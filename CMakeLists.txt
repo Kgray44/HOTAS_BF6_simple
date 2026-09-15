@@ -293,6 +293,8 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_repair_contract.cpp
     src/hidhide_doctor/doctor_repair_helper_protocol.h
     src/hidhide_doctor/doctor_repair_helper_protocol.cpp
+    src/hidhide_doctor/doctor_repair_helper_client.h
+    src/hidhide_doctor/doctor_repair_helper_client.cpp
     src/hidhide_doctor/doctor_repair_engine.h
     src/hidhide_doctor/doctor_repair_engine.cpp
     src/hidhide_doctor/doctor_session_view_model.h

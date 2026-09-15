@@ -108,6 +108,15 @@ private:
     std::optional<NativeError> m_nextError;
 };
 
+// The core never assumes that a successful SET operation repaired the
+// diagnosis.  A caller may provide an independent read-only verifier (for
+// example, the affected Doctor checks) after exact configuration read-back.
+class IRepairPostconditionVerifier {
+public:
+    virtual ~IRepairPostconditionVerifier() = default;
+    virtual bool verify(const RepairPlan &plan, const HidHideConfigurationSnapshot &after, QString *reason) = 0;
+};
+
 class RepairJournalStore final {
 public:
     explicit RepairJournalStore(QString root = {});
@@ -124,6 +133,13 @@ struct RepairExecutionResult final {
     RepairTransaction transaction;
     QString detail;
     bool mutated = false;
+    bool rolledBack = false;
+};
+
+struct RepairRecoveryResult final {
+    RepairTransaction transaction;
+    QString detail;
+    bool requiresOwnerReview = false;
 };
 
 class RepairTransactionCoordinator final {
@@ -131,10 +147,17 @@ public:
     // Dry runs produce the same plan/backup/journal representation but do
     // not receive a mutator and cannot change machine configuration.
     RepairExecutionResult dryRun(const RepairPlanProposal &proposal, const DoctorEnvironment &environment,
-        const DoctorSessionId &sessionId, const RepairJournalStore &journal) const;
+        const DoctorSessionId &sessionId, const RepairJournalStore &journal,
+        const RepairTransactionId &transactionId = {}) const;
     RepairExecutionResult executeOwnerLab(const RepairPlanProposal &proposal, const DoctorEnvironment &environment,
         IRepairConfigurationMutator &mutator, const RepairJournalStore &journal,
-        const RepairTransactionId &transactionId = {}) const;
+        const RepairTransactionId &transactionId = {}, IRepairPostconditionVerifier *postconditionVerifier = nullptr) const;
+
+    // Startup reconciliation is deliberately read-only.  It classifies an
+    // incomplete durable journal and never replays, completes, or rolls back
+    // a transaction automatically after a restart.
+    RepairRecoveryResult reconcileIncomplete(const RepairTransaction &transaction,
+        IRepairConfigurationMutator &mutator, const RepairJournalStore &journal) const;
 };
 
 QString displayName(ConfigurationOwnership ownership);

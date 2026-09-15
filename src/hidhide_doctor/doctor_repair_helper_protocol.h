@@ -21,6 +21,9 @@ struct RepairHelperRequest final {
     RepairPlan plan;
     QString nonce;
     QDateTime expiresAt;
+    // This probes the elevated helper's authenticated input path only.  The
+    // helper repeats its read-only validation then returns before any SET.
+    bool connectivityOnly = false;
     QString requestDigest;
 };
 

@@ -9,6 +9,8 @@
 #include <QJsonDocument>
 #include <QScopeGuard>
 
+#include <atomic>
+
 #include <windows.h>
 #include <sddl.h>
 
@@ -51,6 +53,58 @@ QByteArray response(bool accepted, const QString &detail, const RepairExecutionR
     }
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
+
+class SnapshotPostconditionProvider final : public IReadOnlyDiagnosticProvider {
+public:
+    explicit SnapshotPostconditionProvider(ReadOnlyDiagnosticSnapshot snapshot) : m_snapshot(std::move(snapshot)) {}
+    ReadOnlyDiagnosticSnapshot observe(std::atomic_bool *, ObservationProgress) override { return m_snapshot; }
+private:
+    ReadOnlyDiagnosticSnapshot m_snapshot;
+};
+
+class NativePostconditionVerifier final : public IRepairPostconditionVerifier {
+public:
+    bool verify(const RepairPlan &plan, const HidHideConfigurationSnapshot &, QString *reason) override
+    {
+        // This is deliberately a second provider observation rather than a
+        // re-use of the pre-mutation snapshot or the helper mutator's cached
+        // values. It verifies configuration, provider capability, collateral,
+        // and the affected diagnosis from fresh read-only evidence.
+        ReadOnlyWindowsDiagnosticProvider provider;
+        ReadOnlyDiagnosticSnapshot fresh = provider.observe();
+        if (!fresh.environment.hidhide.present || !fresh.environment.capabilities.directProtocolAvailable
+            || !fresh.environment.capabilities.helperArchitectureCompatible) {
+            if (reason) *reason = QStringLiteral("Independent post-repair provider health or capability verification failed.");
+            return false;
+        }
+        const std::optional<HidHideConfigurationSnapshot> configuration = RepairPlanner::configurationFrom(fresh);
+        if (!configuration || configuration->fingerprint() != plan.expectedPostFingerprint) {
+            if (reason) *reason = QStringLiteral("Independent post-repair configuration and collateral read-back did not match the authorized post-state.");
+            return false;
+        }
+        // Reconstruct only the plan's already-bound HOTAS intent for the
+        // affected diagnosis. The helper still obtains every mutable target
+        // from the sealed plan; no ambient application identity is trusted.
+        fresh.environment.repairIntent.suppliedByHotas = true;
+        for (const RepairOperation &operation : plan.operations) {
+            if (operation.kind == RepairOperationKind::AddWhitelistEntry)
+                fresh.environment.repairIntent.expectedExecutable = operation.targetIdentity;
+            if (operation.kind == RepairOperationKind::RemoveBlacklistEntry)
+                fresh.environment.repairIntent.expectedVirtualOutputIds.append(operation.targetIdentity);
+        }
+        SnapshotPostconditionProvider diagnosisProvider(fresh);
+        const DiagnosticRunOutcome outcome = DoctorDiagnosticEngine().run(diagnosisProvider);
+        const std::optional<RepairRecipe> recipe = RepairRecipeRegistry::recipe(plan.recipeId);
+        if (!recipe) { if (reason) *reason = QStringLiteral("Post-repair recipe identity is unavailable."); return false; }
+        for (const Diagnosis &diagnosis : outcome.session.diagnoses()) {
+            if (recipe->supportedDiagnosisIds.contains(diagnosis.id.value())) {
+                if (reason) *reason = QStringLiteral("The affected diagnosis remains after independent verification.");
+                return false;
+            }
+        }
+        return true;
+    }
+};
 
 int serveOneRequest(const QString &pipeName, const QString &nonce, const QString &doctorBuild)
 {
@@ -102,6 +156,10 @@ int serveOneRequest(const QString &pipeName, const QString &nonce, const QString
         writeExact(pipe, response(false, reason));
         return 4;
     }
+    if (request->connectivityOnly) {
+        writeExact(pipe, response(true, QStringLiteral("Elevated helper connectivity and sealed-plan validation succeeded — no changes made.")));
+        return 0;
+    }
     RepairPlanProposal proposal;
     proposal.status = RepairProposalStatus::AvailableForOwnerLab;
     proposal.plan = request->plan;
@@ -109,8 +167,9 @@ int serveOneRequest(const QString &pipeName, const QString &nonce, const QString
             ? QStringLiteral("HidHide WDM control device") : observed.environment.hidhide.provider,
         observed.environment.hidhide.driverVersion);
     RepairJournalStore journal;
+    NativePostconditionVerifier postconditionVerifier;
     const RepairExecutionResult result = RepairTransactionCoordinator().executeOwnerLab(proposal, observed.environment,
-        mutator, journal, request->transactionId);
+        mutator, journal, request->transactionId, &postconditionVerifier);
     writeExact(pipe, response(result.transaction.state == RepairTransactionState::Completed, result.detail, &result));
     return result.transaction.state == RepairTransactionState::Completed ? 0 : 6;
 }

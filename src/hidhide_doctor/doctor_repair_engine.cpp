@@ -7,8 +7,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QUuid>
+
+#include <windows.h>
+#include <sddl.h>
 
 #include <algorithm>
 
@@ -81,6 +85,27 @@ QString canonicalJson(const QJsonObject &object)
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
 }
 
+bool hardenJournalRoot(const QString &root, QString *reason)
+{
+    // Protect the journal directory from inherited broad ACLs.  OW resolves
+    // to the current per-user owner; SYSTEM is retained for recovery tooling.
+    // New atomic QSaveFile replacements inherit only these object/container
+    // ACEs, so a partial or copied-in file cannot broaden journal access.
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)", SDDL_REVISION_1, &descriptor, nullptr)) {
+        if (reason) *reason = QStringLiteral("Could not construct the private repair-journal ACL (Win32 %1).").arg(GetLastError());
+        return false;
+    }
+    const auto freeDescriptor = qScopeGuard([&] { LocalFree(descriptor); });
+    if (!SetFileSecurityW(reinterpret_cast<LPCWSTR>(root.utf16()),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, descriptor)) {
+        if (reason) *reason = QStringLiteral("Could not apply the private repair-journal ACL (Win32 %1).").arg(GetLastError());
+        return false;
+    }
+    return true;
+}
+
 RepairTransactionId newTransactionId()
 {
     return RepairTransactionId(QStringLiteral("REPAIR-TX-")
@@ -151,6 +176,7 @@ RepairTransaction transactionFor(const RepairPlan &plan, const DoctorEnvironment
     transaction.state = state;
     transaction.preconditions = plan.preconditions;
     transaction.preconditionFingerprint = plan.preconditionFingerprint;
+    transaction.expectedPostFingerprint = plan.expectedPostFingerprint;
     transaction.verificationPlan = QStringLiteral("Independent read-back and exact collateral comparison.");
     transaction.rollbackPlan = QStringLiteral("Restore the exact captured R1 configuration only if no external change is detected.");
     transaction.rebootBoundary = QStringLiteral("None — R1 configuration repair");
@@ -189,8 +215,13 @@ QJsonObject transactionObject(const RepairTransaction &transaction, bool include
 {
     QJsonObject backup{{QStringLiteral("schemaVersion"), transaction.backupManifest.schemaVersion},
         {QStringLiteral("capturedAt"), transaction.backupManifest.capturedAt.toString(Qt::ISODateWithMs)},
-        {QStringLiteral("scope"), transaction.backupManifest.scope}, {QStringLiteral("state"), transaction.backupManifest.serializedState},
+        {QStringLiteral("scope"), transaction.backupManifest.scope}, {QStringLiteral("targetScope"), transaction.backupManifest.targetScope},
+        {QStringLiteral("state"), transaction.backupManifest.serializedState},
         {QStringLiteral("sha256"), transaction.backupManifest.sha256}, {QStringLiteral("provider"), transaction.backupManifest.provider},
+        {QStringLiteral("repairIntent"), transaction.backupManifest.repairIntent},
+        {QStringLiteral("capabilityEvidence"), transaction.backupManifest.capabilityEvidence},
+        {QStringLiteral("windowsBuild"), static_cast<int>(transaction.backupManifest.windowsBuild)},
+        {QStringLiteral("architecture"), transaction.backupManifest.architecture},
         {QStringLiteral("privacy"), transaction.backupManifest.privacyClassification},
         {QStringLiteral("restoreEligible"), transaction.backupManifest.restoreEligible}};
     QJsonObject object{{QStringLiteral("schemaVersion"), transaction.schemaVersion}, {QStringLiteral("transactionId"), transaction.id.value()},
@@ -200,7 +231,8 @@ QJsonObject transactionObject(const RepairTransaction &transaction, bool include
         {QStringLiteral("provider"), transaction.provider}, {QStringLiteral("windowsBuild"), static_cast<int>(transaction.windowsBuild)},
         {QStringLiteral("architecture"), transaction.architecture}, {QStringLiteral("startedAt"), transaction.startedAt.toString(Qt::ISODateWithMs)},
         {QStringLiteral("state"), static_cast<int>(transaction.state)}, {QStringLiteral("preconditions"), preconditionsJson(transaction.preconditions)},
-        {QStringLiteral("preconditionFingerprint"), transaction.preconditionFingerprint}, {QStringLiteral("backupManifest"), backup},
+        {QStringLiteral("preconditionFingerprint"), transaction.preconditionFingerprint},
+        {QStringLiteral("expectedPostFingerprint"), transaction.expectedPostFingerprint}, {QStringLiteral("backupManifest"), backup},
         {QStringLiteral("operations"), operationsJson(transaction.operations)}, {QStringLiteral("currentOperation"), transaction.currentOperation},
         {QStringLiteral("verificationPlan"), transaction.verificationPlan}, {QStringLiteral("rollbackPlan"), transaction.rollbackPlan},
         {QStringLiteral("rebootBoundary"), transaction.rebootBoundary}, {QStringLiteral("finalStatus"), transaction.finalStatus}};
@@ -225,6 +257,7 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
     transaction.startedAt = QDateTime::fromString(object.value(QStringLiteral("startedAt")).toString(), Qt::ISODateWithMs);
     transaction.state = static_cast<RepairTransactionState>(object.value(QStringLiteral("state")).toInt());
     transaction.preconditionFingerprint = object.value(QStringLiteral("preconditionFingerprint")).toString();
+    transaction.expectedPostFingerprint = object.value(QStringLiteral("expectedPostFingerprint")).toString();
     transaction.verificationPlan = object.value(QStringLiteral("verificationPlan")).toString();
     transaction.rollbackPlan = object.value(QStringLiteral("rollbackPlan")).toString();
     transaction.rebootBoundary = object.value(QStringLiteral("rebootBoundary")).toString();
@@ -238,9 +271,14 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
     transaction.backupManifest.schemaVersion = backup.value(QStringLiteral("schemaVersion")).toInt(1);
     transaction.backupManifest.capturedAt = QDateTime::fromString(backup.value(QStringLiteral("capturedAt")).toString(), Qt::ISODateWithMs);
     transaction.backupManifest.scope = backup.value(QStringLiteral("scope")).toString();
+    transaction.backupManifest.targetScope = backup.value(QStringLiteral("targetScope")).toString();
     transaction.backupManifest.serializedState = backup.value(QStringLiteral("state")).toString();
     transaction.backupManifest.sha256 = backup.value(QStringLiteral("sha256")).toString();
     transaction.backupManifest.provider = backup.value(QStringLiteral("provider")).toString();
+    transaction.backupManifest.repairIntent = backup.value(QStringLiteral("repairIntent")).toString();
+    transaction.backupManifest.capabilityEvidence = backup.value(QStringLiteral("capabilityEvidence")).toString();
+    transaction.backupManifest.windowsBuild = static_cast<quint32>(backup.value(QStringLiteral("windowsBuild")).toInt());
+    transaction.backupManifest.architecture = backup.value(QStringLiteral("architecture")).toString();
     transaction.backupManifest.privacyClassification = backup.value(QStringLiteral("privacy")).toString();
     transaction.backupManifest.restoreEligible = backup.value(QStringLiteral("restoreEligible")).toBool();
     transaction.currentOperation = object.value(QStringLiteral("currentOperation")).toInt(-1);
@@ -265,7 +303,7 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
             error.value(QStringLiteral("code")).toString().toLongLong(), error.value(QStringLiteral("name")).toString(), error.value(QStringLiteral("message")).toString()};
         transaction.operations.append(std::move(operation));
     }
-    if (transaction.schemaVersion != 1 || !transaction.id.isValid() || !transaction.sessionId.isValid()
+    if (transaction.schemaVersion != 2 || !transaction.id.isValid() || !transaction.sessionId.isValid()
         || !transaction.planId.isValid() || !transaction.recipeId.isValid() || transaction.checksum.isEmpty()) {
         if (reason) *reason = QStringLiteral("Repair journal has an invalid schema or required stable identifier.");
         return std::nullopt;
@@ -278,14 +316,25 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
     return transaction;
 }
 
-BackupManifest backupFor(const HidHideConfigurationSnapshot &snapshot)
+BackupManifest backupFor(const HidHideConfigurationSnapshot &snapshot, const DoctorEnvironment &environment,
+    const RepairPlan &plan)
 {
     BackupManifest backup;
     backup.capturedAt = QDateTime::currentDateTimeUtc();
     backup.scope = QStringLiteral("HidHide whitelist, blacklist, cloak, inverse, provider and exact R1 targets");
+    backup.targetScope = QStringLiteral("%1 :: %2 typed R1 target(s)")
+        .arg(plan.recipeId.value()).arg(plan.operations.size());
     backup.serializedState = snapshot.stableJson();
     backup.sha256 = hash(backup.serializedState.toUtf8());
     backup.provider = snapshot.provider;
+    backup.repairIntent = environment.repairIntent.suppliedByHotas
+        ? QStringLiteral("HOTAS supplied intent: ") + environment.repairIntent.expectedExecutable
+        : QStringLiteral("No HOTAS repair intent supplied");
+    backup.capabilityEvidence = QStringLiteral("directProtocol=%1; helperArchitectureCompatible=%2")
+        .arg(environment.capabilities.directProtocolAvailable ? QStringLiteral("true") : QStringLiteral("false"),
+            environment.capabilities.helperArchitectureCompatible ? QStringLiteral("true") : QStringLiteral("false"));
+    backup.windowsBuild = environment.platform.build;
+    backup.architecture = displayName(environment.platform.nativeArchitecture);
     backup.privacyClassification = QStringLiteral("Sensitive local diagnostic data; explicit redacted export only.");
     backup.restoreEligible = snapshot.isComplete();
     return backup;
@@ -307,9 +356,9 @@ QList<RepairOperation> restoreOperations(const HidHideConfigurationSnapshot &fro
         RepairOperationKind::RemoveWhitelistEntry, RepairTargetKind::WhitelistEntry, QStringLiteral("OP-R1-ROLLBACK-WL"));
     appendListChanges(from.blacklist, target.blacklist, RepairOperationKind::AddBlacklistEntry,
         RepairOperationKind::RemoveBlacklistEntry, RepairTargetKind::BlacklistEntry, QStringLiteral("OP-R1-ROLLBACK-BL"));
-    if (from.active != target.active && target.active) operations.append({DoctorOperationId(QStringLiteral("OP-R1-ROLLBACK-ACTIVE")),
+    if (from.active != target.active && target.active.has_value()) operations.append({DoctorOperationId(QStringLiteral("OP-R1-ROLLBACK-ACTIVE")),
         RepairOperationKind::SetHidHideActive, RepairTargetKind::HidHideActiveState, QStringLiteral("active"), enumText(*target.active)});
-    if (from.inverse != target.inverse && target.inverse) operations.append({DoctorOperationId(QStringLiteral("OP-R1-ROLLBACK-INVERSE")),
+    if (from.inverse != target.inverse && target.inverse.has_value()) operations.append({DoctorOperationId(QStringLiteral("OP-R1-ROLLBACK-INVERSE")),
         RepairOperationKind::SetHidHideInverse, RepairTargetKind::HidHideInverseState, QStringLiteral("inverse"), enumText(*target.inverse)});
     return operations;
 }
@@ -543,6 +592,7 @@ bool RepairJournalStore::persist(RepairTransaction transaction, QString *reason)
 {
     if (!transaction.id.isValid()) { if (reason) *reason = QStringLiteral("Cannot persist a transaction without a stable transaction ID."); return false; }
     if (!QDir().mkpath(m_root)) { if (reason) *reason = QStringLiteral("The per-user repair journal directory could not be created."); return false; }
+    if (!hardenJournalRoot(m_root, reason)) return false;
     transaction.checksum.clear();
     transaction.checksum = hash(QJsonDocument(transactionObject(transaction, false)).toJson(QJsonDocument::Compact));
     QSaveFile file(journalPath(transaction.id));
@@ -578,12 +628,12 @@ QList<RepairTransaction> RepairJournalStore::history(QString *reason) const
 }
 
 RepairExecutionResult RepairTransactionCoordinator::dryRun(const RepairPlanProposal &proposal, const DoctorEnvironment &environment,
-    const DoctorSessionId &sessionId, const RepairJournalStore &journal) const
+    const DoctorSessionId &sessionId, const RepairJournalStore &journal, const RepairTransactionId &transactionId) const
 {
     RepairExecutionResult result;
     if (proposal.status == RepairProposalStatus::Blocked || proposal.plan.operations.isEmpty()) { result.detail = proposal.reason; return result; }
-    result.transaction = transactionFor(proposal.plan, environment, sessionId, RepairTransactionState::Planned);
-    result.transaction.backupManifest = backupFor(proposal.before);
+    result.transaction = transactionFor(proposal.plan, environment, sessionId, RepairTransactionState::Planned, transactionId);
+    result.transaction.backupManifest = backupFor(proposal.before, environment, proposal.plan);
     result.transaction.finalStatus = QStringLiteral("Dry run complete — no mutation was requested or performed.");
     QString reason;
     if (!journal.persist(result.transaction, &reason)) { result.transaction.state = RepairTransactionState::FailedSafely; result.detail = reason; return result; }
@@ -592,7 +642,8 @@ RepairExecutionResult RepairTransactionCoordinator::dryRun(const RepairPlanPropo
 }
 
 RepairExecutionResult RepairTransactionCoordinator::executeOwnerLab(const RepairPlanProposal &proposal, const DoctorEnvironment &environment,
-    IRepairConfigurationMutator &mutator, const RepairJournalStore &journal, const RepairTransactionId &transactionId) const
+    IRepairConfigurationMutator &mutator, const RepairJournalStore &journal, const RepairTransactionId &transactionId,
+    IRepairPostconditionVerifier *postconditionVerifier) const
 {
     RepairExecutionResult result;
     RepairPlan plan = proposal.plan;
@@ -607,7 +658,10 @@ RepairExecutionResult RepairTransactionCoordinator::executeOwnerLab(const Repair
     lock.setStaleLockTime(0);
     if (!lock.tryLock(0)) { result.detail = QStringLiteral("Another HidHide Doctor repair transaction is active."); return result; }
     const HidHideConfigurationSnapshot before = mutator.readConfiguration();
-    result.transaction = transactionFor(plan, environment, plan.sessionId, RepairTransactionState::Revalidating, transactionId);
+    result.transaction = transactionFor(plan, environment, plan.sessionId, RepairTransactionState::Authorized, transactionId);
+    result.transaction.finalStatus = QStringLiteral("Exact plan authorization, recipe version, targets, digest, and qualification are bound.");
+    if (!journal.persist(result.transaction, &reason)) { result.transaction.state = RepairTransactionState::FailedSafely; result.detail = reason; return result; }
+    result.transaction.state = RepairTransactionState::Revalidating;
     if (before.fingerprint() != plan.preconditionFingerprint) {
         result.transaction.state = RepairTransactionState::StalePlan;
         result.transaction.finalStatus = QStringLiteral("Plan became stale before mutation; replan required.");
@@ -616,7 +670,7 @@ RepairExecutionResult RepairTransactionCoordinator::executeOwnerLab(const Repair
         return result;
     }
     result.transaction.state = RepairTransactionState::CapturingBackup;
-    result.transaction.backupManifest = backupFor(before);
+    result.transaction.backupManifest = backupFor(before, environment, plan);
     if (!journal.persist(result.transaction, &reason)) { result.transaction.state = RepairTransactionState::FailedSafely; result.detail = reason; return result; }
     result.transaction.state = RepairTransactionState::Executing;
     for (int index = 0; index < plan.operations.size(); ++index) {
@@ -651,9 +705,80 @@ RepairExecutionResult RepairTransactionCoordinator::executeOwnerLab(const Repair
     }
     result.transaction.state = RepairTransactionState::Verifying;
     const HidHideConfigurationSnapshot after = mutator.readConfiguration();
-    if (after.fingerprint() == plan.expectedPostFingerprint) {
+    QString postconditionReason;
+    if (after.fingerprint() == plan.expectedPostFingerprint
+        && (!postconditionVerifier || postconditionVerifier->verify(plan, after, &postconditionReason))) {
         result.transaction.state = RepairTransactionState::Completed;
         result.transaction.finalStatus = QStringLiteral("Repair complete — independent configuration read-back matched the authorized exact delta.");
+        journal.persist(result.transaction, nullptr);
+        result.detail = result.transaction.finalStatus;
+        return result;
+    }
+    if (after.fingerprint() == plan.expectedPostFingerprint) {
+        // The configuration delta is exact, but a separate affected check did
+        // not verify.  Because current state still exactly matches the
+        // authorized post-state, restoring the captured pre-state is safe.
+        result.transaction.state = RepairTransactionState::RollingBack;
+        result.transaction.finalStatus = QStringLiteral("Post-repair check did not verify; restoring the exact captured pre-state.");
+        if (!journal.persist(result.transaction, &reason)) {
+            result.transaction.state = RepairTransactionState::RecoveryRequired;
+            result.transaction.finalStatus = QStringLiteral("Rollback was not started because its durable journal boundary could not be recorded.");
+            result.detail = result.transaction.finalStatus;
+            return result;
+        }
+        const HidHideConfigurationSnapshot beforeRollback = mutator.readConfiguration();
+        if (beforeRollback.fingerprint() != plan.expectedPostFingerprint) {
+            result.transaction.state = RepairTransactionState::RecoveryRequired;
+            result.transaction.finalStatus = QStringLiteral("ROLLBACK PAUSED — configuration changed after verification; manual review required.");
+            journal.persist(result.transaction, nullptr);
+            result.detail = result.transaction.finalStatus;
+            return result;
+        }
+        for (const RepairOperation &operation : restoreOperations(beforeRollback, before)) {
+            RepairOperationJournalEntry entry{result.transaction.id, plan.id, operation.id, operation.kind, operation.targetKind,
+                operation.targetIdentity, beforeRollback.stableJson(), operation.requestedValue, {}, DoctorOperationState::Running,
+                std::nullopt, QDateTime::currentDateTimeUtc(), {}, QStringLiteral("Rollback pending")};
+            result.transaction.operations.append(entry);
+            result.transaction.currentOperation = result.transaction.operations.size() - 1;
+            if (!journal.persist(result.transaction, &reason)) {
+                result.transaction.state = RepairTransactionState::RecoveryRequired;
+                result.transaction.finalStatus = QStringLiteral("ROLLBACK PAUSED — durable journal update failed before restore.");
+                result.detail = result.transaction.finalStatus;
+                return result;
+            }
+            NativeError rollbackError;
+            if (!mutator.apply(operation, &rollbackError)) {
+                result.transaction.operations.last().state = DoctorOperationState::Failed;
+                result.transaction.operations.last().nativeError = rollbackError;
+                result.transaction.operations.last().completedAt = QDateTime::currentDateTimeUtc();
+                result.transaction.operations.last().rollbackStatus = QStringLiteral("Rollback failed");
+                result.transaction.state = RepairTransactionState::RecoveryRequired;
+                result.transaction.finalStatus = QStringLiteral("ROLLBACK PAUSED — restore operation failed; manual review required.");
+                journal.persist(result.transaction, nullptr);
+                result.detail = result.transaction.finalStatus;
+                return result;
+            }
+            result.transaction.operations.last().state = DoctorOperationState::Completed;
+            result.transaction.operations.last().actualPostValue = mutator.readConfiguration().stableJson();
+            result.transaction.operations.last().completedAt = QDateTime::currentDateTimeUtc();
+            result.transaction.operations.last().rollbackStatus = QStringLiteral("Restored exact pre-state component");
+            if (!journal.persist(result.transaction, &reason)) {
+                result.transaction.state = RepairTransactionState::RecoveryRequired;
+                result.transaction.finalStatus = QStringLiteral("Rollback applied but journal persistence failed; read-only reconciliation required.");
+                result.detail = result.transaction.finalStatus;
+                return result;
+            }
+        }
+        if (mutator.readConfiguration().fingerprint() == before.fingerprint()) {
+            result.rolledBack = true;
+            result.transaction.state = RepairTransactionState::FailedSafely;
+            result.transaction.finalStatus = QStringLiteral("Repair failed — original state restored after independent verification did not pass.");
+            journal.persist(result.transaction, nullptr);
+            result.detail = result.transaction.finalStatus;
+            return result;
+        }
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("ROLLBACK PAUSED — exact pre-state comparison failed; manual review required.");
         journal.persist(result.transaction, nullptr);
         result.detail = result.transaction.finalStatus;
         return result;
@@ -665,6 +790,39 @@ RepairExecutionResult RepairTransactionCoordinator::executeOwnerLab(const Repair
     result.transaction.finalStatus = QStringLiteral("Repair applied but verification differed; rollback withheld because the current state is not the authorized post-state.");
     journal.persist(result.transaction, nullptr);
     result.detail = result.transaction.finalStatus;
+    return result;
+}
+
+RepairRecoveryResult RepairTransactionCoordinator::reconcileIncomplete(const RepairTransaction &transaction,
+    IRepairConfigurationMutator &mutator, const RepairJournalStore &journal) const
+{
+    RepairRecoveryResult result;
+    result.transaction = transaction;
+    if (!transaction.id.isValid() || transaction.state == RepairTransactionState::Completed
+        || transaction.state == RepairTransactionState::FailedSafely || transaction.state == RepairTransactionState::Cancelled) {
+        result.detail = QStringLiteral("No incomplete repair transaction requires reconciliation.");
+        return result;
+    }
+    const HidHideConfigurationSnapshot current = mutator.readConfiguration();
+    if (current.fingerprint() == transaction.preconditionFingerprint) {
+        result.transaction.state = RepairTransactionState::Cancelled;
+        result.transaction.finalStatus = QStringLiteral("Restart reconciliation observed the captured pre-state; no mutation is pending.");
+        result.detail = result.transaction.finalStatus;
+    } else if (!transaction.expectedPostFingerprint.isEmpty()
+        && current.fingerprint() == transaction.expectedPostFingerprint) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Restart reconciliation observed the expected configuration delta; affected checks require owner review before completion. No retry or mutation was attempted.");
+        result.detail = result.transaction.finalStatus;
+        result.requiresOwnerReview = true;
+    } else {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Restart reconciliation found an unknown configuration state; no retry or rollback was attempted.");
+        result.detail = result.transaction.finalStatus;
+        result.requiresOwnerReview = true;
+    }
+    // Reconciliation itself is a durable, read-only boundary.  It contains no
+    // apply call and cannot restart an interrupted helper transaction.
+    journal.persist(result.transaction, nullptr);
     return result;
 }
 

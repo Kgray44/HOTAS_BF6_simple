@@ -137,12 +137,17 @@ struct RepairOperationJournalEntry final {
 };
 
 struct BackupManifest final {
-    int schemaVersion = 1;
+    int schemaVersion = 2;
     QDateTime capturedAt;
     QString scope;
+    QString targetScope;
     QString serializedState;
     QString sha256;
     QString provider;
+    QString repairIntent;
+    QString capabilityEvidence;
+    quint32 windowsBuild = 0;
+    QString architecture;
     QString privacyClassification;
     bool restoreEligible = false;
 };
@@ -152,7 +157,7 @@ struct BackupManifest final {
 // engine's atomic journal store; a partial JSON file is never accepted as a
 // valid repair record.
 struct RepairTransaction final {
-    int schemaVersion = 1;
+    int schemaVersion = 2;
     RepairTransactionId id;
     DoctorSessionId sessionId;
     RepairPlanId planId;
@@ -167,6 +172,7 @@ struct RepairTransaction final {
     RepairTransactionState state = RepairTransactionState::Planned;
     QList<RepairPrecondition> preconditions;
     QString preconditionFingerprint;
+    QString expectedPostFingerprint;
     BackupManifest backupManifest;
     QList<RepairOperationJournalEntry> operations;
     int currentOperation = -1;

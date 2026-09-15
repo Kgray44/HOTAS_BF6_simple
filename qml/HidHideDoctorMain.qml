@@ -478,9 +478,16 @@ ApplicationWindow {
                 x: root.densityPad
                 y: root.densityPad
                 spacing: root.densityGap
-                Doctor.DoctorStatusPill { text: doctorSession.repairPlanAvailable ? "REPAIR REVIEW" : doctorSession.diagnosisCards.length ? "DIAGNOSIS COMPLETE" : "NOTHING REQUIRED"; tone: doctorSession.repairPlanAvailable || doctorSession.diagnosisCards.length ? "warning" : "healthy" }
+                Doctor.DoctorStatusPill { text: doctorSession.labRepairMode ? doctorSession.repairRuntimeState : (doctorSession.repairPlanAvailable ? "REPAIR REVIEW" : doctorSession.diagnosisCards.length ? "DIAGNOSIS COMPLETE" : "NOTHING REQUIRED"); tone: doctorSession.repairPlanAvailable || doctorSession.diagnosisCards.length ? "warning" : "healthy" }
                 Label { text: doctorSession.userActionTitle; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 15; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Label { text: doctorSession.userActionDetail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Rectangle {
+                    visible: doctorSession.recoveryNotice.length > 0
+                    Layout.fillWidth: true
+                    implicitHeight: recoveryNoticeText.implicitHeight + 18
+                    color: "#33231d"; border.color: Theme.warning; border.width: 1; radius: 2
+                    Label { id: recoveryNoticeText; anchors.fill: parent; anchors.margins: 9; text: "REPAIR RECOVERY REVIEW REQUIRED\n" + doctorSession.recoveryNotice; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                }
                 Rectangle {
                     visible: doctorSession.repairPlanAvailable
                     Layout.fillWidth: true
@@ -496,7 +503,7 @@ ApplicationWindow {
                         spacing: 5
                         property var plan: doctorSession.repairPlanSummary
                         RowLayout { Layout.fillWidth: true
-                            Eyebrow { text: "REPAIR PLAN · READ ONLY"; color: Theme.warning; Layout.fillWidth: true }
+                            Eyebrow { text: doctorSession.labRepairMode ? "LAB REPAIR MODE · DEVELOPMENT FIXTURE" : "REPAIR PLAN · READ ONLY"; color: Theme.warning; Layout.fillWidth: true }
                             Doctor.DoctorStatusPill { text: repairPlanColumn.plan.qualification || "NOT QUALIFIED"; tone: "warning" }
                         }
                         Label { text: repairPlanColumn.plan.title || ""; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 13; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
@@ -511,12 +518,27 @@ ApplicationWindow {
                             delegate: Label { required property string modelData; text: "• " + modelData; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: 9; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
                         }
                         Label { text: "BACKUP  " + repairPlanColumn.plan.backup + "\nROLLBACK  " + repairPlanColumn.plan.rollback + "\nADMINISTRATOR ACCESS  " + repairPlanColumn.plan.elevation + "\nRESTART  " + repairPlanColumn.plan.restart + "\nUSER ACTION  " + repairPlanColumn.plan.userAction; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 9; lineHeight: 1.18; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Rectangle {
+                            visible: doctorSession.labRepairMode
+                            Layout.fillWidth: true
+                            implicitHeight: labDetail.implicitHeight + labButtons.implicitHeight + 20
+                            color: "#202a24"; border.color: Theme.warning; border.width: 1; radius: 2
+                            ColumnLayout {
+                                anchors.fill: parent; anchors.margins: 8; spacing: 6
+                                Label { id: labDetail; text: doctorSession.repairRuntimeState + "\n" + doctorSession.repairRuntimeDetail; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                RowLayout {
+                                    id: labButtons; Layout.fillWidth: true; spacing: 6
+                                    Doctor.DoctorButton { text: "TEST HELPER — NO CHANGES"; compact: true; enabled: !doctorSession.repairOperationInFlight; tooltipText: "Uses the sealed plan and elevated helper path, but sends no HidHide SET operation."; onClicked: doctorSession.requestHelperConnectivityTest() }
+                                    Doctor.DoctorButton { text: "AUTHORIZE LAB REPAIR"; tone: "primary"; compact: true; enabled: !doctorSession.repairOperationInFlight; tooltipText: "Final owner/lab authorization for this exact fixture plan. UAC cancellation makes no changes."; onClicked: doctorSession.requestLabRepairAuthorization() }
+                                }
+                            }
+                        }
                     }
                 }
                 Doctor.DoctorDivider {}
                 Eyebrow { text: "PHASE 3 SAFETY BOUNDARY" }
                 Rectangle { Layout.fillWidth: true; implicitHeight: safetyText.implicitHeight + 20; color: "#17222a"; border.color: Theme.readOnly; radius: 2
-                    Label { id: safetyText; anchors.fill: parent; anchors.margins: 10; text: "NORMAL MODE IS READ ONLY\nPlans are safe to inspect. LabQualified R1 recipes require a distinct, explicit owner/lab authorization path; this review surface never starts UAC or changes HidHide."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                    Label { id: safetyText; anchors.fill: parent; anchors.margins: 10; text: doctorSession.labRepairMode ? "LAB REPAIR MODE — DEVELOPMENT FIXTURE ONLY\nA deliberate final authorization binds the exact plan, transaction, recipe version, targets, fingerprints, and digest. The helper revalidates before any SET; UAC cancellation makes no changes." : "NORMAL MODE IS READ ONLY\nPlans are safe to inspect. LabQualified R1 recipes require a distinct, explicit owner/lab authorization path; this review surface never starts UAC or changes HidHide."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap }
                 }
                 Item { Layout.fillHeight: true }
                 Label { text: "SESSION  " + doctorSession.sessionId.slice(-8); color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: 10 }

@@ -79,6 +79,15 @@ private:
     bool m_cancel = false;
 };
 
+class RejectingPostconditionVerifier final : public IRepairPostconditionVerifier {
+public:
+    bool verify(const RepairPlan &, const HidHideConfigurationSnapshot &, QString *reason) override
+    {
+        if (reason) *reason = QStringLiteral("The independent affected check remains unhealthy.");
+        return false;
+    }
+};
+
 ReadOnlyDiagnosticSnapshot healthyFixtureSnapshot()
 {
     ReadOnlyDiagnosticSnapshot snapshot;
@@ -139,6 +148,7 @@ private slots:
     void phaseThreePlannerPreservesCollateralAndDistinguishesLabQualification();
     void phaseThreeHelperProtocolRejectsUntrustedAndOutOfScopeFrames();
     void phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider();
+    void phaseThreeRollbackAndRestartReconciliationAreStrictlyGuarded();
     void phaseThreeJournalDetectsCorruption();
 };
 
@@ -615,6 +625,24 @@ void HidHideDoctorDomainTests::phaseThreeHelperProtocolRejectsUntrustedAndOutOfS
     QVERIFY2(parsed.has_value(), qPrintable(reason));
     QVERIFY(RepairHelperProtocol::validate(*parsed, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
 
+    RepairHelperRequest connectivity = request;
+    connectivity.connectivityOnly = true;
+    connectivity.requestDigest = RepairHelperProtocol::seal(connectivity);
+    const QByteArray connectivityWire = QJsonDocument(RepairHelperProtocol::serialize(connectivity)).toJson(QJsonDocument::Compact);
+    const std::optional<RepairHelperRequest> parsedConnectivity = RepairHelperProtocol::parse(connectivityWire, &reason);
+    QVERIFY(parsedConnectivity.has_value());
+    QVERIFY(parsedConnectivity->connectivityOnly);
+    QVERIFY(RepairHelperProtocol::validate(*parsedConnectivity, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest alteredConnectivity = connectivity;
+    alteredConnectivity.connectivityOnly = false;
+    QVERIFY(!RepairHelperProtocol::validate(alteredConnectivity, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
+    RepairHelperRequest alteredAuthorization = request;
+    alteredAuthorization.plan.authorization = RepairAuthorization::NotAuthorized;
+    alteredAuthorization.requestDigest = RepairHelperProtocol::seal(alteredAuthorization);
+    QVERIFY(!RepairHelperProtocol::validate(alteredAuthorization, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+
     RepairHelperRequest wrongNonce = request;
     wrongNonce.nonce = QString(32, QLatin1Char('B'));
     wrongNonce.requestDigest = RepairHelperProtocol::seal(wrongNonce);
@@ -671,6 +699,45 @@ void HidHideDoctorDomainTests::phaseThreeExecutionRevalidatesAndJournalsWithoutL
     QCOMPARE(executed.transaction.state, RepairTransactionState::Completed);
     QVERIFY(executed.mutated);
     QCOMPARE(mutator.readConfiguration().fingerprint(), proposal.plan.expectedPostFingerprint);
+}
+
+void HidHideDoctorDomainTests::phaseThreeRollbackAndRestartReconciliationAreStrictlyGuarded()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    RepairJournalStore journal(temporary.path());
+    RepairTransactionCoordinator coordinator;
+
+    // An exact configuration delta is not completion: an independent failed
+    // affected check triggers rollback only while the post-state still binds.
+    MemoryRepairConfigurationMutator rollbackMutator(proposal.before);
+    RejectingPostconditionVerifier reject;
+    const RepairExecutionResult rolledBack = coordinator.executeOwnerLab(proposal, outcome.snapshot.environment,
+        rollbackMutator, journal, {}, &reject);
+    QCOMPARE(rolledBack.transaction.state, RepairTransactionState::FailedSafely);
+    QVERIFY(rolledBack.mutated);
+    QVERIFY(rolledBack.rolledBack);
+    QCOMPARE(rollbackMutator.readConfiguration().fingerprint(), proposal.before.fingerprint());
+    QVERIFY(rolledBack.detail.contains(QStringLiteral("original state restored")));
+
+    // A restart never replays an incomplete repair.  It only re-reads and
+    // records whether owner review is needed.
+    const RepairExecutionResult dryRun = coordinator.dryRun(proposal, outcome.snapshot.environment, outcome.session.id(), journal);
+    RepairTransaction interrupted = dryRun.transaction;
+    interrupted.state = RepairTransactionState::Executing;
+    interrupted.expectedPostFingerprint = proposal.plan.expectedPostFingerprint;
+    QVERIFY(journal.persist(interrupted));
+    MemoryRepairConfigurationMutator postState(proposal.after);
+    const RepairRecoveryResult recovered = coordinator.reconcileIncomplete(interrupted, postState, journal);
+    QCOMPARE(recovered.transaction.state, RepairTransactionState::RecoveryRequired);
+    QVERIFY(recovered.requiresOwnerReview);
+    QCOMPARE(postState.readConfiguration().fingerprint(), proposal.after.fingerprint());
+    QVERIFY(recovered.detail.contains(QStringLiteral("no retry"), Qt::CaseInsensitive));
+    QVERIFY(recovered.detail.contains(QStringLiteral("owner review"), Qt::CaseInsensitive));
 }
 
 void HidHideDoctorDomainTests::phaseThreeJournalDetectsCorruption()

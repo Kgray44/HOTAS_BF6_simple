@@ -207,7 +207,8 @@ QJsonObject RepairHelperProtocol::serialize(const RepairHelperRequest &request)
     return {{QStringLiteral("protocolVersion"), request.version}, {QStringLiteral("doctorBuildId"), request.doctorBuildId},
         {QStringLiteral("helperBuildId"), request.helperBuildId}, {QStringLiteral("transactionId"), request.transactionId.value()},
         {QStringLiteral("plan"), planJson(request.plan)}, {QStringLiteral("nonce"), request.nonce},
-        {QStringLiteral("expiresAt"), request.expiresAt.toUTC().toString(Qt::ISODateWithMs)}, {QStringLiteral("requestDigest"), request.requestDigest}};
+        {QStringLiteral("expiresAt"), request.expiresAt.toUTC().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("connectivityOnly"), request.connectivityOnly}, {QStringLiteral("requestDigest"), request.requestDigest}};
 }
 
 std::optional<RepairHelperRequest> RepairHelperProtocol::parse(const QByteArray &payload, QString *reason)
@@ -230,6 +231,7 @@ std::optional<RepairHelperRequest> RepairHelperProtocol::parse(const QByteArray 
     request.transactionId = RepairTransactionId(object.value(QStringLiteral("transactionId")).toString());
     request.nonce = object.value(QStringLiteral("nonce")).toString();
     request.expiresAt = QDateTime::fromString(object.value(QStringLiteral("expiresAt")).toString(), Qt::ISODateWithMs);
+    request.connectivityOnly = object.value(QStringLiteral("connectivityOnly")).toBool(false);
     request.requestDigest = object.value(QStringLiteral("requestDigest")).toString();
     const std::optional<RepairPlan> plan = planFromJson(object.value(QStringLiteral("plan")).toObject(), reason);
     if (!plan) return std::nullopt;

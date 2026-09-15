@@ -6,7 +6,7 @@
 - Phase 3 branch: `codex/hidhide-doctor-phase3-safe-repair`
 - Isolated worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase3-safe-repair`
 - Final candidate commit: recorded by the Phase 3 closeout after the commit is created (a Git commit cannot contain its own resulting SHA without changing that SHA).
-- Engine contract revision: `R1 / helper IPC protocol 1 / journal schema 1 / report schema 4`
+- Engine contract revision: `R1 / helper IPC protocol 1 / journal schema 2 / report schema 4`
 
 Phase 3 is limited to R1 configuration work.  No component, service,
 filter-registration, Driver Store, package, upgrade, reboot-continuation, or
@@ -48,7 +48,12 @@ The Focus and Command Center User Action surfaces render the same native
 Doctor-styled review card: problem, R1 risk, Lab qualification, exact
 operations, before/after-bound collateral, backup/rollback, elevation,
 restart, estimated time, and user action. Normal mode is visibly read-only;
-it neither invokes UAC nor can it obtain a mutable provider.
+it neither invokes UAC nor can it obtain a mutable provider. An explicit
+`--development-fixture ... --lab-repair-mode` path alone labels the card
+`LAB REPAIR MODE — DEVELOPMENT FIXTURE`, displays live transaction status,
+and offers separate final actions for a no-SET helper connectivity test and
+for owner/lab authorization of that exact plan. The normal executable never
+sets this mode.
 
 `--headless` remains non-mutating. Diagnosis/report generation includes an R1
 plan only when evidence and HOTAS context support it. The in-memory execution
@@ -59,23 +64,32 @@ read-back without a Windows provider.
 
 Before any execution, the coordinator performs a fresh configuration read and
 requires its fingerprint to match the plan. It then captures whitelist,
-blacklist, cloak, inverse, provider, timestamp, scope, privacy classification,
-and SHA-256 backup manifest. A journal write failure prevents execution.
+blacklist, cloak, inverse, provider, timestamp, R1 target scope, HOTAS repair
+intent, direct-protocol/helper capability evidence, Windows build,
+architecture, privacy classification, and SHA-256 backup manifest. A journal
+write failure prevents execution.
 
 `RepairJournalStore` uses the dynamically resolved per-user
-`AppLocalDataLocation/repair-transactions` directory, QSaveFile atomic
-replacement, a versioned schema, and a checksum verified on read. Journals are
-sensitive local diagnostic data and are not emitted to console or uploaded.
-The directory relies on the normal per-user Windows application-data ACL; an
-installer-level explicit ACL hardening policy remains a release packaging
-decision rather than an unverified claim in this candidate.
+`AppLocalDataLocation/repair-transactions` directory, an owner/System-only
+protected DACL (object/container inheritance), QSaveFile atomic replacement,
+a versioned schema, and a checksum verified on read. Journals are sensitive
+local diagnostic data and are not emitted to console or uploaded. Failure to
+create or harden the directory fails the transaction before mutation.
 
-The state model is `Planned`, authorization, backup, revalidation, elevation,
-execution, verification, rollback, completion, safe-failure, recovery,
-cancellation, and stale-plan states. A cross-process `QLockFile` prevents two
-repair transactions from running simultaneously. A stale fingerprint stops
-before mutation. Corrupt journals fail closed. Restart reconciliation is
-intentionally read-back-first: no journal causes an automatic replay.
+The state model persists `Planned`, `AwaitingAuthorization`, `Authorized`,
+`CapturingBackup`, `Revalidating`, `AwaitingElevation`, `Executing`,
+`Verifying`, `RollingBack`, `Completed`, `FailedSafely`, `RecoveryRequired`,
+`Cancelled`, and `StalePlan` boundaries. Authorization uses the same
+transaction ID delivered to the helper and binds the recipe/version, typed
+targets, qualification, fingerprints, and digest. A cross-process `QLockFile`
+prevents two repair transactions from running simultaneously. A stale
+fingerprint stops before mutation. Corrupt journals fail closed. Restart
+reconciliation is intentionally read-back-only: it classifies the current
+configuration after the normal Doctor's complete GET scan, records the
+result, and never replays, completes, or rolls back an interrupted
+transaction. A `RecoveryRequired` result appears in the User Action rail as
+`REPAIR RECOVERY REVIEW REQUIRED`, carrying its transaction ID and the
+read-only reconciliation result.
 
 ## Elevated helper and mutation boundary
 
@@ -88,7 +102,10 @@ request/plan digests. It rejects malformed, oversized, stale, mismatched, or
 out-of-scope requests before opening the mutation path.
 
 The helper accepts no shell command, command line, registry path, file path
-operation, service operation, or package operation. It validates the plan’s
+operation, service operation, or package operation. The Doctor launches only
+the paired helper with `runas`, a per-launch pipe name and nonce; it serializes
+exactly one sealed request and treats UAC `ERROR_CANCELLED` as `Authorization
+cancelled — no changes made`. The helper validates the plan’s
 exact bound before/after delta and permits only:
 
 - `SetHidHideActive`
@@ -96,19 +113,28 @@ exact bound before/after delta and permits only:
 - `AddWhitelistEntry` / `RemoveWhitelistEntry`
 - `AddBlacklistEntry` / `RemoveBlacklistEntry`
 
-The separate `HidHideConfigurationMutator` uses the documented HidHide WDM
+The safe connectivity request carries the same sealed authorization and
+requires helper-side independent GET revalidation, but returns before any SET
+operation. The separate `HidHideConfigurationMutator` uses the documented HidHide WDM
 control device and only persistent configuration IOCTL functions 2049, 2051,
 2053, and 2055 after the helper’s independent GET revalidation. Lists are
 rebuilt as bounded `MULTI_SZ` buffers from an exact in-memory delta. A SET
 result is not completion: the coordinator reads configuration back and checks
-the authorized post-state fingerprint before `Completed`.
+the authorized post-state fingerprint, while a second fresh read-only provider
+observation verifies provider health/capability, exact configuration and
+collateral, and that the plan's affected diagnosis no longer remains before
+`Completed`.
 
 If an operation fails, dependent work stops and the exact native error is
 journaled. If post-state differs, the transaction becomes
-`RecoveryRequired`; it does not overwrite a possible external change. The
-current rollback posture is deliberately conservative: the exact captured
-pre-state is retained, and automatic rollback is withheld unless a future
-reviewed policy can prove the current state is still Doctor’s expected state.
+`RecoveryRequired`; it does not overwrite a possible external change. If the
+configuration read-back is exact but an independent affected-check verifier
+does not pass, rollback first re-reads and requires the exact authorized
+post-state. Only then does it restore the captured exact pre-state with a
+journal update around every restore operation. Any changed state, persistence
+failure, or restore failure becomes `ROLLBACK PAUSED` / `RecoveryRequired` for
+manual review. A successful rollback ends `FailedSafely` with an explicit
+original-state-restored result.
 
 ## Verification and test evidence
 
@@ -118,9 +144,14 @@ Focused domain coverage proves:
 - exact whitelist/blacklist collateral preservation and deterministic deltas;
 - dry-run journal persistence, stale-plan no-mutation, and in-memory
   apply/read-back completion;
+- independent postcondition failure, exact guarded rollback, and preserved
+  original state;
+- restart reconciliation that reads an incomplete journal and current state
+  without a retry, rollback, or mutation;
 - corrupt journal rejection;
 - helper frame round-trip and rejection of wrong nonce, expired request,
-  R2 operation, altered target/delta, and oversized payload;
+  R2 operation, altered target/delta, altered connectivity-only flag, and
+  oversized payload;
 - the Phase 1 Windows provider contains no SET IOCTL, registry-write,
   service-control, or process-launch mutation surface.
 
@@ -128,6 +159,10 @@ The standalone `Missing HOTAS Exemption` fixture completed a schema-4
 `--plan-repair --dry-run-repair` pass with exactly one LabQualified
 `HD-R1-ADD-HOTAS-WHITELIST` operation and a durable dry-run journal. The
 helper’s non-mutating `--protocol-version` connectivity probe exited zero.
+The lifecycle build also loaded the Lab-only QML surface with
+`--development-fixture "Missing HOTAS Exemption" --lab-repair-mode
+--startup-smoke`; no action button was clicked, no UAC request was made, and
+no HidHide configuration mutation was attempted.
 
 The candidate also completed a fresh non-elevated, real-machine, read-only
 schema-4 diagnosis: `Incomplete HidHide driver replacement` and `Broken HID

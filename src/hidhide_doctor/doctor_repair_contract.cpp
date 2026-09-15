@@ -70,6 +70,8 @@ QString RepairHelperContract::seal(const RepairPlan &plan)
     QByteArray canonical = plan.id.value().toUtf8() + '\n' + plan.sessionId.value().toUtf8() + '\n';
     canonical += plan.recipeId.value().toUtf8() + '\n' + plan.recipeVersion.toUtf8() + '\n';
     canonical += QByteArray::number(static_cast<int>(plan.riskClass)) + '\n';
+    canonical += QByteArray::number(static_cast<int>(plan.qualification)) + '\n';
+    canonical += QByteArray::number(static_cast<int>(plan.authorization)) + '\n';
     canonical += plan.preconditionFingerprint.toUtf8() + '\n';
     canonical += plan.expectedPreState.toUtf8() + '\n' + plan.expectedPostState.toUtf8() + '\n'
         + plan.expectedPostFingerprint.toUtf8() + '\n';
