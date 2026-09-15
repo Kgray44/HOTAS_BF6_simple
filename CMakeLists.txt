@@ -295,6 +295,10 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_session_view_model.cpp
     src/hidhide_doctor/doctor_diagnostics.h
     src/hidhide_doctor/doctor_diagnostics.cpp
+    src/hidhide_doctor/doctor_knowledge.h
+    src/hidhide_doctor/doctor_knowledge.cpp
+    src/hidhide_doctor/doctor_fixtures.h
+    src/hidhide_doctor/doctor_fixtures.cpp
     src/hidhide_doctor/doctor_windows_provider.cpp
 )
 target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)

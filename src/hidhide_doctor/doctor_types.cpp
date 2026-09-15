@@ -89,6 +89,58 @@ QString displayName(DoctorCheckStatus status)
     return QStringLiteral("Unknown");
 }
 
+QString displayName(FindingSeverity severity)
+{
+    switch (severity) {
+    case FindingSeverity::Informational: return QStringLiteral("Informational");
+    case FindingSeverity::Warning: return QStringLiteral("Warning");
+    case FindingSeverity::Error: return QStringLiteral("Error");
+    case FindingSeverity::Critical: return QStringLiteral("Critical");
+    }
+    return QStringLiteral("Informational");
+}
+
+QString displayName(DiagnosisConfidence confidence)
+{
+    switch (confidence) {
+    case DiagnosisConfidence::Uncertain: return QStringLiteral("Inconclusive");
+    case DiagnosisConfidence::Moderate: return QStringLiteral("Moderate");
+    case DiagnosisConfidence::High: return QStringLiteral("High");
+    case DiagnosisConfidence::VeryHigh: return QStringLiteral("Very High");
+    case DiagnosisConfidence::Confirmed: return QStringLiteral("Confirmed");
+    }
+    return QStringLiteral("Inconclusive");
+}
+
+QString displayName(Repairability repairability)
+{
+    switch (repairability) {
+    case Repairability::NotEvaluated: return QStringLiteral("Not evaluated");
+    case Repairability::NoRepairRequired: return QStringLiteral("No repair required");
+    case Repairability::AutomaticallyRepairable: return QStringLiteral("Automatic repair possible");
+    case Repairability::AutomaticallyRepairableAfterRestart: return QStringLiteral("Automatic repair possible after restart");
+    case Repairability::PotentialRepairAvailableButUnqualified: return QStringLiteral("Potential repair available but not qualified");
+    case Repairability::ManualInterventionRequired: return QStringLiteral("Manual intervention required");
+    case Repairability::UpstreamOrComponentDefect: return QStringLiteral("Upstream or component defect");
+    case Repairability::UnsupportedEnvironment: return QStringLiteral("Unsupported environment");
+    case Repairability::InsufficientEvidence: return QStringLiteral("Insufficient evidence");
+    case Repairability::NoQualifiedRepair: return QStringLiteral("No qualified automatic repair");
+    case Repairability::ConfigurationOnly: return QStringLiteral("Configuration repair only");
+    case Repairability::Repairable: return QStringLiteral("Repairable");
+    }
+    return QStringLiteral("Not evaluated");
+}
+
+QString displayName(DiagnosisRole role)
+{
+    switch (role) {
+    case DiagnosisRole::Primary: return QStringLiteral("Primary diagnosis");
+    case DiagnosisRole::Secondary: return QStringLiteral("Secondary diagnosis");
+    case DiagnosisRole::Contributing: return QStringLiteral("Contributing condition");
+    }
+    return QStringLiteral("Secondary diagnosis");
+}
+
 bool isTerminal(DoctorCheckStatus status)
 {
     return status != DoctorCheckStatus::Waiting && status != DoctorCheckStatus::Running;

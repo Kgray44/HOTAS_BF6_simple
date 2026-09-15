@@ -177,6 +177,9 @@ struct DiagnosticRunOutcome final {
     QDateTime completedAt;
     qint64 durationMs = 0;
     bool cancelled = false;
+    QString knowledgeEngineVersion;
+    int findingRuleCount = 0;
+    int diagnosisRuleCount = 0;
 };
 
 class DoctorDiagnosticEngine final {

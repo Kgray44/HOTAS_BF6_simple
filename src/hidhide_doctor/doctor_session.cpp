@@ -177,14 +177,28 @@ void DoctorSession::appendEvidence(EvidenceRecord evidence) { if (!evidence.id.i
 void DoctorSession::appendCheckResult(DoctorCheckResult result) { m_checkResults.append(std::move(result)); }
 void DoctorSession::appendFinding(Finding finding) { m_findings.append(std::move(finding)); }
 void DoctorSession::appendDiagnosis(Diagnosis diagnosis) { m_diagnoses.append(std::move(diagnosis)); }
+void DoctorSession::appendActivity(DoctorActivityEvent event)
+{
+    if (!event.timestamp.isValid()) event.timestamp = QDateTime::currentDateTimeUtc();
+    // The timeline is intentionally bounded: a long device or Event Log scan
+    // must not turn UI transparency into unbounded retained UI work.
+    constexpr int maxActivityEvents = 600;
+    if (m_activity.size() >= maxActivityEvents) m_activity.remove(0, m_activity.size() - maxActivityEvents + 1);
+    m_activity.append(std::move(event));
+}
 void DoctorSession::setUserAction(UserAction action) { m_userAction = std::move(action); }
 void DoctorSession::setCurrentOperation(DoctorOperation operation) { m_currentOperation = std::move(operation); }
+void DoctorSession::setEnvironment(DoctorEnvironment environment) { m_environment = std::move(environment); }
+void DoctorSession::setSessionLabel(QString label) { m_sessionLabel = std::move(label); }
 const QList<EvidenceRecord> &DoctorSession::evidence() const { return m_evidence; }
 const QList<DoctorCheckResult> &DoctorSession::checkResults() const { return m_checkResults; }
 const QList<Finding> &DoctorSession::findings() const { return m_findings; }
 const QList<Diagnosis> &DoctorSession::diagnoses() const { return m_diagnoses; }
+const QList<DoctorActivityEvent> &DoctorSession::activity() const { return m_activity; }
 const UserAction &DoctorSession::userAction() const { return m_userAction; }
 const std::optional<DoctorOperation> &DoctorSession::currentOperation() const { return m_currentOperation; }
+const std::optional<DoctorEnvironment> &DoctorSession::environment() const { return m_environment; }
+const QString &DoctorSession::sessionLabel() const { return m_sessionLabel; }
 QDateTime DoctorSession::createdAt() const { return m_createdAt; }
 
 DoctorSession createPhase0FixtureSession()
