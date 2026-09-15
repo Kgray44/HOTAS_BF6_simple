@@ -34,7 +34,7 @@ Flickable {
     readonly property bool usingPresentationFixture: automationPresentationOverride !== null && automationPresentationOverride !== undefined
                                                        || profilePresentationOverride !== null && profilePresentationOverride !== undefined
                                                        || buttonPresentationOverride !== null && buttonPresentationOverride !== undefined
-    readonly property var axisLabels: ["Roll", "Pitch", "Throttle", "Rotation X", "Rotation Y", "Yaw", "Additional axis 1", "Additional axis 2"]
+    readonly property var axisLabels: ["Axis 1", "Axis 2", "Axis 3", "Axis 4", "Axis 5", "Axis 6", "Axis 7", "Axis 8"]
     readonly property var directionLabels: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
     readonly property var conditionTypes: ["All the time", "Axis is above", "Axis is below", "Axis is between", "Axis is outside range", "Button is held", "Button is not held", "POV points direction", "POV is not pointing direction", "Selected profile is", "Active profile is", "Button is pressed", "Button is released", "Button is pressed multiple times", "Button is held for a while", "Axis crosses above", "Axis crosses below"]
     readonly property var actionTypes: ["Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch to profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis output", "Mix one axis into another", "Make one axis follow another", "Tap virtual button", "Turn mapping on", "Turn mapping off", "Toggle mapping", "Temporarily enable Adaptive Response", "Temporarily disable Adaptive Response", "Apply Adaptive Response preset"]
@@ -660,6 +660,14 @@ Flickable {
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
                                 font.pixelSize: 10
+                            }
+                            Text {
+                                text: "EDITOR PROFILE · " + backend.selectedProfileDisplayName
+                                    + " · " + (backend.selectedProfileActive ? "ACTIVE" : "VIEWING")
+                                color: backend.selectedProfileActive ? deck.healthy : deck.focus
+                                font.family: deck.telemetryFont
+                                font.pixelSize: 9
+                                font.bold: true
                             }
                         }
                         DeckSwitch {

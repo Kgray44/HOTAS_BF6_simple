@@ -12,24 +12,39 @@ class ThemeManagerTests final : public QObject {
     Q_OBJECT
 
 private slots:
-    void missingValueMigratesToLegacy();
+    void missingPresentationDefaultsToFlightDeck();
     void selectionPersistsAndNormalizes();
     void themeStateDoesNotTouchMapperPayload();
     void flightDeckExperienceIsProductionSelectableAndDoesNotTouchMapperPayload();
     void presentationChoicesCentralizeAllFiveExperiences();
 };
 
-void ThemeManagerTests::missingValueMigratesToLegacy()
+void ThemeManagerTests::missingPresentationDefaultsToFlightDeck()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     hotas::ThemeManager manager(directory.filePath(u"settings.ini"_qs));
     QCOMPARE(manager.currentTheme(), u"Legacy"_qs);
+    QCOMPARE(manager.currentExperience(), u"Flight Deck"_qs);
+    QCOMPARE(manager.currentPresentationId(), u"flight-deck"_qs);
     QVERIFY(!manager.isTopGun());
     QVERIFY(!manager.isDayOps());
     QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs,
                                                   u"Day Ops"_qs}));
     QVERIFY(!manager.themeChoices().contains(u"Flight Deck"_qs));
+
+    // Older builds persisted only the theme key.  It remains a user-selected
+    // existing presentation, rather than being overridden by the new default.
+    const QString existingPath = directory.filePath(u"existing-theme.ini"_qs);
+    {
+        QSettings settings(existingPath, QSettings::IniFormat);
+        settings.setValue(u"presentation/uiTheme"_qs, u"Day Ops"_qs);
+        settings.sync();
+    }
+    hotas::ThemeManager existing(existingPath);
+    QCOMPARE(existing.currentTheme(), u"Day Ops"_qs);
+    QCOMPARE(existing.currentExperience(), u"Existing"_qs);
+    QCOMPARE(existing.currentPresentationId(), u"theme:Day Ops"_qs);
 }
 
 void ThemeManagerTests::selectionPersistsAndNormalizes()
@@ -114,7 +129,7 @@ void ThemeManagerTests::presentationChoicesCentralizeAllFiveExperiences()
     }
 
     hotas::ThemeManager normal(path);
-    QCOMPARE(normal.currentPresentationId(), u"theme:Legacy"_qs);
+    QCOMPARE(normal.currentPresentationId(), u"flight-deck"_qs);
     const QVariantList normalChoices = normal.presentationChoices();
     QCOMPARE(normalChoices.size(), 5);
     QCOMPARE(normalChoices.constLast().toMap().value(u"id"_qs).toString(), u"flight-deck"_qs);

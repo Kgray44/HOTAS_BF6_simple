@@ -63,6 +63,22 @@ enum class PhysicalAxis : int {
     Slider1,
 };
 
+// This is control-plane metadata captured from DirectInput object
+// enumeration.  It deliberately describes a controller's technical input
+// identity, not a guessed flight-control role: a device can expose Rz without
+// that necessarily meaning "Rudder".  The report path only needs the fixed
+// PhysicalAxis slot; names, offsets, and ranges are resolved before polling.
+struct NativeAxisDescriptor {
+    bool present = false;
+    QString nativeName;
+    QString directInputGuid;
+    quint32 directInputType = 0;
+    quint32 directInputOffset = 0;
+    qint32 nativeMinimum = -10000;
+    qint32 nativeMaximum = 10000;
+    bool relative = false;
+};
+
 enum class VirtualAxis : int {
     Disabled = 0,
     X = 1,
@@ -681,6 +697,10 @@ struct DeviceRig {
     bool autoActivate = true;
     int activationPriority = 50;
     QString fallbackRigId;
+    // Optional profile policy.  Hardware topology remains activatable when
+    // this is empty, stale, disabled, or otherwise incompatible.
+    QString defaultProfileId;
+    bool defaultProfileNone = false;
     DeviceRigDisconnectBehavior disconnectBehavior = DeviceRigDisconnectBehavior::SuspendAffectedRoutes;
     std::vector<DeviceRigMember> members;
     std::vector<DeviceRigOutputTarget> outputs;
@@ -692,6 +712,13 @@ struct DeviceRig {
     // presentation/control-plane metadata only; reports never change it.
     bool hidhideManaged = false;
     int presentationOrder = 0;
+    // A fresh Rig is configuration-complete before anyone has inspected the
+    // physical controller, vJoy descriptor, or HidHide state. Keep that
+    // explicitly separate from a completed inspection result so Devices does
+    // not call a newly-created Rig broken merely because verification has not
+    // been requested yet.
+    QString setupStatus;
+    QString setupLastChecked;
 };
 
 inline bool deviceRigOwnsEnabledOutput(const DeviceRig &rig, const QString &outputLayoutId)
@@ -805,6 +832,7 @@ struct DiscoveredController {
     int vendorId = 0;
     int productId = 0;
     std::array<bool, kPhysicalAxisCount> axes{};
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;
@@ -822,6 +850,11 @@ struct SavedControllerRecord {
     int vendorId = 0;
     int productId = 0;
     std::array<bool, kPhysicalAxisCount> axes{};
+    // Saved during Verify Device and backfilled from a matching connected
+    // controller for older records.  These descriptors are canonical device
+    // metadata shared by the editor, diagnostics, reconnect checks, and the
+    // compiled runtime; they are never page-local QML state.
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;
@@ -927,7 +960,17 @@ struct SignalFlowMixer {
     QString identityKey;
     QString id;
     QString profileId;
+    // An empty source scope intentionally denotes a Profile-wide mixer. It
+    // combines contributors from multiple Device Rig members into one virtual
+    // destination; a non-empty scope retains the established per-device
+    // Graphical Editor mixer.
     QString controllerRecordId;
+    // Existing persisted mixers are analog. The explicit destination kind
+    // lets this same canonical topology represent an intentional shared
+    // digital output instead of maintaining a Flight Deck-only mixer model.
+    SignalFlowPortKind destinationKind = SignalFlowPortKind::Axis;
+    // Historical field name retained for configuration compatibility. It is
+    // the destination index for destinationKind (axis or virtual button).
     int destinationAxis = -1;
     SignalFlowMixerMode mode = SignalFlowMixerMode::Disabled;
     bool enabled = true;
@@ -1252,27 +1295,30 @@ inline QString physicalAxisActivityLabel(PhysicalAxisActivity activity)
 inline QString physicalAxisLabel(PhysicalAxis axis)
 {
     switch (axis) {
-    case PhysicalAxis::X: return u"Roll"_qs;
-    case PhysicalAxis::Y: return u"Pitch"_qs;
-    case PhysicalAxis::Z: return u"Throttle"_qs;
-    case PhysicalAxis::Rz: return u"Yaw"_qs;
-    case PhysicalAxis::Rx: return u"Rotation X"_qs;
-    case PhysicalAxis::Ry: return u"Rotation Y"_qs;
-    case PhysicalAxis::Slider0: return u"Additional axis 1"_qs;
-    case PhysicalAxis::Slider1: return u"Additional axis 2"_qs;
+    // These are native DirectInput identities, not guessed flight roles. A
+    // Profile can still save "Rudder", "Throttle", etc. as a per-device
+    // friendly alias without making the generic controller assumption.
+    case PhysicalAxis::X: return u"X Axis"_qs;
+    case PhysicalAxis::Y: return u"Y Axis"_qs;
+    case PhysicalAxis::Z: return u"Z Axis"_qs;
+    case PhysicalAxis::Rx: return u"X Rotation"_qs;
+    case PhysicalAxis::Ry: return u"Y Rotation"_qs;
+    case PhysicalAxis::Rz: return u"Z Rotation"_qs;
+    case PhysicalAxis::Slider0: return u"Slider 0"_qs;
+    case PhysicalAxis::Slider1: return u"Slider 1"_qs;
     }
     return u"Unknown axis"_qs;
 }
 
 inline QString physicalAxisDetail(PhysicalAxis axis)
 {
-    switch (axis) {
-    case PhysicalAxis::X: return u"Stick X"_qs;
-    case PhysicalAxis::Y: return u"Stick Y"_qs;
-    case PhysicalAxis::Z: return u"Throttle"_qs;
-    case PhysicalAxis::Rz: return u"Stick twist"_qs;
-    default: return physicalAxisKey(axis).toUpper();
-    }
+    return physicalAxisKey(axis).toUpper();
+}
+
+inline QString physicalAxisDisplayLabel(const NativeAxisDescriptor &descriptor, PhysicalAxis axis)
+{
+    const QString reported = descriptor.nativeName.trimmed();
+    return reported.isEmpty() ? physicalAxisLabel(axis) : reported;
 }
 
 inline bool isVirtualControllerName(const QString &name)
@@ -1351,7 +1397,9 @@ inline QString mappingControlActionLabel(MappingControlAction action)
     return u"None"_qs;
 }
 
-inline QString virtualAxisLabel(VirtualAxis axis)
+// Keep the vJoy/serialization token separate from the label shown to people.
+// X/Rz/etc. are driver slots, not meaningful default control names.
+inline QString virtualAxisTechnicalLabel(VirtualAxis axis)
 {
     switch (axis) {
     case VirtualAxis::Disabled: return u"Disabled"_qs;
@@ -1367,17 +1415,35 @@ inline QString virtualAxisLabel(VirtualAxis axis)
     return u"Disabled"_qs;
 }
 
+inline QString virtualAxisLabel(VirtualAxis axis)
+{
+    switch (axis) {
+    case VirtualAxis::Disabled: return u"Disabled"_qs;
+    case VirtualAxis::X: return u"Axis 1"_qs;
+    case VirtualAxis::Y: return u"Axis 2"_qs;
+    case VirtualAxis::Z: return u"Axis 3"_qs;
+    case VirtualAxis::Rx: return u"Axis 4"_qs;
+    case VirtualAxis::Ry: return u"Axis 5"_qs;
+    case VirtualAxis::Rz: return u"Axis 6"_qs;
+    case VirtualAxis::Slider0: return u"Axis 7"_qs;
+    case VirtualAxis::Slider1: return u"Axis 8"_qs;
+    }
+    return u"Disabled"_qs;
+}
+
 inline VirtualAxis virtualAxisFromString(const QString &value)
 {
     const auto normalized = value.trimmed().toLower();
-    if (normalized == u"x") return VirtualAxis::X;
-    if (normalized == u"y") return VirtualAxis::Y;
-    if (normalized == u"z") return VirtualAxis::Z;
-    if (normalized == u"rx") return VirtualAxis::Rx;
-    if (normalized == u"ry") return VirtualAxis::Ry;
-    if (normalized == u"rz") return VirtualAxis::Rz;
-    if (normalized == u"slider0"_qs || normalized == u"slider 0"_qs) return VirtualAxis::Slider0;
-    if (normalized == u"slider1"_qs || normalized == u"slider 1"_qs) return VirtualAxis::Slider1;
+    if (normalized == u"x" || normalized == u"axis1" || normalized == u"axis 1") return VirtualAxis::X;
+    if (normalized == u"y" || normalized == u"axis2" || normalized == u"axis 2") return VirtualAxis::Y;
+    if (normalized == u"z" || normalized == u"axis3" || normalized == u"axis 3") return VirtualAxis::Z;
+    if (normalized == u"rx" || normalized == u"axis4" || normalized == u"axis 4") return VirtualAxis::Rx;
+    if (normalized == u"ry" || normalized == u"axis5" || normalized == u"axis 5") return VirtualAxis::Ry;
+    if (normalized == u"rz" || normalized == u"axis6" || normalized == u"axis 6") return VirtualAxis::Rz;
+    if (normalized == u"slider0"_qs || normalized == u"slider 0"_qs
+        || normalized == u"axis7" || normalized == u"axis 7") return VirtualAxis::Slider0;
+    if (normalized == u"slider1"_qs || normalized == u"slider 1"_qs
+        || normalized == u"axis8" || normalized == u"axis 8") return VirtualAxis::Slider1;
     return VirtualAxis::Disabled;
 }
 
@@ -1445,12 +1511,9 @@ inline ControllerProfile defaultProfile(const QString &id, const QString &name)
     profile.id = id;
     profile.name = name;
     profile.axes = defaultAxisMappings();
-    // These are editable game-facing aliases only; no BF6 raw-HID assumption
-    // is made by the worker or the route defaults.
-    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::X)] = u"L Left/Right"_qs;
-    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Y)] = u"L Up/Down"_qs;
-    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Z)] = u"R Left/Right"_qs;
-    profile.virtualAxisAliases[static_cast<int>(VirtualAxis::Rx)] = u"R Up/Down"_qs;
+    // vJoy defaults stay neutral (Axis 1 … Axis 8). A profile may still save
+    // an explicit output alias, but the application never invents gamepad
+    // semantics for a newly created output channel.
     return profile;
 }
 

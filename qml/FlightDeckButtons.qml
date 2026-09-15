@@ -25,6 +25,7 @@ Flickable {
     property int conflictHatIndex: -1
     property int conflictDirectionIndex: -1
     property int conflictTarget: 0
+    property var conflictOwner: ({})
     signal navigateToPage(int page)
     signal navigateToProfile(string profileId)
     signal navigateToAutomation(string automationId)
@@ -32,18 +33,33 @@ Flickable {
     signal requestQuickMap()
     signal requestPovLearning(int virtualButton)
 
-    readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttons
+    readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttonConfiguration
+    // The physical-card tree stays stable; only this bounded selected-device
+    // projection changes while buttons are pressed or released.
+    readonly property var buttonTelemetry: backend.buttonInputTelemetry
     readonly property var povItems: povPresentationOverride !== null ? povPresentationOverride : backend.povs
     readonly property var povInputItems: povInputsPresentationOverride !== null ? povInputsPresentationOverride : backend.povInputs
     readonly property var automationItems: automationPresentationOverride !== null ? automationPresentationOverride : backend.automationRules
-    readonly property var outputChoices: backend.buttonOutputChoices
+    readonly property var plainOutputChoices: backend.buttonOutputChoices
     readonly property var profileChoices: backend.profileTriggerChoices
     readonly property var behaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var mappingControlChoices: backend.mappingControlActionChoices
     readonly property var nativePovChoices: backend.nativePovTargetChoices
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0
-        ? inputDeviceNameOverride : (backend.deviceName || "Selected controller")
+        ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "Selected controller")
     readonly property bool hasVisibleButtons: visibleButtonCount() > 0
+    // The active mapper device is deliberately not used here.  The top-bar
+    // Selected Device is the sole physical-input editor context.
+    readonly property string selectedInputDeviceId: selectedDeviceId()
+    readonly property bool selectedInputDeviceConnected: {
+        const devices = backend.selectedDevices || []
+        for (let index = 0; index < devices.length; ++index) {
+            const device = devices[index] || ({})
+            if (String(device.id || "") === selectedInputDeviceId)
+                return Boolean(device.connected)
+        }
+        return false
+    }
 
     contentWidth: width
     contentHeight: buttonsContent.implicitHeight + deck.space24
@@ -61,6 +77,14 @@ Flickable {
     }
 
     function lower(value) { return String(value || "").toLowerCase() }
+    function selectedDeviceId() {
+        const devices = backend.selectedDevices || []
+        for (let index = 0; index < devices.length; ++index) {
+            const device = devices[index] || ({})
+            if (Boolean(device.selected)) return String(device.id || "")
+        }
+        return ""
+    }
     function profileChoiceIndex(profileId) {
         for (let index = 0; index < profileChoices.length; ++index) {
             if (String(profileChoices[index].id || "") === String(profileId || "")) return index
@@ -83,6 +107,21 @@ Flickable {
     function nativeChoiceKey(index) {
         return index >= 0 && index < nativePovChoices.length ? String(nativePovChoices[index].key || "") : ""
     }
+    function outputChoiceIndex(choices, target) {
+        for (let index = 0; index < choices.length; ++index) {
+            if (Number(choices[index].target || 0) === Number(target || 0)) return index
+        }
+        return 0
+    }
+    function liveButtonState(index) {
+        // The selected-device snapshot is ordered by the stable physical
+        // button index.  Direct indexing avoids an O(buttons²) QML scan when
+        // a rapid input transition publishes a new bounded snapshot.
+        const position = Number(index || 0) - 1
+        if (position >= 0 && position < buttonTelemetry.length)
+            return buttonTelemetry[position] || ({})
+        return ({ pressed: false, liveAvailable: false, virtualPressed: false })
+    }
     function visibleButtonCount() {
         let count = 0
         for (let index = 0; index < buttonItems.length; ++index) {
@@ -98,20 +137,16 @@ Flickable {
         return count
     }
     function isAssigned(button) {
-        return Number((button || {}).target || 0) > 0
-            || Boolean((button || {}).profileControlEnabled)
-            || String((button || {}).mappingControlKey || "none") !== "none"
-            || automationForButton(Number((button || {}).index)).length > 0
+        // Cards represent the configured virtual-output capacity, so they
+        // remain visible whether or not a physical source is assigned.
+        return !!button
     }
     function buttonVisible(button) {
         if (!button) return false
-        const assigned = isAssigned(button)
-        if (filterMode === "assigned" && !assigned) return false
-        if (filterMode === "unassigned" && assigned) return false
         const needle = lower(searchText).trim()
         if (needle.length === 0) return true
         const terms = [button.label, button.hardwareLabel, button.targetLabel,
-            button.profileControlTargetName, button.mappingControl]
+            button.sourceSummary]
         for (let index = 0; index < terms.length; ++index) {
             if (lower(terms[index]).indexOf(needle) >= 0) return true
         }
@@ -204,12 +239,15 @@ Flickable {
         expandedButtonIndex = -1
     }
     function requestButtonMapping(buttonIndex, target, explicitOverride) {
-        if (backend.setButtonMapping(buttonIndex, target, explicitOverride)) return true
+        if (backend.assignSelectedDeviceButtonToVirtualOutput(target, buttonIndex, explicitOverride)) return true
         if (!explicitOverride) {
+            const collision = backend.buttonMappingCollision(buttonIndex, target)
+            if (!collision.exists) return false
             conflictButtonIndex = buttonIndex
             conflictHatIndex = -1
             conflictDirectionIndex = -1
             conflictTarget = target
+            conflictOwner = collision
             mappingConflict.open()
         }
         return false
@@ -221,6 +259,7 @@ Flickable {
             conflictHatIndex = hat
             conflictDirectionIndex = direction
             conflictTarget = target
+            conflictOwner = ({})
             mappingConflict.open()
         }
         return false
@@ -390,19 +429,200 @@ Flickable {
         }
     }
 
+    // The stable page surface is keyed by vJoy output button. A card never
+    // becomes another device merely because the top-bar source selector
+    // changes; it renders the actual persisted owner(s) of that output.
+    component VirtualButtonCard: FlightDeckCard {
+        id: card
+        tokens: deck
+        property var button: ({})
+        readonly property int buttonIndex: Number(button.index)
+        readonly property bool expanded: root.expandedButtonIndex === buttonIndex
+        readonly property var live: root.liveButtonState(buttonIndex)
+        // Read selectedDeviceId inside the binding as well as consulting the
+        // backend.  This makes a top-bar device change refresh the exact
+        // capability list even when both controllers expose the same number
+        // of buttons.
+        readonly property var sourceChoices: {
+            const selectedId = root.selectedDeviceId()
+            if (selectedId.length === 0) return []
+            return backend.selectedDeviceButtonChoices()
+        }
+        readonly property bool pressed: Boolean(live.pressed)
+        readonly property bool virtualPressed: Boolean(live.virtualPressed)
+        readonly property int selectedOwnedSourceButton: {
+            const selectedId = root.selectedDeviceId()
+            const sources = button.sources || []
+            for (let index = 0; index < sources.length; ++index) {
+                if (String(sources[index].controllerRecordId || "") === selectedId)
+                    return Number(sources[index].physicalButton || 0)
+            }
+            return 0
+        }
+        // Retain the stable card identity used by the original grid.  The
+        // semantic change is that a card now represents one virtual output,
+        // while its source list truthfully identifies whichever device owns
+        // each route.
+        objectName: "flightDeckButtonCard_" + buttonIndex
+        width: root.width >= 1180 ? (virtualButtonFlow.width - deck.space12) / 2 : virtualButtonFlow.width
+        visible: root.buttonVisible(button)
+        implicitHeight: visible ? content.implicitHeight + contentPadding * 2 : 0
+        color: pressed ? deck.selected : deck.elevatedSurface
+        border.color: pressed ? deck.accent : deck.border
+
+        ColumnLayout {
+            id: content
+            anchors.fill: parent
+            anchors.margins: parent.contentPadding
+            spacing: deck.space12
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: deck.space12
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    spacing: 2
+                    Text {
+                        text: String(button.label || "Virtual Button " + buttonIndex)
+                        color: deck.textPrimary
+                        font.family: deck.displayFont
+                        font.pixelSize: 16
+                        font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: String(button.sourceSummary || "No physical input assigned")
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                }
+                SummaryChip {
+                    label: pressed ? "PRESSED" : "RELEASED"
+                    tone: pressed ? "healthy" : "informational"
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Text { text: "→"; color: deck.accent; font.pixelSize: 20; font.bold: true }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        text: String(button.targetLabel || "vJoy Button " + buttonIndex)
+                        color: deck.textPrimary
+                        font.pixelSize: 13
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: Number(button.sourceCount || 0) === 0 ? "UNASSIGNED"
+                            : Number(button.sourceCount || 0) === 1 ? "ONE PHYSICAL SOURCE"
+                            : "MIXED · " + Number(button.sourceCount || 0) + " PHYSICAL SOURCES"
+                        color: Number(button.sourceCount || 0) > 1 ? deck.accent : deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                        Layout.fillWidth: true
+                    }
+                }
+                DeckButton { text: card.expanded ? "CLOSE" : "CONFIGURE"; subdued: true; onClicked: root.setExpandedButton(card.buttonIndex) }
+            }
+
+            ColumnLayout {
+                visible: card.expanded
+                Layout.fillWidth: true
+                spacing: deck.space12
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                SectionLabel { text: "SOURCE DEVICE" }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.selectedDeviceId().length > 0
+                        ? root.inputDeviceName
+                        : "Select a controller above"
+                    color: root.selectedDeviceId().length > 0 ? deck.textPrimary : deck.attention
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                }
+                SectionLabel { text: "INPUT BUTTON" }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.selectedDeviceId().length > 0
+                        ? "Selected Device · " + root.inputDeviceName + ". Choose the physical button that should control " + String(button.targetLabel || "this output") + "."
+                        : "Choose a specific controller from SELECTED DEVICE in the top bar before assigning a physical source."
+                    color: root.selectedDeviceId().length > 0 ? deck.textSecondary : deck.attention
+                    font.pixelSize: 10
+                    wrapMode: Text.WordWrap
+                }
+                DeckCombo {
+                    id: sourceSelector
+                    objectName: "flightDeckVirtualButtonSource_" + card.buttonIndex
+                    Layout.fillWidth: true
+                    enabled: root.selectedDeviceId().length > 0 && card.sourceChoices.length > 0
+                    model: card.sourceChoices
+                    textRole: "label"
+                    currentIndex: {
+                        for (let index = 0; index < card.sourceChoices.length; ++index) {
+                            if (Number(card.sourceChoices[index].button || 0) === card.selectedOwnedSourceButton)
+                                return index
+                        }
+                        return card.sourceChoices.length > 0 ? 0 : -1
+                    }
+                    onActivated: function(index) {
+                        const source = Number(card.sourceChoices[index].button || 0)
+                        if (source > 0) {
+                            root.requestButtonMapping(source, card.buttonIndex, false)
+                        } else if (card.selectedOwnedSourceButton > 0) {
+                            root.requestButtonMapping(card.selectedOwnedSourceButton, 0, false)
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    DeckButton {
+                        text: "CLEAR SELECTED SOURCE"
+                        subdued: true
+                        enabled: card.selectedOwnedSourceButton > 0
+                        onClicked: root.requestButtonMapping(card.selectedOwnedSourceButton, 0, false)
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: card.virtualPressed ? "vJoy output is pressed" : ""
+                        color: deck.healthy
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                    }
+                }
+            }
+        }
+    }
+
     component ButtonCard: FlightDeckCard {
         id: card
         tokens: deck
         property var button: ({})
         readonly property int buttonIndex: Number(button.index)
         readonly property bool expanded: root.expandedButtonIndex === buttonIndex
+        readonly property var live: root.liveButtonState(buttonIndex)
+        readonly property bool pressed: Boolean(live.pressed)
+        readonly property bool virtualPressed: Boolean(live.virtualPressed)
         readonly property var automations: root.automationForButton(buttonIndex)
+        // Shared-output ownership belongs to the stable configuration row.
+        // It must not call back into C++ from every card on a live tick.
+        readonly property var sharedOutput: button.sharedOutput || ({ mixed: false })
         objectName: "flightDeckButtonCard_" + buttonIndex
-        width: root.width >= 1180 ? (assignedFlow.width - deck.space12) / 2 : assignedFlow.width
+        width: root.width >= 1180 ? (virtualButtonFlow.width - deck.space12) / 2 : virtualButtonFlow.width
         visible: root.isAssigned(button) && root.buttonVisible(button)
         implicitHeight: visible ? content.implicitHeight + contentPadding * 2 : 0
-        color: button.pressed ? deck.selected : deck.elevatedSurface
-        border.color: button.pressed ? deck.accent : deck.border
+        color: pressed ? deck.selected : deck.elevatedSurface
+        border.color: pressed ? deck.accent : deck.border
 
         ColumnLayout {
             id: content
@@ -427,7 +647,8 @@ Flickable {
                         Layout.minimumWidth: 0
                     }
                     Text {
-                        text: root.inputDeviceName + " · " + String(button.hardwareLabel || "Button " + buttonIndex)
+                        text: String(button.sourceDevice || root.inputDeviceName) + " · "
+                            + String(button.hardwareLabel || "Button " + buttonIndex)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
@@ -437,8 +658,11 @@ Flickable {
                     }
                 }
                 SummaryChip {
-                    label: button.pressed ? "PRESSED" : "RELEASED"
-                    tone: button.pressed ? "healthy" : "informational"
+                    label: pressed ? "PRESSED" : "RELEASED"
+                    tone: pressed ? "healthy" : "informational"
+                    // Keep pressed-state feedback out of the card geometry:
+                    // a label change may recolor the chip, never reflow Flow.
+                    Layout.preferredWidth: 78
                 }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
@@ -508,9 +732,14 @@ Flickable {
                     tone: "attention"
                 }
                 SummaryChip {
-                    visible: Number(button.target) > 0 && button.virtualPressed
+                    visible: Number(button.target) > 0 && virtualPressed
                     label: "VIRTUAL PRESSED"
                     tone: "healthy"
+                }
+                SummaryChip {
+                    visible: Boolean(card.sharedOutput.mixed)
+                    label: "MIXED · " + Number(card.sharedOutput.participants ? card.sharedOutput.participants.length : 0) + " SOURCES"
+                    tone: "informational"
                 }
             }
             ColumnLayout {
@@ -541,11 +770,49 @@ Flickable {
                             id: buttonMappingSelector
                             objectName: "flightDeckButtonMappingSelector_" + card.buttonIndex
                             Layout.fillWidth: true
-                            model: root.outputChoices
-                            currentIndex: Math.max(0, Number(button.target || 0))
-                            onActivated: {
-                                if (!root.requestButtonMapping(card.buttonIndex, currentIndex, false))
-                                    currentIndex = Math.max(0, Number(button.target || 0))
+                            model: backend.buttonOutputChoiceDetailsForSource(card.buttonIndex)
+                            textRole: "label"
+                            currentIndex: root.outputChoiceIndex(model, button.target)
+                            onActivated: function(index) {
+                                const target = Number(model[index].target || 0)
+                                if (!root.requestButtonMapping(card.buttonIndex, target, false))
+                                    currentIndex = root.outputChoiceIndex(model, button.target)
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    visible: Boolean(card.sharedOutput.mixed)
+                    Layout.fillWidth: true
+                    implicitHeight: mixedDetail.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: mixedDetail
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: 4
+                        SectionLabel { text: "MIXED OUTPUT · " + String(card.sharedOutput.target || "") }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "With: " + String(card.sharedOutput.with || "another source")
+                            color: deck.textSecondary
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                        }
+                        DeckCombo {
+                            Layout.fillWidth: true
+                            model: [
+                                { key: "sum-clamped", label: "Sum / Clamp" },
+                                { key: "highest-magnitude", label: "Larger Value" },
+                                { key: "average", label: "Average" }
+                            ]
+                            textRole: "label"
+                            currentIndex: String(card.sharedOutput.modeKey || "") === "sum-clamped" ? 0
+                                : String(card.sharedOutput.modeKey || "") === "average" ? 2 : 1
+                            onActivated: function(index) {
+                                backend.setSharedButtonMixerMode(Number(button.target || 0), model[index].key)
                             }
                         }
                     }
@@ -567,7 +834,7 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: Number(button.target) > 0 && button.virtualPressed ? "vJoy output is pressed" : ""
+                        text: Number(button.target) > 0 && virtualPressed ? "vJoy output is pressed" : ""
                         color: deck.healthy
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
@@ -737,7 +1004,8 @@ Flickable {
                         font.bold: true
                     }
                     Text {
-                        text: root.inputDeviceName + " · " + String(button.hardwareLabel || "Button " + buttonIndex) + " · Unassigned"
+                        text: String(button.sourceDevice || root.inputDeviceName) + " · "
+                            + String(button.hardwareLabel || "Button " + buttonIndex) + " · Unassigned"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
@@ -749,10 +1017,12 @@ Flickable {
             DeckCombo {
                 objectName: "flightDeckButtonMappingSelector_" + editor.buttonIndex
                 Layout.fillWidth: true
-                model: root.outputChoices
+                model: backend.buttonOutputChoiceDetailsForSource(editor.buttonIndex)
+                textRole: "label"
                 currentIndex: 0
-                onActivated: {
-                    if (!root.requestButtonMapping(editor.buttonIndex, currentIndex, false)) currentIndex = 0
+                onActivated: function(index) {
+                    if (!root.requestButtonMapping(editor.buttonIndex,
+                                                   Number(model[index].target || 0), false)) currentIndex = 0
                 }
             }
             Text {
@@ -947,7 +1217,7 @@ Flickable {
                     id: povMappingSelector
                     objectName: "flightDeckPovMappingSelector_" + card.hatIndex + "_" + root.expandedPovDirection
                     Layout.fillWidth: true
-                    model: root.outputChoices
+                    model: root.plainOutputChoices
                     currentIndex: Math.max(0, Number(povDetail.selectedDirection.target || 0))
                     onActivated: {
                         if (!root.requestPovMapping(card.hatIndex, root.expandedPovDirection, currentIndex, false))
@@ -1060,7 +1330,9 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: 2
                 Text {
-                    text: inputDeviceName + " · " + assignedButtonCount() + " assigned of " + buttonItems.length + " controls"
+                    text: selectedInputDeviceId.length > 0
+                        ? buttonItems.length + " physical buttons · " + inputDeviceName
+                        : "Select a specific controller to view its physical buttons"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
                     font.pixelSize: 10
@@ -1072,14 +1344,16 @@ Flickable {
                 objectName: "flightDeckButtonsLearn"
                 text: "LEARN ROUTE"
                 subdued: true
-                enabled: backend.physicalConnected && backend.vjoyButtonCount > 0
+                enabled: root.selectedInputDeviceId.length > 0
+                    && root.selectedInputDeviceConnected && backend.vjoyButtonCount > 0
                 onClicked: root.requestButtonLearning()
             }
             DeckButton {
                 objectName: "flightDeckButtonsQuickMap"
                 text: "QUICK MAP"
                 subdued: true
-                enabled: backend.buttonCount > 0
+                enabled: root.selectedInputDeviceId.length > 0
+                    && backend.selectedDeviceButtonChoices().length > 1
                 onClicked: root.requestQuickMap()
             }
         }
@@ -1089,7 +1363,8 @@ Flickable {
             contentPadding: deck.cardPadding
             Layout.fillWidth: true
             implicitHeight: statusContent.implicitHeight + contentPadding * 2
-            color: backend.physicalConnected ? deck.secondarySurface : deck.elevatedSurface
+            color: root.selectedInputDeviceId.length === 0 || root.selectedInputDeviceConnected
+                ? deck.secondarySurface : deck.elevatedSurface
             ColumnLayout {
                 id: statusContent
                 anchors.fill: parent
@@ -1098,8 +1373,11 @@ Flickable {
                 RowLayout {
                     Layout.fillWidth: true
                     SummaryChip {
-                        label: backend.physicalConnected ? "CONTROLLER CONNECTED" : "CONTROLLER UNAVAILABLE"
-                        tone: backend.physicalConnected ? "healthy" : "attention"
+                        label: root.selectedInputDeviceId.length === 0 ? "SELECT A CONTROLLER"
+                            : root.selectedInputDeviceConnected ? "SELECTED CONTROLLER CONNECTED"
+                            : "SELECTED CONTROLLER DISCONNECTED"
+                        tone: root.selectedInputDeviceId.length === 0 ? "informational"
+                            : root.selectedInputDeviceConnected ? "healthy" : "attention"
                     }
                     SummaryChip {
                         label: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "VIRTUAL OUTPUT ATTENTION"
@@ -1107,7 +1385,11 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: backend.lastPhysicalButton > 0 ? "Last control · Button " + backend.lastPhysicalButton : "Live state waits for physical input"
+                        text: root.selectedInputDeviceId.length === 0
+                            ? "Choose a source in SELECTED DEVICE to edit button routing"
+                            : root.selectedInputDeviceConnected
+                                ? "Live state waits for input from " + root.inputDeviceName
+                                : root.inputDeviceName + " is disconnected; saved routes remain editable"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
@@ -1115,12 +1397,15 @@ Flickable {
                     }
                 }
                 RowLayout {
-                    visible: !backend.physicalConnected || !backend.vjoyReady
+                    visible: root.selectedInputDeviceId.length === 0
+                        || !root.selectedInputDeviceConnected || !backend.vjoyReady
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
-                        text: !backend.physicalConnected
-                            ? "Reconnect or choose a controller in Devices & setup. Configured routes remain owned by the active profile."
+                        text: root.selectedInputDeviceId.length === 0
+                            ? "Use SELECTED DEVICE in the top bar to choose the controller whose physical buttons you want to route."
+                            : !root.selectedInputDeviceConnected
+                            ? root.inputDeviceName + " is disconnected. Its saved routes remain available for editing."
                             : "Virtual output needs attention. You can still inspect existing physical controls and routes."
                         color: deck.textSecondary
                         font.pixelSize: 10
@@ -1134,9 +1419,13 @@ Flickable {
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space8
-            FilterButton { text: "ALL"; filterValue: "all" }
-            FilterButton { text: "ASSIGNED"; filterValue: "assigned" }
-            FilterButton { text: "UNASSIGNED"; filterValue: "unassigned" }
+            Text {
+                text: "Each card is the selected device's physical button. The output route shown is the only editable destination."
+                color: deck.textMuted
+                font.pixelSize: 9
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+            }
             Item { Layout.fillWidth: true }
             DeckField {
                 id: controlSearch
@@ -1148,16 +1437,18 @@ Flickable {
             }
         }
 
-        SectionLabel { text: "ASSIGNED CONTROLS" }
+        SectionLabel { text: "PHYSICAL BUTTONS" }
         Text {
-            visible: assignedButtonCount() === 0
-            text: "No assigned physical buttons are published for this controller."
+            visible: buttonItems.length === 0
+            text: selectedInputDeviceId.length === 0
+                ? "Choose a specific controller from SELECTED DEVICE in the top bar."
+                : inputDeviceName + " exposes no verified physical buttons."
             color: deck.textMuted
             font.pixelSize: 10
             Layout.fillWidth: true
         }
         Flow {
-            id: assignedFlow
+            id: virtualButtonFlow
             Layout.fillWidth: true
             spacing: deck.space12
             Repeater {
@@ -1166,34 +1457,6 @@ Flickable {
                     required property var modelData
                     button: modelData
                 }
-            }
-        }
-
-        SectionLabel { text: "UNASSIGNED CONTROLS" }
-        Text {
-            visible: !hasVisibleButtons
-            text: "No DirectInput buttons are currently published. Open Devices & setup to select or reconnect a controller."
-            color: deck.textMuted
-            font.pixelSize: 10
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-        }
-        Flow {
-            Layout.fillWidth: true
-            spacing: deck.space8
-            Repeater {
-                model: root.buttonItems
-                delegate: UnassignedButton {
-                    required property var modelData
-                    button: modelData
-                }
-            }
-        }
-        Repeater {
-            model: root.buttonItems
-            delegate: UnassignedEditor {
-                required property var modelData
-                button: modelData
             }
         }
 
@@ -1220,7 +1483,7 @@ Flickable {
     FlightDeckDialog {
         id: mappingConflict
         tokens: deck
-        heading: "Output already assigned"
+        heading: conflictButtonIndex > 0 ? "Virtual output is already in use" : "Output already assigned"
         tone: "attention"
         preferredWidth: 520
         contentItem: ColumnLayout {
@@ -1229,7 +1492,8 @@ Flickable {
             Text {
                 Layout.fillWidth: true
                 text: conflictButtonIndex > 0
-                    ? "This vJoy button is already routed. Replace moves the existing route; Share keeps both physical buttons on the same vJoy output."
+                    ? "Existing source:\n    " + String(conflictOwner.ownerLabel || "Configured source")
+                      + "\n\nNew source:\n    " + root.inputDeviceName + " · Button " + conflictButtonIndex
                     : "This vJoy button is already routed. Replace moves the existing route. POV directions do not support shared output routes."
                 color: deck.textSecondary
                 font.pixelSize: 11
@@ -1241,11 +1505,11 @@ Flickable {
                 Item { Layout.fillWidth: true }
                 DeckButton {
                     visible: conflictButtonIndex > 0
-                    text: "SHARE"
+                    text: "MIX"
                     subdued: true
                     onClicked: {
-                        const changed = backend.resolveButtonRouteChange(conflictButtonIndex, conflictTarget, "ignore")
-                        if (changed) mappingConflict.close()
+                        mappingConflict.close()
+                        mixerModeDialog.open()
                     }
                 }
                 DeckButton {
@@ -1255,6 +1519,50 @@ Flickable {
                             ? root.requestButtonMapping(conflictButtonIndex, conflictTarget, true)
                             : root.requestPovMapping(conflictHatIndex, conflictDirectionIndex, conflictTarget, true)
                         if (changed) mappingConflict.close()
+                    }
+                }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: mixerModeDialog
+        tokens: deck
+        heading: "Choose mixer mode"
+        tone: "informational"
+        preferredWidth: 460
+        contentItem: ColumnLayout {
+            width: mixerModeDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                Layout.fillWidth: true
+                text: "Create one canonical shared-output mixer for " + root.inputDeviceName
+                    + " · Button " + root.conflictButtonIndex + " and "
+                    + String(root.conflictOwner.ownerLabel || "the existing source") + "."
+                color: deck.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+            DeckCombo {
+                id: mixerModeSelector
+                Layout.fillWidth: true
+                model: [
+                    { key: "sum-clamped", label: "Sum / Clamp" },
+                    { key: "highest-magnitude", label: "Larger Value" },
+                    { key: "average", label: "Average" }
+                ]
+                textRole: "label"
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                DeckButton { text: "CANCEL"; subdued: true; onClicked: mixerModeDialog.close() }
+                Item { Layout.fillWidth: true }
+                DeckButton {
+                    text: "MIX"
+                    onClicked: {
+                        const result = backend.mixButtonMapping(root.conflictButtonIndex,
+                            root.conflictTarget, mixerModeSelector.model[mixerModeSelector.currentIndex].key)
+                        if (result.success) mixerModeDialog.close()
                     }
                 }
             }

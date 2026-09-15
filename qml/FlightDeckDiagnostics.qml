@@ -53,6 +53,10 @@ Flickable {
     readonly property string vjoyStatus: stringValue("vjoyStatus", readinessState.vjoyStatus === undefined ? backend.vjoyStatus : readinessState.vjoyStatus)
     readonly property string vjoySeverity: stringValue("vjoyStatusSeverity", readinessState.vjoyStatusSeverity === undefined ? backend.vjoyStatusSeverity : readinessState.vjoyStatusSeverity)
     readonly property int vjoyDeviceId: numberValue("vjoyDeviceId", readinessState.vjoyDeviceId === undefined ? backend.vjoyDeviceId : readinessState.vjoyDeviceId)
+    readonly property var outputRuntime: overrideValue("outputRuntime", backend.outputRuntimeTelemetry || ({}))
+    readonly property bool outputAvailable: outputRuntime.outputAvailable === true
+    readonly property string outputReportState: String(outputRuntime.runtimeReportState || "")
+    readonly property int outputDeviceId: Number(outputRuntime.configuredVjoyDeviceId || vjoyDeviceId || 0)
     readonly property bool hidhideAvailable: boolValue("hidhideAvailable", readinessState.hidhideAvailable === undefined ? backend.hidhideAvailable : readinessState.hidhideAvailable)
     readonly property bool hidhideCloakStateKnown: boolValue("hidhideCloakStateKnown", readinessState.hidhideCloakStateKnown === undefined ? backend.hidhideCloakStateKnown : readinessState.hidhideCloakStateKnown)
     readonly property bool hidhideCloaked: boolValue("hidhideCloaked", readinessState.hidhideCloaked === undefined ? backend.hidhideCloaked : readinessState.hidhideCloaked)
@@ -598,8 +602,11 @@ Flickable {
                             },
                             {
                                 label: "VIRTUAL OUTPUT",
-                                title: vjoyReady ? "vJoy Device " + vjoyDeviceId : "Virtual output unavailable",
-                                detail: vjoyStatus,
+                                title: outputAvailable ? "vJoy Device " + outputDeviceId + " acquired"
+                                    : vjoyReady ? "vJoy Device " + vjoyDeviceId : "Virtual output unavailable",
+                                detail: outputAvailable && outputReportState !== "REPORTING"
+                                    ? "Waiting for first mapped report."
+                                    : vjoyStatus,
                                 tone: outputHealth.tone || "informational"
                             },
                             {
@@ -866,7 +873,8 @@ Flickable {
                                 font.bold: true
                             }
                             Text {
-                                text: vjoyReady ? "Online" : "Action needed"
+                                text: outputAvailable ? (outputReportState === "REPORTING" ? "Reporting" : "Acquired")
+                                    : vjoyReady ? "Online" : "Action needed"
                                 color: deck.statusColor(outputHealth.tone || "informational")
                                 font.family: deck.displayFont
                                 font.pixelSize: 18
@@ -875,14 +883,16 @@ Flickable {
                         }
                         FlightDeckStatusChip {
                             tokens: deck
-                            label: vjoyReady ? "ONLINE" : "OFFLINE"
-                            value: "vJoy " + vjoyDeviceId
+                            label: outputAvailable ? "ACQUIRED" : vjoyReady ? "ONLINE" : "OFFLINE"
+                            value: "vJoy " + outputDeviceId
                             tone: outputHealth.tone || "informational"
                             visible: root.medium
                         }
                     }
                     Text {
-                        text: vjoyStatus || outputHealth.detail || "Virtual output status is not available."
+                        text: outputAvailable && outputReportState !== "REPORTING"
+                            ? "Waiting for first mapped report."
+                            : vjoyStatus || outputHealth.detail || "Virtual output status is not available."
                         color: deck.textSecondary
                         font.pixelSize: 10
                         Layout.fillWidth: true

@@ -185,8 +185,8 @@ Flickable {
             }
             RowLayout { Layout.fillWidth: true
                 Text { Layout.fillWidth: true; text: "Choose each Device Rig's primary output in Devices."; color: root.faintColor; font.pixelSize: 9 }
-                ActionButton { label: "CREATE 5-AXIS OUTPUT"; subdued: true; actionEnabled: root.nextOutputDeviceId() > 0
-                    onTriggered: { const id = root.nextOutputDeviceId(); backend.createFiveAxisOutputLayout("5-Axis Output " + id, id) } }
+                ActionButton { label: "MANAGE VIRTUAL OUTPUTS"; subdued: true
+                    onTriggered: root.manageDevicesRequested() }
             }
             RowLayout { Layout.fillWidth: true; spacing: 8
                 ComboBox { id: visibilityLayoutSelector; Layout.preferredWidth: 175; implicitHeight: 30; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
@@ -250,7 +250,7 @@ Flickable {
                 }
             }
         }
-        Card { Layout.fillWidth: true; title: "Application Update"; detail: "Current version  ·  v" + Qt.application.version; accent: backend.updateAvailable ? root.readyColor : root.borderColor
+        Card { Layout.fillWidth: true; title: "HOTAS BF6"; detail: "Version  ·  v" + backend.applicationVersion; accent: backend.updateAvailable ? root.readyColor : root.borderColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                     Text { text: backend.updateChecking ? "CHECKING…" : backend.updateStatusText; color: backend.updateCheckFailed ? root.warningColor : backend.updateAvailable ? root.readyColor : root.mutedColor; font.pixelSize: 10 }

@@ -8,6 +8,7 @@ Page {
     padding: 0
 
     property int currentPage: 8
+    property var notificationCenter: null
     property bool setupAssistantReturnAfterCalibration: false
     property bool deviceDetailsReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, "Legacy")
@@ -1361,6 +1362,7 @@ Page {
                 DevicesPage {
                     anchors.fill: parent; visible: root.currentPage === 10
                     backendObject: backend; themeTokens: root.adaptiveThemeTokens; legacy: true
+                    notificationCenter: root.notificationCenter
                     onVerificationRequested: function(rigId, deviceId, outputId) {
                         if (rigId !== "") backend.setEditingDeviceContext(rigId, deviceId !== "" ? [deviceId] : [])
                         controllerSetupDialog.open()
@@ -2088,7 +2090,10 @@ Page {
                             property bool followTail: true
                             onMovementEnded: followTail = atYEnd
                             onCountChanged: Qt.callLater(function() {
-                                if (eventLogView.followTail) eventLogView.positionViewAtEnd()
+                                // The page may have been destroyed before the
+                                // queued tail update runs during navigation.
+                                if (eventLogView && eventLogView.followTail)
+                                    eventLogView.positionViewAtEnd()
                             })
                             Component.onCompleted: positionViewAtEnd()
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }

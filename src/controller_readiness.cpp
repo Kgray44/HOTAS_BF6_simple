@@ -1,5 +1,6 @@
 #include "controller_readiness.h"
 #include "hid_device_identity.h"
+#include "vjoy_ownership.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -35,6 +36,7 @@ constexpr int kApplyTimeoutMs = 30000;
 // converting a transient control-plane delay into an "unknown" setup state.
 constexpr int kHidHideGamingReadAttempts = 2;
 constexpr int kHidHideGamingReadRetryIntervalMs = 150;
+constexpr int kVJoyStaleOwnershipRequeryDelayMs = 150;
 constexpr auto kPendingRecoveryKey = "readiness/pendingAutomaticRepairRecovery";
 
 QStringList installRoots()
@@ -116,9 +118,41 @@ QString firstRegexCapture(const QString &input, const QRegularExpression &expres
 QString stateName(const VJoyCapabilities &vjoy)
 {
     if (vjoy.ownedByHotasBf6) return QStringLiteral("owned by HOTAS BF6");
-    if (vjoy.busy) return QStringLiteral("busy in another application");
+    if (vjoy.staleOwnership) return QStringLiteral("stale ownership / driver state");
+    if (vjoy.busy) {
+        const QString owner = vjoy.ownerProcessName.isEmpty()
+            ? QStringLiteral("process identity unavailable") : vjoy.ownerProcessName;
+        return vjoy.ownerPid == 0
+            ? QStringLiteral("busy; owner PID was not exposed")
+            : QStringLiteral("owned by %1 (PID %2)").arg(owner).arg(vjoy.ownerPid);
+    }
     if (!vjoy.devicePresent) return QStringLiteral("not configured");
     return QStringLiteral("available");
+}
+
+void applyVJoyOwnership(VJoyCapabilities &capabilities, const VJoyOwnershipEvidence &ownership)
+{
+    capabilities.rawStatus = ownership.rawStatus;
+    capabilities.rawStatusName = vjoyRawStatusName(ownership.rawStatus);
+    capabilities.ownerPidAvailable = ownership.ownerPidAvailable;
+    capabilities.ownerPid = ownership.ownerPid;
+    capabilities.hotasProcessId = ownership.hotasProcessId;
+    capabilities.ownerProcessLive = ownership.ownerProcess.live;
+    capabilities.ownerProcessName = ownership.ownerProcess.name;
+    capabilities.ownerProcessPath = ownership.ownerProcess.path;
+    capabilities.ownershipState = vjoyOwnershipStateName(ownership.state);
+    capabilities.ownershipDiagnostic = ownership.diagnostic;
+    capabilities.ownedByHotasBf6 = ownership.state == VJoyOwnershipState::OwnedByCurrentProcess;
+    capabilities.busy = ownership.state == VJoyOwnershipState::BusyOtherProcess;
+    capabilities.staleOwnership = ownership.state == VJoyOwnershipState::StaleOwnership;
+}
+
+QString externalOwnerDescription(const VJoyCapabilities &vjoy)
+{
+    if (vjoy.ownerPid == 0) return QStringLiteral("owner PID was not exposed");
+    const QString name = vjoy.ownerProcessName.isEmpty()
+        ? QStringLiteral("process identity unavailable") : vjoy.ownerProcessName;
+    return QStringLiteral("%1 (PID %2)").arg(name).arg(vjoy.ownerPid);
 }
 
 QString canonicalPath(const QString &path)
@@ -185,13 +219,13 @@ QString decodeProcessOutput(const QByteArray &bytes)
 QString vJoyConfigurationAxisToken(VirtualAxis axis)
 {
     // vJoyConfig's display spelling ("Slider 0") is not its command-line
-    // spelling. Passing the display label makes an elevated repair appear to
+    // spelling. Passing a presentation label makes an elevated repair appear to
     // run, but the driver rejects its required slider axes. Keep this adapter
     // at the driver boundary; UI labels remain human-readable everywhere else.
     switch (axis) {
     case VirtualAxis::Slider0: return QStringLiteral("Sl0");
     case VirtualAxis::Slider1: return QStringLiteral("Sl1");
-    default: return virtualAxisLabel(axis);
+    default: return virtualAxisTechnicalLabel(axis);
     }
 }
 
@@ -569,15 +603,20 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         const QString capabilitySuffix = extras == QStringLiteral("none")
             ? QString{}
             : QStringLiteral(" Extra available axes: %1.").arg(extras);
-        if (vjoy.busy && !vjoy.ownedByHotasBf6) {
+        if (vjoy.staleOwnership) {
             plan.vjoyStatus = VerificationSubsystemState::Attention;
-            plan.vjoySummary = QStringLiteral("vJoy Device %1 — Busy in another application; its configured capabilities are correct.")
-                .arg(vjoy.deviceId) + capabilitySuffix;
+            plan.vjoySummary = QStringLiteral("vJoy Device %1 — STALE OWNERSHIP / DRIVER STATE. %2")
+                .arg(vjoy.deviceId).arg(vjoy.ownershipDiagnostic) + capabilitySuffix;
+            plan.findings.append(plan.vjoySummary);
+        } else if (vjoy.busy && !vjoy.ownedByHotasBf6) {
+            plan.vjoyStatus = VerificationSubsystemState::Attention;
+            plan.vjoySummary = QStringLiteral("vJoy Device %1 — CONFIGURED · BUSY; owned by %2. Its configured capabilities are correct.")
+                .arg(vjoy.deviceId).arg(externalOwnerDescription(vjoy)) + capabilitySuffix;
             plan.findings.append(plan.vjoySummary);
         } else {
             plan.vjoyStatus = VerificationSubsystemState::Ready;
             plan.vjoySummary = (vjoy.ownedByHotasBf6
-            ? QStringLiteral("vJoy Device %1 — Ready · HOTAS BF6 currently owns this device.")
+            ? QStringLiteral("vJoy Device %1 — CONFIGURED · ACQUIRED · HOTAS BF6 currently owns this device.")
             : QStringLiteral("vJoy Device %1 — Ready · required capabilities present."))
                 .arg(vjoy.deviceId) + capabilitySuffix;
             plan.findings.append(plan.vjoySummary);
@@ -586,10 +625,15 @@ ControllerReadinessPlan ControllerReadinessService::planFor(const PhysicalContro
         plan.vjoyStatus = VerificationSubsystemState::Error;
         plan.vjoySummary = QStringLiteral("vJoy is unavailable — install or repair the vJoy driver.");
         plan.findings.append(QStringLiteral("VJOY NOT DETECTED — Install vJoy before configuring virtual output."));
+    } else if (vjoy.staleOwnership) {
+        plan.vjoyStatus = VerificationSubsystemState::Attention;
+        plan.vjoySummary = QStringLiteral("vJoy Device %1 — STALE OWNERSHIP / DRIVER STATE. %2")
+            .arg(vjoy.deviceId).arg(vjoy.ownershipDiagnostic);
+        plan.findings.append(plan.vjoySummary);
     } else if (vjoy.busy && !vjoy.ownedByHotasBf6) {
         plan.vjoyStatus = VerificationSubsystemState::Attention;
-        plan.vjoySummary = QStringLiteral("vJoy Device %1 — Busy in another application; release it before correcting its capabilities.")
-            .arg(vjoy.deviceId);
+        plan.vjoySummary = QStringLiteral("vJoy Device %1 — BUSY; owned by %2. Release it before correcting its capabilities.")
+            .arg(vjoy.deviceId).arg(externalOwnerDescription(vjoy));
         plan.findings.append(plan.vjoySummary);
     } else {
         plan.vjoyStatus = VerificationSubsystemState::Error;
@@ -867,10 +911,18 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
     // (without colons), while earlier releases used "Device: 1". Treat both
     // formats as descriptors; otherwise a healthy native installation is
     // falsely read as an absent zero-button device.
-    const QRegularExpression deviceLine(QStringLiteral("(?im)\\bdevice\\s*:?[\\t ]*%1\\b")
-        .arg(deviceId));
-    result.busy = deviceLine.match(report).hasMatch() && lower.contains(QStringLiteral("busy"));
-    result.devicePresent = deviceLine.match(report).hasMatch()
+    // Parse the line's numeric identifier instead of looking for a bare
+    // formatted token. vJoy 2.1.9 and older utilities both emit a valid
+    // "Device: 2" descriptor, but the latter boundary-only check could
+    // reject that exact Device 2 read-back and repeatedly reconfigure it.
+    const QRegularExpression deviceLine(
+        QStringLiteral("^\\s*device\\s*:?[\\t ]*(\\d+)"),
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch deviceMatch = deviceLine.match(report);
+    const bool selectedDeviceReported = deviceMatch.hasMatch()
+        && deviceMatch.captured(1).toInt() == deviceId;
+    result.busy = selectedDeviceReported && lower.contains(QStringLiteral("busy"));
+    result.devicePresent = selectedDeviceReported
         && !lower.contains(QStringLiteral("does not exist")) && !lower.contains(QStringLiteral("not configured"));
     result.driverReady = result.devicePresent && !lower.contains(QStringLiteral("driver is disabled"))
         && !lower.contains(QStringLiteral("not enabled"));
@@ -885,7 +937,7 @@ VJoyCapabilities ControllerReadinessService::parseVJoyReport(const QString &repo
     const QString axes = firstRegexCapture(report, QRegularExpression(QStringLiteral("(?im)axes\\s*:?[\\t ]*([^\\r\\n]+)")));
     for (int index = 1; index < kVirtualAxisSlotCount; ++index) {
         const VirtualAxis axis = static_cast<VirtualAxis>(index);
-        const QString name = virtualAxisLabel(axis);
+        const QString name = virtualAxisTechnicalLabel(axis);
         QString compactName = name;
         compactName.remove(u' ');
         // vJoyConfig's own report spells its two sliders "Sl0" and "Sl1"
@@ -930,11 +982,42 @@ QStringList ControllerReadinessService::parseHidHideCommands(const QString &outp
 QStringList ControllerReadinessService::parseHidHideGamingDevices(const QString &output)
 {
     QStringList result;
-    const QRegularExpression expression(QStringLiteral("(?im)(HID\\\\[^\\r\\n\\\"]+)"));
-    QRegularExpressionMatchIterator iterator = expression.globalMatch(output);
-    while (iterator.hasNext()) {
-        const QString instance = normalizeDeviceInstanceId(iterator.next().captured(1));
+    const auto append = [&result](const QString &value) {
+        const QString instance = normalizeDeviceInstanceId(value);
         if (!instance.isEmpty() && !result.contains(instance, Qt::CaseInsensitive)) result.append(instance);
+    };
+
+    // HidHideCLI --dev-gaming writes a JSON inventory.  Treating that JSON as
+    // line-oriented text retains its escaped `\\` separators, so a saved
+    // `HID\\VID_…` identity can falsely fail an otherwise exact match. Parse
+    // the document first and read the actual deviceInstancePath values.
+    const QJsonDocument document = QJsonDocument::fromJson(output.toUtf8());
+    const auto collect = [&append](const QJsonValue &value, const auto &collectRef) -> void {
+        if (value.isArray()) {
+            for (const QJsonValue &entry : value.toArray()) collectRef(entry, collectRef);
+        } else if (value.isObject()) {
+            const QJsonObject object = value.toObject();
+            const QJsonValue instance = object.value(QStringLiteral("deviceInstancePath"));
+            if (instance.isString()) append(instance.toString());
+            for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+                if (it.key() != QStringLiteral("deviceInstancePath")) collectRef(it.value(), collectRef);
+            }
+        }
+    };
+    if (!document.isNull()) collect(document.isArray() ? QJsonValue(document.array())
+                                                        : QJsonValue(document.object()), collect);
+
+    // Older HidHide releases and controlled test fixtures can use the legacy
+    // line format. Keep that compatibility path, while accepting either one
+    // or two escaped JSON backslashes before normalization.
+    if (result.isEmpty()) {
+        const QRegularExpression expression(QStringLiteral("(?im)(HID\\\\+[^\\r\\n\\\"]+)"));
+        QRegularExpressionMatchIterator iterator = expression.globalMatch(output);
+        while (iterator.hasNext()) {
+            QString raw = iterator.next().captured(1);
+            raw.replace(QStringLiteral("\\\\\\\\"), QStringLiteral("\\\\"));
+            append(raw);
+        }
     }
     return result;
 }
@@ -951,9 +1034,28 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
 {
     VJoyCapabilities result;
     result.deviceId = deviceId;
+    // Capture the driver API state before parsing vJoyConfig.  The textual
+    // utility only says BUSY; it cannot tell whether that owner is us.
+    VJoyOwnershipEvidence ownership = queryVJoyOwnership(deviceId);
+    if (ownership.state == VJoyOwnershipState::StaleOwnership) {
+        // A dead PID can be a short-lived vJoy service transition. Re-read
+        // once on the control plane before surfacing a persistent stale
+        // driver state; never spin or invent an external application.
+        QThread::msleep(kVJoyStaleOwnershipRequeryDelayMs);
+        const VJoyOwnershipEvidence rechecked = queryVJoyOwnership(deviceId);
+        if (rechecked.state == VJoyOwnershipState::StaleOwnership) {
+            ownership = rechecked;
+            ownership.diagnostic = QStringLiteral("%1 Re-query after %2 ms still reported stale ownership.")
+                .arg(ownership.diagnostic).arg(kVJoyStaleOwnershipRequeryDelayMs);
+        } else {
+            ownership = rechecked;
+        }
+    }
+    applyVJoyOwnership(result, ownership);
     const QString utility = vjoyConfigPath();
     if (utility.isEmpty()) {
-        result.diagnostic = QStringLiteral("vJoyConfig.exe was not found");
+        result.diagnostic = QStringLiteral("vJoyConfig.exe was not found\n%1")
+            .arg(result.ownershipDiagnostic);
         return result;
     }
     result.installed = true;
@@ -965,6 +1067,7 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
     }
     result = parseVJoyReport(report.output, deviceId);
     result.descriptorReport = report.output;
+    applyVJoyOwnership(result, ownership);
     result.installed = true;
     result.configurationUtilityAvailable = true;
     if (!report.succeeded() && result.diagnostic.isEmpty()) result.diagnostic = report.error;
@@ -995,6 +1098,10 @@ VJoyCapabilities ControllerReadinessService::inspectVJoy(int deviceId) const
     } else {
         result.diagnostic += QStringLiteral("\nvJoyConfig -t failed: %1").arg(
             devices.error.isEmpty() ? devices.output.trimmed() : devices.error);
+    }
+    if (ownership.state == VJoyOwnershipState::Missing) {
+        result.devicePresent = false;
+        result.driverReady = false;
     }
     if (!result.devicePresent) {
         // There is no descriptor to preserve. A deletion of this newly created
@@ -1032,6 +1139,7 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
         result.cloakKnown = true;
         result.cloaked = cloak.output.contains(QStringLiteral("--cloak-on"), Qt::CaseInsensitive);
     } else {
+        result.inspectionTimedOut = cloak.error.contains(QStringLiteral("timed out"), Qt::CaseInsensitive);
         result.diagnostic = cloak.error.isEmpty() ? cloak.output.trimmed() : cloak.error;
         result.inspectionFailures.append(QStringLiteral("--cloak-state: %1").arg(result.diagnostic));
     }
@@ -1039,12 +1147,15 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
     const SetupProcessResult apps = runHidHide(false, {QStringLiteral("--app-list")});
     result.appListReport = apps.output;
     if (apps.succeeded()) {
+        result.mapperAllowlistKnown = true;
         result.allowlistedApplications = parseHidHideCommands(apps.output, QStringLiteral("app-reg"));
         result.mapperAllowlisted = std::any_of(result.allowlistedApplications.cbegin(),
             result.allowlistedApplications.cend(), [&result](const QString &entry) {
                 return samePath(entry, result.mapperExecutable);
             });
     } else {
+        result.inspectionTimedOut = result.inspectionTimedOut
+            || apps.error.contains(QStringLiteral("timed out"), Qt::CaseInsensitive);
         result.inspectionFailures.append(QStringLiteral("--app-list: %1").arg(
             apps.error.isEmpty() ? apps.output.trimmed() : apps.error));
     }
@@ -1059,13 +1170,18 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
     }
     result.gamingDevicesReport = devices.output;
     if (devices.succeeded()) gamingDevices = parseHidHideGamingDevices(devices.output);
-    else result.inspectionFailures.append(QStringLiteral("--dev-gaming: %1").arg(
-        devices.error.isEmpty() ? devices.output.trimmed() : devices.error));
+    else {
+        result.inspectionTimedOut = result.inspectionTimedOut
+            || devices.error.contains(QStringLiteral("timed out"), Qt::CaseInsensitive);
+        result.inspectionFailures.append(QStringLiteral("--dev-gaming: %1").arg(
+            devices.error.isEmpty() ? devices.output.trimmed() : devices.error));
+    }
     result.selectedControllerInstanceIds = selectedPhysicalHidInstances(physical, gamingDevices);
     result.selectedControllerResolved = !result.selectedControllerInstanceIds.isEmpty();
     const SetupProcessResult hidden = runHidHide(false, {QStringLiteral("--dev-list")});
     result.deviceListReport = hidden.output;
     if (hidden.succeeded()) {
+        result.hiddenDeviceListKnown = true;
         result.hiddenDeviceInstanceIds = parseHidHideCommands(hidden.output, QStringLiteral("dev-hide"));
         result.selectedControllerHidden = !result.selectedControllerInstanceIds.isEmpty()
             && std::all_of(result.selectedControllerInstanceIds.cbegin(),
@@ -1079,6 +1195,8 @@ HidHideCapabilities ControllerReadinessService::inspectHidHide(const PhysicalCon
             result.diagnostic = QStringLiteral("One or more current HID collections for the selected controller are not cloaked.");
         }
     } else {
+        result.inspectionTimedOut = result.inspectionTimedOut
+            || hidden.error.contains(QStringLiteral("timed out"), Qt::CaseInsensitive);
         result.inspectionFailures.append(QStringLiteral("--dev-list: %1").arg(
             hidden.error.isEmpty() ? hidden.output.trimmed() : hidden.error));
     }
@@ -1453,7 +1571,10 @@ const ControllerReadinessPlan &ControllerReadinessService::inspect(const MapperC
     const MapperOutputRequirements requirements = requirementsFor(configuration);
     m_inspectedRequirements = requirements;
     VJoyCapabilities vjoy = inspectVJoy(configuration.vjoyDeviceId);
-    vjoy.ownedByHotasBf6 = mapperOwnsVjoy;
+    // Direct GetOwnerPid evidence is authoritative even before the mapper
+    // emits a report.  Mapper runtime ownership is corroborating evidence,
+    // never a reason to overwrite a current-process owner PID.
+    vjoy.ownedByHotasBf6 = vjoy.ownedByHotasBf6 || mapperOwnsVjoy;
     vjoy.outputReportsSucceeding = outputReportsSucceeding;
     const HidHideCapabilities hidhide = inspectHidHide(physical);
     m_plan = planFor(physical, requirements, vjoy, hidhide, mode);

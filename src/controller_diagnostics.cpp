@@ -75,6 +75,26 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
         QStringLiteral("Configured axes: %1  Buttons: %2  Continuous POV: %3  Discrete POV: %4")
             .arg(std::count(snapshot.vjoy.axes.cbegin(), snapshot.vjoy.axes.cend(), true))
             .arg(snapshot.vjoy.buttons).arg(snapshot.vjoy.continuousPovs).arg(snapshot.vjoy.discretePovs),
+        QStringLiteral("Raw status: %1 (%2)  Ownership: %3")
+            .arg(snapshot.vjoy.rawStatusName).arg(snapshot.vjoy.rawStatus)
+            .arg(snapshot.vjoy.ownershipState),
+        QStringLiteral("Owner PID: %1  HOTAS BF6 PID: %2")
+            .arg(snapshot.vjoy.ownerPid == 0 ? QStringLiteral("not reported")
+                                              : QString::number(snapshot.vjoy.ownerPid),
+                 snapshot.vjoy.hotasProcessId == 0 ? QStringLiteral("not reported")
+                                                    : QString::number(snapshot.vjoy.hotasProcessId)),
+        QStringLiteral("Owner process: %1")
+            .arg(snapshot.vjoy.ownerProcessName.isEmpty() ? QStringLiteral("not available")
+                                                          : sanitizeControllerDiagnosticText(snapshot.vjoy.ownerProcessName, snapshot.privatePaths)),
+        QStringLiteral("Owner path: %1")
+            .arg(snapshot.vjoy.ownerProcessPath.isEmpty() ? QStringLiteral("not available")
+                                                          : sanitizeControllerDiagnosticText(snapshot.vjoy.ownerProcessPath, snapshot.privatePaths)),
+        QStringLiteral("Ownership diagnostic: %1")
+            .arg(sanitizeControllerDiagnosticText(snapshot.vjoy.ownershipDiagnostic, snapshot.privatePaths)),
+        QStringLiteral("Acquire attempt result: %1")
+            .arg(sanitizeControllerDiagnosticText(snapshot.vjoyAcquireAttempt, snapshot.privatePaths)),
+        QStringLiteral("Last status transition: %1")
+            .arg(sanitizeControllerDiagnosticText(snapshot.vjoyLastStatusTransition, snapshot.privatePaths)),
         QString{},
         QStringLiteral("ACTIVE PROFILE / OUTPUT"),
         QStringLiteral("Profile: %1").arg(snapshot.activeProfileName),

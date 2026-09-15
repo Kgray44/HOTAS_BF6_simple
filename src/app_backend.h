@@ -69,13 +69,29 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantMap adaptiveResponseState READ adaptiveResponseState NOTIFY stateChanged)
     Q_PROPERTY(QVariantList adaptiveResponsePresets READ adaptiveResponsePresets NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap adaptiveResponseTelemetry READ adaptiveResponseTelemetry NOTIFY inputTelemetryChanged)
-    // Button configuration is cached separately from its small live pressed
-    // state. Axis updates must never force QML to rebuild up to 128 cards.
-    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY buttonTelemetryChanged)
+    // The physical-button editor mirrors the axis editor: Selected Device
+    // owns its stable card model, while pressed state stays a bounded stream.
+    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
+    // Legacy virtual-output telemetry remains available to the non-Flight
+    // Deck presentation. Flight Deck consumes the two selected-device
+    // projections below: a static configuration model and one bounded live
+    // snapshot, each with its own notification channel.
+    Q_PROPERTY(QVariantList buttonTelemetry READ buttonTelemetry NOTIFY buttonTelemetryChanged)
+    Q_PROPERTY(QVariantList buttonConfiguration READ buttonConfiguration NOTIFY buttonConfigurationChanged)
+    Q_PROPERTY(QVariantList buttonInputTelemetry READ buttonInputTelemetry NOTIFY selectedButtonTelemetryChanged)
     Q_PROPERTY(QVariantList povs READ povs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QVariantList profileCategories READ profileCategories NOTIFY stateChanged)
+    // Editor selection is deliberately distinct from mapper activation.  A
+    // Profile can be inspected and changed without acquiring its Rig, vJoy,
+    // or physical controller; only an explicit activation reaches that path.
+    Q_PROPERTY(QString selectedProfileId READ selectedProfileId NOTIFY selectedProfileChanged)
+    Q_PROPERTY(QString selectedProfileName READ selectedProfileName NOTIFY selectedProfileChanged)
+    Q_PROPERTY(QString selectedProfileDisplayName READ selectedProfileDisplayName NOTIFY selectedProfileChanged)
+    Q_PROPERTY(QString selectedCategoryId READ selectedCategoryId NOTIFY selectedProfileChanged)
+    Q_PROPERTY(QString selectedCategoryName READ selectedCategoryName NOTIFY selectedProfileChanged)
+    Q_PROPERTY(bool selectedProfileActive READ selectedProfileActive NOTIFY selectedProfileChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged)
@@ -106,6 +122,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString selectedDeviceRigName READ selectedDeviceRigName NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString selectedDeviceLabel READ selectedDeviceLabel NOTIFY deviceRigsChanged)
     Q_PROPERTY(QVariantList selectedDevices READ selectedDevices NOTIFY deviceRigsChanged)
+    Q_PROPERTY(bool selectedDeviceIsSpecific READ selectedDeviceIsSpecific NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString deviceRigMigrationWarning READ deviceRigMigrationWarning NOTIFY deviceRigsChanged)
     Q_PROPERTY(QString deviceRigDetectionMessage READ deviceRigDetectionMessage NOTIFY deviceRigsChanged)
     Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
@@ -196,6 +213,9 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool updateCheckFailed READ updateCheckFailed NOTIFY stateChanged)
     Q_PROPERTY(QString updateAvailableVersion READ updateAvailableVersion NOTIFY stateChanged)
     Q_PROPERTY(QString updateStatusText READ updateStatusText NOTIFY stateChanged)
+    // CMake's HOTAS_VERSION is compiled into this value. QML must consume this
+    // authority rather than carrying a second handwritten release string.
+    Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
     Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)
     Q_PROPERTY(qint64 lastPhysicalUpdateAgeMs READ lastPhysicalUpdateAgeMs NOTIFY telemetryChanged)
     Q_PROPERTY(double vjoyWritesPerSecond READ vjoyWritesPerSecond NOTIFY telemetryChanged)
@@ -219,6 +239,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString automationValidationMessage READ automationValidationMessage NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
     Q_PROPERTY(QStringList virtualAxisChoices READ virtualAxisChoices NOTIFY stateChanged)
+    // Rich Flight Deck choice projections retain the established string lists
+    // for legacy pages while exposing source ownership for selected-device
+    // editors.
+    Q_PROPERTY(QVariantList buttonOutputChoiceDetails READ buttonOutputChoiceDetails NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList virtualAxisChoiceDetails READ virtualAxisChoiceDetails NOTIFY stateChanged)
     Q_PROPERTY(QString virtualAxisStatus READ virtualAxisStatus NOTIFY stateChanged)
     Q_PROPERTY(QStringList mappingControlActionChoices READ mappingControlActionChoices CONSTANT)
     Q_PROPERTY(QVariantList profileTriggerChoices READ profileTriggerChoices NOTIFY stateChanged)
@@ -304,6 +329,12 @@ public:
     // compiled only into the isolated startup suites and cannot alter a
     // production mapper, driver, or visibility transaction.
     bool configureActivationTransactionFixtureForTest();
+    // Uses the same selected-device runtime atomics as production to stress
+    // the Flight Deck button presentation path without DirectInput hardware.
+    bool configureSelectedButtonPresentationFixtureForTest(int buttonCount = 32);
+    bool publishSelectedButtonStateForTest(int physicalButton, bool pressed);
+    bool configureUnmappedRigActivationFixtureForTest();
+    bool configureRigProfileResolutionFixtureForTest(const QString &mode);
     bool configureRigOwnedOutputFixtureForTest();
     bool configureSidebarActivationFixtureForTest();
     bool configureSetupTruthReadyToActivateFixtureForTest();
@@ -311,17 +342,45 @@ public:
     bool finishStartupSetupTruthInspectionForTest();
     bool startupSetupTruthInspectionScheduledForTest() const;
     bool configureStartupSetupTruthInspectionFailureForTest();
+    bool configureHidHideRefreshTimeoutWithLastKnownGoodForTest();
     bool configureReconnectLifecycleFixtureForTest();
     bool completeReconnectInventoryRefreshForTest();
     bool configureTargetedVJoyRepairFixtureForTest(const QString &rigId, int deviceId);
+    bool configureExternalVJoyBusyFixtureForTest();
+    bool configureAcquiredOutputWaitingForReportFixtureForTest();
+    // Exercises the exact persisted-controller verification convergence seam:
+    // the first session commits an unverified required record, reads it back,
+    // rebuilds Rig/activation truth, and completes without relying on a second
+    // CHECK.  It remains startup-test-only and never probes user hardware.
+    bool configureControllerVerificationConvergenceFixtureForTest();
+    bool completeControllerVerificationConvergenceForTest();
+    // Two durable controller records in one Rig: the primary required member
+    // starts verified while the optional member is connected but deliberately
+    // unverified. These seams exercise member-scoped UI/control-plane truth
+    // without enumerating the owner's DirectInput devices.
+    bool configureMultiControllerRigFixtureForTest();
+    bool commitExactControllerVerificationForTest(const QString &recordId);
+    bool disconnectFixtureControllerForTest(const QString &recordId);
+    QVariantMap beginSetupCheckSessionForTest();
+    bool completeFreshSetupCheckWithFixturePlansForTest();
+    bool configureStaleWaitingForUserFixtureForTest();
     bool applyAutomaticProfileActivationForTest(const QString &profileId);
     void setActivationFaultInjectionsForTest(const QStringList &stages);
 #endif
     QVariantList buttons() const;
+    QVariantList buttonTelemetry() const;
+    QVariantList buttonConfiguration() const;
+    QVariantList buttonInputTelemetry() const;
     QVariantList povs() const;
     QVariantList povInputs() const;
     QVariantList profiles() const;
     QVariantList profileCategories() const;
+    QString selectedProfileId() const;
+    QString selectedProfileName() const;
+    QString selectedProfileDisplayName() const;
+    QString selectedCategoryId() const;
+    QString selectedCategoryName() const;
+    bool selectedProfileActive() const;
     QString activeProfileId() const;
     QString activeProfileName() const;
     QString activeProfileDisplayName() const;
@@ -347,6 +406,7 @@ public:
     QString selectedDeviceRigName() const;
     QString selectedDeviceLabel() const;
     QVariantList selectedDevices() const;
+    bool selectedDeviceIsSpecific() const;
     QString deviceRigMigrationWarning() const;
     QString deviceRigDetectionMessage() const;
     Q_INVOKABLE QVariantMap physicalDeviceDetail(const QString &recordId) const;
@@ -429,6 +489,7 @@ public:
     bool updateCheckFailed() const { return m_updateCheckFailed; }
     QString updateAvailableVersion() const { return m_updateAvailableVersion; }
     QString updateStatusText() const { return m_updateStatusText; }
+    QString applicationVersion() const;
     double inputReportsPerSecond() const { return m_inputReportsPerSecond; }
     qint64 lastPhysicalUpdateAgeMs() const { return m_lastPhysicalUpdateAgeMs; }
     double vjoyWritesPerSecond() const { return m_vjoyWritesPerSecond; }
@@ -452,6 +513,8 @@ public:
     QString automationValidationMessage() const;
     QStringList buttonOutputChoices() const;
     QStringList virtualAxisChoices() const;
+    QVariantList buttonOutputChoiceDetails() const;
+    QVariantList virtualAxisChoiceDetails() const;
     QString virtualAxisStatus() const;
     QStringList mappingControlActionChoices() const;
     QVariantList profileTriggerChoices() const;
@@ -480,6 +543,11 @@ public:
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
     Q_INVOKABLE bool setMapping(int physicalAxis, const QString &target, bool explicitOverride = false);
+    Q_INVOKABLE QVariantMap axisMappingCollision(int physicalAxis, const QString &target) const;
+    Q_INVOKABLE QVariantMap mixAxisMapping(int physicalAxis, const QString &target,
+                                            const QString &mixerMode);
+    Q_INVOKABLE QVariantMap axisSharedOutputState(int physicalAxis) const;
+    Q_INVOKABLE bool setSharedAxisMixerMode(const QString &target, const QString &mixerMode);
     // Focused axis editors use this deliberate conflict transaction instead
     // of retaining the historic implicit row-order collision. `replace`
     // removes competing analog sources; the supported mixer values create a
@@ -585,6 +653,19 @@ public:
     Q_INVOKABLE bool adaptiveResponseSimulatorRecordingActive() const;
     Q_INVOKABLE QVariantList adaptiveResponseSimulatorRecording() const;
     Q_INVOKABLE bool setButtonMapping(int physicalButton, int virtualButton, bool explicitOverride = false);
+    Q_INVOKABLE QVariantMap buttonMappingCollision(int physicalButton, int virtualButton) const;
+    Q_INVOKABLE QVariantList buttonOutputChoiceDetailsForSource(int physicalButton) const;
+    Q_INVOKABLE QVariantList virtualAxisChoiceDetailsForSource(int physicalAxis) const;
+    // Compatibility helper retained for non-Flight-Deck callers. The Flight
+    // Deck itself is keyed by the selected physical button source.
+    Q_INVOKABLE QVariantList selectedDeviceButtonChoices() const;
+    Q_INVOKABLE bool assignSelectedDeviceButtonToVirtualOutput(int virtualButton,
+                                                               int physicalButton,
+                                                               bool explicitOverride = false);
+    Q_INVOKABLE QVariantMap mixButtonMapping(int physicalButton, int virtualButton,
+                                              const QString &mixerMode);
+    Q_INVOKABLE QVariantMap buttonSharedOutputState(int physicalButton) const;
+    Q_INVOKABLE bool setSharedButtonMixerMode(int virtualButton, const QString &mixerMode);
     Q_INVOKABLE bool resolveButtonRouteChange(int physicalButton, int virtualButton,
                                               const QString &resolution);
     Q_INVOKABLE void setButtonCustomName(int physicalButton, const QString &name);
@@ -600,6 +681,14 @@ public:
     Q_INVOKABLE bool createProfile(const QString &name, const QString &startFromId = {});
     Q_INVOKABLE bool createProfileInCategory(const QString &name, const QString &categoryId,
                                              const QString &startFromId = {});
+    // Creates an editable Profile for an already-active unmapped Rig.  This
+    // is a configuration-only transaction: the Rig remains active, the new
+    // Profile becomes the editor selection, and mapping stays neutral until
+    // the user explicitly activates the Profile.
+    Q_INVOKABLE QString createProfileForRigInCategory(const QString &name,
+                                                       const QString &categoryId,
+                                                       const QString &rigId,
+                                                       const QString &startFromId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);
     Q_INVOKABLE bool duplicateProfileToCategory(const QString &profileId, const QString &name,
                                                 const QString &categoryId);
@@ -607,9 +696,18 @@ public:
     Q_INVOKABLE bool moveProfileToCategory(const QString &profileId, const QString &categoryId);
     Q_INVOKABLE bool setProfileEnabled(const QString &profileId, bool enabled);
     Q_INVOKABLE bool deleteProfile(const QString &profileId);
+    // This is editor/view context only. It intentionally performs no runtime
+    // readiness check and never changes active Profile, Rig, or mapper state.
+    Q_INVOKABLE bool selectProfileForEditing(const QString &profileId);
     Q_INVOKABLE bool activateProfile(const QString &profileId);
     Q_INVOKABLE QVariantMap activateProfileResult(const QString &profileId);
+    // The ordinary request never silently switches hardware topology. This
+    // follow-up is callable only after Flight Deck has shown that choice.
+    Q_INVOKABLE QVariantMap activateProfileAfterRigSwitchConfirmation(const QString &profileId);
     Q_INVOKABLE bool createProfileCategory(const QString &name);
+    Q_INVOKABLE QString createNewProfileCategoryForProfile(const QString &profileId);
+    Q_INVOKABLE QString createProfileCategoryForDroppedProfile(const QString &name,
+                                                                const QString &profileId);
     Q_INVOKABLE bool renameProfileCategory(const QString &categoryId, const QString &name);
     Q_INVOKABLE bool deleteProfileCategory(const QString &categoryId);
     Q_INVOKABLE bool activateProfileCategory(const QString &categoryId);
@@ -669,7 +767,11 @@ public:
                                                             const QVariantList &customAxes = {},
                                                             int buttons = 0,
                                                             int continuousPovs = 0,
-                                                            int discretePovs = 0);
+                                                            int discretePovs = 0,
+                                                            const QString &attachToRigId = {},
+                                                            bool attachToRig = false,
+                                                            bool makeRigPrimary = false);
+    Q_INVOKABLE QVariantMap retryVirtualOutputAcquire(const QString &layoutId);
     Q_INVOKABLE bool renameVirtualOutputLayout(const QString &layoutId, const QString &name);
     Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
                                                    const QString &deviceInstanceId);
@@ -707,12 +809,18 @@ public:
     // inventing repair work. The frozen check becomes its final snapshot.
     Q_INVOKABLE QVariantMap completeSetupCheck();
     Q_INVOKABLE bool copySetupHealthDiagnostics();
+    // Kept deliberately generic for presentation-only notification details;
+    // callers provide the already user-facing text, never backend internals.
+    Q_INVOKABLE bool copyTextToClipboard(const QString &text) const;
     Q_INVOKABLE QVariantMap startSetupAssistantCheckForScope(const QString &scopeType,
                                                              const QString &scopeId = {});
     // Completes the selected saved controller's exact-identity verification.
     // This differs from a generic diagnostic rerun: success persists the
     // verified device record and advances the assistant to the next cause.
     Q_INVOKABLE QVariantMap completeSetupAssistantDevice(const QString &recordId = {});
+    // A Devices/Rig card verifies one saved controller only.  It is not an
+    // alias for Setup Health and never changes the active controller or Rig.
+    Q_INVOKABLE QVariantMap verifyController(const QString &recordId);
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
@@ -742,6 +850,8 @@ public:
     Q_INVOKABLE bool deactivateDeviceRig(const QString &rigId);
     Q_INVOKABLE bool setDefaultDeviceRig(const QString &rigId);
     Q_INVOKABLE bool clearDefaultDeviceRig(const QString &rigId);
+    Q_INVOKABLE bool setDeviceRigDefaultProfile(const QString &rigId, const QString &profileId,
+                                                bool explicitlyNone = false);
     Q_INVOKABLE bool setDeviceRigAutoActivate(const QString &rigId, bool enabled);
     Q_INVOKABLE bool setDeviceRigActivationPriority(const QString &rigId, int priority);
     Q_INVOKABLE bool setDeviceRigMemberRequired(const QString &rigId, const QString &controllerRecordId,
@@ -773,6 +883,10 @@ public:
                                              const QStringList &controllerRecordIds = {});
     Q_INVOKABLE bool setSelectedDeviceContext(const QString &rigId,
                                               const QStringList &controllerRecordIds = {});
+    // Selects only the editor/view target for an already-saved Rig member.
+    // It deliberately cannot activate a Rig, change the runtime controller,
+    // configure output, or schedule setup work.
+    Q_INVOKABLE bool selectControllerForEditing(const QString &recordId);
     // App Health actions enter a persistent editing context before navigating
     // to an owning page. This is intentionally a control-plane operation;
     // input reports never call it.
@@ -796,6 +910,11 @@ public:
                                                        int sourceSubIndex, const QString &destination,
                                                        const QString &mixerMode,
                                                        qulonglong expectedRevision);
+    // An explicit mixer is one canonical topology object.  Its mode can be
+    // changed from the graph or a focused editor without creating a second
+    // settings-page representation.
+    Q_INVOKABLE QVariantMap signalFlowSetMixerMode(const QString &mixerId, const QString &mixerMode,
+                                                   qulonglong expectedRevision);
     Q_INVOKABLE QVariantMap signalFlowDisconnect(const QString &routeId,
                                                  qulonglong expectedRevision);
     // These are deliberately control-plane helpers. They resolve an existing
@@ -829,6 +948,7 @@ public:
     Q_INVOKABLE QVariantMap signalFlowAutoLayout();
     Q_INVOKABLE bool setActiveController(const QString &recordId);
     Q_INVOKABLE bool selectNewController(const QString &directInputId);
+    Q_INVOKABLE QVariantMap controllerForgetConsequences(const QString &recordId) const;
     Q_INVOKABLE bool forgetController(const QString &recordId);
     Q_INVOKABLE void setAutoSwitchVerifiedController(bool enabled);
     Q_INVOKABLE void setKeepRunningInTray(bool enabled);
@@ -846,10 +966,13 @@ public:
 
 signals:
     void stateChanged();
+    void selectedProfileChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
     void profilePresentationChanged();
     void buttonTelemetryChanged();
+    void buttonConfigurationChanged();
+    void selectedButtonTelemetryChanged();
     void controllersChanged();
     void deviceRigsChanged();
     void runningApplicationsChanged();
@@ -918,6 +1041,9 @@ private:
         qint64 sequence = 0;
         qint64 elapsedMs = 0;
         int axis = 0;
+        int sourceMemberIndex = -1;
+        quint64 workerSequence = 0;
+        quint64 workerPublishedAtUs = 0;
         float physical = 0.0F;
         float estimated = 0.0F;
         float predicted = 0.0F;
@@ -1026,6 +1152,11 @@ private:
     bool commitSignalFlowCommand(MapperConfiguration before, const QString &description);
     QString signalFlowWorkspaceKey() const;
     bool saveSignalFlowPresentation();
+    // Resolves the bounded worker snapshot for Selected Device. A selected
+    // non-active Rig has no mapper source and is reported as unavailable
+    // rather than silently showing another controller's stale telemetry.
+    const AtomicAdaptiveTelemetry *adaptiveTelemetrySource(QString *recordId = nullptr,
+                                                            int *memberIndex = nullptr) const;
     void sampleAdaptiveResponseHistory();
     void publishProfilePresentationIfChanged();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
@@ -1051,6 +1182,9 @@ private:
                                           const QString &requestedProfileId = {},
                                           const QString &requestedRigId = {}) const;
     QVariantMap activationDecisionVariant(const ActivationDecision &decision) const;
+    QVariantMap activateProfileResultInternal(const QString &profileId,
+                                              bool rigSwitchConfirmed);
+    QVariantMap activateDeviceRigWithoutProfile(const QString &rigId);
     void scheduleActivationResolution(const QString &reason);
     void resolveActivationNow();
     bool applyActivationDecision(const ActivationDecision &decision, ActivationIntent intent,
@@ -1067,6 +1201,8 @@ private:
     bool rebuildControllerUiModel();
     void rebuildButtonUiModel();
     bool refreshButtonUiModelRuntimeState();
+    void rebuildSelectedButtonPresentationModel();
+    bool refreshSelectedButtonInputTelemetryRuntimeState();
     void captureInputLearningBaseline();
     void enterInputLearningArming();
     void processInputLearning();
@@ -1106,6 +1242,8 @@ private:
     // Multi-source route edits must be an explicit transaction, never an
     // accidental mutation of the legacy profile payload.
     bool editingScopeHasSinglePhysicalSource() const;
+    const SavedControllerRecord *selectedEditingControllerRecord() const;
+    QString selectedEditingControllerId() const;
     DeviceProfileMapping *editingDeviceMappingForWrite();
     const DeviceProfileMapping *editingDeviceMapping() const;
     AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
@@ -1114,6 +1252,11 @@ private:
     bool validAxis(int physicalAxis) const;
     bool validPhysicalButton(int physicalButton) const;
     bool axisIsOneSided(int physicalAxis) const;
+    bool editorPhysicalAxisAvailable(int physicalAxis) const;
+    bool editorVirtualAxisAvailable(int virtualAxis) const;
+    int editorPhysicalButtonCount() const;
+    int editorPovCount() const;
+    int editorVjoyButtonCount() const;
     const ControllerProfile &currentProfile() const;
     ControllerProfile &currentProfile();
     // A Profile selects a Device Rig; the Rig selects its primary output.
@@ -1128,7 +1271,7 @@ private:
     QString effectiveProfileId() const;
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
-    void startVerification(VerificationMode mode);
+    void startVerification(VerificationMode mode, const QString &exactRecordId = {});
     // Startup uses the established read-only quick verifier, then inspects
     // every output on the viewed Rig before publishing the first durable
     // Setup Truth snapshot.  This is intentionally separate from the
@@ -1145,7 +1288,19 @@ private:
     void scheduleAutomaticSetupTruthRefresh();
     void startAutomaticSetupTruthRefresh();
     bool applyControllerReadinessForConfiguration(const MapperConfiguration &configuration);
-    void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName);
+    void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName,
+                                                const QString &recordId = {});
+    QVariantMap controllerVerificationProgress(const QString &recordId) const;
+    void setControllerVerificationProgress(const QString &recordId, const QString &state,
+                                           const QString &detail);
+    // A successful exact-controller verification is also the moment the
+    // application learns a safe, fully qualified physical HID identity.  New
+    // controller records default to game-hidden; this performs that narrow
+    // HidHide transaction and insists on read-back without selecting or
+    // activating a Rig.
+    void scheduleVerifiedControllerDefaultIsolation();
+    void configureVerifiedControllerDefaultIsolation(
+        const QString &recordId, const PhysicalControllerCapabilities &physical);
     QString setupTruthDirectInputId() const;
     void observeControllerReconnect();
     void reconcileControllerReconnect(const PhysicalControllerCapabilities &physical);
@@ -1166,8 +1321,36 @@ private:
     void refreshSelectedRigOutputReadiness();
     const ControllerReadinessPlan *virtualOutputReadinessPlan(const QString &layoutId) const;
     ControllerDiagnosticsSnapshot controllerDiagnosticsSnapshot() const;
+    QString setupInspectionStatusForRig(const DeviceRig &rig) const;
+    struct HidHideLastKnownGoodEvidence {
+        QDateTime checkedAt;
+        quint64 configurationGeneration = 0;
+        QString mapperExecutable;
+        bool cloakOn = false;
+        bool mapperAllowlisted = false;
+        QStringList isolatedPhysicalInstances;
+    };
+    void rememberHidHideLastKnownGoodEvidence();
+    // Exact controller verification changes only the saved identity proof. It
+    // does not mutate HidHide's allowlist, cloak, or hidden physical-device
+    // collections, so valid evidence remains usable across that metadata
+    // generation advance while a fresh read-only inspection is coalesced.
+    void retainHidHideLastKnownGoodAcrossControllerVerification();
+    const HidHideLastKnownGoodEvidence *hidHideLastKnownGoodEvidenceFor(
+        const PhysicalControllerCapabilities &physical) const;
+    bool canRetainHidHideLastKnownGood(const ControllerReadinessPlan &plan,
+                                        const HidHideLastKnownGoodEvidence *evidence) const;
+    QString setupWaitingForUserReason() const;
+    void recordSetupInspectionResult(const QVariantMap &snapshot);
     QVariantMap buildSetupTruthSnapshot() const;
     void captureSetupTruthSnapshot(bool finalSnapshot = false);
+    // A successful setup mutation invalidates every derived readiness view.
+    // Rebuild those views before choosing the next repair or a terminal state;
+    // this is bounded per interactive session to prevent an accidental repair
+    // loop from being reported as a successful completion.
+    bool refreshSetupConvergenceAfterMutation(const QString &mutation,
+                                              const QVariantMap &evidence = {});
+    bool setupConvergenceHasPendingWork() const;
     // A convergence session records operation history, but the fresh AFTER
     // snapshot is the authority for its terminal outcome. Reconcile transient
     // operation failures once their exact postconditions are proven there.
@@ -1184,6 +1367,7 @@ private:
     void updateSetupRepairProgress(const QString &id, const QString &state, const QString &detail = {},
                                    const QString &result = {}, const QVariantMap &evidence = {},
                                    bool current = false);
+    void beginSetupCheckSession();
     void setSetupConvergenceStage(SetupConvergenceStage stage);
     QVariantMap currentSetupRepairStep() const;
     void completeSetupConvergence(const QString &finalState = {});
@@ -1204,6 +1388,10 @@ private:
     };
 
     MapperConfiguration m_configuration;
+    // Session-only editor context. It is intentionally outside
+    // MapperConfiguration so persisting an edit never converts selection into
+    // a runtime activation request.
+    QString m_selectedProfileId;
     std::vector<SignalFlowCommand> m_signalFlowUndo;
     std::vector<SignalFlowCommand> m_signalFlowRedo;
     QString m_signalFlowActionFeedback;
@@ -1236,6 +1424,20 @@ private:
     // distinct result so the assistant does not send the user through an
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
+    // Per-record card state is deliberately separate from the global Setup
+    // Health session. It lets a multi-controller Rig report the exact target
+    // being verified without projecting a generic CHECKING state.
+    QHash<QString, QVariantMap> m_controllerVerificationProgress;
+    // One automatic default-isolation attempt per connected saved controller
+    // for this process lifetime. A deliberate Verify Controller retry starts
+    // a fresh exact-identity transaction; passive inventory refreshes never
+    // create a command storm.
+    QSet<QString> m_defaultIsolationAttemptedRecords;
+    bool m_defaultIsolationTaskActive = false;
+    // A global read-only check probes every enabled member independently.
+    // These results are evidence for Setup Truth and diagnostics only; they
+    // never select a controller for MappingWorker.
+    QHash<QString, QVariantMap> m_setupMemberAcquisitionEvidence;
     QString m_pendingSetupVerificationRecordId;
     // The pending ID above belongs to the legacy asynchronous acquisition
     // hand-off.  Keep the frozen repair target separately so a recovery
@@ -1260,6 +1462,10 @@ private:
     };
     SetupConvergenceStage m_setupConvergenceStage = SetupConvergenceStage::Idle;
     QString m_setupConvergenceSessionId;
+    QString m_setupConvergenceTargetRigId;
+    quint64 m_setupConvergenceCheckGeneration = 0;
+    int m_setupConvergenceReadbackPasses = 0;
+    bool m_setupConvergenceReadbackLimitExceeded = false;
     QDateTime m_setupConvergenceStarted;
     QDateTime m_setupConvergenceFinished;
     QVariantMap m_setupTruthSnapshot;
@@ -1268,6 +1474,10 @@ private:
     QVariantMap m_setupTruthCheckSnapshot;
     QVariantMap m_setupTruthBeforeSnapshot;
     QVariantMap m_setupTruthAfterSnapshot;
+    // A transient HidHide CLI timeout is not proof of a bad allowlist or
+    // device-isolation state. These keyed control-plane facts are retained
+    // only for the same physical controller and configuration generation.
+    QHash<QString, HidHideLastKnownGoodEvidence> m_hidHideLastKnownGood;
     QVariantList m_setupRepairProgress;
     QString m_setupRepairSessionReport;
     QSet<QString> m_setupConvergenceAttemptedIssues;
@@ -1321,6 +1531,7 @@ private:
     // old DeviceRigStatus must never be reused for the final decision.  This
     // gate owns the one required inventory → rig-status → activation refresh.
     bool m_setupReconnectInventoryRefreshPending = false;
+    bool m_setupSoftwareReacquisitionInventoryRefreshPending = false;
     bool m_controllerSelectionInProgress = false;
     QPointer<QThread> m_controllerSelectionThread;
     // Discovery and process inspection are intentionally short-lived,
@@ -1330,6 +1541,13 @@ private:
     bool m_controllerDiscoveryInProgress = false;
     bool m_gameDetectionInProgress = false;
     QTimer m_snapshotTimer;
+    // Button cards have their own tiny presentation stream.  It reads only
+    // the latest bounded atomics and never rebuilds the card configuration.
+    QTimer m_buttonTelemetryTimer;
+    // The legacy virtual-output projection is not the Flight Deck editor's
+    // live source. Keep its compatibility stream deliberately slower so it
+    // cannot consume the selected-device 60 Hz presentation budget.
+    QTimer m_legacyButtonTelemetryTimer;
     QTimer m_numericTelemetryTimer;
     QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
@@ -1364,13 +1582,18 @@ private:
     QVariantList m_runningApplications;
     QHash<QString, QString> m_runningApplicationPathCache;
     QVariantList m_buttonUiModel;
+    QVariantList m_buttonTelemetryModel;
+    QVariantList m_selectedButtonConfigurationModel;
+    QVariantList m_selectedButtonInputTelemetryModel;
     InputLearningState m_inputLearning;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;
     QElapsedTimer m_overviewMetricsClock;
     QElapsedTimer m_adaptiveResponseHistoryClock;
-    std::array<AdaptiveResponseHistorySample, 3000> m_adaptiveResponseHistory{};
+    // 83 Hz sampler × five-second Live Analysis window, with a small fixed
+    // scheduling margin. It cannot become a multi-second presentation queue.
+    std::array<AdaptiveResponseHistorySample, 480> m_adaptiveResponseHistory{};
     int m_adaptiveResponseHistoryNext = 0;
     int m_adaptiveResponseHistoryCount = 0;
     qint64 m_adaptiveResponseHistorySequence = 0;
@@ -1449,12 +1672,15 @@ private:
     quint64 m_controllerUiModelRebuilds = 0;
     mutable quint64 m_buttonGetterCalls = 0;
     quint64 m_buttonUiModelRebuilds = 0;
+    quint64 m_selectedButtonConfigurationRebuilds = 0;
+    quint64 m_selectedButtonTelemetryPublishes = 0;
     mutable quint64 m_profileGetterCalls = 0;
     mutable quint64 m_categoryGetterCalls = 0;
     quint64 m_stateChangedNotifications = 0;
     quint64 m_telemetryChangedNotifications = 0;
     quint64 m_inputTelemetryChangedNotifications = 0;
     quint64 m_buttonTelemetryChangedNotifications = 0;
+    quint64 m_selectedButtonTelemetryChangedNotifications = 0;
     quint64 m_controllersChangedNotifications = 0;
     quint64 m_controllerDiscoveryBackgroundRuns = 0;
     quint64 m_gameDetectionBackgroundRuns = 0;

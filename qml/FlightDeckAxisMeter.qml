@@ -17,8 +17,12 @@ FlightDeckCard {
         spacing: root.tokens.space12
 
         ColumnLayout {
-            Layout.preferredWidth: Math.min(160, Math.max(104, root.width * 0.28))
-            Layout.fillWidth: true
+            // Keep labels compact so the live meter is the dominant visual
+            // on wide cards, while still reserving enough room at small sizes.
+            Layout.minimumWidth: root.width < 460 ? 92 : 120
+            Layout.preferredWidth: Math.min(180, Math.max(120, root.width * 0.18))
+            Layout.maximumWidth: root.width < 460 ? 124 : 180
+            Layout.fillWidth: false
             spacing: 1
             Text {
                 text: root.axis.label || "Axis"
@@ -38,17 +42,9 @@ FlightDeckCard {
                 Layout.fillWidth: true
             }
         }
-        Text {
-            text: root.percent
-            color: root.tokens.textPrimary
-            font.family: root.tokens.telemetryFont
-            font.pixelSize: 11
-            font.bold: true
-            Layout.preferredWidth: 46
-            horizontalAlignment: Text.AlignRight
-        }
         Rectangle {
             Layout.fillWidth: true
+            Layout.minimumWidth: Math.max(72, Math.min(320, root.width * 0.45))
             Layout.preferredHeight: 8
             radius: height / 2
             color: root.tokens.primarySurface
@@ -68,6 +64,15 @@ FlightDeckCard {
                 x: parent.width / 2
                 color: root.tokens.textMuted
             }
+        }
+        Text {
+            text: root.percent
+            color: root.tokens.textPrimary
+            font.family: root.tokens.telemetryFont
+            font.pixelSize: 11
+            font.bold: true
+            Layout.preferredWidth: 46
+            horizontalAlignment: Text.AlignRight
         }
     }
 }

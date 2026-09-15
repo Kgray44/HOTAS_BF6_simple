@@ -97,6 +97,10 @@ Item {
             vjoyStatus: backendObject.vjoyStatus,
             vjoyStatusSeverity: backendObject.vjoyStatusSeverity,
             vjoyDeviceId: backendObject.vjoyDeviceId,
+            // Descriptor readiness, vJoy ownership, and mapped-report flow
+            // are different facts. The rail must not collapse an acquired
+            // output into "unavailable" merely because it is still neutral.
+            outputRuntime: backendObject.outputRuntimeTelemetry || ({}),
             vjoyButtonCount: backendObject.vjoyButtonCount,
             vjoyContinuousPovCount: backendObject.vjoyContinuousPovCount,
             vjoyDiscretePovCount: backendObject.vjoyDiscretePovCount,
@@ -158,7 +162,10 @@ Item {
             return { label: truthStatus, tone: "fault", detail: "The current setup truth requires action." };
         }
         const readiness = String(state.controllerReadinessState || "").toUpperCase();
-        const outputUnavailable = !state.vjoyReady || String(state.vjoyStatusSeverity || "").toLowerCase() === "error";
+        const outputRuntime = state.outputRuntime || {};
+        const outputAvailable = outputRuntime.outputAvailable === true;
+        const outputUnavailable = !outputAvailable && (!state.vjoyReady
+            || String(state.vjoyStatusSeverity || "").toLowerCase() === "error");
         const checking = readiness.indexOf("CHECK") >= 0 || readiness.indexOf("UNKNOWN") >= 0;
         const attention = readiness.indexOf("ATTENTION") >= 0 || readiness.indexOf("ACTION") >= 0;
 
@@ -246,10 +253,26 @@ Item {
     }
 
     function outputFor(state) {
+        const outputRuntime = state.outputRuntime || {};
+        const descriptorState = String(outputRuntime.descriptorState || "");
+        const ownershipState = String(outputRuntime.ownershipState || "");
+        const reportState = String(outputRuntime.runtimeReportState || "");
+        const deviceId = outputRuntime.configuredVjoyDeviceId || state.vjoyDeviceId || "";
+        if (outputRuntime.outputAvailable === true) {
+            return {
+                title: "vJoy " + deviceId + " acquired",
+                detail: reportState === "REPORTING"
+                    ? "Publishing mapped reports."
+                    : "Waiting for first mapped report.",
+                tone: "healthy"
+            };
+        }
         if (!state.vjoyReady)
             return {
                 title: "Virtual output unavailable",
-                detail: state.vjoyStatus || "vJoy is not ready.",
+                detail: descriptorState === "CONFIGURED" && ownershipState.length
+                    ? "vJoy is configured but " + ownershipState.toLowerCase() + "."
+                    : state.vjoyStatus || "vJoy is not ready.",
                 tone: "fault"
             };
         if (String(state.vjoyStatusSeverity || "").toLowerCase() === "warning")

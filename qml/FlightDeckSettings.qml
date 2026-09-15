@@ -468,6 +468,17 @@ Flickable {
             title: "General"
         }
         SettingsGroup {
+            objectName: "flightDeckSettingsApplicationInfo"
+            title: "HOTAS BF6"
+            detail: "Flight Deck application identity from the compiled release authority."
+            SettingsRow {
+                objectName: "flightDeckSettingsApplicationVersion"
+                title: "VERSION"
+                detail: "Version " + backend.applicationVersion
+                last: true
+            }
+        }
+        SettingsGroup {
             objectName: "flightDeckSettingsGeneralGroup"
             title: "Application behavior"
             detail: "Preferences apply immediately through HOTAS BF6's existing configuration ownership."
@@ -745,12 +756,9 @@ Flickable {
                 RowLayout {
                     DeckButton {
                         objectName: "flightDeckSettingsCreateOutput"
-                        text: "CREATE 5-AXIS OUTPUT"
+                        text: "CREATE VIRTUAL OUTPUT"
                         enabled: root.nextOutputDeviceId() > 0
-                        onClicked: {
-                            const deviceId = root.nextOutputDeviceId();
-                            backend.createFiveAxisOutputLayout("5-Axis Output " + deviceId, deviceId);
-                        }
+                        onClicked: settingsCreateOutputDialog.openFor("")
                     }
                     DeckButton {
                         text: "MANAGE RIGS"
@@ -960,5 +968,16 @@ Flickable {
                 }
             }
         }
+    }
+
+    // Settings is an entry point, not a second output-creation experience.
+    // It deliberately opens the same modal used by Devices and Rig Details.
+    CreateVirtualOutputDialog {
+        id: settingsCreateOutputDialog
+        objectName: "flightDeckSettingsCreateVirtualOutputDialog"
+        backendObject: backend
+        tokens: deck
+        rigItems: backend.deviceRigs
+        onCreated: function(result) { root.navigateToPage(10) }
     }
 }

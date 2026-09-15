@@ -360,8 +360,8 @@ Item {
                             font.bold: true
                         }
                         Text {
-                            text: (backendObject ? backendObject.activeProfileName : "Normal") + " / "
-                                + (axisSelector.currentText || "Roll") + " · " + (editorState.summary || "Linear · 0%")
+                            text: (backendObject ? backendObject.selectedProfileName : "Normal") + " / "
+                                + (axisSelector.currentText || "Axis 1") + " · " + (editorState.summary || "Linear · 0%")
                             color: theme.topGun ? theme.orange : theme.cyan
                             font.pixelSize: 13
                             font.bold: true

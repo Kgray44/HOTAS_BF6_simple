@@ -20,6 +20,9 @@ Item {
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
     property var learningDialog: null
+    // Supplied by Main's app-level overlay.  Standard's page host receives
+    // the same object so a Devices action has one presentation owner.
+    property var notificationCenter: null
     // Holds only the transient Signal Flow viewport/selection while one of
     // Flight Deck's authoritative focused editors is shown.
     property var signalFlowPresentationState: ({})
@@ -162,6 +165,14 @@ Item {
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
+                        }
+                        Text {
+                            text: "v" + backend.applicationVersion
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 7
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
                         }
                     }
                 }
@@ -318,10 +329,16 @@ Item {
                         elide: Text.ElideRight
                     }
                     FlightDeckSelectedDeviceSelector {
-                        compact: root.width < 1180
+                        compact: root.width < 1380
                         backendObject: backend
                         tokens: deck
                         onManageDevices: root.navigateTo(2)
+                    }
+                    FlightDeckSelectedProfileSelector {
+                        compact: root.width < 1180
+                        backendObject: backend
+                        tokens: deck
+                        notificationCenter: root.notificationCenter
                     }
                     FlightDeckHeaderPill {
                         objectName: "flightDeckControllerPill"
@@ -359,6 +376,7 @@ Item {
                         flightDeckMode: true
                         flightDeckReadiness: readinessModel
                         flightDeckLearningDialog: root.learningDialog
+                        notificationCenter: root.notificationCenter
                         currentPage: 8
                         onCurrentPageChanged: {
                             if (currentPage === 7 && flightDeckAutomationContext.length > 0)

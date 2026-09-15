@@ -69,9 +69,12 @@ ApplicationWindow {
         }
     }
 
-    Component { id: legacySurface; Legacy { } }
-    Component { id: standardSurface; Standard { } }
-    Component { id: flightDeckSurface; FlightDeck { learningDialog: shell.flightDeckLearningDialog } }
+    Component { id: legacySurface; Legacy { notificationCenter: globalNotifications } }
+    Component { id: standardSurface; Standard { notificationCenter: globalNotifications } }
+    Component { id: flightDeckSurface; FlightDeck {
+        learningDialog: shell.flightDeckLearningDialog
+        notificationCenter: globalNotifications
+    } }
     Component { id: flightDeckLearningDialogComponent; FlightDeckInputLearningDialog { } }
 
     Loader {
@@ -81,5 +84,14 @@ ApplicationWindow {
         sourceComponent: themeManager.currentExperience === "Flight Deck"
             ? flightDeckSurface
             : (themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface)
+    }
+
+    // This stays outside the presentation Loader.  A page change, a
+    // Flickable scroll, or a theme-shell rebuild therefore cannot move or
+    // destroy in-flight operation feedback.
+    GlobalNotificationHost {
+        id: globalNotifications
+        backendObject: backend
+        flightDeck: themeManager.currentExperience === "Flight Deck"
     }
 }

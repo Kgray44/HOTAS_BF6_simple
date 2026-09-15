@@ -1,9 +1,11 @@
 #pragma once
 
 #include "mapping_types.h"
+#include "vjoy_ownership.h"
 
 #include <QMutex>
 #include <QThread>
+#include <QVariantMap>
 
 #include <array>
 #include <atomic>
@@ -23,7 +25,9 @@ struct MappingLatencyPercentiles {
     std::uint64_t p99Us = 0;
 };
 
-struct AtomicRuntimeState {
+// Latest adaptive axis values for one physical input. The mapper overwrites
+// these atomics; the UI samples them independently at display cadence.
+struct AtomicAdaptiveTelemetry {
     std::array<std::atomic<float>, kPhysicalAxisCount> raw{};
     std::array<std::atomic<float>, kPhysicalAxisCount> normalized{};
     std::array<std::atomic<float>, kPhysicalAxisCount> afterDeadzone{};
@@ -108,6 +112,26 @@ struct AtomicRuntimeState {
     std::array<std::atomic<float>, kPhysicalAxisCount> adaptiveRuntimeEngagementSensitivity{};
     std::array<std::atomic_bool, kPhysicalAxisCount> adaptiveAutomationOverlayActive{};
     std::array<std::atomic_uint32_t, kPhysicalAxisCount> adaptiveAutomationOverlayProperties{};
+    // Publication is written last, after the scalar fields for this axis.
+    // Consumers coalesce to the latest snapshot instead of queuing reports.
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptivePublicationSequence{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> adaptivePublishedAtUs{};
+    std::atomic_bool physicalConnected{false};
+};
+
+struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
+    // Selected Device reads this exact member snapshot in a Device Rig; it
+    // never repurposes the aggregate (member-zero) presentation state.
+    std::array<AtomicAdaptiveTelemetry, kMaximumDeviceRigMembers> deviceRigMemberAdaptive{};
+    // These fixed-size snapshots carry the non-axis physical inputs for each
+    // Rig member.  They are written by the mapping thread and sampled by the
+    // UI timer, so choosing a controller never borrows member zero's buttons,
+    // POVs, or connection state.
+    std::array<std::atomic_bool, kMaximumDeviceRigMembers> deviceRigMemberPhysicalConnected{};
+    std::array<std::array<std::atomic_bool, kMaximumPhysicalButtons>,
+               kMaximumDeviceRigMembers> deviceRigMemberPhysicalButtonPressed{};
+    std::array<std::array<std::atomic_int, kMaximumPhysicalPovs>,
+               kMaximumDeviceRigMembers> deviceRigMemberPovValues{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
@@ -118,7 +142,6 @@ struct AtomicRuntimeState {
     std::array<std::atomic<bool>, kMaximumPhysicalButtons> physicalButtonPressed{};
     std::array<std::atomic<bool>, kMaximumPhysicalButtons> virtualButtonPressed{};
     std::array<std::atomic<bool>, kMaximumPhysicalButtons> buttonAvailable{};
-    std::atomic_bool physicalConnected{false};
     std::atomic_int axisCount{0};
     std::atomic_int buttonCount{0};
     std::atomic_int povCount{0};
@@ -209,9 +232,11 @@ struct DirectInputControllerProbe {
     QString hidInstanceId;
     QString hidContainerId;
     std::array<bool, kPhysicalAxisCount> axes{};
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;
+    int unsupportedAxisCount = 0;
     QString diagnostic;
 };
 
@@ -224,6 +249,11 @@ public:
 
     void updateConfiguration(const MapperConfiguration &configuration);
     void setMappingEnabled(bool enabled);
+    // Requests an immediate control-plane output availability pass. The
+    // worker still owns every vJoy acquire; this merely bypasses its bounded
+    // one-second polling cadence after a user says an external owner released
+    // a device. It never runs from DirectInput report handling.
+    void requestOutputAvailabilityRetry();
     bool mappingRequested() const;
     // A setup transaction uses this bounded control-plane handoff before
     // touching vJoy. It is never called from a report and it never changes a
@@ -260,6 +290,7 @@ public:
     void publishVirtualAxisAvailabilityForTest(bool available);
     DeviceSnapshot deviceSnapshot() const;
     QString vjoyStatus() const;
+    QVariantMap vjoyOwnershipTelemetry() const;
     MappingLatencyPercentiles latencyPercentiles() const;
     std::shared_ptr<const RuntimeProfileCache> runtimeProfileCache() const;
 
@@ -279,10 +310,12 @@ private:
     preparedConfigurationCopy();
     void setDeviceSnapshot(const DeviceSnapshot &snapshot);
     void setVjoyStatus(const QString &status);
+    void setVjoyOwnershipEvidence(const VJoyOwnershipEvidence &evidence, const QString &acquireAttempt);
 
     AtomicRuntimeState m_runtime;
     std::atomic_bool m_stopRequested{false};
     std::atomic_bool m_mappingRequested{false};
+    std::atomic_uint64_t m_outputAvailabilityRetryGeneration{0};
     std::atomic_bool m_releaseVjoyRequested{false};
     std::atomic_bool m_vjoyReleasedForControlPlane{false};
     // This fixture is only written through the explicit UI-test seam below.
@@ -301,6 +334,9 @@ private:
     DeviceSnapshot m_device;
     mutable QMutex m_statusMutex;
     QString m_vjoyStatus = u"Not checked"_qs;
+    VJoyOwnershipEvidence m_vjoyOwnership;
+    QString m_vjoyAcquireAttempt = u"No acquisition attempt yet"_qs;
+    QString m_vjoyLastStatusTransition = u"Not observed"_qs;
 };
 
 } // namespace hotas

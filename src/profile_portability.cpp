@@ -1153,7 +1153,8 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             mixer.id.clear();
             mixer.identityKey = signalFlowMixerIdentityKey(*importedProfile,
                                                            mixer.controllerRecordId,
-                                                           mixer.destinationAxis);
+                                                           mixer.destinationAxis,
+                                                           mixer.destinationKind);
             destinationTopology.mixers.push_back(std::move(mixer));
         }
         for (SignalFlowSharedProcessor processor : sourceTopology.sharedProcessors) {
