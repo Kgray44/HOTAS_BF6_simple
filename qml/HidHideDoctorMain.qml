@@ -16,6 +16,8 @@ ApplicationWindow {
 
     readonly property int densityGap: doctorSession.density === "Comfortable" ? 14 : doctorSession.density === "Dense" ? 6 : 10
     readonly property int densityPad: doctorSession.density === "Comfortable" ? 18 : doctorSession.density === "Dense" ? 8 : 12
+    readonly property int cardPad: doctorSession.density === "Comfortable" ? 18 : doctorSession.density === "Dense" ? 10 : 14
+    readonly property int cardGap: doctorSession.density === "Comfortable" ? 10 : doctorSession.density === "Dense" ? 5 : 7
     readonly property bool commandCenterFits: width >= 1310
     readonly property bool usingFocusFallback: doctorSession.commandCenter && !commandCenterFits
 
@@ -125,6 +127,7 @@ ApplicationWindow {
                     model: doctorSession.environmentGroups
                     delegate: RowLayout {
                         required property var modelData
+                        required property int index
                         Layout.fillWidth: true
                         spacing: 8
                         ColumnLayout { spacing: 1; Layout.fillWidth: true
@@ -153,6 +156,8 @@ ApplicationWindow {
                     model: doctorSession.healthDomains
                     delegate: Item {
                         required property var modelData
+                        Accessible.name: modelData.label + " " + modelData.status
+                        Accessible.description: modelData.detail
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         ColumnLayout { anchors.centerIn: parent; spacing: 2
@@ -288,6 +293,7 @@ ApplicationWindow {
     Component {
         id: currentBody
         Flickable {
+            objectName: "currentOperationViewport"
             contentWidth: width
             contentHeight: details.implicitHeight + root.densityPad * 2
             clip: true
@@ -299,25 +305,79 @@ ApplicationWindow {
                 y: root.densityPad
                 spacing: root.densityGap
                 property var operation: doctorSession.currentOperationDetails
-                Eyebrow { text: doctorSession.scanRunning ? "CURRENT OPERATION" : "READ-ONLY ANALYSIS COMPLETE" }
-                Label { text: doctorSession.scanRunning ? details.operation.title : "All applicable read-only checks completed."; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 16; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Label { text: doctorSession.scanRunning ? details.operation.checkId : "ACTIVE CHECK  None"; color: Theme.information; font.family: Theme.mono; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                RowLayout { Layout.fillWidth: true
-                    Doctor.DoctorStatusPill { text: details.operation.status; tone: doctorSession.scanRunning ? "running" : "healthy" }
-                    Item { Layout.fillWidth: true }
-                    Label { visible: doctorSession.scanRunning; text: details.operation.progress + "%"; color: Theme.textPrimary; font.family: Theme.mono; font.pixelSize: 12 }
+                readonly property bool activeScan: doctorSession.scanRunning
+                readonly property string sessionHealth: doctorSession.failedCheckCount ? "Degraded" : doctorSession.warningCheckCount ? "Attention required" : "Healthy"
+                readonly property string sessionTone: doctorSession.failedCheckCount ? "fault" : doctorSession.warningCheckCount ? "warning" : "healthy"
+
+                ColumnLayout {
+                    visible: details.activeScan
+                    Layout.fillWidth: true
+                    spacing: root.cardGap
+                    Eyebrow { text: "CURRENT OPERATION" }
+                    Label { text: details.operation.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 16; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Label { text: details.operation.checkId; color: Theme.information; font.family: Theme.mono; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                    RowLayout { Layout.fillWidth: true
+                        Doctor.DoctorStatusPill { text: details.operation.status; tone: "running" }
+                        Item { Layout.fillWidth: true }
+                        Label { text: details.operation.progress + "%"; color: Theme.textPrimary; font.family: Theme.mono; font.pixelSize: 12 }
+                    }
+                    Doctor.DoctorProgressBar { Layout.fillWidth: true; value: details.operation.progress; tone: "running" }
+                    Doctor.DoctorDivider {}
+                    GridLayout { columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
+                        Eyebrow { text: "ELAPSED" }
+                        Label { text: details.operation.elapsed; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
+                        Eyebrow { text: "TIMEOUT" }
+                        Label { text: details.operation.timeout; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
+                        Eyebrow { text: "SESSION HEALTH" }
+                        Label { text: details.sessionHealth; color: Theme.tone(details.sessionTone); font.family: Theme.ui; font.pixelSize: 11 }
+                    }
+                    Label { text: details.operation.detail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 }
-                Doctor.DoctorProgressBar { visible: doctorSession.scanRunning; Layout.fillWidth: true; value: details.operation.progress; tone: "running" }
-                Doctor.DoctorDivider {}
-                GridLayout { columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
-                    Eyebrow { text: "ELAPSED" }
-                    Label { text: details.operation.elapsed; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
-                    Eyebrow { text: "TIMEOUT" }
-                    Label { text: details.operation.timeout; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 11 }
-                    Eyebrow { text: "SESSION HEALTH" }
-                    Label { text: doctorSession.failedCheckCount ? "Degraded" : doctorSession.warningCheckCount ? "Attention required" : "Healthy"; color: doctorSession.failedCheckCount ? Theme.critical : doctorSession.warningCheckCount ? Theme.warning : Theme.healthy; font.family: Theme.ui; font.pixelSize: 11 }
+
+                Rectangle {
+                    objectName: "completedOperationSummary"
+                    visible: !details.activeScan
+                    Layout.fillWidth: true
+                    implicitHeight: completedSummary.implicitHeight + root.cardPad * 2
+                    color: Theme.inset
+                    border.color: Theme.separatorStrong
+                    border.width: 1
+                    radius: 2
+                    ColumnLayout {
+                        id: completedSummary
+                        anchors.fill: parent
+                        anchors.margins: root.cardPad
+                        spacing: root.cardGap
+                        RowLayout { Layout.fillWidth: true
+                            Eyebrow { text: "READ-ONLY ANALYSIS COMPLETE"; color: Theme.information; Layout.fillWidth: true }
+                            Doctor.DoctorStatusPill { text: details.sessionHealth.toUpperCase(); tone: details.sessionTone }
+                        }
+                        Label { text: "All applicable read-only checks completed."; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 16; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Doctor.DoctorDivider {}
+                        GridLayout {
+                            columns: 2
+                            columnSpacing: root.cardPad
+                            rowSpacing: root.cardGap
+                            Layout.fillWidth: true
+                            Repeater {
+                                model: [
+                                    { label: "ACTIVE CHECK", value: "None", tone: "neutral" },
+                                    { label: "STATUS", value: details.sessionHealth, tone: details.sessionTone },
+                                    { label: "ELAPSED", value: details.operation.elapsed, tone: "neutral" },
+                                    { label: "CHECKS", value: doctorSession.completedChecks + " / " + (doctorSession.completedChecks + doctorSession.remainingChecks), tone: "information" }
+                                ]
+                                delegate: ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 2
+                                    Eyebrow { text: modelData.label }
+                                    Label { text: modelData.value; color: Theme.tone(modelData.tone); font.family: modelData.label === "ELAPSED" || modelData.label === "CHECKS" ? Theme.mono : Theme.ui; font.pixelSize: 11; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                                }
+                            }
+                        }
+                        Label { text: details.operation.detail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
                 }
-                Label { text: details.operation.detail; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
         }
     }
@@ -325,51 +385,67 @@ ApplicationWindow {
     Component {
         id: findingsBody
         ScrollView {
+            objectName: "findingsViewport"
             clip: true
             background: Rectangle { color: "transparent" }
             ScrollBar.vertical: Doctor.DoctorScrollBar {}
             ScrollBar.horizontal: Doctor.DoctorScrollBar {}
             ColumnLayout {
-                width: parent.width
-                spacing: root.densityGap
+                width: parent.availableWidth
+                spacing: root.cardGap
                 Repeater {
                     model: doctorSession.diagnosisCards
                     delegate: Doctor.DoctorButton {
+                        objectName: "diagnosisCard_" + modelData.id
                         required property var modelData
                         Layout.fillWidth: true
-                        implicitHeight: diagnosisColumn.implicitHeight + root.densityPad * 2
+                        leftPadding: root.cardPad
+                        rightPadding: root.cardPad
+                        topPadding: root.cardPad
+                        bottomPadding: root.cardPad
+                        implicitHeight: diagnosisColumn.implicitHeight + root.cardPad * 2
                         text: ""
                         accessibleName: modelData.role + " " + modelData.title
                         onClicked: root.openEvidence(modelData.evidenceId)
-                        background: Rectangle { radius: 2; color: modelData.role.indexOf("PRIMARY") >= 0 ? "#20272c" : Theme.elevated; border.width: 1; border.color: root.toneColor(modelData.tone); Rectangle { width: 3; height: parent.height; color: root.toneColor(modelData.tone) } }
-                        contentItem: ColumnLayout { id: diagnosisColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 5
+                        background: Rectangle { radius: 2; color: modelData.role.indexOf("PRIMARY") >= 0 ? "#20272c" : Theme.elevated; border.width: 1; border.color: root.toneColor(modelData.tone); Rectangle { width: 4; height: parent.height; color: root.toneColor(modelData.tone) } }
+                        contentItem: ColumnLayout { id: diagnosisColumn; spacing: root.cardGap
                             RowLayout { Layout.fillWidth: true
-                                Eyebrow { text: modelData.role; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
+                                Eyebrow { text: modelData.role; color: root.toneColor(modelData.tone); Layout.fillWidth: true; elide: Text.ElideRight }
                                 Doctor.DoctorStatusPill { text: modelData.confidence.toUpperCase() + " · " + modelData.score + "%"; tone: modelData.tone }
                             }
-                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: modelData.role.indexOf("PRIMARY") >= 0 ? 16 : 14; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: "IMPACT  " + modelData.impact; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: modelData.role.indexOf("PRIMARY") >= 0 ? 17 : 14; font.weight: Font.DemiBold; lineHeight: 1.16; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; lineHeight: 1.22; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Rectangle { visible: modelData.impact.length > 0; Layout.fillWidth: true; implicitHeight: impactColumn.implicitHeight + root.cardGap * 2; color: Theme.inset; border.color: Theme.separator; border.width: 1; radius: 1
+                                ColumnLayout { id: impactColumn; anchors.fill: parent; anchors.margins: root.cardGap; spacing: 3
+                                    Eyebrow { text: "IMPACT" }
+                                    Label { text: modelData.impact; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: 10; lineHeight: 1.2; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                }
+                            }
                         }
                     }
                 }
                 Repeater {
                     model: doctorSession.findingCards
                     delegate: Doctor.DoctorButton {
+                        objectName: "findingCard_" + modelData.id
                         required property var modelData
                         Layout.fillWidth: true
-                        implicitHeight: findingColumn.implicitHeight + root.densityPad * 2
+                        leftPadding: root.cardPad
+                        rightPadding: root.cardPad
+                        topPadding: root.cardPad
+                        bottomPadding: root.cardPad
+                        implicitHeight: findingColumn.implicitHeight + root.cardPad * 2
                         text: ""
                         accessibleName: modelData.severity + " " + modelData.title
                         onClicked: root.openEvidence(modelData.evidenceId)
                         background: Rectangle { radius: 2; color: Theme.surface; border.width: 1; border.color: modelData.tone === "fault" ? Theme.critical : modelData.tone === "warning" ? Theme.warning : Theme.separator }
-                        contentItem: ColumnLayout { id: findingColumn; anchors.fill: parent; anchors.margins: root.densityPad; spacing: 4
+                        contentItem: ColumnLayout { id: findingColumn; spacing: root.cardGap
                             RowLayout { Layout.fillWidth: true
-                                Eyebrow { text: modelData.severity; color: root.toneColor(modelData.tone); Layout.fillWidth: true }
+                                Eyebrow { text: modelData.severity; color: root.toneColor(modelData.tone); Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: modelData.confidence; color: root.toneColor(modelData.tone); font.family: Theme.ui; font.pixelSize: 10 }
                             }
-                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 13; font.weight: Font.DemiBold; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.title; color: Theme.textPrimary; font.family: Theme.ui; font.pixelSize: 13; font.weight: Font.DemiBold; lineHeight: 1.15; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Label { text: modelData.summary; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 11; lineHeight: 1.2; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
                     }
                 }
@@ -463,13 +539,13 @@ ApplicationWindow {
                 objectName: "commandVerticalSplit"
                 anchors.fill: parent
                 orientation: Qt.Vertical
-                handle: Rectangle { implicitHeight: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 32; height: 2; color: Theme.textMuted; radius: 1 } }
+                handle: Rectangle { objectName: "commandVerticalSplitHandle"; implicitHeight: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 32; height: 2; color: Theme.textMuted; radius: 1 } }
                 SplitView {
                     id: workspaceSplit
                     objectName: "commandPaneSplit"
                     orientation: Qt.Horizontal
                     SplitView.fillHeight: true
-                    handle: Rectangle { implicitWidth: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 2; height: 28; color: Theme.textMuted; radius: 1 } }
+                    handle: Rectangle { objectName: "commandPaneSplitHandle"; implicitWidth: 7; color: Theme.separator; Rectangle { anchors.centerIn: parent; width: 2; height: 28; color: Theme.textMuted; radius: 1 } }
                     PaneSurface {
                         objectName: "commandPlanPane"
                         visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "plan"
@@ -490,7 +566,7 @@ ApplicationWindow {
                         objectName: "commandFindingsPane"
                         visible: doctorSession.maximizedPane === "" || doctorSession.maximizedPane === "findings"
                         paneId: "findings"; heading: "FINDINGS & DIAGNOSES"; countText: (doctorSession.diagnosisCards.length + doctorSession.findingCards.length) + " items"; bodyContent: findingsBody
-                        SplitView.minimumWidth: 340
+                        SplitView.minimumWidth: 380
                         SplitView.preferredWidth: doctorSession.maximizedPane === "findings" ? workspaceSplit.width : Number(doctorSession.paneFractions[2]) * workspaceSplit.width
                         onWidthChanged: paneSaveTimer.restart()
                     }
@@ -538,7 +614,9 @@ ApplicationWindow {
             ScrollBar.vertical: Doctor.DoctorScrollBar {}
             ColumnLayout {
                 id: focusColumn
-                width: parent.width
+                objectName: "focusNarrativeColumn"
+                width: Math.min(parent.width, Math.max(560, parent.width * 0.62))
+                x: Math.max(0, (parent.width - width) / 2)
                 spacing: root.densityGap
                 Rectangle { Layout.fillWidth: true; implicitHeight: 47; color: Theme.inset; border.color: Theme.separator; radius: 2
                     RowLayout { anchors.fill: parent; anchors.leftMargin: 13; anchors.rightMargin: 13
@@ -549,8 +627,8 @@ ApplicationWindow {
                         Doctor.DoctorStatusPill { text: doctorSession.sessionState; tone: doctorSession.failedCheckCount ? "fault" : doctorSession.warningCheckCount ? "warning" : "healthy" }
                     }
                 }
-                PaneSurface { Layout.fillWidth: true; implicitHeight: 280; paneId: "current"; heading: "CURRENT STEP / OPERATION"; bodyContent: currentBody; maximizable: false }
-                PaneSurface { Layout.fillWidth: true; implicitHeight: 460; paneId: "findings"; heading: "PRIMARY DIAGNOSIS & CONTRIBUTING FINDINGS"; bodyContent: findingsBody; maximizable: false }
+                PaneSurface { objectName: "focusCurrentPane"; Layout.fillWidth: true; implicitHeight: doctorSession.scanRunning ? 280 : 308; paneId: "current"; heading: "CURRENT STEP / OPERATION"; bodyContent: currentBody; maximizable: false }
+                PaneSurface { objectName: "focusFindingsPane"; Layout.fillWidth: true; implicitHeight: 520; paneId: "findings"; heading: "PRIMARY DIAGNOSIS & CONTRIBUTING FINDINGS"; bodyContent: findingsBody; maximizable: false }
                 PaneSurface { Layout.fillWidth: true; implicitHeight: 340; paneId: "plan"; heading: "DIAGNOSTIC PLAN"; bodyContent: planBody; maximizable: false }
                 PaneSurface { Layout.fillWidth: true; implicitHeight: 250; paneId: "action"; heading: "USER ACTION"; bodyContent: actionBody; maximizable: false }
                 Rectangle { Layout.fillWidth: true; implicitHeight: 66; color: Theme.inset; border.color: Theme.separator; radius: 2

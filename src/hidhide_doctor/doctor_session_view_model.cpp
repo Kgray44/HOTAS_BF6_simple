@@ -10,7 +10,10 @@ namespace hotas::doctor {
 namespace {
 
 constexpr int kPresentationLayoutVersion = 2;
-constexpr std::array<double, 4> kDefaultPaneFractions{0.22, 0.265, 0.36, 0.155};
+// The reset layout deliberately gives the planning rail enough room for a
+// full phase ledger while reserving a durable reading width for findings. Qt
+// still enforces each pane's practical pixel minimum at narrow widths.
+constexpr std::array<double, 4> kDefaultPaneFractions{0.49, 0.145, 0.22, 0.145};
 constexpr double kMinimumPersistedPaneFraction = 0.08;
 constexpr double kFractionSumTolerance = 0.015;
 
@@ -51,6 +54,15 @@ QString toneFor(DoctorCheckStatus status)
     case DoctorCheckStatus::Running: return QStringLiteral("running");
     default: return QStringLiteral("neutral");
     }
+}
+
+QString healthRailLabel(DoctorCheckStatus status)
+{
+    // Unknown is a deliberate diagnosis result: a safe direct observation did
+    // not establish a verdict. Make that absence of a verdict clear without
+    // relabelling the underlying result as healthy, warning, or failure.
+    return status == DoctorCheckStatus::Unknown ? QStringLiteral("NO VERDICT")
+        : displayName(status).toUpper();
 }
 
 QString elapsedText(qint64 milliseconds)
@@ -219,7 +231,10 @@ QVariantList DoctorSessionViewModel::healthDomains() const
     QVariantList values;
     for (const auto &domain : domains) {
         const DoctorCheckStatus status = aggregateStatus(m_session.checkResults(), domain.second);
-        values.append(QVariantMap{{QStringLiteral("label"), domain.first}, {QStringLiteral("status"), displayName(status).toUpper()},
+        values.append(QVariantMap{{QStringLiteral("label"), domain.first}, {QStringLiteral("status"), healthRailLabel(status)},
+            {QStringLiteral("detail"), status == DoctorCheckStatus::Unknown
+                ? QStringLiteral("No category verdict: one or more safe direct observations were not determinate.")
+                : QStringLiteral("Aggregate status from completed read-only checks.")},
             {QStringLiteral("symbol"), iconFor(status)}, {QStringLiteral("tone"), toneFor(status)}});
     }
     return values;

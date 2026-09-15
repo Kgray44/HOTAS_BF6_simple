@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include <algorithm>
 #include <functional>
 
 using namespace hotas::doctor;
@@ -120,6 +121,7 @@ private slots:
     void repairContractRejectsUnknownAndArbitraryTargets();
     void presentationToggleKeepsOneCanonicalSession();
     void presentationFractionsRejectInvalidPixelGeometry();
+    void healthRailUnknownMeansNoVerdict();
     void phaseOneEngineKeepsProtocolFailuresIndependentAndExact();
     void phaseOneDeviceMetadataMapsToCatalogChecks();
     void phaseOneReportRedactsSensitiveObservationValues();
@@ -301,11 +303,34 @@ void HidHideDoctorDomainTests::presentationToggleKeepsOneCanonicalSession()
 void HidHideDoctorDomainTests::presentationFractionsRejectInvalidPixelGeometry()
 {
     const QVariantList defaults = DoctorSessionViewModel::defaultPaneFractions();
+    const QVariantList canonical{0.49, 0.145, 0.22, 0.145};
+    const QVariantList legacyValid{0.22, 0.265, 0.36, 0.155};
     QCOMPARE(defaults.size(), 4);
+    QCOMPARE(defaults, canonical);
     QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{22, 27, 36, 15}), defaults);
-    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.22, 0.265, 0.36, 0.155}), defaults);
+    QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(legacyValid), legacyValid);
     QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.02, 0.265, 0.36, 0.355}), defaults);
     QCOMPARE(DoctorSessionViewModel::normalizedPaneFractions(QVariantList{0.22, 0.265, 0.36}), defaults);
+}
+
+void HidHideDoctorDomainTests::healthRailUnknownMeansNoVerdict()
+{
+    DoctorSession session;
+    DoctorCheckResult unknownResult;
+    unknownResult.checkId = DoctorCheckId(QStringLiteral("HD-SYS-001"));
+    unknownResult.status = DoctorCheckStatus::Unknown;
+    unknownResult.summary = QStringLiteral("No direct read-only observation was available.");
+    unknownResult.implementationConditional = true;
+    session.appendCheckResult(unknownResult);
+    DoctorSessionViewModel model(session, QStringLiteral("unit-test"));
+    const QVariantList domains = model.healthDomains();
+    const auto windows = std::find_if(domains.cbegin(), domains.cend(), [](const QVariant &value) {
+        return value.toMap().value(QStringLiteral("label")).toString() == QStringLiteral("WINDOWS");
+    });
+    QVERIFY(windows != domains.cend());
+    const QVariantMap domain = windows->toMap();
+    QCOMPARE(domain.value(QStringLiteral("status")).toString(), QStringLiteral("NO VERDICT"));
+    QVERIFY(domain.value(QStringLiteral("detail")).toString().contains(QStringLiteral("not determinate")));
 }
 
 void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAndExact()
