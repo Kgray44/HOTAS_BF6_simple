@@ -145,11 +145,18 @@ Page {
         const argument = flightDeckLearningArgument
         flightDeckLearningOperation = ""
         flightDeckLearningArgument = null
-        if (operation === "button") dialog.openButtonLearning()
-        else if (operation === "quick-buttons") dialog.openQuickButtons()
-        else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
-        else if (operation === "quick-axes") dialog.openQuickAxes()
-        else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+        // A page button's release can still be in flight, or the prior
+        // learning popup can still be completing its close signal. Open on
+        // the next event turn so that stale close work cannot immediately
+        // hide the newly requested Flight Deck modal.
+        Qt.callLater(function() {
+            if (!dialog) return
+            if (operation === "button") dialog.openButtonLearning()
+            else if (operation === "quick-buttons") dialog.openQuickButtons()
+            else if (operation === "axis") dialog.openAxisLearning(String(argument || "Disabled"))
+            else if (operation === "quick-axes") dialog.openQuickAxes()
+            else if (operation === "pov") dialog.openPovLearning(Number(argument || 1))
+        })
     }
     function openFlightDeckButtonLearning() { requestFlightDeckLearning("button", null) }
     function openFlightDeckQuickMap() { requestFlightDeckLearning("quick-buttons", null) }
@@ -2536,7 +2543,12 @@ Page {
                 Component.onCompleted: {
                     if (root.flightDeckAdaptiveProfileContext.length > 0) {
                         backend.selectProfileForEditing(root.flightDeckAdaptiveProfileContext)
-                        editScope = "profile"
+                        // The Profile deep link selects the configuration
+                        // container, but Adaptive Response remains a
+                        // physical-device channel editor.  Do not let this
+                        // legacy profile-wide assignment leak settings from
+                        // one controller into another.
+                        editScope = "device"
                         targetId = ""
                         setPreview()
                         root.flightDeckAdaptiveProfileContext = ""

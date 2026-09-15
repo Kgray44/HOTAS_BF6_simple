@@ -31,6 +31,10 @@ Flickable {
     // Repeater model or reevaluating every card's editor bindings.
     readonly property var axisItems: usingPresentationOverride ? axisPresentationOverride : backend.axisConfiguration
     readonly property var axisTelemetryItems: usingPresentationOverride ? axisPresentationOverride : backend.axisTelemetry
+    // The canonical output vocabulary remains available at page scope for
+    // summaries and assistive tooling. Per-card selectors below still narrow
+    // their choices to the selected source and expose collision ownership.
+    readonly property var outputChoices: backend.virtualAxisChoices || []
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0 ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "All Devices")
     // Do not borrow backend.physicalConnected here: that reports the active
     // mapper source.  Axes is an editor and must describe the top-bar

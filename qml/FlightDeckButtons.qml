@@ -33,10 +33,17 @@ Flickable {
     signal requestQuickMap()
     signal requestPovLearning(int virtualButton)
 
-    readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttonConfiguration
-    // The physical-card tree stays stable; only this bounded selected-device
-    // projection changes while buttons are pressed or released.
-    readonly property var buttonTelemetry: backend.buttonInputTelemetry
+    // The normal grid is permanently keyed by Virtual Output.  Changing the
+    // top-bar Selected Device changes only the source chooser inside an
+    // expanded card; it never replaces every card with that device's buttons.
+    readonly property var buttonItems: buttonPresentationOverride !== null ? buttonPresentationOverride : backend.buttons
+    readonly property var buttonTelemetry: backend.buttonTelemetry
+    // Keep the selected-device input projection separate from the permanent
+    // virtual-output grid.  These are bounded snapshots: configuration only
+    // changes when routes change, while input telemetry is indexed directly
+    // for live physical feedback without any per-card backend query.
+    readonly property var buttonConfiguration: backend.buttonConfiguration
+    readonly property var buttonInputTelemetry: backend.buttonInputTelemetry
     readonly property var povItems: povPresentationOverride !== null ? povPresentationOverride : backend.povs
     readonly property var povInputItems: povInputsPresentationOverride !== null ? povInputsPresentationOverride : backend.povInputs
     readonly property var automationItems: automationPresentationOverride !== null ? automationPresentationOverride : backend.automationRules
@@ -122,6 +129,12 @@ Flickable {
             return buttonTelemetry[position] || ({})
         return ({ pressed: false, liveAvailable: false, virtualPressed: false })
     }
+    function liveSelectedInputButtonState(index) {
+        const position = Number(index || 0) - 1
+        if (position >= 0 && position < buttonInputTelemetry.length)
+            return buttonInputTelemetry[position] || ({})
+        return ({ pressed: false, liveAvailable: false })
+    }
     function visibleButtonCount() {
         let count = 0
         for (let index = 0; index < buttonItems.length; ++index) {
@@ -137,9 +150,7 @@ Flickable {
         return count
     }
     function isAssigned(button) {
-        // Cards represent the configured virtual-output capacity, so they
-        // remain visible whether or not a physical source is assigned.
-        return !!button
+        return Number(button && button.sourceCount || 0) > 0
     }
     function buttonVisible(button) {
         if (!button) return false
@@ -168,6 +179,24 @@ Flickable {
                         && Number(condition.button) === Number(buttonIndex)) {
                     related.push(rule)
                     break
+                }
+            }
+        }
+        return related
+    }
+    function automationsForSources(button) {
+        const related = []
+        const seen = ({})
+        const sources = button && button.sources ? button.sources : []
+        for (let sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex) {
+            const source = sources[sourceIndex] || ({})
+            const sourceRules = automationForButton(Number(source.physicalButton || 0))
+            for (let ruleIndex = 0; ruleIndex < sourceRules.length; ++ruleIndex) {
+                const rule = sourceRules[ruleIndex] || ({})
+                const id = String(rule.id || rule.name || ruleIndex)
+                if (!seen[id]) {
+                    seen[id] = true
+                    related.push(rule)
                 }
             }
         }
@@ -439,6 +468,8 @@ Flickable {
         readonly property int buttonIndex: Number(button.index)
         readonly property bool expanded: root.expandedButtonIndex === buttonIndex
         readonly property var live: root.liveButtonState(buttonIndex)
+        readonly property var selectedInputLive: root.liveSelectedInputButtonState(selectedOwnedSourceButton)
+        readonly property var automations: root.automationsForSources(button)
         // Read selectedDeviceId inside the binding as well as consulting the
         // backend.  This makes a top-bar device change refresh the exact
         // capability list even when both controllers expose the same number
@@ -531,6 +562,15 @@ Flickable {
                         font.pixelSize: 9
                         Layout.fillWidth: true
                     }
+                    Text {
+                        visible: card.automations.length > 0
+                        text: "Automation · " + card.automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
+                        color: deck.textSecondary
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 9
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
                 }
                 DeckButton { text: card.expanded ? "CLOSE" : "CONFIGURE"; subdued: true; onClicked: root.setExpandedButton(card.buttonIndex) }
             }
@@ -594,7 +634,8 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: card.virtualPressed ? "vJoy output is pressed" : ""
+                        text: card.virtualPressed ? "vJoy output is pressed"
+                            : (Boolean(card.selectedInputLive.pressed) ? "Selected input is pressed" : "")
                         color: deck.healthy
                         font.family: deck.telemetryFont
                         font.pixelSize: 9
@@ -689,7 +730,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: button.profileControlEnabled && Number(button.target) > 0
+                        visible: Boolean(button.profileControlEnabled) && Number(button.target) > 0
                         text: "Saved game route · " + String(button.targetLabel)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
@@ -717,7 +758,7 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space8
                 SummaryChip {
-                    visible: button.profileControlEnabled
+                    visible: Boolean(button.profileControlEnabled)
                     label: String(button.profileControlMode || "Profile").toUpperCase()
                     tone: button.profileControlTargetAvailable ? "healthy" : "attention"
                 }
@@ -887,7 +928,7 @@ Flickable {
                     }
                 }
                 RowLayout {
-                    visible: button.profileControlEnabled
+                    visible: Boolean(button.profileControlEnabled)
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
@@ -901,7 +942,7 @@ Flickable {
                     DeckButton {
                         text: "OPEN PROFILE"
                         subdued: true
-                        enabled: button.profileControlTargetAvailable
+                        enabled: Boolean(button.profileControlTargetAvailable)
                         onClicked: root.navigateToProfile(String(button.profileControlTargetId || ""))
                     }
                 }
@@ -1330,9 +1371,10 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: 2
                 Text {
-                    text: selectedInputDeviceId.length > 0
-                        ? buttonItems.length + " physical buttons · " + inputDeviceName
-                        : "Select a specific controller to view its physical buttons"
+                    text: buttonItems.length + " virtual buttons · "
+                        + (selectedInputDeviceId.length > 0
+                            ? "source selector: " + inputDeviceName
+                            : "select a controller to choose a source")
                     color: deck.textMuted
                     font.family: deck.telemetryFont
                     font.pixelSize: 10
@@ -1420,7 +1462,7 @@ Flickable {
             Layout.fillWidth: true
             spacing: deck.space8
             Text {
-                text: "Each card is the selected device's physical button. The output route shown is the only editable destination."
+                text: "Each card is one virtual output. Its source summary shows the controller and physical button that currently own it."
                 color: deck.textMuted
                 font.pixelSize: 9
                 Layout.fillWidth: true
@@ -1437,12 +1479,10 @@ Flickable {
             }
         }
 
-        SectionLabel { text: "PHYSICAL BUTTONS" }
+        SectionLabel { text: "VIRTUAL BUTTONS" }
         Text {
             visible: buttonItems.length === 0
-            text: selectedInputDeviceId.length === 0
-                ? "Choose a specific controller from SELECTED DEVICE in the top bar."
-                : inputDeviceName + " exposes no verified physical buttons."
+            text: "No virtual button outputs are available for the selected Profile."
             color: deck.textMuted
             font.pixelSize: 10
             Layout.fillWidth: true
@@ -1453,7 +1493,7 @@ Flickable {
             spacing: deck.space12
             Repeater {
                 model: root.buttonItems
-                delegate: ButtonCard {
+                delegate: VirtualButtonCard {
                     required property var modelData
                     button: modelData
                 }

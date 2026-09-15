@@ -1285,7 +1285,10 @@ private:
     // Later control-plane transitions use the same passive inspection path
     // as startup. Requests are coalesced so a Profile/Rig/output hand-off
     // cannot create a utility-process storm.
-    void scheduleAutomaticSetupTruthRefresh();
+    // An explicit Rig activation has just captured a coherent new topology.
+    // It may retain that published truth while the follow-up inspection runs
+    // instead of flashing the entire application back to CHECKING.
+    void scheduleAutomaticSetupTruthRefresh(bool retainPublishedSnapshot = false);
     void startAutomaticSetupTruthRefresh();
     bool applyControllerReadinessForConfiguration(const MapperConfiguration &configuration);
     void startExplicitNewControllerVerification(const QString &directInputId, const QString &displayName,

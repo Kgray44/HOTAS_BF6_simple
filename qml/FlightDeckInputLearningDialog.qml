@@ -22,6 +22,12 @@ FlightDeckDialog {
     property bool complete: false
     property string startError: ""
     property bool confirmResetButtons: false
+    // A prior popup can remain in its exit transition for one UI turn after
+    // it is no longer visible. Keep a new request until that close has
+    // finished so an old close event cannot immediately hide the new modal.
+    property bool closeInProgress: false
+    property string queuedOperation: ""
+    property var queuedArgument: null
 
     readonly property bool quickWorkflow: workflow === "quick-axes" || workflow === "quick-buttons"
     readonly property bool quickAxes: workflow === "quick-axes"
@@ -47,13 +53,35 @@ FlightDeckDialog {
         confirmResetButtons = false
     }
 
+    function deferUntilClosed(operation, argument) {
+        if (!closeInProgress)
+            return false
+        queuedOperation = operation
+        queuedArgument = argument
+        return true
+    }
+
+    function dispatchQueuedOperation() {
+        const operation = queuedOperation
+        const argument = queuedArgument
+        queuedOperation = ""
+        queuedArgument = null
+        if (operation === "button") openButtonLearning()
+        else if (operation === "axis") openAxisLearning(String(argument || "Disabled"))
+        else if (operation === "pov") openPovLearning(Number(argument || 1))
+        else if (operation === "quick-axes") openQuickAxes()
+        else if (operation === "quick-buttons") openQuickButtons()
+    }
+
     function openButtonLearning() {
+        if (deferUntilClosed("button", null)) return
         resetFor("single-button")
         selectedVirtualButton = Math.max(1, Math.min(selectedVirtualButton, backend.vjoyButtonCount))
         open()
     }
 
     function openAxisLearning(target) {
+        if (deferUntilClosed("axis", target)) return
         resetFor("single-axis")
         targets = [{ "target": String(target || "Disabled") }]
         open()
@@ -61,6 +89,7 @@ FlightDeckDialog {
     }
 
     function openPovLearning(virtualButton) {
+        if (deferUntilClosed("pov", virtualButton)) return
         resetFor("single-pov")
         selectedVirtualButton = Math.max(1, Number(virtualButton || 1))
         open()
@@ -68,6 +97,7 @@ FlightDeckDialog {
     }
 
     function openQuickAxes() {
+        if (deferUntilClosed("quick-axes", null)) return
         resetFor("quick-axes")
         targets = backend.quickAssignAxisTargets
         complete = targets.length === 0
@@ -77,6 +107,7 @@ FlightDeckDialog {
     }
 
     function openQuickButtons() {
+        if (deferUntilClosed("quick-buttons", null)) return
         resetFor("quick-buttons")
         targets = backend.quickMapButtonTargets
         complete = targets.length === 0
@@ -157,10 +188,14 @@ FlightDeckDialog {
         close()
     }
 
+    onAboutToHide: closeInProgress = true
     onClosed: {
+        closeInProgress = false
         if (learning.active)
             backend.cancelInputLearning()
         workflow = ""
+        if (queuedOperation.length > 0)
+            Qt.callLater(dispatchQueuedOperation)
     }
 
     Connections {

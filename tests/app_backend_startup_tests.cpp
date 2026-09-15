@@ -2,6 +2,8 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QQuickWindow>
 #include <QSettings>
 #include <QStandardPaths>
@@ -9,7 +11,9 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <array>
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -120,7 +124,10 @@ bool verifyHealthyRigActivatesWithoutCompatibleProfile()
     if (mapping.value(QStringLiteral("status")).toString() != QStringLiteral("READY")
         || !mapping.value(QStringLiteral("evidence")).toMap().value(QStringLiteral("unmapped")).toBool()
         || !mapping.value(QStringLiteral("detail")).toString().contains(QStringLiteral("no Profile mapped"))) {
-        std::fprintf(stderr, "active unmapped Rig was incorrectly presented as a Profile activation fault\n");
+        std::fprintf(stderr, "active unmapped Rig was incorrectly presented as a Profile activation fault: status=%s detail=%s unmapped=%d\n",
+            qPrintable(mapping.value(QStringLiteral("status")).toString()),
+            qPrintable(mapping.value(QStringLiteral("detail")).toString()),
+            mapping.value(QStringLiteral("evidence")).toMap().value(QStringLiteral("unmapped")).toBool() ? 1 : 0);
         return false;
     }
     for (const QVariant &entry : backend->deviceRigs()) {
@@ -1192,14 +1199,26 @@ bool verifySelectedProfileEditorContext()
         return false;
     }
 
+    if (!backend->selectControllerForEditing(QStringLiteral("activation-transaction-controller"))) {
+        std::fprintf(stderr, "selected-Profile editor could not establish its physical device channel\n");
+        return false;
+    }
+    if (!backend->assignSelectedDeviceButtonToVirtualOutput(1, 1, false)) {
+        std::fprintf(stderr, "selected-Profile editor could not route its selected device button\n");
+        return false;
+    }
     backend->setAxisCustomName(0, QStringLiteral("Helicopter Roll"));
     backend->setButtonCustomName(1, QStringLiteral("Helicopter Fire"));
     const QVariantList axes = backend->axisConfiguration();
     const QVariantList buttons = backend->buttons();
+    const QVariantMap firstButton = buttons.isEmpty() ? QVariantMap{} : buttons.front().toMap();
+    const QVariantList firstButtonSources = firstButton.value(QStringLiteral("sources")).toList();
+    const QString firstButtonPhysicalLabel = firstButtonSources.isEmpty() ? QString{}
+        : firstButtonSources.front().toMap().value(QStringLiteral("physicalLabel")).toString();
     if (axes.isEmpty() || buttons.isEmpty()
         || axes.front().toMap().value(QStringLiteral("customName")).toString()
             != QStringLiteral("Helicopter Roll")
-        || buttons.front().toMap().value(QStringLiteral("customName")).toString()
+        || firstButtonPhysicalLabel
             != QStringLiteral("Helicopter Fire")
         || backend->activeProfileId() != normalProfileId) {
         std::fprintf(stderr, "offline selected-Profile editor changes did not stay outside mapper activation\n");
@@ -1233,6 +1252,54 @@ bool verifySelectedProfileEditorContext()
     return true;
 }
 
+using StartupFixture = bool (*)();
+
+const std::array<std::pair<QString, StartupFixture>, 20> &startupFixtures()
+{
+    static const std::array<std::pair<QString, StartupFixture>, 20> fixtures{{
+        {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
+        {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
+        {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
+        {QStringLiteral("manual-rig-output"), verifyManualRigUsesRigOwnedOutputTransaction},
+        {QStringLiteral("unmapped-rig"), verifyHealthyRigActivatesWithoutCompatibleProfile},
+        {QStringLiteral("rig-profile-resolution"), verifyRigProfileResolutionIsNeverAnActivationBlocker},
+        {QStringLiteral("manual-profile-output"), verifyManualProfileUsesRigOwnedOutputTransaction},
+        {QStringLiteral("viewed-profile-output"), verifyViewedProfileUsesRigOwnedOutputForMappingEdits},
+        {QStringLiteral("ready-to-activate"), verifySetupTruthReadyToActivateCompletion},
+        {QStringLiteral("reconnect"), verifyReconnectLifecycleTruth},
+        {QStringLiteral("targeted-vjoy"), verifyTargetedVJoyRepairPlan},
+        {QStringLiteral("external-vjoy"), verifyExternalVJoyBusyTruth},
+        {QStringLiteral("fresh-setup"), verifyFreshSetupCheckSessionLifecycle},
+        {QStringLiteral("damaged-vjoy"), verifyDamagedVJoyIsDetectedOnSecondFreshCheck},
+        {QStringLiteral("controller-verification"), verifyControllerVerificationConvergesInOneSetupRun},
+        {QStringLiteral("acquired-output"), verifyAcquiredOutputWaitsForReportWithoutBecomingUnavailable},
+        {QStringLiteral("stale-waiting"), verifyWaitingForUserDoesNotLatch},
+        {QStringLiteral("multi-controller"), verifyMultiControllerMemberIsolation},
+        {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
+        {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
+    }};
+    return fixtures;
+}
+
+bool runFixtureInFreshProcess(const QString &name)
+{
+    QProcess fixture;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("HOTAS_STARTUP_FOCUSED_TEST"), name);
+    fixture.setProcessEnvironment(environment);
+    fixture.setProgram(QCoreApplication::applicationFilePath());
+    fixture.setArguments({QStringLiteral("--isolated-presentation")});
+    fixture.setProcessChannelMode(QProcess::ForwardedChannels);
+    fixture.start();
+    if (!fixture.waitForStarted(10'000) || !fixture.waitForFinished(30'000)
+        || fixture.exitStatus() != QProcess::NormalExit || fixture.exitCode() != 0) {
+        std::fprintf(stderr, "isolated startup fixture failed: %s (exit=%d)\n",
+                     name.toUtf8().constData(), fixture.exitCode());
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1244,15 +1311,22 @@ int main(int argc, char *argv[])
     // presentation test into a driver-integration test.
     qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
     QApplication application(argc, argv);
+    const QString focusedFixture = qEnvironmentVariable("HOTAS_STARTUP_FOCUSED_TEST");
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
-    application.setApplicationName(QStringLiteral("HOTAS Mapper"));
-    // This suite exercises a known-good startup fixture.  A narrow recovery
-    // journal is intentionally durable in production, so remove any record
-    // left by another test process before the AppBackend constructors load
-    // it.  Recovery semantics themselves are covered by readiness tests.
+    // Every synthetic fixture owns an independent ConfigStore directory.
+    // They exercise deliberately different persisted Rig/Profile states and
+    // must never inherit one another's topology merely because CTest runs
+    // them under one executable name.
+    application.setApplicationName(focusedFixture.isEmpty()
+        ? QStringLiteral("HOTAS Mapper")
+        : QStringLiteral("HOTAS Mapper Fixture %1").arg(focusedFixture));
+    // Synthetic fixtures each establish their own persisted topology.  Test
+    // mode isolates this store from the owner, and clearing it here keeps a
+    // prior CTest invocation from becoming hidden input to the next fixture.
+    // Recovery persistence is covered explicitly by readiness tests.
     QSettings testSettings;
-    testSettings.remove(QStringLiteral("readiness/pendingAutomaticRepairRecovery"));
+    testSettings.clear();
     testSettings.sync();
 
     if (qEnvironmentVariable("HOTAS_STARTUP_FOCUSED_TEST")
@@ -1291,27 +1365,31 @@ int main(int argc, char *argv[])
             == QStringLiteral("rig-profile-resolution")) {
         return verifyRigProfileResolutionIsNeverAnActivationBlocker() ? 0 : 1;
     }
+    if (!focusedFixture.isEmpty()) {
+        for (const auto &[name, fixture] : startupFixtures()) {
+            if (name == focusedFixture) {
+                // These child fixtures deliberately mutate the same isolated
+                // ConfigStore. Terminate at the assertion boundary instead
+                // of letting Qt's process-wide platform/tray teardown from
+                // one synthetic process influence the next fixture.
+                const bool passed = fixture();
+                std::fflush(stderr);
+                std::_Exit(passed ? 0 : 1);
+            }
+        }
+        std::fprintf(stderr, "unknown startup fixture: %s\n", focusedFixture.toUtf8().constData());
+        return 1;
+    }
 
-    if (!verifyStartupSetupTruthPublication()) return 1;
-    if (!verifyHidHideTimeoutRetainsLastKnownGoodReadback()) return 1;
-    if (!verifyActivationTransactionFaults()) return 1;
-    if (!verifyManualRigUsesRigOwnedOutputTransaction()) return 1;
-    if (!verifyHealthyRigActivatesWithoutCompatibleProfile()) return 1;
-    if (!verifyRigProfileResolutionIsNeverAnActivationBlocker()) return 1;
-    if (!verifyManualProfileUsesRigOwnedOutputTransaction()) return 1;
-    if (!verifyViewedProfileUsesRigOwnedOutputForMappingEdits()) return 1;
-    if (!verifySetupTruthReadyToActivateCompletion()) return 1;
-    if (!verifyReconnectLifecycleTruth()) return 1;
-    if (!verifyTargetedVJoyRepairPlan()) return 1;
-    if (!verifyExternalVJoyBusyTruth()) return 1;
-    if (!verifyFreshSetupCheckSessionLifecycle()) return 1;
-    if (!verifyDamagedVJoyIsDetectedOnSecondFreshCheck()) return 1;
-    if (!verifyControllerVerificationConvergesInOneSetupRun()) return 1;
-    if (!verifyAcquiredOutputWaitsForReportWithoutBecomingUnavailable()) return 1;
-    if (!verifyWaitingForUserDoesNotLatch()) return 1;
-    if (!verifyMultiControllerMemberIsolation()) return 1;
-    if (!verifySidebarActivationLifecycle()) return 1;
-    if (!verifySelectedProfileEditorContext()) return 1;
+    // Each control-plane fixture deliberately rewrites persisted topology.
+    // Execute those destructive seams in short-lived child processes so a
+    // queued timer or worker teardown from one fixture cannot touch the next
+    // fixture's ConfigStore state. Production uses one long-lived backend;
+    // this isolates only the test harness's independent scenarios.
+    for (const auto &[name, fixture] : startupFixtures()) {
+        Q_UNUSED(fixture);
+        if (!runFixtureInFreshProcess(name)) return 1;
+    }
     // Fixture tests above intentionally rewrite isolated persisted topology.
     // Construct the long-lived presentation backend only after that control-
     // plane work has completed, so it cannot race the fixture ConfigStore.

@@ -326,10 +326,11 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         }
         const DeviceProfileMapping *deviceMapping = profile
             ? findDeviceProfileMapping(*profile, record->id) : nullptr;
-        if (profile && (!deviceMapping || !deviceMapping->enabled)) {
-            runtime.issue = u"The active profile has no enabled mapping for a Device Rig member."_qs;
-            return runtime;
-        }
+        // A Profile may intentionally leave a Rig member unconfigured. This
+        // is how a true blank Profile and incremental multi-controller setup
+        // remain safe: preserve the verified hardware topology while this
+        // member contributes a neutral, disabled route. Missing or disabled
+        // per-device mapping is therefore not a Rig-compilation defect.
         // Member-specific destinations remain Rig topology. A member without
         // an explicit advanced assignment always routes to the Rig-owned
         // primary output; a Profile can never redirect it.

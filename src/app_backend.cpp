@@ -2045,7 +2045,10 @@ bool AppBackend::publishSelectedButtonStateForTest(int physicalButton, bool pres
 
 bool AppBackend::configureUnmappedRigActivationFixtureForTest()
 {
-    if (!configureActivationTransactionFixtureForTest()) return false;
+    // This fixture asserts the terminal, owner-visible state after a healthy
+    // Rig activation. Start from the completed readiness evidence fixture,
+    // not the constructor's deliberately provisional CHECKING state.
+    if (!configureSetupTruthReadyToActivateFixtureForTest()) return false;
     const DeviceRig *source = findDeviceRig(m_configuration, u"activation-transaction-rig"_qs);
     if (!source) return false;
 
@@ -2221,6 +2224,7 @@ bool AppBackend::configureSetupTruthReadyToActivateFixtureForTest()
     const QDateTime checkedAt = QDateTime::currentDateTime();
     ControllerReadinessPlan ready;
     ready.state = ControllerReadinessState::Ready;
+    ready.isChecking = false;
     ready.lastChecked = checkedAt;
     ready.physical.name = discovered.name;
     ready.physical.directInputId = discovered.directInputId;
@@ -5989,6 +5993,12 @@ QVariantMap AppBackend::activateDeviceRigWithoutProfile(const QString &rigId)
     if (!output) {
         return reject(u"The Device Rig needs an enabled Primary Virtual Output."_qs);
     }
+    // commitActivationConfiguration replaces m_configuration, invalidating
+    // pointers returned from its old vectors. Preserve owner-visible names
+    // before the transaction so the successful active/unmapped result never
+    // dereferences a stale Rig or output after the commit.
+    const QString requestedRigName = rig->name;
+    const QString outputName = output->name;
     const ActivationContext context = activationContext({}, ActivationIntent::ManualRig, {}, requestedRigId);
     for (const DeviceRigMember &member : rig->members) {
         if (!member.enabled) continue;
@@ -6067,7 +6077,7 @@ QVariantMap AppBackend::activateDeviceRigWithoutProfile(const QString &rigId)
     }
     m_activationDegraded = false;
     appendEvent(QString(u"Device Rig activated without a Profile: %1. Hardware is ready; mapping is intentionally neutral."_qs)
-        .arg(rig->name));
+        .arg(requestedRigName));
     // Publish the resulting active/unmapped truth immediately. The scheduled
     // passive refresh below can still fold in later driver evidence, but the
     // visible state must never briefly describe this safe topology as a
@@ -6075,14 +6085,14 @@ QVariantMap AppBackend::activateDeviceRigWithoutProfile(const QString &rigId)
     captureSetupTruthSnapshot();
     emit deviceRigsChanged();
     if (!m_setupTruthSynchronousActivationRefresh)
-        scheduleAutomaticSetupTruthRefresh();
-    QVariantMap result = actionResult(true, rig->name + u" activated"_qs,
+        scheduleAutomaticSetupTruthRefresh(true);
+    QVariantMap result = actionResult(true, requestedRigName + u" activated"_qs,
         u"Hardware is active with no Profile mapped. Create, copy, or choose a Profile when ready."_qs,
         u"deviceRig"_qs, requestedRigId);
     result.insert(u"deviceRigId"_qs, requestedRigId);
-    result.insert(u"deviceRigName"_qs, rig->name);
+    result.insert(u"deviceRigName"_qs, requestedRigName);
     result.insert(u"outputLayoutId"_qs, outputId);
-    result.insert(u"outputLayoutName"_qs, output->name);
+    result.insert(u"outputLayoutName"_qs, outputName);
     result.insert(u"profileId"_qs, QString{});
     result.insert(u"profileName"_qs, u"No active Profile"_qs);
     result.insert(u"unmapped"_qs, true);
@@ -16967,7 +16977,7 @@ void AppBackend::startStartupSetupTruthInspection()
     }
 }
 
-void AppBackend::scheduleAutomaticSetupTruthRefresh()
+void AppBackend::scheduleAutomaticSetupTruthRefresh(bool retainPublishedSnapshot)
 {
     // Interactive CHECK/REPAIR owns its frozen before/after snapshots and
     // already performs a terminal full read-back. Never interleave a passive
@@ -16988,10 +16998,12 @@ void AppBackend::scheduleAutomaticSetupTruthRefresh()
 
     if (!m_setupTruthAutomaticRefreshPending) {
         m_setupTruthAutomaticRefreshPending = true;
-        // This invalidates the prior frozen result immediately. Every setup
-        // surface now shows the shared neutral CHECKING state until one fresh
-        // read-only inspection can be published atomically.
-        captureSetupTruthSnapshot();
+        // Ordinary external-state changes invalidate the prior frozen result
+        // immediately. An explicit Rig activation is different: it has just
+        // published a coherent active topology, so retain it while its
+        // follow-up read-only inspection runs instead of falsely flashing
+        // a healthy active/unmapped Rig as CHECKING.
+        if (!retainPublishedSnapshot) captureSetupTruthSnapshot();
         emit stateChanged();
     }
     // Do not restart a live timer: a burst of mapper/output/inventory events
