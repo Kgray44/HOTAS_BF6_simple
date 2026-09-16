@@ -159,7 +159,7 @@ QList<ApprovedPackage> ApprovedPackageCatalog::packages()
             ApprovedPackageSourceKind::OfficialSignedRelease,
             QStringLiteral("f4bbbcB82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6"),
             PackageSignaturePolicy::AuthenticodeRequired, QStringLiteral("Nefarius Software Solutions e.U."),
-            19041, 0, {}, {}, 1, RepairQualificationLevel::LabQualified,
+            19041, 26200, {}, {}, 1, RepairQualificationLevel::LabQualified,
             QStringLiteral("Official Nefarius GitHub release v1.5.230.0; 8,078,016-byte x64 asset, independently SHA-256 and Authenticode verified on 2026-09-16."),
             QStringLiteral("HidHide_1.5.230_x64.exe"), QStringLiteral("1.5.230"), 8078016, {}},
         {QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.230.0-X64"),

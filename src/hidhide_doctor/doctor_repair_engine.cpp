@@ -84,19 +84,29 @@ QJsonObject configurationObject(const HidHideConfigurationSnapshot &snapshot)
 
 QString canonicalJson(const QJsonObject &object);
 
-bool userConfigurationMatchesBackup(const HidHideConfigurationSnapshot &current, const QString &serializedBefore)
+QString configurationReconciliationDisposition(const HidHideConfigurationSnapshot &current, const QString &serializedBefore)
 {
     QJsonParseError error;
     const QJsonDocument beforeDocument = QJsonDocument::fromJson(serializedBefore.toUtf8(), &error);
-    if (error.error != QJsonParseError::NoError || !beforeDocument.isObject()) return false;
+    if (error.error != QJsonParseError::NoError || !beforeDocument.isObject()) return QStringLiteral("incompatible-legacy-entry");
     QJsonObject before = beforeDocument.object();
     QJsonObject after = configurationObject(current);
+    const QString previousProvider = before.value(QStringLiteral("provider")).toString();
+    const QString previousVersion = before.value(QStringLiteral("providerVersion")).toString();
+    const bool settingsWereLost = (!before.value(QStringLiteral("whitelist")).toArray().isEmpty()
+            && after.value(QStringLiteral("whitelist")).toArray().isEmpty())
+        || (!before.value(QStringLiteral("blacklist")).toArray().isEmpty()
+            && after.value(QStringLiteral("blacklist")).toArray().isEmpty());
     // A signed package replacement necessarily changes its provider version.
     // This is migration evidence, not a user-configuration edit; ownership
     // reconciliation deliberately compares only the HidHide settings.
     before.remove(QStringLiteral("providerVersion"));
     after.remove(QStringLiteral("providerVersion"));
-    return canonicalJson(before) == canonicalJson(after);
+    if (canonicalJson(before) == canonicalJson(after))
+        return current.providerVersion != previousVersion ? QStringLiteral("migration-preserved") : QStringLiteral("preserved");
+    if (settingsWereLost) return QStringLiteral("restoration-required");
+    if (current.provider != previousProvider) return QStringLiteral("incompatible-legacy-entry");
+    return QStringLiteral("external-conflict");
 }
 
 QString canonicalJson(const QJsonObject &object)
@@ -962,8 +972,11 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
     const bool targetDriverLoaded = !targetVersion.isEmpty()
         && snapshot.environment.hidhide.driverVersion == targetVersion;
     const std::optional<HidHideConfigurationSnapshot> configuration = RepairPlanner::configurationFrom(snapshot);
-    const bool configurationMatchesBackup = configuration && !transaction.backupManifest.serializedState.isEmpty()
-        && userConfigurationMatchesBackup(*configuration, transaction.backupManifest.serializedState);
+    const QString configurationDisposition = !configuration ? QStringLiteral("unreadable")
+        : transaction.backupManifest.serializedState.isEmpty() ? QStringLiteral("incompatible-legacy-entry")
+        : configurationReconciliationDisposition(*configuration, transaction.backupManifest.serializedState);
+    const bool configurationMatchesBackup = configurationDisposition == QStringLiteral("preserved")
+        || configurationDisposition == QStringLiteral("migration-preserved");
     const bool controlApiHealthy = readable(protocol(snapshot, QStringLiteral("GET_ACTIVE")))
         && readable(protocol(snapshot, QStringLiteral("GET_INVERSE")))
         && readable(protocol(snapshot, QStringLiteral("GET_WHITELIST")))
@@ -972,9 +985,7 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
     result.transaction.continuationState.insert(QStringLiteral("targetDriverLoaded"), targetDriverLoaded);
     result.transaction.continuationState.insert(QStringLiteral("controlApiHealthy"), controlApiHealthy);
     result.transaction.continuationState.insert(QStringLiteral("configurationReadable"), configuration.has_value());
-    result.transaction.continuationState.insert(QStringLiteral("configurationDisposition"), !configuration
-        ? QStringLiteral("unreadable") : configurationMatchesBackup ? QStringLiteral("preserved")
-        : QStringLiteral("changed-requires-owner-reconciliation"));
+    result.transaction.continuationState.insert(QStringLiteral("configurationDisposition"), configurationDisposition);
 
     if (result.transaction.rebootCount > result.transaction.maximumReboots) {
         result.transaction.state = RepairTransactionState::RecoveryRequired;
@@ -1002,7 +1013,11 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
         // overwrite user-owned HidHide configuration, so a distinct plan is
         // required after the read-only classification is shown to the owner.
         result.transaction.state = RepairTransactionState::RecoveryRequired;
-        result.transaction.finalStatus = QStringLiteral("Post-reboot configuration differs from the captured backup; it is classified as changed and no restoration or rollback was attempted.");
+        result.transaction.finalStatus = configurationDisposition == QStringLiteral("restoration-required")
+            ? QStringLiteral("Post-reboot configuration lost one or more captured settings; restoration requires a separately authorized exact plan.")
+            : configurationDisposition == QStringLiteral("incompatible-legacy-entry")
+                ? QStringLiteral("Post-reboot configuration is incompatible with the captured legacy representation; no migration or restore was attempted.")
+                : QStringLiteral("Post-reboot configuration differs from the captured backup and is classified as an external conflict; no restoration or rollback was attempted.");
         result.requiresOwnerReview = true;
     } else {
         result.transaction.state = RepairTransactionState::Completed;
