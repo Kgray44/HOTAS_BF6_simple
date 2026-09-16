@@ -98,13 +98,9 @@ int main(int argc, char *argv[])
         std::abort();
 #endif
     });
-    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-        [] { hotas::CrashDiagnostics::markCleanShutdown(); });
     // The Phase 0 probe is opt-in and all of its samples remain in memory
     // until this one bounded shutdown export.
     hotas::ResponsivenessProbe::installIfEnabled(&application);
-    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-        [] { hotas::ResponsivenessProbe::exportActive(); });
     // Development/test-only fatal-path exercise. It is not presented in QML
     // or Settings and never runs unless a caller supplies the explicit flag.
     if (hasArgument(argc, argv, "--crash-reporter-test")) {
@@ -118,6 +114,14 @@ int main(int argc, char *argv[])
     }
 
     hotas::AppBackend backend;
+    // Connection order is intentional: shutdown waits only for the latest
+    // asynchronous configuration generation before the final probe export.
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [&backend] { backend.flushPersistenceForShutdown(); });
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [] { hotas::CrashDiagnostics::markCleanShutdown(); });
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [] { hotas::ResponsivenessProbe::exportActive(); });
     hotas::ThemeManager themeManager;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);

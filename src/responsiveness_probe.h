@@ -33,6 +33,14 @@ public:
     void recordNavigationObjectReady(int page, const QString &pageName);
     void recordConfigSave(qint64 startedNs, qint64 finishedNs, qint64 serializationNs,
                           qint64 setValueNs, qint64 syncNs, bool success, bool guiThread);
+    void recordPersistenceEnqueue(qint64 captureStartedNs, qint64 captureFinishedNs,
+                                  qint64 enqueuedNs, quint64 generation, bool supersededPending);
+    void recordPersistenceWorker(quint64 generation, qint64 enqueuedNs, qint64 workerStartedNs,
+                                 qint64 workerFinishedNs, qint64 serializationNs,
+                                 qint64 setValueNs, qint64 syncNs, bool success);
+    void recordPersistenceState(quint64 requests, quint64 writes, quint64 superseded,
+                                quint64 latestRequestedGeneration, quint64 durableGeneration,
+                                quint64 failures, quint64 lastFailedGeneration);
     QString exportReport(const QString &requestedPath = QString());
 
     // Narrow test seam: it verifies aggregation and bounded reporting without
@@ -122,6 +130,13 @@ private:
     SampleSet m_configSerialization;
     SampleSet m_configSetValue;
     SampleSet m_configSync;
+    SampleSet m_persistenceGuiSnapshot;
+    SampleSet m_persistenceGuiEnqueue;
+    SampleSet m_persistenceWorkerQueueWait;
+    SampleSet m_persistenceWorkerTotal;
+    SampleSet m_persistenceWorkerSerialization;
+    SampleSet m_persistenceWorkerSetValue;
+    SampleSet m_persistenceWorkerSync;
     QVector<PendingInput> m_pendingInputs;
     QVector<NavigationRecord> m_navigation;
     QVector<ConfigSaveRecord> m_configSaves;
@@ -132,6 +147,13 @@ private:
     quint64 m_configSaveBursts = 0;
     quint64 m_configSaveFailures = 0;
     quint64 m_configSaveGuiThreadCount = 0;
+    quint64 m_persistenceRequests = 0;
+    quint64 m_persistenceWrites = 0;
+    quint64 m_persistenceSuperseded = 0;
+    quint64 m_persistenceLatestRequestedGeneration = 0;
+    quint64 m_persistenceDurableGeneration = 0;
+    quint64 m_persistenceFailures = 0;
+    quint64 m_persistenceLastFailedGeneration = 0;
 };
 
 } // namespace hotas

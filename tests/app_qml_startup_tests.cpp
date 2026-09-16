@@ -6301,6 +6301,39 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
             .arg(sliderClick.x()).arg(sliderClick.y())
             .arg(adaptive->property("contentY").toReal()));
     }
+    // Phase 1 uses the existing pointer-safe tuning slider as a real bursty
+    // configuration source. Do not settle between taps: the test verifies the
+    // GUI-side enqueue boundary while the serial persistence worker coalesces
+    // snapshots in the background. The probe records the p95/p99 evidence;
+    // this stays a deliberately generous regression ceiling for CI variance.
+    const int pointerPressesBeforeBurst = horizonSlider->property("pointerPresses").toInt();
+    std::vector<qint64> burstClickTimes;
+    burstClickTimes.reserve(100);
+    for (int index = 0; index < 100; ++index) {
+        const qreal fraction = 0.12 + static_cast<qreal>(index % 76) / 100.0;
+        const QPoint burstClick = viewportPoint(horizonSlider, adaptiveItem,
+            QPointF(horizonSlider->width() * fraction, horizonSlider->height() * 0.5));
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, burstClick);
+        burstClickTimes.push_back(elapsed.nsecsElapsed());
+    }
+    settlePresentation();
+    std::sort(burstClickTimes.begin(), burstClickTimes.end());
+    const auto burstPercentileMs = [&burstClickTimes](double fraction) {
+        const size_t index = std::min(burstClickTimes.size() - 1,
+            static_cast<size_t>(std::ceil(fraction * burstClickTimes.size())) - 1);
+        return static_cast<double>(burstClickTimes[index]) / 1'000'000.0;
+    };
+    const double p95BurstClickMs = burstPercentileMs(0.95);
+    const double p99BurstClickMs = burstPercentileMs(0.99);
+    std::fprintf(stderr,
+        "whole_app_responsiveness_slider_burst requests=100 gui_click_p95_ms=%.3f gui_click_p99_ms=%.3f\n",
+        p95BurstClickMs, p99BurstClickMs);
+    if (horizonSlider->property("pointerPresses").toInt() < pointerPressesBeforeBurst + 100
+        || p99BurstClickMs > 500.0) {
+        return fail(QStringLiteral("bursty Adaptive Response slider did not remain pointer-responsive"));
+    }
     const auto verifyPrimaryResponseSlider = [&](const QString &objectName, const QString &property) {
         auto *slider = findItem(objectName);
         if (!slider || !scrollTo(slider)) {
@@ -8223,6 +8256,7 @@ int main(int argc, char *argv[])
         backend.setVirtualAxisAvailabilityForTest(true);
         const bool safe = verifyWholeAppResponsivenessNavigation(
             backend, themeManager, QStringLiteral("Dark"));
+        backend.flushPersistenceForShutdown();
         const QString reportPath = backend.exportResponsivenessProbe();
         if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
             return failPresentationLifecycleTest(
@@ -8244,6 +8278,15 @@ int main(int argc, char *argv[])
         backend.setVirtualAxisAvailabilityForTest(true);
         const bool telemetrySafe = verifyFlightDeckAdaptiveResponseInteraction(
             backend, themeManager, QStringLiteral("Dark"));
+        backend.flushPersistenceForShutdown();
+        const QString reportPath = backend.exportResponsivenessProbe();
+        if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
+            return failPresentationLifecycleTest(
+                QStringLiteral("Phase 1 persistence probe could not export its bounded result"));
+        }
+        if (!reportPath.isEmpty()) {
+            std::fprintf(stderr, "whole_app_responsiveness_report=%s\n", reportPath.toUtf8().constData());
+        }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return telemetrySafe ? 0 : 1;
     }
