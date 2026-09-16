@@ -96,12 +96,13 @@ Helper protocol is v2 and integration protocol is v1.
   and 2 diagnoses. It retained the known 1.5.230.0 client / 1.4.181.0 driver
   mismatch, pending-restart evidence, and degraded HID enumeration as separate
   evidence. Its R3 proposal remained explicitly not FieldQualified.
-- The owner manually exercised **Devices → Open HidHide Doctor** and
-  **Diagnostics/App Health → Open HidHide Doctor** in the fresh staged build.
+- The owner manually exercised **Devices → Open HidHide Doctor**,
+  **Diagnostics/App Health → Open HidHide Doctor**, and
+  **Flight Deck → Diagnostics → Open HidHide Doctor** in the fresh staged build.
   Devices was independently observed to launch the paired staged Doctor with
-  the bounded integration token; the owner confirmed the App Health route
-  correctly focused the existing Doctor, with one staged Doctor process. This
-  is entry-point evidence only, not full native visual, DPI, accessibility,
+  the bounded integration token; the owner confirmed the App Health and Flight
+  Deck routes correctly focused the existing Doctor, with one staged Doctor
+  process. This is entry-point evidence only, not full native visual, DPI, accessibility,
   hardware, or repair acceptance.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
@@ -125,7 +126,7 @@ negative product claim, nor a substituted real-machine result.
 | Required category | Current evidence / status |
 |---|---|
 | 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR, whose head is the current candidate. |
-| 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor and Diagnostics/App Health focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
+| 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Updater atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
 | 13–15. Clean, healthy, partial HidHide | Deterministic diagnostic fixtures only; clean/healthy/partial real or VM environments are Not qualified. |
