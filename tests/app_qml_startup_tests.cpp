@@ -6322,6 +6322,10 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
     settlePresentation();
     adaptive->setProperty("presetNameDraft", customPresetName);
     adaptive->setProperty("presetDescriptionDraft", QStringLiteral("Pointer-created native Flight Deck fixture"));
+    // The native button's enabled binding follows the QML event loop. Let it
+    // settle before pointer input so a slow headless runner cannot click the
+    // previously disabled control and report a misleading save failure.
+    settlePresentation();
     auto *savePreset = findItem(QStringLiteral("flightDeckAdaptivePresetSave"));
     if (!clickItem(savePreset)) {
         return fail(QStringLiteral("custom preset save was not pointer reachable"));
