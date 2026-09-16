@@ -18,6 +18,7 @@ ledger's fixture work.
 | English / non-English locale | English host only. | Partially qualified | Locale matrix remains open. |
 | 100–200% DPI / small window | Existing headless layout suite passed. | Fixture/headless | Native DPI and screen-reader review remain open. |
 | Command Center reporting and layout | Native-QML fixture test exercised Safe-to-Share report composition, local bundle writing, a 10-second released-divider stability hold, shared Activity/Inspector dock, and density transition. | Executed, native-QML fixture | This is not an owner visual review on a normal desktop, nor a full accessibility qualification. |
+| Staged HOTAS Doctor entry points | Owner manually confirmed that **Devices** and **Diagnostics/App Health** each opened or focused the paired staged Doctor. The Devices launch was independently observed to start `HidHide Doctor.exe` from the same stage with a bounded `--integration-context`; the paired staged process count remained one. | Executed, native owner route check | Covers the two deliberate launch surfaces and single-instance behavior only. It is not broad visual, DPI, screen-reader, hardware, or repair qualification. |
 
 ## Environment and hardware matrix
 
@@ -42,8 +43,9 @@ ledger's fixture work.
 ## Release blocker classification
 
 BLOCKER evidence is still missing for cross-machine qualification, real repair
-execution/reboot reconciliation, native owner visual/DPI/accessibility review,
-CPU contention, installer/update/uninstall, full HOTAS regression, and
+execution/reboot reconciliation, native owner visual/DPI/accessibility review
+beyond the exercised entry points, CPU contention, installer/update/uninstall,
+full HOTAS regression, and
 external tester use. The owner-machine diagnosis itself is not a repair
 authorization. No unresolved code safety defect was identified by the focused
 tests, but missing evidence is not treated as a pass.
