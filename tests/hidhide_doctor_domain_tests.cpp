@@ -882,6 +882,9 @@ void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReport
     QVERIFY(qmlSource.contains("doctorSession.exportDiagnosticBundleUrl(selectedFolder"));
     QVERIFY(!qmlSource.contains("selectedFile.toLocalFile"));
     QVERIFY(!qmlSource.contains("selectedFolder.toLocalFile"));
+    QVERIFY(qmlSource.contains("visible: doctorSession.reportStatus.length > 0"));
+    QVERIFY(qmlSource.contains("text: doctorSession.reportStatus"));
+    QVERIFY(qmlSource.contains("text: doctorSession.reportBusy ? \"Exporting…\""));
 
     model.exportReportUrl(QUrl::fromLocalFile(destination), QStringLiteral("Entire Session"), QStringLiteral("Detailed"),
                           QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
