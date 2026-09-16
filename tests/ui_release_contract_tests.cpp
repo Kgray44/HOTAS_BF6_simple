@@ -35,6 +35,7 @@ private slots:
     void axisConflictsRequireExplicitSignalFlowDecisions();
     void installerUpgradeAcceptanceTracksSchema33();
     void flightDeckTypographyContract();
+    void signalFlowTypographyScalesContainingRowsAndCards();
     void flightDeckInformationArchitectureContract();
     void multiControllerVerificationAndSelectionStayScoped();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -1142,6 +1143,31 @@ void UiReleaseContractTests::flightDeckTypographyContract()
     QVERIFY(!ciWorkflow.contains(QStringLiteral("Qt 6.5 uses")));
     QVERIFY(toolchainCheck.contains(QStringLiteral("$qualifiedQtVersion = '6.8.3'")));
     QVERIFY(toolchainCheck.contains(QStringLiteral("$qualifiedQtArch = 'win64_msvc2022_64'")));
+}
+
+void UiReleaseContractTests::signalFlowTypographyScalesContainingRowsAndCards()
+{
+    const QString theme = sourceFile(QStringLiteral("qml/Theme.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/SignalFlow.qml"));
+    const QString flightDeck = sourceFile(QStringLiteral("qml/FlightDeckSignalFlow.qml"));
+
+    QVERIFY(theme.contains(QStringLiteral("readonly property int compactControlHeight: Math.round(32 * textScale)")));
+    QVERIFY(theme.contains(QStringLiteral("readonly property int controlHeight: Math.round(40 * textScale)")));
+    QVERIFY(standard.contains(QStringLiteral("implicitHeight: root.compactControlHeight")));
+    QVERIFY(standard.contains(QStringLiteral("implicitHeight: root.controlHeight")));
+    QVERIFY(standard.contains(QStringLiteral("themeTokens.scale(32)")));
+    QVERIFY(standard.contains(QStringLiteral("nodeColumn.implicitHeight + themeTokens.scale(16)")));
+    QVERIFY(standard.contains(QStringLiteral("height: root.compactControlHeight")));
+    QVERIFY(!standard.contains(QStringLiteral("implicitHeight: 27")));
+    QVERIFY(!standard.contains(QStringLiteral("width: 180; height: 20")));
+    QVERIFY(flightDeck.contains(QStringLiteral("implicitHeight: deck.compactControlHeight")));
+    QVERIFY(flightDeck.contains(QStringLiteral("inputNodeContent.implicitHeight + contentPadding * 2")));
+    QVERIFY(flightDeck.contains(QStringLiteral("secondaryInputNodeContent.implicitHeight + contentPadding * 2")));
+    QVERIFY(flightDeck.contains(QStringLiteral("processorNodeContent.implicitHeight + contentPadding * 2")));
+    QVERIFY(flightDeck.contains(QStringLiteral("outputNodeContent.implicitHeight + contentPadding * 2")));
+    QVERIFY(flightDeck.contains(QStringLiteral("height: deck.compactControlHeight; radius: deck.radiusControl")));
+    QVERIFY(!flightDeck.contains(QStringLiteral("implicitHeight: 31")));
+    QVERIFY(!flightDeck.contains(QStringLiteral("height: 118")));
 }
 
 void UiReleaseContractTests::flightDeckInformationArchitectureContract()

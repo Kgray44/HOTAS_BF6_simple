@@ -27,6 +27,11 @@ QtObject {
     readonly property int sectionTitle: scale(16)
     readonly property int cardTitle: scale(18)
     readonly property int pageTitle: scale(26)
+    // Controls and dense rows must grow with their labels.  Signal Flow uses
+    // these shared metrics so accessibility scaling cannot turn a fixed row
+    // into overlapping text.
+    readonly property int compactControlHeight: Math.round(32 * textScale)
+    readonly property int controlHeight: Math.round(40 * textScale)
     readonly property int panelRadius: topGun ? 2 : dayOps ? 4 : 6
     readonly property int controlRadius: topGun ? 1 : dayOps ? 3 : 4
 

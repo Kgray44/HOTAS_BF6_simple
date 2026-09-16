@@ -7260,6 +7260,9 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     // matrix below. It instantiates all five production experiences and
     // exercises a route through the QML-owned click-click command function,
     // while retaining the real AppBackend/configuration authority.
+    // Run the dense graph fixture at the maximum supported presentation size:
+    // it is the case that exposed fixed-height text overlap in the editor.
+    themeManager.setTextSize(QStringLiteral("Extra Large"));
     backend.setVirtualAxisAvailabilityForTest(true);
     const auto signalFlowWarnings = [](QStringList warnings) {
         warnings.erase(std::remove_if(warnings.begin(), warnings.end(), [](const QString &warning) {

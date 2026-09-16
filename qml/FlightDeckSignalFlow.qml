@@ -1193,7 +1193,7 @@ Item {
         property bool destination: false
         property bool isSelected: false
         property bool isCompatible: false
-        implicitHeight: 31
+        implicitHeight: deck.compactControlHeight
         radius: deck.radiusControl
         color: isSelected ? deck.accentMuted : isCompatible ? deck.selected : dropTarget.containsDrag ? deck.selected : hover.containsMouse ? deck.secondarySurface : "transparent"
         border.width: isSelected || isCompatible || dropTarget.containsDrag ? 1 : 0
@@ -1384,8 +1384,9 @@ Item {
                                     width: parent.width; spacing: 2
                                     Row {
                                         width: parent.width; spacing: 4
-                                        Text { width: parent.width - 34; text: parent.parent.groupName + " · " + root.groupPorts("input", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
-                                        DeckButton { width: 28; height: 20; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("input", parent.parent.groupName, !parent.parent.collapsed) }
+                                        height: deck.compactControlHeight
+                                        Text { width: parent.width - deck.scale(32); anchors.verticalCenter: parent.verticalCenter; text: parent.parent.groupName + " · " + root.groupPorts("input", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        DeckButton { width: deck.scale(28); height: parent.height; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("input", parent.parent.groupName, !parent.parent.collapsed) }
                                     }
                                     Repeater {
                                         visible: !parent.collapsed
@@ -1570,13 +1571,14 @@ Item {
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: 250
-                            height: 118
+                            height: Math.max(deck.scale(118), inputNodeContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
                             ColumnLayout {
+                                id: inputNodeContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
                                 Text { text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Text { text: inputNode.nodeData.detail || "Physical source"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
@@ -1607,13 +1609,14 @@ Item {
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: 250
-                                height: 118
+                                height: Math.max(deck.scale(118), secondaryInputNodeContent.implicitHeight + contentPadding * 2)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
                                 color: modelData.missingReference ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface
                                 ColumnLayout {
+                                    id: secondaryInputNodeContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
                                     Text { text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Text { text: modelData.detail || "Saved Device Rig member"; color: modelData.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
@@ -1643,7 +1646,10 @@ Item {
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: 180
-                                height: 88 + Math.max(0, Number(modelData.sharedChannelCount || 0) - 1) * 20
+                                height: Math.max(deck.scale(88)
+                                                 + Math.max(0, Number(modelData.sharedChannelCount || 0) - 1)
+                                                     * deck.compactControlHeight,
+                                                 processorNodeContent.implicitHeight + contentPadding * 2)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -1651,6 +1657,7 @@ Item {
                                 contentPadding: deck.cardPaddingCompact
                                 color: deck.elevatedSurface
                                 ColumnLayout {
+                                    id: processorNodeContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: 4
                                     Text { text: modelData.label; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Text { text: modelData.detail; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
@@ -1687,13 +1694,14 @@ Item {
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: 250
-                            height: 118
+                            height: Math.max(deck.scale(118), outputNodeContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
                             ColumnLayout {
+                                id: outputNodeContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
                                 Text { text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Text { text: outputNode.nodeData.detail || "vJoy destination"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
@@ -1716,7 +1724,7 @@ Item {
                                 model: root.graph.routes || []
                                 delegate: Rectangle {
                                     required property var modelData
-                                    width: parent.width; height: 25; radius: deck.radiusControl
+                                    width: parent.width; height: deck.compactControlHeight; radius: deck.radiusControl
                                     color: routeHit.containsMouse || processorDrop.containsDrag || (root.inspectedRoute && root.inspectedRoute.id === modelData.id) ? deck.selected : "transparent"
                                     RowLayout {
                                         anchors.fill: parent
@@ -1809,8 +1817,9 @@ Item {
                                     width: parent.width; spacing: 2
                                     Row {
                                         width: parent.width; spacing: 4
-                                        Text { width: parent.width - 34; text: parent.parent.groupName + " · " + root.groupPorts("output", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
-                                        DeckButton { width: 28; height: 20; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("output", parent.parent.groupName, !parent.parent.collapsed) }
+                                        height: deck.compactControlHeight
+                                        Text { width: parent.width - deck.scale(32); anchors.verticalCenter: parent.verticalCenter; text: parent.parent.groupName + " · " + root.groupPorts("output", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        DeckButton { width: deck.scale(28); height: parent.height; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("output", parent.parent.groupName, !parent.parent.collapsed) }
                                     }
                                     Repeater {
                                         visible: !parent.collapsed

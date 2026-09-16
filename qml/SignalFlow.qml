@@ -97,6 +97,12 @@ Item {
     readonly property color graphPreview: themeTokens.graphPreview || "#377da3"
     readonly property color graphLabel: themeTokens.graphLabel || "#76909a"
     readonly property color graphFrame: themeTokens.graphFrame || "#4b7081"
+    // Legacy keeps a compact token map.  Retain that supported host by
+    // deriving these newer semantic metrics from its existing scale helper.
+    readonly property int compactControlHeight: Number(themeTokens.compactControlHeight) > 0
+        ? Number(themeTokens.compactControlHeight) : themeTokens.scale(32)
+    readonly property int controlHeight: Number(themeTokens.controlHeight) > 0
+        ? Number(themeTokens.controlHeight) : themeTokens.scale(40)
 
     // A host signal keeps Signal Flow independent of a particular shell while
     // still allowing actual deep links into the authoritative focused editors.
@@ -1250,7 +1256,7 @@ Item {
         property bool accent: false
         property bool dangerAction: false
         property string helpText: ""
-        implicitHeight: 30
+        implicitHeight: root.compactControlHeight
         padding: 10
         font.pixelSize: themeTokens.scale(11)
         font.bold: true
@@ -1286,7 +1292,7 @@ Item {
         property bool output: false
         property bool selected: false
         property bool compatible: false
-        implicitHeight: 27
+        implicitHeight: root.compactControlHeight
         width: parent ? parent.width : 180
         Rectangle {
             anchors.fill: parent
@@ -1448,7 +1454,7 @@ Item {
                     id: searchField
                     Layout.preferredWidth: 190
                     Layout.fillWidth: root.width < 980
-                    implicitHeight: 30
+                    implicitHeight: root.controlHeight
                     placeholderText: "Find port or route"
                     color: root.text
                     placeholderTextColor: root.textMuted
@@ -1548,10 +1554,11 @@ Item {
                                     readonly property bool collapsed: root.groupCollapsed("input", modelData.group)
                                     Row {
                                         width: parent.width
+                                        height: root.compactControlHeight
                                         spacing: 4
-                                        Text { width: parent.width - 35; text: modelData.group + " · " + root.portsForGroup("input", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        Text { width: parent.width - themeTokens.scale(33); anchors.verticalCenter: parent.verticalCenter; text: modelData.group + " · " + root.portsForGroup("input", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
                                         Button {
-                                            width: 28; height: 20; padding: 0
+                                            width: themeTokens.scale(28); height: parent.height; padding: 0
                                             text: parent.parent.collapsed ? "+" : "−"
                                             Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + modelData.group
                                             onClicked: root.setGroupCollapsed("input", modelData.group, !parent.parent.collapsed)
@@ -1765,8 +1772,13 @@ Item {
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: node.kind === "processor" ? 155 : 238
                                 height: node.kind === "processor"
-                                    ? 82 + Math.max(0, Number(node.sharedChannelCount || 0) - 1) * 20
-                                    : Math.min(620, 86 + portColumn.implicitHeight)
+                                    ? Math.max(themeTokens.scale(82)
+                                               + Math.max(0, Number(node.sharedChannelCount || 0) - 1)
+                                                   * root.compactControlHeight,
+                                               nodeColumn.implicitHeight + themeTokens.scale(16))
+                                    : Math.min(themeTokens.scale(620),
+                                               Math.max(themeTokens.scale(86) + portColumn.implicitHeight,
+                                                        nodeColumn.implicitHeight + themeTokens.scale(16)))
                                 Behavior on height { NumberAnimation { duration: root.reducedMotion ? 0 : 190; easing.type: Easing.OutCubic } }
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
@@ -1779,9 +1791,10 @@ Item {
                                 border.color: node.kind === "input" ? root.graphInput : node.kind === "output" ? root.graphOutput : root.borderStrong
                                 clip: true
                                 Column {
+                                    id: nodeColumn
                                     anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 4
+                                    anchors.margins: themeTokens.scale(8)
+                                    spacing: themeTokens.scale(4)
                                     Row {
                                         width: parent.width
                                         spacing: 5
@@ -1872,8 +1885,8 @@ Item {
                                     return entry.routeId === String(modelData.id || "")
                                 })[0]
                                 x: geometry ? Math.max(0, Number(geometry.focusX || (geometry.startX + geometry.endX) * 0.5) - 90) : 680
-                                y: geometry ? Math.max(0, Number(geometry.focusY || (geometry.startY + geometry.endY) * 0.5) - 10) : 80 + index * 24
-                                width: 180; height: 20
+                                y: geometry ? Math.max(0, Number(geometry.focusY || (geometry.startY + geometry.endY) * 0.5) - root.compactControlHeight * 0.5) : themeTokens.scale(80) + index * (root.compactControlHeight + themeTokens.scale(4))
+                                width: themeTokens.scale(180); height: root.compactControlHeight
                                 DropArea {
                                     id: processorDrop
                                     anchors.fill: parent
@@ -2086,10 +2099,11 @@ Item {
                                     readonly property bool collapsed: root.groupCollapsed("output", modelData.group)
                                     Row {
                                         width: parent.width
+                                        height: root.compactControlHeight
                                         spacing: 4
-                                        Text { width: parent.width - 35; text: modelData.group + " · " + root.portsForGroup("output", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        Text { width: parent.width - themeTokens.scale(33); anchors.verticalCenter: parent.verticalCenter; text: modelData.group + " · " + root.portsForGroup("output", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
                                         Button {
-                                            width: 28; height: 20; padding: 0
+                                            width: themeTokens.scale(28); height: parent.height; padding: 0
                                             text: parent.parent.collapsed ? "+" : "−"
                                             Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + modelData.group
                                             onClicked: root.setGroupCollapsed("output", modelData.group, !parent.parent.collapsed)
