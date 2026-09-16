@@ -1,152 +1,151 @@
 # HidHide Doctor — Phase 4 Deep Repair and Recovery Implementation Record
 
-## Candidate provenance and scope
+## Final status
 
-- Accepted Phase 3 base: `a8e384c831952ceac1f65613243bd79de7d0d900`
-- Phase 4 branch: `codex/hidhide-doctor-phase4-deep-recovery`
-- Isolated worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase4-deep-recovery`
-- Final candidate commit: recorded in the delivery closeout after the commit is created; a commit cannot contain its own resulting SHA.
-- Contract revision: deep-repair engine `4.0`; helper IPC protocol `2`; journal schema `3`; report schema `5`.
+**PHASE 4 COMPLETE: YES**
 
-This candidate extends Phase 3's explicit pipeline—diagnosis, planning,
-authorization, backup, journal, fresh precondition check, narrow helper,
-independent read-back, verification, and recovery. It is deliberately a
-LabQualified candidate. It is not a release, a production repair claim, a
-driver-signing waiver, or authority to mutate the review machine.
+Phase 4 is complete as a **LabQualified implementation and documentation candidate**: the bounded R2–R5 design, execution boundaries, package validation, recovery contract, focused tests, CI, and read-only machine proof are recorded here. This is not a claim that a machine is fixed or that invasive repair is FieldQualified.
 
-## Risk classes, recipes, and gates
+No Phase 5 work was started. No real repair, UAC elevation, helper invocation, package installation, service/filter write, Driver Store change, HidHide SET, reboot, merge, tag, or release was performed for this closeout.
 
-The recipe registry remains versioned and typed. R1 remains unchanged. The
-new R2–R5 recipes are all `LabQualified`; normal mode surfaces their evidence
-and remains read-only.
+## Candidate provenance
 
-| Risk | Recipe | Entry condition | Bounded scope |
-| --- | --- | --- | --- |
-| R2 | `HD-R2-REPAIR-HIDHIDE-SERVICE` | Confirmed exact HidHide service-registration inconsistency | HidHide service registration only. |
-| R2 | `HD-R2-REPAIR-HIDHIDE-FILTER` | Confirmed exact HidHide filter-registration inconsistency | HidHide filter registration only; preserve unrelated order. |
-| R3 | `HD-R3-COMPLETE-DRIVER-REPLACEMENT` | Confirmed installed-versus-loaded replacement discontinuity | One pinned approved HidHide package, one bounded restart, read-back. |
-| R3 | `HD-R3-REPAIR-INSTALLATION` | Confirmed partial install or missing control endpoint | One pinned approved HidHide package, one bounded restart, read-back. |
-| R4 | `HD-R4-UPGRADE-APPROVED-PACKAGE` | Explicit owner upgrade request plus confirmed mismatch | Exact approved package only, with an allowed measured source version. |
-| R5 | `HD-R5-RECOVER-APPROVED-PACKAGE` | Confirmed failed/damaged repair state | Separate recovery plan and authorization; exact inactive package only. |
+| Item | Recorded value |
+| --- | --- |
+| Phase 3 base | a8e384c831952ceac1f65613243bd79de7d0d900 |
+| Branch | codex/hidhide-doctor-phase4-deep-recovery |
+| Final implementation candidate | b2ff8d418c06f927cf0cbabf727d12738e085010 |
+| Pull request | [#65](https://github.com/Kgray44/HOTAS_BF6_simple/pull/65) |
+| Contract revisions | deep-repair engine 4.0; helper IPC protocol 2; journal schema 3; report schema 5 |
 
-The planner refuses contradictory evidence, an unknown/incompatible helper
-architecture, an incomplete GET-only configuration backup, an unqualified
-Windows build, an unapproved package, unpinned source/hash/signer/version, an
-upgrade outside the catalog migration matrix, or reboot counts above the
-recipe/package bound. Newer version evidence alone never causes an upgrade.
+The candidate is a reviewable implementation. This record does not authorize merge, tag, release, ordinary-user activation, or a live repair.
 
-## Approved-package boundary
+## Exact approved official package
 
-`ApprovedPackage` records package identity, provider, version, native
-architecture, Windows-build range, source/provenance class, pinned SHA-256,
-signature policy and signer identity, upgrade/downgrade matrix, maximum
-reboots, qualification, and provenance text. `ApprovedPackageCatalog::validate`
-requires each observed identity value to match exactly.
+The catalog contains one real, immutable R3 package. It is not a floating latest selector, a caller-provided URL/path, or a fixture.
 
-The type system reserves distinct source kinds for installed validated cache,
-known official signed release, HOTAS-qualified signed provider, and
-deterministic fixture test. It accepts no arbitrary URL, local path, command
-line, latest-channel selector, or generic installer operation.
+| Field | Exact approved value |
+| --- | --- |
+| Package ID | HD-PKG-NEFARIUS-HIDHIDE-1.5.230.0-X64 |
+| Provider / channel | Nefarius / stable official signed release |
+| Artifact | HidHide_1.5.230_x64.exe |
+| Source | [Nefarius HidHide v1.5.230.0 release](https://github.com/nefarius/HidHide/releases/tag/v1.5.230.0), catalogued asset: https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe |
+| SHA-256 | f4bbbcB82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6 |
+| Expected size | 8,078,016 bytes |
+| Authenticode signer | Nefarius Software Solutions e.U. |
+| Artifact version / architecture | 1.5.230 / x64 |
+| Qualified Windows builds | 19041 through 26200, inclusive |
+| Maximum restarts / qualification | 1 / LabQualified |
+| Upgrade sources / rollback asset | none / none |
 
-Only two deterministic, `fixture://` records are supplied in this candidate.
-They exist to prove catalog/plan/helper/reboot behavior and are visibly marked
-**Deterministic test fixture only**. No public HidHide MSI hash, signer, or
-download provenance was represented as production-approved without a reviewed
-source record. Consequently, a real-machine R3–R5 diagnosis with an ordinary
-Nefarius installation is safely blocked at the catalog gate rather than
-downloading or installing anything.
+The final source review independently obtained the exact asset without running it and confirmed the stated byte count, SHA-256, valid Authenticode result, signer, and file/product version 1.5.230. That proves the pinned artifact identity, not a driver installation or a field repair.
 
-## Package, component, restart, and recovery model
+ApprovedPackageRuntime accepts only the catalogued GitHub HTTPS release and approved GitHub asset redirect hosts. It stores the artifact and exact metadata in the application local-data approved-packages cache with owner-and-LocalSystem-only protected ACLs. Before use, and again immediately before installation, it requires canonical filename/path, matching metadata and ACLs, exact bounded file size, SHA-256, WinVerifyTrust Authenticode validation, signer, PE architecture, and file version. A stale cache, failed signature, redirect escape, identity drift, or failed revalidation stops before the installer.
 
-The typed operation allow-list adds approved-package validation/staging,
-exact HidHide service/filter repair, exact inactive-package removal, approved
-package installation, a persisted Windows-restart boundary, and configuration
-reconciliation. Package targets must be `HD-PKG-*` identifiers and deep plan
-payloads reject path or argument fields. The helper protocol independently
-validates the sealed payload after its own fresh observation; protocol v2 keeps
-the normal Doctor/helper build and nonce binding.
+## Architecture qualification correction
 
-Before a deep plan can advance, the transaction captures the full HidHide
-configuration snapshot, Driver Store digest, package/loaded-version evidence,
-plan digest, provider/build/architecture and expected restart count. Journal
-schema 3 persists deep-recovery data and continuation state atomically under
-the existing owner/System-only directory policy. A reboot continuation is
-observe-first: it performs fresh package/driver/API/configuration evidence
-collection, does not replay installation, does not silently restore data, and
-enters `RecoveryRequired` on a missing package, old driver, failed API check,
-configuration mismatch, or exhausted restart bound. Recovery is separately
-planned and separately authorized.
+The previous record was wrong to retain REPAIR BLOCKED for architecture. The provider had measured native architecture and the Doctor process but had not measured the paired helper binary into the capability decision. It could therefore report an incompatible helper despite compatible paired binaries.
 
-R5 may name one exact inactive HidHide package only after both target and
-rollback eligibility are established. It never enumerates or removes an
-arbitrary Driver Store package. The model also retains deliberate handling for
-service/filter drift, driver-store/cache drift, same-version reinstall,
-client-only, driver-only, failed install, interrupted replacement, deferred
-restart, repeated restart, legacy configuration, conflicting configuration,
-wrong architecture, unknown build, and constrained staging space.
+The final candidate measures native system, Doctor binary/process, paired helper binary, and WOW64 state before accepting direct helper pairing. Focused regression coverage asserts the x64 native/process/Doctor/helper evidence and rejects drift in sealed helper requests.
 
-The Phase 3 native R1 mutator is intentionally still its R1 IOCTL allow-list.
-This candidate does **not** claim a production package installer, service
-writer, filter writer, Driver Store remover, or reboot issuer. An attempted
-deep execution therefore stops safely rather than falling back to generic
-process launch or arbitrary system mutation. Completing those system-specific
-helpers requires separately reviewed actual source records and Lab execution
-evidence; it is not substituted by fixture success.
+| Final read-only evidence | Value |
+| --- | --- |
+| Native / Doctor / helper architecture | x64 / x64 / x64 |
+| WOW64 | false |
+| Helper architecture compatible | true |
+| Direct helper protocol | true |
+| Highest qualified repair tier | Recovery Supported |
 
-## UI, CLI, reports, fixtures, and tests
+The corrected proposal is **REPAIR IDENTIFIED — NOT FIELD QUALIFIED**. Architecture compatibility removes that planning defect only; it does not bypass Lab qualification, owner authorization, fresh evidence, or field gates.
 
-The shared User Action/Command Center view model now renders R1–R5 risk,
-package identity/provenance, pinned hash and signer, source type, build and
-architecture qualification, typed operation list, configuration backup and
-rollback/recovery guidance, restart maximum/continuation status, qualification,
-authorization, and blocked reasons. The QML review card adds an Approved
-Package section without turning a normal scan into an elevation path.
+## Implemented R2–R5 boundary
 
-Reports use schema 5 and add a redaction-aware approved-package catalog and
-the deep plan/continuation fields. `--headless --plan-repair --dry-run-repair`
-is explicitly read-only: it can create a durable dry-run plan/journal but
-cannot invoke UAC, the helper, package staging, installation, service/filter
-repair, Driver Store mutation, or restart. `--approved-upgrade` is fixture
-only and does not authorize a normal-mode upgrade.
+Normal Doctor use remains read-only. A deep plan is sealed, separately authorized, journalled, and freshly revalidated. The executor accepts typed R2–R5 operations only: there is no generic command/script runner, arbitrary URL/path, arbitrary service or registry target, or generic Driver Store removal.
 
-The development fixture matrix is expanded beyond forty named cases. Focused
-tests cover exact catalog identity rejection, separate R2/R3/R4/R5 plan
-selection, typed helper plan validation and path-field tamper rejection,
-observe-first bounded reboot reconciliation, schema-5 catalog reporting, and
-fixture uniqueness. Existing domain, standalone startup, and QML layout tests
-continue to exercise the non-mutating Doctor surface.
+### R2 — exact component repair
 
-## Verification, machine boundary, and handoff
+R2 repairs only the exact HidHide kernel-driver service contract: demand start, normal error control, and %SystemRoot%\System32\drivers\HidHide.sys. It creates that service only when that exact driver file exists and otherwise fails safely; unrelated service settings are preserved.
 
-The following candidate-local checks are required before owner review:
+Before writing any filter value, R2 preflights all three classes. It appends only a missing HidHide UpperFilters entry and preserves all existing entries and ordering:
 
-1. `hidhide_doctor_domain_tests`
-2. `hidhide_doctor_deep_repair_tests`
-3. `hidhide_doctor_standalone_startup_smoke`
-4. `hidhide_doctor_layout_tests`
-5. Mapping core/readiness/startup and synthetic hot-path checks, recorded in the delivery closeout.
+- HID: {745A17A0-74D3-11D0-B6FE-00C04FB3EFC0}
+- XNA composite: {D61CA365-5AF4-4486-998B-9DB4734C6CA3}
+- Xbox composite: {05F5CFE2-4733-4950-A6BB-07AAD01A3A84}
 
-On the Phase 4 candidate build, all four Doctor checks passed: domain (8.12 s),
-deep repair (0.45 s), standalone startup (0.38 s), and native QML layout
-(4.90 s). The independent mapping core, controller-readiness, backend-startup,
-and synthetic mapping hot-path tests also passed. The synthetic benchmark
-reported zero tracked allocations in all reported linear, adaptive,
-profile-control, and automation cases; that result explicitly excludes live
-DirectInput polling and the vJoy driver call.
+This narrow scope is not permission to normalize unrelated filter chains.
 
-Real-machine validation is limited to a non-elevated, read-only diagnosis and
-optional dry-run. It must record the actual incomplete-replacement/broken-
-enumeration evidence, any permission-limited data, the blocked package reason,
-and the absence of an authorized plan. No owner authorization button, UAC
-prompt, installer, restart, Driver Store change, HidHide configuration SET, or
-automatic repair is part of this candidate handoff. Leave the native plan open
-for owner review and do not merge, tag, release, or start Phase 5.
+### R3 — exact package replacement
 
-The final Phase 4 real-machine headless dry-run exited `0` and wrote a
-schema-5 report. It diagnosed `HD-DIAG-INCOMPLETE-REPLACEMENT` at Very High
-confidence (97) and `HD-DIAG-DEVICE-ENUMERATION` at High confidence (86),
-with three warnings and one pending-restart record. The safe proposal state was
-`REPAIR BLOCKED`: the measured helper/native-architecture capability was not
-compatible. The scan additionally recorded `RegOpenKeyExW: Access is denied.`
-as an operational limit. Thus no package catalog, helper, installation,
-service/filter, Driver Store, HidHide SET, or restart path was entered.
+R3 implements the bounded approved-package route: validate; acquire/stage from the pinned source; independently revalidate; invoke only the exact catalog-derived installer executable with no caller arguments; persist a continuation boundary; then observe afresh after reboot before reconciliation. The installer has a bounded 30-minute wait and accepts only success or reboot-required codes. The current catalog permits one reboot.
+
+The final real-machine dry run produced an R3 plan with exactly five typed operations: validate approved package, stage approved package, install approved HidHide package, request the restart boundary, and reconcile HidHide configuration. No operation ran.
+
+### R4 and R5 — safe availability
+
+R4 plan architecture and sealed-plan validation are implemented and fixture-covered, but no newer qualified package or migration source is catalogued. A real R4 upgrade is therefore unavailable; version drift cannot silently become a latest upgrade.
+
+R5 requires a precisely identified inactive HidHide package and a separately verified rollback asset. Deterministic fixtures cover the typed recovery path and the arbitrary-Driver-Store-removal prohibition. Production has no verified rollback package, so R5 safely returns ROLLBACK_PACKAGE_UNAVAILABLE; no real inactive package was removed.
+
+## Helper scope and reboot continuation
+
+The helper protocol independently validates sealed plan/package identity, allowed operation/target identity, nonce/build binding, expiry, and fresh preconditions. Tests demonstrate rejection of catalog or operation drift, arbitrary executable paths and arguments, unrelated service targets, and expired requests. Elevated mutation is confined to the R2 service/filter and R3 approved-package scopes above.
+
+Journal schema 3 persists transaction, configuration snapshot, package/loaded-version evidence, Driver Store digest, plan digest, architecture/build evidence, restart count, and continuation state under the existing owner/System-only policy. Continuation is one current-user RunOnce entry for the paired Doctor executable and transaction ID. Scheduling does not reboot: restart-now is an isolated explicit owner action, and restart-later is supported.
+
+After reboot, Doctor shows RESUMING REPAIR, runs a new read-only scan, and never replays installation. It removes the continuation only at a terminal state. Reconciliation is observe-first and reports preserved, migration-preserved, restoration-required, incompatible-legacy-entry, external-conflict, or unreadable; it does not overwrite external changes. Missing package, old driver, failed API/configuration evidence, or exhausted restart bound enters RecoveryRequired for owner review.
+
+## Final real-machine read-only dry run
+
+The final non-elevated invocation was:
+
+~~~text
+HidHide Doctor.exe --headless --plan-repair --dry-run-repair --report C:\hotas-builds\hidhide-doctor-phase4-evidence\phase4-real-machine-readonly-after-architecture-fix.json
+~~~
+
+It exited 0, wrote a schema-5 report, and created only a durable dry-run plan/journal.
+
+| Observed evidence | Final value |
+| --- | --- |
+| Client version | 1.5.230.0 |
+| Driver / Driver Store version | 1.4.181.0 / 1.4.181.0 |
+| Diagnoses | HD-DIAG-INCOMPLETE-REPLACEMENT — Very High 97; HD-DIAG-DEVICE-ENUMERATION — High 86 |
+| Pending restart evidence | present (1 record) |
+| Proposal | REPAIR IDENTIFIED — NOT FIELD QUALIFIED |
+| Candidate package / qualification | HD-PKG-NEFARIUS-HIDHIDE-1.5.230.0-X64 / review-only LabQualified |
+| Restart / rollback | one restart allowed / no rollback asset |
+
+The run also recorded the permission-limited RegOpenKeyExW: Access is denied. observation. It did **not** request UAC; launch the helper; download, stage, or install a package; change a service, filter, or Driver Store entry; send a HidHide SET; restart; alter controller visibility; or operate a physical HOTAS. It is planning and diagnostic evidence only.
+
+## Verification evidence
+
+Focused local candidate verification completed before this documentation closeout:
+
+- hidhide_doctor_deep_repair_tests: 11 passed.
+- hidhide_doctor_domain_tests: 29 passed.
+- hidhide_doctor_layout_tests: 9 passed. Existing non-fatal QML mock and geometry warnings do not constitute native pointer or typography qualification.
+- Isolated Release targets HidHideDoctor and HidHideDoctorRepair built.
+
+For implementation candidate b2ff8d418c06f927cf0cbabf727d12738e085010, GitHub reported both terminal pull-request workflows successful:
+
+| Workflow | Run | Result |
+| --- | --- | --- |
+| [HOTAS BF6 CI](https://github.com/Kgray44/HOTAS_BF6_simple/actions/runs/35110126399) | 35110126399 / validate | completed / success |
+| [Documentation Check](https://github.com/Kgray44/HOTAS_BF6_simple/actions/runs/35110126418) | 35110126418 / verify | completed / success |
+
+These results cover the implementation candidate. They do not replace an owner-authorized elevated repair test, physical-device qualification, or a FieldQualified release gate.
+
+## Qualification decision and Phase 5 limits
+
+| Question | Decision | Reason |
+| --- | --- | --- |
+| Is Phase 4 implementation complete? | **Yes** | R2/R3 execution boundaries, secure package acquisition, typed helper validation, durable continuation, R4/R5 safe availability rules, reports, fixtures, focused tests, CI, and a final read-only dry run are recorded. |
+| Is this a FieldQualified repair? | **No** | The package and recipes are LabQualified; no live repair was authorized or performed. |
+| Is R4 ready for a real upgrade? | **No** | No separately qualified newer package/migration source exists. |
+| Is R5 ready for production rollback? | **No** | No independently verified rollback asset exists; production removal is blocked. |
+| Has native/physical controller behavior been qualified? | **No** | No physical HOTAS, DirectInput/vJoy runtime, or owner acceptance was exercised. |
+
+If separately authorized, Phase 5 must qualify a real-machine matrix: disposable/clean-machine R2/R3 execution and failures across the stated Windows range; explicit restart/reconciliation outcomes; a reviewed newer package and migration matrix before R4; a verified rollback asset and recovery exercise before production R5; native UI/pointer review; physical HidHide/HOTAS behavior; and owner acceptance. Those are intentional limits, not permission to expand this candidate or perform repair now.
+
+## Handoff
+
+Keep the deep plan available only for Lab/owner review. Do not merge, tag, release, start Phase 5, or execute a real repair from this closeout.
