@@ -180,6 +180,12 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         const qreal contentY = scroll->property("contentY").toReal();
         scroll->setProperty("contentY", std::max<qreal>(0.0,
             viewportCoordinates ? relative.y() - 96.0 : contentY + relative.y() - 96.0));
+        // A direct contentY assignment changes the control's presentation
+        // binding on the next polish/render turn.  Let that turn commit
+        // before calculating and dispatching a physical pointer location;
+        // otherwise a loaded CI runner can deliver a click to the former
+        // viewport position even though the ComboBox is visible.
+        QTest::qWait(50);
         settlePresentation();
         const QPoint comboPoint = viewportCoordinates
             ? viewportPoint(comboItem, scroll, QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5))
@@ -188,6 +194,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
         QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
+        QTest::qWait(32);
         settlePresentation();
         QObject *popup = combo->findChild<QObject *>(combo->objectName() + QStringLiteral("Popup"));
         if (!popup || !popup->property("visible").toBool()) continue;
@@ -204,6 +211,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
+        QTest::qWait(32);
         settlePresentation();
         if (!popup->property("visible").toBool()
             && (!requireSelectedRow || combo->property("currentIndex").toInt() == row)) return true;
