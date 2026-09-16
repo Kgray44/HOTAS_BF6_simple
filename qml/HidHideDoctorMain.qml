@@ -38,13 +38,13 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         nameFilters: exportSurface.format === "JSON" ? ["Doctor JSON report (*.json)"] : exportSurface.format === "Plain Text" ? ["Doctor text report (*.txt)"] : ["Doctor Markdown report (*.md)"]
         defaultSuffix: exportSurface.format === "JSON" ? "json" : exportSurface.format === "Plain Text" ? "txt" : "md"
-        onAccepted: doctorSession.exportReport(selectedFile.toLocalFile(), exportSurface.scope, exportSurface.detail, exportSurface.format, exportSurface.privacy)
+        onAccepted: doctorSession.exportReportUrl(selectedFile, exportSurface.scope, exportSurface.detail, exportSurface.format, exportSurface.privacy)
     }
 
     FolderDialog {
         id: exportBundleFolder
         title: "Choose an empty-or-new HidHide Doctor diagnostic bundle folder"
-        onAccepted: doctorSession.exportDiagnosticBundle(selectedFolder.toLocalFile(), exportSurface.privacy)
+        onAccepted: doctorSession.exportDiagnosticBundleUrl(selectedFolder, exportSurface.privacy)
     }
 
     QtObject {

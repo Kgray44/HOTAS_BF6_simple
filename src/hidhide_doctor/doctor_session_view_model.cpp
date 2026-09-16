@@ -759,10 +759,31 @@ void DoctorSessionViewModel::copySelectedEvidence(const QString &format, const Q
     emit presentationChanged();
 }
 
+void DoctorSessionViewModel::exportReportUrl(const QUrl &fileUrl, const QString &scope, const QString &detail,
+                                             const QString &format, const QString &privacy)
+{
+    if (!fileUrl.isLocalFile()) {
+        m_reportStatus = QStringLiteral("Export failed safely: choose a local report destination.");
+        emit presentationChanged();
+        return;
+    }
+    exportReport(fileUrl.toLocalFile(), scope, detail, format, privacy);
+}
+
 void DoctorSessionViewModel::exportReport(const QString &fileName, const QString &scope, const QString &detail,
                                           const QString &format, const QString &privacy)
 {
     beginAsynchronousExport(fileName, scope, detail, format, privacy);
+}
+
+void DoctorSessionViewModel::exportDiagnosticBundleUrl(const QUrl &directoryUrl, const QString &privacy)
+{
+    if (!directoryUrl.isLocalFile()) {
+        m_reportStatus = QStringLiteral("Export failed safely: choose a local diagnostic bundle folder.");
+        emit presentationChanged();
+        return;
+    }
+    exportDiagnosticBundle(directoryUrl.toLocalFile(), privacy);
 }
 
 void DoctorSessionViewModel::exportDiagnosticBundle(const QString &directory, const QString &privacy)

@@ -59,6 +59,13 @@ loop and verifies the requested Markdown file, nonzero contents, cleared busy
 state, and exact completion path; it is not a substitute for an owner desktop
 export retest.
 
+The Qt Quick file and folder dialogs now hand their selected `QUrl` values to
+typed model invokables. Local-path conversion occurs only in C++, not through
+a JavaScript URL method; a non-local URL reports a visible safe failure. The
+domain contract asserts both dialog handoffs, rejects the former invalid QML
+conversion, and exercises the same `file:///` local URL type through a real
+export.
+
 The Command Center no longer continuously binds persisted pane fractions back
 into a live `SplitView`. Saved fractions are restored once, a user drag owns
 the geometry until release, and the released geometry alone is persisted. A

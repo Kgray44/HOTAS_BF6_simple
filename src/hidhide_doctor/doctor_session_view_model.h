@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -152,9 +153,13 @@ public:
                                        const QString &privacy = QStringLiteral("Safe to Share"));
     Q_INVOKABLE void copySelectedEvidence(const QString &format = QStringLiteral("Markdown"),
                                           const QString &privacy = QStringLiteral("Safe to Share"));
-    Q_INVOKABLE void exportReport(const QString &fileName, const QString &scope, const QString &detail,
-                                  const QString &format, const QString &privacy);
-    Q_INVOKABLE void exportDiagnosticBundle(const QString &directory, const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE void exportReportUrl(const QUrl &fileUrl, const QString &scope, const QString &detail,
+                                     const QString &format, const QString &privacy);
+    Q_INVOKABLE void exportDiagnosticBundleUrl(const QUrl &directoryUrl,
+                                               const QString &privacy = QStringLiteral("Safe to Share"));
+    void exportReport(const QString &fileName, const QString &scope, const QString &detail,
+                      const QString &format, const QString &privacy);
+    void exportDiagnosticBundle(const QString &directory, const QString &privacy = QStringLiteral("Safe to Share"));
     Q_INVOKABLE bool exportDiagnosticReport(const QString &fileName);
     void notifySessionChanged();
     void replaceSession(DoctorSession session);

@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QUrl>
 
 #include <algorithm>
 #include <functional>
@@ -869,8 +870,21 @@ void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReport
     QVERIFY(directory.isValid());
     const QString destination = directory.filePath(QStringLiteral("test-report.md"));
 
-    model.exportReport(destination, QStringLiteral("Entire Session"), QStringLiteral("Detailed"),
-                       QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
+    model.exportReportUrl(QUrl(QStringLiteral("https://example.invalid/report.md")), QStringLiteral("Entire Session"),
+                          QStringLiteral("Detailed"), QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
+    QVERIFY(!model.reportBusy());
+    QVERIFY(model.reportStatus().contains(QStringLiteral("choose a local report destination")));
+
+    QFile qml(QStringLiteral(HOTAS_DOCTOR_SOURCE_ROOT "/qml/HidHideDoctorMain.qml"));
+    QVERIFY(qml.open(QIODevice::ReadOnly));
+    const QByteArray qmlSource = qml.readAll();
+    QVERIFY(qmlSource.contains("doctorSession.exportReportUrl(selectedFile"));
+    QVERIFY(qmlSource.contains("doctorSession.exportDiagnosticBundleUrl(selectedFolder"));
+    QVERIFY(!qmlSource.contains("selectedFile.toLocalFile"));
+    QVERIFY(!qmlSource.contains("selectedFolder.toLocalFile"));
+
+    model.exportReportUrl(QUrl::fromLocalFile(destination), QStringLiteral("Entire Session"), QStringLiteral("Detailed"),
+                          QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
     QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(destination), 10000);
     QTRY_VERIFY_WITH_TIMEOUT(!model.reportBusy(), 10000);
     const QFileInfo report(destination);
