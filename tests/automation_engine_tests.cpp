@@ -77,6 +77,7 @@ private slots:
     void temporalStateResetsOnStopDisconnectAndConfigurationSwap();
     void mappingControlsPublishOnlyOnActivationEdges();
     void adaptiveResponseOverlaysAreCompiledAndPriorityResolved();
+    void adaptiveResponsePresetDoesNotChangeActivation();
     void adaptiveResponseOverlaysComposeByProperty();
 };
 
@@ -832,6 +833,9 @@ void AutomationEngineTests::adaptiveResponseOverlaysAreCompiledAndPriorityResolv
     const RuntimeAdaptiveResponseOverride &overlay = result.adaptiveResponseOverlays[
         static_cast<size_t>(PhysicalAxis::X)];
     QVERIFY(overlay.active);
+    // A preset contributes response behavior, while the separate
+    // lower-priority Enable action remains the activation authority.
+    QVERIFY((overlay.properties & AdaptiveResponseEnabled) != 0);
     QVERIFY((overlay.properties & AdaptiveResponseMaximumHorizon) != 0);
     QCOMPARE(overlay.settings.maximumHorizonMs, 12.0F);
 
@@ -844,6 +848,38 @@ void AutomationEngineTests::adaptiveResponseOverlaysAreCompiledAndPriorityResolv
     const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
     QVERIFY(valid);
     QCOMPARE(restored.automations[1].actions[0].adaptiveResponsePresetId, QStringLiteral("fast"));
+}
+
+void AutomationEngineTests::adaptiveResponsePresetDoesNotChangeActivation()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    AutomationActionDefinition preset;
+    preset.type = AutomationActionType::AdaptiveResponsePreset;
+    preset.targetAxis = static_cast<int>(PhysicalAxis::X);
+    preset.adaptiveResponsePresetId = QStringLiteral("fast");
+    configuration.automations.push_back(rule(u"Fast response values"_qs, always(), preset));
+
+    const RuntimeProfileCache cache = compileRuntimeProfileCache(configuration);
+    QVERIFY(cache.automation->publishable);
+    AutomationRuntime runtime;
+    const RuntimeAdaptiveResponseOverride &overlay = evaluate(runtime, cache, input())
+        .adaptiveResponseOverlays[static_cast<size_t>(PhysicalAxis::X)];
+    QVERIFY(overlay.active);
+    QVERIFY((overlay.properties & AdaptiveResponseEnabled) == 0);
+    QVERIFY((overlay.properties & AdaptiveResponseMaximumHorizon) != 0);
+
+    RuntimeAdaptiveResponseConfig disabled;
+    const RuntimeAdaptiveResponseConfig disabledEffective =
+        applyAdaptiveResponseRuntimeOverride(disabled, overlay);
+    QVERIFY(!disabledEffective.enabled);
+    QCOMPARE(disabledEffective.maximumHorizonSeconds, 0.012F);
+
+    RuntimeAdaptiveResponseConfig enabled;
+    enabled.enabled = true;
+    const RuntimeAdaptiveResponseConfig enabledEffective =
+        applyAdaptiveResponseRuntimeOverride(enabled, overlay);
+    QVERIFY(enabledEffective.enabled);
+    QCOMPARE(enabledEffective.maximumHorizonSeconds, 0.012F);
 }
 
 void AutomationEngineTests::adaptiveResponseOverlaysComposeByProperty()

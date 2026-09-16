@@ -33,7 +33,7 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void axisConflictsRequireExplicitSignalFlowDecisions();
-    void installerUpgradeAcceptanceTracksSchema32();
+    void installerUpgradeAcceptanceTracksSchema33();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void multiControllerVerificationAndSelectionStayScoped();
@@ -42,6 +42,7 @@ private slots:
     void profileLibraryPortabilityIsSharedAndThemed();
     void allThemeSelectorsUseSkinnedDarkPopups();
     void adaptiveResponseControlsRetainZeroAndExposeSignalMetrics();
+    void adaptiveResponseActivationUsesOneExplicitAuthority();
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
     void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
     void setupAssistantAndOutputCreationExposeObservableContracts();
@@ -527,6 +528,27 @@ void UiReleaseContractTests::adaptiveResponseControlsRetainZeroAndExposeSignalMe
     QVERIFY(backend.contains(QStringLiteral("meanAbsolutePredictionError")));
     QVERIFY(backend.contains(QStringLiteral("targetOvershoot")));
     QVERIFY(!backend.contains(QStringLiteral("std::abs(predicted) - 1.0F")));
+}
+
+void UiReleaseContractTests::adaptiveResponseActivationUsesOneExplicitAuthority()
+{
+    const QString engine = sourceFile(QStringLiteral("src/adaptive_response.cpp"));
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString flightDeck = sourceFile(QStringLiteral("qml/FlightDeckAdaptiveResponse.qml"));
+    const QString standard = sourceFile(QStringLiteral("qml/AdaptiveResponsePage.qml"));
+
+    QVERIFY(engine.contains(QStringLiteral("std::array<AdaptiveResponsePreset, 5>")));
+    QVERIFY(!engine.contains(QStringLiteral("makeBuiltInPreset(u\"off\"")));
+    QCOMPARE(engine.count(QStringLiteral("runtime.enabled = settings.enabled;")), 2);
+    QVERIFY(!engine.contains(QStringLiteral("settings.enabled && settings.maximumHorizonMs")));
+    QVERIFY(backend.contains(QStringLiteral("&& bit == AdaptiveResponseEnabled) return false;")));
+    QVERIFY(backend.contains(QStringLiteral("{u\"effectivePresetId\"_qs, resolvedPresetId}")));
+    QVERIFY(flightDeck.contains(QStringLiteral("checked: String(root.scopeInfo().effectivePresetId")));
+    QVERIFY(flightDeck.contains(QStringLiteral("readonly property bool selectedWhileDisabled: checked && !adaptiveResponseActive")));
+    QVERIFY(flightDeck.contains(QStringLiteral("presetButton.selectedWhileDisabled ? deck.disabled : deck.accent")));
+    QVERIFY(!flightDeck.contains(QStringLiteral("adaptivePresetButton_off")));
+    QVERIFY(standard.contains(QStringLiteral("accent: (scopeInfo().effectivePresetId || scopeInfo().presetId) === modelData.id")));
+    QVERIFY(!standard.contains(QStringLiteral("adaptivePresetButton_off")));
 }
 
 void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane()
@@ -1062,23 +1084,23 @@ void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
     QVERIFY(flightDeckAxes.contains(QStringLiteral("LARGER VALUE")));
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema32()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema33()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 32")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v32")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v32")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 33")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v33")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v33")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v32")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v32")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v33")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v33")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v32")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v33")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 

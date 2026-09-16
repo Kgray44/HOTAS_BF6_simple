@@ -44,7 +44,9 @@ bool nearlyEqual(float left, float right)
 RuntimeAdaptiveResponseConfig runtimeForAdaptiveSettings(const AdaptiveResponseSettings &settings)
 {
     RuntimeAdaptiveResponseConfig runtime;
-    runtime.enabled = settings.enabled;
+    // Built-in presets intentionally carry no activation authority. These
+    // math fixtures explicitly evaluate their configured behavior as active.
+    runtime.enabled = true;
     runtime.model = settings.model;
     runtime.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
     runtime.maximumLead = settings.maximumLead;
@@ -824,6 +826,7 @@ private slots:
     void adaptiveResponseGuardsHighLocalCurveGain();
     void adaptiveResponseCanonicalPreviewScenariosAreDeterministic();
     void adaptiveResponsePersistsAndResolvesLayeredSettings();
+    void adaptiveResponseActivationUsesOnlyTheEnabledStateAndMigratesOff();
     void adaptiveResponseRecognizesSlowMotionAcrossSampleRates();
     void adaptiveResponsePreservesSlowWobbleAcrossSampleRates();
     void adaptiveResponseHandlesSampleAndHoldSourcesThenSettles();
@@ -1728,19 +1731,21 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 {
     const auto &builtIns = builtInAdaptiveResponsePresets();
     const auto settingsFor = [&builtIns](size_t index) { return builtIns[index].axes[0].settings; };
-    QCOMPARE(settingsFor(0).sustainedAssist, 0.0F);
-    QCOMPARE(settingsFor(0).horizonExtensionCapMs, 0.0F);
-    QCOMPARE(settingsFor(1).sustainedAssist, 0.12F);
-    QCOMPARE(settingsFor(1).sustainedCap, 0.06F);
-    QCOMPARE(settingsFor(1).horizonExtension, 0.10F);
-    QCOMPARE(settingsFor(1).horizonExtensionCapMs, 4.0F);
-    QCOMPARE(settingsFor(1).turningPointProtection, 0.75F);
-    QCOMPARE(settingsFor(5).sustainedAssist, 0.55F);
-    QCOMPARE(settingsFor(5).sustainedCap, 0.28F);
-    QCOMPARE(settingsFor(5).horizonExtension, 0.65F);
-    QCOMPARE(settingsFor(5).horizonExtensionCapMs, 24.0F);
-    QCOMPARE(settingsFor(5).turningPointProtection, 1.0F);
-    QCOMPARE(settingsFor(5).turningPointMargin, 0.08F);
+    QCOMPARE(builtIns.size(), size_t{5});
+    QVERIFY(std::none_of(builtIns.cbegin(), builtIns.cend(), [](const auto &preset) {
+        return preset.id == QStringLiteral("off");
+    }));
+    QCOMPARE(settingsFor(0).sustainedAssist, 0.12F);
+    QCOMPARE(settingsFor(0).sustainedCap, 0.06F);
+    QCOMPARE(settingsFor(0).horizonExtension, 0.10F);
+    QCOMPARE(settingsFor(0).horizonExtensionCapMs, 4.0F);
+    QCOMPARE(settingsFor(0).turningPointProtection, 0.75F);
+    QCOMPARE(settingsFor(4).sustainedAssist, 0.55F);
+    QCOMPARE(settingsFor(4).sustainedCap, 0.28F);
+    QCOMPARE(settingsFor(4).horizonExtension, 0.65F);
+    QCOMPARE(settingsFor(4).horizonExtensionCapMs, 24.0F);
+    QCOMPARE(settingsFor(4).turningPointProtection, 1.0F);
+    QCOMPARE(settingsFor(4).turningPointMargin, 0.08F);
 
     AdaptiveResponseSettings malformed;
     malformed.onsetAssist = std::numeric_limits<float>::infinity();
@@ -1793,13 +1798,14 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     MapperConfiguration configuration = defaultConfiguration();
     ControllerProfile &profile = activeProfile(configuration);
     configuration.adaptiveResponseGlobal.axes[0].presetId = QStringLiteral("light");
-    profile.adaptiveResponse.axes[0].properties = AdaptiveResponseMaximumHorizon
+    profile.adaptiveResponse.axes[0].properties = AdaptiveResponseEnabled | AdaptiveResponseMaximumHorizon
         | AdaptiveResponseOnsetAssist | AdaptiveResponseOnsetCap
         | AdaptiveResponseSustainedAssist | AdaptiveResponseSustainedCap
         | AdaptiveResponseHorizonExtension | AdaptiveResponseHorizonExtensionCap
         | AdaptiveResponseTurningPointProtection | AdaptiveResponseTurningPointMargin
         | AdaptiveResponseNormalMovementResponse | AdaptiveResponseRapidMovementResponse
         | AdaptiveResponseEngagementSensitivity;
+    profile.adaptiveResponse.axes[0].settings.enabled = true;
     profile.adaptiveResponse.axes[0].settings.maximumHorizonMs = 16.0F;
     profile.adaptiveResponse.axes[0].settings.onsetAssist = 0.72F;
     profile.adaptiveResponse.axes[0].settings.onsetCap = 0.31F;
@@ -1838,7 +1844,7 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
 
     bool valid = false;
     const QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 33);
     QCOMPARE(json.value(QStringLiteral("adaptiveResponseSchemaVersion")).toInt(), 2);
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
@@ -1916,7 +1922,120 @@ void MappingCoreTests::adaptiveResponsePersistsAndResolvesLayeredSettings()
     legacy.remove(QStringLiteral("adaptiveResponsePresets"));
     const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
     QVERIFY(valid);
+    // V2.6.4 no longer treats the absent legacy global horizon as a second
+    // disable switch: the profile's explicit enabled state remains decisive.
+    QVERIFY(resolveAdaptiveResponseConfiguration(migrated, activeProfile(migrated), 0).enabled);
+}
+
+void MappingCoreTests::adaptiveResponseActivationUsesOnlyTheEnabledStateAndMigratesOff()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    ControllerProfile &profile = activeProfile(configuration);
+    const RuntimeAdaptiveResponseConfig fresh = resolveAdaptiveResponseConfiguration(configuration, profile, 0);
+    QCOMPARE(configuration.adaptiveResponseGlobal.axes[0].presetId, QStringLiteral("balanced"));
+    QVERIFY(!fresh.enabled);
+    QCOMPARE(fresh.maximumHorizonSeconds, 0.008F);
+
+    AdaptiveResponseAxisOverride &profileAxis = profile.adaptiveResponse.axes[0];
+    profileAxis.presetId = QStringLiteral("fast");
+    QVERIFY(!resolveAdaptiveResponseConfiguration(configuration, profile, 0).enabled);
+    QCOMPARE(resolveAdaptiveResponseConfiguration(configuration, profile, 0).maximumHorizonSeconds, 0.012F);
+    profileAxis.properties |= AdaptiveResponseEnabled;
+    profileAxis.settings.enabled = true;
+    QVERIFY(resolveAdaptiveResponseConfiguration(configuration, profile, 0).enabled);
+    QCOMPARE(resolveAdaptiveResponseConfiguration(configuration, profile, 0).maximumHorizonSeconds, 0.012F);
+    profileAxis.settings.enabled = false;
+    const RuntimeAdaptiveResponseConfig disabledFast = resolveAdaptiveResponseConfiguration(configuration, profile, 0);
+    QVERIFY(!disabledFast.enabled);
+    QCOMPARE(disabledFast.maximumHorizonSeconds, 0.012F);
+
+    QJsonObject legacy = ConfigStore::toJson(configuration);
+    legacy.insert(QStringLiteral("version"), 32);
+    const auto setOff = [](QJsonObject *layer, int axis) {
+        QJsonArray axes = layer->value(QStringLiteral("axes")).toArray();
+        QJsonObject entry = axes.at(axis).toObject();
+        entry.insert(QStringLiteral("presetId"), QStringLiteral("off"));
+        axes.replace(axis, entry);
+        layer->insert(QStringLiteral("axes"), axes);
+    };
+    QJsonObject global = legacy.value(QStringLiteral("adaptiveResponseGlobal")).toObject();
+    setOff(&global, 0);
+    legacy.insert(QStringLiteral("adaptiveResponseGlobal"), global);
+    QJsonArray categories = legacy.value(QStringLiteral("profileCategories")).toArray();
+    QJsonObject category = categories.at(0).toObject();
+    QJsonObject categoryLayer = category.value(QStringLiteral("adaptiveResponse")).toObject();
+    setOff(&categoryLayer, 1);
+    category.insert(QStringLiteral("adaptiveResponse"), categoryLayer);
+    categories.replace(0, category);
+    legacy.insert(QStringLiteral("profileCategories"), categories);
+    QJsonArray profiles = legacy.value(QStringLiteral("profiles")).toArray();
+    QJsonObject firstProfile = profiles.at(0).toObject();
+    QJsonObject profileLayer = firstProfile.value(QStringLiteral("adaptiveResponse")).toObject();
+    setOff(&profileLayer, 2);
+    setOff(&profileLayer, 3);
+    {
+        QJsonArray axes = profileLayer.value(QStringLiteral("axes")).toArray();
+        QJsonObject entry = axes.at(3).toObject();
+        entry.insert(QStringLiteral("presetId"), QStringLiteral("fast"));
+        entry.insert(QStringLiteral("properties"), 0);
+        axes.replace(3, entry);
+        profileLayer.insert(QStringLiteral("axes"), axes);
+    }
+    firstProfile.insert(QStringLiteral("adaptiveResponse"), profileLayer);
+    profiles.replace(0, firstProfile);
+    legacy.insert(QStringLiteral("profiles"), profiles);
+
+    QJsonArray presets = legacy.value(QStringLiteral("adaptiveResponsePresets")).toArray();
+    QJsonObject customPreset{{QStringLiteral("id"), QStringLiteral("legacy-custom")},
+        {QStringLiteral("name"), QStringLiteral("Legacy Custom")},
+        {QStringLiteral("description"), QStringLiteral("Legacy OFF reference")},
+        {QStringLiteral("axes"), global.value(QStringLiteral("axes")).toArray()}};
+    presets.append(customPreset);
+    legacy.insert(QStringLiteral("adaptiveResponsePresets"), presets);
+
+    QJsonArray automations = legacy.value(QStringLiteral("automations")).toArray();
+    automations.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("legacy-off-automation")},
+        {QStringLiteral("name"), QStringLiteral("Legacy OFF Automation")},
+        {QStringLiteral("enabled"), true}, {QStringLiteral("matchMode"), QStringLiteral("all")},
+        {QStringLiteral("activationMode"), QStringLiteral("whileTriggerActive")},
+        {QStringLiteral("activeDurationMs"), 250}, {QStringLiteral("priority"), 50},
+        {QStringLiteral("conditions"), QJsonArray{QJsonObject{{QStringLiteral("controllerRecordId"), QString{}},
+            {QStringLiteral("type"), QStringLiteral("always")}, {QStringLiteral("axis"), 0},
+            {QStringLiteral("minimum"), 0.0}, {QStringLiteral("maximum"), 0.0},
+            {QStringLiteral("hysteresis"), 0.0}, {QStringLiteral("button"), 1},
+            {QStringLiteral("povHat"), 1}, {QStringLiteral("povDirection"), 1},
+            {QStringLiteral("profileId"), QString{}}, {QStringLiteral("pressCount"), 2},
+            {QStringLiteral("multiPressWindowMs"), 350}, {QStringLiteral("longPressDurationMs"), 600}}}},
+        {QStringLiteral("actions"), QJsonArray{QJsonObject{{QStringLiteral("sourceControllerRecordId"), QString{}},
+            {QStringLiteral("outputLayoutId"), QString{}}, {QStringLiteral("type"), QStringLiteral("adaptiveResponsePreset")},
+            {QStringLiteral("virtualButton"), 1}, {QStringLiteral("profileId"), QString{}},
+            {QStringLiteral("adaptiveResponsePresetId"), QStringLiteral("off")}, {QStringLiteral("targetAxis"), 0},
+            {QStringLiteral("sourceAxis"), 0}, {QStringLiteral("sourceStage"), 1}, {QStringLiteral("value"), 0.0},
+            {QStringLiteral("offset"), 0.0}, {QStringLiteral("minimum"), -1.0}, {QStringLiteral("maximum"), 1.0},
+            {QStringLiteral("tapDurationMs"), 80}}}}});
+    legacy.insert(QStringLiteral("automations"), automations);
+
+    bool valid = false;
+    const MapperConfiguration migrated = ConfigStore::fromJson(legacy, &valid);
+    QVERIFY(valid);
+    const auto verifyMigratedOff = [](const AdaptiveResponseAxisOverride &axis) {
+        return axis.presetId == QStringLiteral("balanced")
+            && (axis.properties & AdaptiveResponseEnabled) != 0U && !axis.settings.enabled;
+    };
+    QVERIFY(verifyMigratedOff(migrated.adaptiveResponseGlobal.axes[0]));
+    QVERIFY(verifyMigratedOff(migrated.profileCategories[0].adaptiveResponse.axes[1]));
+    QVERIFY(verifyMigratedOff(migrated.profiles[0].adaptiveResponse.axes[2]));
+    QCOMPARE(migrated.profiles[0].adaptiveResponse.axes[3].presetId, QStringLiteral("fast"));
+    QVERIFY((migrated.profiles[0].adaptiveResponse.axes[3].properties & AdaptiveResponseEnabled) != 0U);
+    QVERIFY(migrated.profiles[0].adaptiveResponse.axes[3].settings.enabled);
+    QVERIFY((migrated.adaptiveResponsePresets[0].axes[0].properties & AdaptiveResponseEnabled) == 0U);
+    QCOMPARE(migrated.adaptiveResponsePresets[0].axes[0].presetId, QStringLiteral("balanced"));
+    QCOMPARE(migrated.automations.back().actions[0].type, AutomationActionType::AdaptiveResponseDisable);
+    QVERIFY(migrated.automations.back().actions[0].adaptiveResponsePresetId.isEmpty());
     QVERIFY(!resolveAdaptiveResponseConfiguration(migrated, activeProfile(migrated), 0).enabled);
+    const QJsonDocument persisted(ConfigStore::toJson(migrated));
+    QCOMPARE(persisted.object().value(QStringLiteral("version")).toInt(), 33);
+    QVERIFY(!persisted.toJson(QJsonDocument::Compact).contains("\"off\""));
 }
 
 void MappingCoreTests::adaptiveResponseRecognizesSlowMotionAcrossSampleRates()
@@ -2294,7 +2413,7 @@ void MappingCoreTests::adaptiveResponseContinuityTraceAndLobeMetrics()
         QStringLiteral("Human-Like Rapid Reversal"), -1.0F, 1.0F);
     const auto &presets = builtInAdaptiveResponsePresets();
     for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 3>{
-             {{"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+             {{"Fast", 2}, {"Aggressive", 3}, {"Extreme", 4}}}) {
         const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(
             presets[presetIndex].axes[0].settings);
         const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration, physical, 0.004F);
@@ -2482,7 +2601,7 @@ void MappingCoreTests::adaptiveResponseHoldoutGeneralizationCorpus()
     std::array<AdaptiveDistribution, 5> amplitudeBandErrors;
 
     for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 5>{
-             {{"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+             {{"Light", 0}, {"Balanced", 1}, {"Fast", 2}, {"Aggressive", 3}, {"Extreme", 4}}}) {
         const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(
             presets[presetIndex].axes[0].settings);
         for (const float rate : kSourceRates) {
@@ -2599,7 +2718,7 @@ void MappingCoreTests::adaptiveResponseHoldoutGeneralizationCorpus()
         {"full", true, true, true, true},
     }};
     for (const auto &[name, presetIndex] : std::array<std::pair<const char *, size_t>, 5>{
-             {{"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5}}}) {
+             {{"Light", 0}, {"Balanced", 1}, {"Fast", 2}, {"Aggressive", 3}, {"Extreme", 4}}}) {
         const RuntimeAdaptiveResponseConfig full = runtimeForAdaptiveSettings(
             presets[presetIndex].axes[0].settings);
         for (const Ablation &ablation : ablations) {
@@ -2698,7 +2817,7 @@ void MappingCoreTests::adaptiveResponseReplaysRecordedRealHotasCorpus()
 
     const auto &presets = builtInAdaptiveResponsePresets();
     const std::array<std::pair<const char *, size_t>, 5> presetMatrix{{
-        {"Light", 1}, {"Balanced", 2}, {"Fast", 3}, {"Aggressive", 4}, {"Extreme", 5},
+        {"Light", 0}, {"Balanced", 1}, {"Fast", 2}, {"Aggressive", 3}, {"Extreme", 4},
     }};
     AdaptiveDistribution aggregateErrors;
     AdaptiveDistribution aggregateSteps;
@@ -3363,7 +3482,6 @@ void MappingCoreTests::adaptiveResponseOwnerTrajectoryReview()
     }};
     for (const AdaptiveResponsePreset &preset : builtInAdaptiveResponsePresets()) {
         const AdaptiveResponseSettings &settings = preset.axes[0].settings;
-        if (!settings.enabled) continue;
         const RuntimeAdaptiveResponseConfig configuration = runtimeForAdaptiveSettings(settings);
         for (const auto &[label, sourceScenario] : scenarios) {
             const AdaptiveResponseSimulation simulation = simulateAdaptiveResponse(configuration,
@@ -3391,7 +3509,6 @@ void MappingCoreTests::adaptiveResponseOwnerTrajectoryReview()
     TraceSummary extremeSlow;
     TraceSummary extremeNormal;
     for (const AdaptiveResponsePreset &preset : builtInAdaptiveResponsePresets()) {
-        if (!preset.axes[0].settings.enabled) continue;
         const RuntimeAdaptiveResponseConfig curve = runtimeForAdaptiveSettings(preset.axes[0].settings);
         for (const float speed : std::array<float, 6>{0.08F, 0.16F, 0.28F, 0.45F, 0.75F, 1.10F}) {
             const TraceSummary summary = traceAtSpeed(curve, speed);
@@ -3819,7 +3936,7 @@ void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()
 
     bool valid = false;
     const QJsonObject serialized = ConfigStore::toJson(configuration);
-    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 32);
+    QCOMPARE(serialized.value(QStringLiteral("version")).toInt(), 33);
     QVERIFY(serialized.value(QStringLiteral("signalFlow")).isObject());
     const MapperConfiguration restored = ConfigStore::fromJson(serialized, &valid);
     QVERIFY(valid);
@@ -5065,7 +5182,7 @@ void MappingCoreTests::activationResolverPersistsPolicyAndMigratesV24()
     configuration.manualOverrideProfileId = precision->id;
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 33);
     QVERIFY(!json.contains(QStringLiteral("activationManualOverride")));
     QVERIFY(!json.contains(QStringLiteral("manualOverrideProfileId")));
 
@@ -7434,7 +7551,7 @@ void MappingCoreTests::profileTriggerConfigurationRoundTripsAndMigrates()
     MapperConfiguration configuration = defaultConfiguration();
     setProfileTrigger(configuration, 5, precisionProfileId(), ProfileTriggerMode::Hold);
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 33);
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
@@ -7677,7 +7794,7 @@ void MappingCoreTests::povProfileAndNativePovConfigurationRoundTripWithSafeMigra
     configuration.nativePovBindings[0] = {true, NativePovTargetType::Discrete, 2};
 
     QJsonObject json = ConfigStore::toJson(configuration);
-    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 32);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 33);
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(json, &valid);
     QVERIFY(valid);
