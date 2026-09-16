@@ -5,7 +5,8 @@ Phase 2 completion**: native pointer/keyboard/wheel evidence, live mapping, and
 physical controller-to-vJoy evidence require an owner-run capture on this host.
 
 **Phase 0 head:** `f137c5405698989b6cb664aa039a8d4b9486026b`
-**Phase 1 base / current Phase 2 source head:** `4325fdac929f0a59fb5769b3c43a2e709937ef66`
+**Phase 1 implementation base:** `4325fdac929f0a59fb5769b3c43a2e709937ef66`
+**Phase 2 initial evidence commit:** `0e466250bd6e19f6c1397feed02aeed3c74032d9`
 **`origin/main` observed before Phase 2:** `5d5df526d93cccbef4b9e72068c6929ea7f11f7c`
 **Phase 2 worktree:** `C:\Users\kkids\Documents\HOTAS_BF6-responsiveness-phase2`
 **Phase 2 Release build:** `C:\hotas-builds\responsiveness-phase2`
