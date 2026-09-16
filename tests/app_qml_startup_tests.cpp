@@ -180,6 +180,12 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         const qreal contentY = scroll->property("contentY").toReal();
         scroll->setProperty("contentY", std::max<qreal>(0.0,
             viewportCoordinates ? relative.y() - 96.0 : contentY + relative.y() - 96.0));
+        // A direct contentY assignment changes the control's presentation
+        // binding on the next polish/render turn.  Let that turn commit
+        // before calculating and dispatching a physical pointer location;
+        // otherwise a loaded CI runner can deliver a click to the former
+        // viewport position even though the ComboBox is visible.
+        QTest::qWait(50);
         settlePresentation();
         const QPoint comboPoint = viewportCoordinates
             ? viewportPoint(comboItem, scroll, QPointF(comboItem->width() * 0.5, comboItem->height() * 0.5))
@@ -188,6 +194,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
         QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, comboPoint);
+        QTest::qWait(32);
         settlePresentation();
         QObject *popup = combo->findChild<QObject *>(combo->objectName() + QStringLiteral("Popup"));
         if (!popup || !popup->property("visible").toBool()) continue;
@@ -204,6 +211,7 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
+        QTest::qWait(32);
         settlePresentation();
         if (!popup->property("visible").toBool()
             && (!requireSelectedRow || combo->property("currentIndex").toInt() == row)) return true;
@@ -1364,7 +1372,17 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
     // fixtures deliberately reserve the final three vJoy slots on its final
     // pass, so only exercise the fourth (attached) creation transaction when
     // the configuration can still accommodate all four layouts.
-    const bool canExerciseRigAttach = backend.virtualOutputLayouts().size() <= 12;
+    const auto viewedRigOutputCount = [&backend, &rigId]() {
+        for (const QVariant &candidate : backend.deviceRigs()) {
+            const QVariantMap rig = candidate.toMap();
+            if (rig.value(QStringLiteral("id")).toString() == rigId) {
+                return static_cast<int>(rig.value(QStringLiteral("outputs")).toList().size());
+            }
+        }
+        return hotas::kMaximumDeviceRigOutputs;
+    };
+    const bool canExerciseRigAttach = backend.virtualOutputLayouts().size() <= 12
+        && viewedRigOutputCount() < hotas::kMaximumDeviceRigOutputs;
     const int attachedDeviceId = canExerciseRigAttach
         ? nextFreeOutputDeviceId(customDeviceId + 1) : 0;
     if (matchedDeviceId == 0 || copiedDeviceId == 0 || customDeviceId == 0
@@ -1432,6 +1450,54 @@ bool verifyDevicesInteractionStress(hotas::AppBackend &backend, QObject *surface
         || customLayout.value(QStringLiteral("discretePovs")).toInt() != 2
         || customLayout.value(QStringLiteral("axes")).toString() != QStringLiteral("Axis 1 · Axis 4 · Axis 8")) {
         return failPresentationLifecycleTest(QStringLiteral("Virtual Output modes did not save the promised capability configuration"));
+    }
+
+    // The same backend-owned plan powers the canonical Edit Output dialog.
+    // Cover metadata-only persistence, descriptor review, invalid contracts,
+    // relationship-safe deletion, and the protected default policy without
+    // issuing a vJoy or HidHide command from this software-only lifecycle.
+    const QString renamedOutput = QStringLiteral("Renamed Output Fixture %1").arg(outputFixtureSuffix);
+    const QVariantMap renamePlan = backend.previewVirtualOutputEdit(copiedOutputId, renamedOutput,
+        copiedLayout.value(QStringLiteral("deviceId")).toInt(), copiedLayout.value(QStringLiteral("axesList")).toList(),
+        copiedLayout.value(QStringLiteral("buttons")).toInt(),
+        copiedLayout.value(QStringLiteral("continuousPovs")).toInt(),
+        copiedLayout.value(QStringLiteral("discretePovs")).toInt());
+    const QVariantMap renamed = backend.applyVirtualOutputEdit(renamePlan);
+    const QVariantMap descriptorPlan = backend.previewVirtualOutputEdit(customOutputId,
+        customLayout.value(QStringLiteral("name")).toString(), customDeviceId,
+        QVariantList{QVariant{1}, QVariant{2}, QVariant{4}, QVariant{8}}, 32, 0, 2);
+    const QVariantMap descriptorUpdated = backend.applyVirtualOutputEdit(descriptorPlan);
+    const QVariantMap invalidMixedPovs = backend.previewVirtualOutputEdit(customOutputId,
+        customLayout.value(QStringLiteral("name")).toString(), customDeviceId,
+        QVariantList{QVariant{1}, QVariant{2}, QVariant{4}, QVariant{8}}, 32, 1, 1);
+    const QVariantMap duplicateName = backend.previewVirtualOutputEdit(customOutputId, renamedOutput,
+        customDeviceId, QVariantList{QVariant{1}, QVariant{2}}, 16, 0, 0);
+    const QVariantMap duplicateDevice = backend.previewVirtualOutputEdit(customOutputId,
+        QStringLiteral("Duplicate Device Fixture %1").arg(outputFixtureSuffix), copiedLayout.value(QStringLiteral("deviceId")).toInt(),
+        QVariantList{QVariant{1}, QVariant{2}}, 16, 0, 0);
+    const QVariantMap defaultDelete = backend.previewVirtualOutputDelete(QStringLiteral("bf6-output"));
+    const QVariantMap attachedDelete = canExerciseRigAttach
+        ? backend.previewVirtualOutputDelete(attachedOutputId) : QVariantMap{{QStringLiteral("canDelete"), false}};
+    const QVariantMap customDelete = backend.previewVirtualOutputDelete(customOutputId);
+    const QVariantMap deletedCustom = backend.deleteVirtualOutputLayout(customOutputId);
+    const QVariantMap renamedLayout = outputLayout(copiedOutputId);
+    if (!renamePlan.value(QStringLiteral("valid")).toBool()
+        || !renamePlan.value(QStringLiteral("metadataOnly")).toBool()
+        || !renamed.value(QStringLiteral("success")).toBool()
+        || renamedLayout.value(QStringLiteral("name")).toString() != renamedOutput
+        || !descriptorPlan.value(QStringLiteral("valid")).toBool()
+        || !descriptorPlan.value(QStringLiteral("descriptorChanged")).toBool()
+        || !descriptorPlan.value(QStringLiteral("setupHealthRequired")).toBool()
+        || !descriptorUpdated.value(QStringLiteral("success")).toBool()
+        || invalidMixedPovs.value(QStringLiteral("valid")).toBool()
+        || duplicateName.value(QStringLiteral("valid")).toBool()
+        || duplicateDevice.value(QStringLiteral("valid")).toBool()
+        || defaultDelete.value(QStringLiteral("canDelete")).toBool()
+        || (canExerciseRigAttach && attachedDelete.value(QStringLiteral("canDelete")).toBool())
+        || !customDelete.value(QStringLiteral("canDelete")).toBool()
+        || !deletedCustom.value(QStringLiteral("success")).toBool()
+        || !outputLayout(customOutputId).isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral("Virtual Output edit/preview/delete contract did not preserve its safety boundaries"));
     }
 
     // Critical Devices actions must provide an observable result on both the
@@ -2578,9 +2644,20 @@ bool clickFlightDeckSettingsItem(QQuickWindow *window, QQuickItem *settings, QQu
     const qreal targetY = std::clamp(contentPoint(item, settings).y() - 84.0, 0.0, maximumY);
     settings->setProperty("contentY", targetY);
     settlePresentation();
-    const QPoint clickPoint = viewportPoint(item, settings,
-        QPointF(item->width() * 0.5, item->height() * 0.5));
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
+    const QPointF center(item->width() * 0.5, item->height() * 0.5);
+    const QPoint clickPoint = settings == window->contentItem()
+        ? item->mapToScene(center).toPoint()
+        : viewportPoint(item, settings, center);
+    // A freshly scrolled QML control can enter the native hit-test tree one
+    // frame after its binding settles. Keep the real pointer route, but give
+    // its press and release distinct event turns as the ComboBox helper does.
+    window->contentItem()->forceActiveFocus(Qt::MouseFocusReason);
+    QTest::mouseMove(window, clickPoint);
+    QTest::qWait(50);
+    settlePresentation();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
+    QTest::qWait(8);
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
     settlePresentation();
     return true;
 }
@@ -3556,9 +3633,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     auto *createRig = findVisualItemByObjectName(devicesItem,
         QStringLiteral("flightDeckCreateRig"));
     const QString activeRigBeforeViewing = backend.activeDeviceRigId();
+    const bool openedRigPointer = openRig && clickFlightDeckSettingsItem(window, devicesItem, openRig);
     if (flightDeckRigId.isEmpty() || flightDeckRig.value(QStringLiteral("members")).toList().size() != 2
         || !rigCard || !openRig || !createRig
-        || !clickFlightDeckSettingsItem(window, devicesItem, openRig)) {
+        || !openedRigPointer) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Device Rig section or its pointer entry was unavailable"));
     }
     QObject *rigDetails = devices->findChild<QObject *>(QStringLiteral("flightDeckRigDetailsDialog"));
@@ -3960,7 +4038,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     auto *clearRunningSearch = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckRunningGameSearchClear"));
-    if (!clearRunningSearch || !clickFlightDeckSettingsItem(window, window->contentItem(), clearRunningSearch)) {
+    bool runningSearchCleared = false;
+    for (int attempt = 0; clearRunningSearch && attempt < 3 && !runningSearchCleared; ++attempt) {
+        if (!clickFlightDeckSettingsItem(window, window->contentItem(), clearRunningSearch)) break;
+        QTest::qWait(16);
+        settlePresentation();
+        runningSearchCleared = addGameDialog->property("runningSearchText").toString().isEmpty();
+    }
+    if (!clearRunningSearch || !runningSearchCleared) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Running search clear was not pointer reachable")
             .arg(appearance));
     }
@@ -4503,12 +4588,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const QVariantMap axisLearningBefore = flightDeckConfigurationSnapshot(backend);
     auto *axisLearningButton = findVisualItemByObjectName(axesItem,
         QStringLiteral("flightDeckAxisLearn_0"));
-    if (!axisLearningButton || !clickFlightDeckSettingsItem(window, axesItem, axisLearningButton)) {
+    if (!axisLearningButton) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axis Learn pointer entry was not reachable")
             .arg(appearance));
     }
-    settlePresentation();
-    QObject *axisLearningDialog = window->findChild<QObject *>(QStringLiteral("flightDeckInputLearningDialog"));
+    // The shared modal is deliberately opened on the next event turn so the
+    // button-release and a prior popup close cannot hide the new workflow.
+    // Wait for that presentation turn rather than inspecting between them.
+    QObject *axisLearningDialog = nullptr;
+    bool pointerAxisDialogVisible = false;
+    for (int clickAttempt = 0; clickAttempt < 3 && !pointerAxisDialogVisible; ++clickAttempt) {
+        if (!clickFlightDeckSettingsItem(window, axesItem, axisLearningButton)) break;
+        for (int settleAttempt = 0; settleAttempt < 20; ++settleAttempt) {
+            QTest::qWait(16);
+            settlePresentation();
+            axisLearningDialog = window->findChild<QObject *>(QStringLiteral("flightDeckInputLearningDialog"));
+            if (axisLearningDialog && axisLearningDialog->property("visible").toBool()) {
+                pointerAxisDialogVisible = true;
+                break;
+            }
+        }
+    }
     const bool axisDialogVisible = axisLearningDialog && axisLearningDialog->property("visible").toBool();
     const QString axisWorkflow = axisLearningDialog ? axisLearningDialog->property("workflow").toString() : QString{};
     const bool axisLearningActive = backend.inputLearning().value(QStringLiteral("active")).toBool();
@@ -4519,7 +4619,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         ? axisLearningHost->property("flightDeckLearningOperation").toString() : QString{};
     const bool cachedAxisDialog = axisLearningHost
         && qvariant_cast<QObject *>(axisLearningHost->property("flightDeckLearningDialog"));
-    if (!axisLearningDialog || !axisDialogVisible || axisWorkflow != QStringLiteral("single-axis")
+    if (!pointerAxisDialogVisible || !axisLearningDialog || !axisDialogVisible || axisWorkflow != QStringLiteral("single-axis")
         || (!axisLearningActive && !axisLearningExplained)
         || !captureShell(QStringLiteral("axes-learn-safe-unavailable"))) {
         return failPresentationLifecycleTest(QStringLiteral(
@@ -7168,6 +7268,9 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
     // matrix below. It instantiates all five production experiences and
     // exercises a route through the QML-owned click-click command function,
     // while retaining the real AppBackend/configuration authority.
+    // Run the dense graph fixture at the maximum supported presentation size:
+    // it is the case that exposed fixed-height text overlap in the editor.
+    themeManager.setTextSize(QStringLiteral("Extra Large"));
     backend.setVirtualAxisAvailabilityForTest(true);
     const auto signalFlowWarnings = [](QStringList warnings) {
         warnings.erase(std::remove_if(warnings.begin(), warnings.end(), [](const QString &warning) {
@@ -8128,6 +8231,12 @@ int main(int argc, char *argv[])
         const QStringList appearances = requestedAppearance.isEmpty()
             ? QStringList{QStringLiteral("Dark"), QStringLiteral("Light")}
             : QStringList{requestedAppearance};
+        if (!backend.deleteDeviceRig(QStringLiteral("fixture-rig")) || !backend.deviceRigs().isEmpty()) {
+            themeManager.setCurrentExperience(QStringLiteral("Existing"));
+            failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck visual matrix could not establish its isolated no-Rig baseline"));
+            return 1;
+        }
         bool visualSafe = verifyFlightDeckAxesQmlLoad(backend, themeManager);
         for (const QString &appearance : appearances) {
             if (appearance != QStringLiteral("Dark") && appearance != QStringLiteral("Light")) {
@@ -8135,8 +8244,20 @@ int main(int argc, char *argv[])
                     "Flight Deck visual appearance must be Dark or Light, not '%1'").arg(appearance));
                 break;
             }
-            if (!visualSafe || !verifyFlightDeckShell(backend, themeManager, appearance)) {
+            // Match the normal lifecycle's scoped Rig fixture: the Flight
+            // Deck visual shell renders the native Device Rig relationships,
+            // then releases this fixture before the next appearance.
+            const QString visualRigFixture = backend.createDeviceRig(
+                QStringLiteral("Flight Deck Visual Rig Fixture"), {QStringLiteral("fixture-stick")});
+            if (visualRigFixture.isEmpty()
+                || !backend.addDeviceRigMember(visualRigFixture, QStringLiteral("fixture-throttle"), false)
+                || !visualSafe || !verifyFlightDeckShell(backend, themeManager, appearance)) {
                 visualSafe = false;
+                break;
+            }
+            if (!backend.deviceRigs().isEmpty()) {
+                visualSafe = failPresentationLifecycleTest(QStringLiteral(
+                    "Flight Deck visual Device Rig fixture remained after its scoped pass"));
                 break;
             }
         }

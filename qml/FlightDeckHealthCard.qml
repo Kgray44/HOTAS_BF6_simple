@@ -26,7 +26,7 @@ FlightDeckCard {
                 text: root.eyebrow
                 color: root.tokens.textMuted
                 font.family: root.tokens.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: root.tokens.scale(9)
                 font.bold: true
                 elide: Text.ElideRight
                 Layout.fillWidth: true
@@ -43,7 +43,7 @@ FlightDeckCard {
             text: root.title
             color: root.tokens.textPrimary
             font.family: root.tokens.displayFont
-            font.pixelSize: 15
+            font.pixelSize: root.tokens.scale(15)
             font.bold: true
             elide: Text.ElideRight
             Layout.fillWidth: true
@@ -51,7 +51,7 @@ FlightDeckCard {
         Text {
             text: root.detail
             color: root.tokens.textSecondary
-            font.pixelSize: 10
+            font.pixelSize: root.tokens.scale(10)
             wrapMode: Text.WordWrap
             maximumLineCount: 3
             elide: Text.ElideRight
@@ -76,7 +76,7 @@ FlightDeckCard {
                 text: parent.text
                 color: root.tokens.accent
                 font.family: root.tokens.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: root.tokens.scale(9)
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter

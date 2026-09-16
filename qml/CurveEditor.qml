@@ -40,7 +40,7 @@ Item {
         property string role: "secondary"
         implicitHeight: 36
         implicitWidth: Math.max(104, contentItem.implicitWidth + 28)
-        font.pixelSize: 12
+        font.pixelSize: theme.scale(12)
         font.bold: true
         contentItem: Text {
             text: control.text; color: control.enabled ? theme.textStrong : theme.textFaint
@@ -62,20 +62,20 @@ Item {
     component AviationCombo: ComboBox {
         id: control
         implicitHeight: 36
-        font.pixelSize: 12
+        font.pixelSize: theme.scale(12)
         contentItem: Text {
             leftPadding: 11; rightPadding: 28; text: control.displayText
             color: control.enabled ? theme.text : theme.textFaint; font: control.font
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
         }
         indicator: Text { x: control.width - width - 9; y: (control.height - height) / 2
-            text: "⌄"; color: control.enabled ? theme.textMuted : theme.textFaint; font.pixelSize: 16 }
+            text: "⌄"; color: control.enabled ? theme.textMuted : theme.textFaint; font.pixelSize: theme.scale(16) }
         background: Rectangle { radius: theme.controlRadius; border.width: 1
             border.color: control.activeFocus ? theme.orange : control.hovered ? theme.borderStrong : theme.border
             color: control.enabled ? theme.control : theme.controlDisabled }
         delegate: ItemDelegate { width: control.width; height: 34; highlighted: control.highlightedIndex === index
             contentItem: Text { text: modelData[control.textRole] || modelData; color: theme.text
-                verticalAlignment: Text.AlignVCenter; leftPadding: 11; font.pixelSize: 12; elide: Text.ElideRight }
+                verticalAlignment: Text.AlignVCenter; leftPadding: 11; font.pixelSize: theme.scale(12); elide: Text.ElideRight }
             background: Rectangle { color: highlighted ? theme.selection : theme.control }
         }
         popup: Popup { y: control.height - 1; width: control.width; padding: 1
@@ -97,22 +97,22 @@ Item {
         }
         background: Rectangle { radius: theme.controlRadius; color: theme.control; border.color: control.activeFocus ? theme.orange : theme.border }
         up.indicator: Rectangle { x: control.width - width; height: control.height / 2; width: 16; color: control.up.pressed ? theme.controlPressed : "transparent"
-            Text { anchors.centerIn: parent; text: "▲"; color: theme.cyan; font.pixelSize: 7 } }
+            Text { anchors.centerIn: parent; text: "▲"; color: theme.cyan; font.pixelSize: theme.scale(7) } }
         down.indicator: Rectangle { x: control.width - width; y: control.height / 2; height: control.height / 2; width: 16; color: control.down.pressed ? theme.controlPressed : "transparent"
-            Text { anchors.centerIn: parent; text: "▼"; color: theme.cyan; font.pixelSize: 7 } }
+            Text { anchors.centerIn: parent; text: "▼"; color: theme.cyan; font.pixelSize: theme.scale(7) } }
     }
 
     component AviationMenuItem: MenuItem {
         id: control
         implicitHeight: 29
-        contentItem: Text { text: control.text; color: control.enabled ? theme.text : theme.textFaint; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+        contentItem: Text { text: control.text; color: control.enabled ? theme.text : theme.textFaint; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: theme.scale(11) }
         background: Rectangle { color: control.highlighted ? theme.selection : theme.tooltip }
     }
 
     component AviationTextField: TextField {
         id: control
         implicitHeight: 36
-        font.pixelSize: 12
+        font.pixelSize: theme.scale(12)
         color: theme.text
         placeholderTextColor: theme.textFaint
         selectionColor: theme.selection
@@ -169,7 +169,7 @@ Item {
                 text: "✓"
                 visible: control.checked
                 color: control.enabled ? theme.ivory : theme.textFaint
-                font.pixelSize: 13
+                font.pixelSize: theme.scale(13)
                 font.bold: true
             }
         }
@@ -178,7 +178,7 @@ Item {
             text: control.text
             color: control.enabled ? theme.text : theme.textFaint
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: 12
+            font.pixelSize: theme.scale(12)
             font.bold: true
         }
         ToolTip.visible: hovered && ToolTip.text.length > 0
@@ -186,13 +186,13 @@ Item {
 
     component CardHeading: Text {
         color: theme.topGun ? theme.ivory : theme.textStrong
-        font.pixelSize: 15
+        font.pixelSize: theme.scale(15)
         font.bold: true
     }
 
     component FieldCaption: Text {
         color: theme.textMuted
-        font.pixelSize: 12
+        font.pixelSize: theme.scale(12)
         font.bold: true
     }
 
@@ -356,14 +356,14 @@ Item {
                             text: "CURVE EDITOR"
                             color: theme && theme.textPrimary !== undefined ? theme.textPrimary : "#f3f7f7"
                             font.family: theme.displayFont
-                            font.pixelSize: 20
+                            font.pixelSize: theme.scale(20)
                             font.bold: true
                         }
                         Text {
                             text: (backendObject ? backendObject.selectedProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Axis 1") + " · " + (editorState.summary || "Linear · 0%")
                             color: theme.topGun ? theme.orange : theme.cyan
-                            font.pixelSize: 13
+                            font.pixelSize: theme.scale(13)
                             font.bold: true
                         }
                     }
@@ -375,7 +375,7 @@ Item {
                         Text {
                             text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"
                             color: backendObject && backendObject.mappingActive ? theme.ready : theme.warning
-                            font.pixelSize: 12
+                            font.pixelSize: theme.scale(12)
                             font.bold: true
                         }
                     }
@@ -443,7 +443,7 @@ Item {
                         Layout.fillWidth: true
                         FieldCaption { text: "RESPONSE STRENGTH" }
                         Item { Layout.fillWidth: true }
-                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? theme.cyan : theme.textMuted; font.family: theme.telemetryFont; font.pixelSize: 16; font.bold: true }
+                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? theme.cyan : theme.textMuted; font.family: theme.telemetryFont; font.pixelSize: theme.scale(16); font.bold: true }
                     }
                     Slider {
                         id: responseStrength
@@ -462,7 +462,7 @@ Item {
                     }
                     RowLayout { Layout.fillWidth: true
                         Repeater { model: ["0%", "25%", "50%", "75%", "100%"]
-                            delegate: Text { Layout.fillWidth: true; text: modelData; color: theme.textMuted; font.pixelSize: 11; horizontalAlignment: index === 0 ? Text.AlignLeft : index === 4 ? Text.AlignRight : Text.AlignHCenter }
+                            delegate: Text { Layout.fillWidth: true; text: modelData; color: theme.textMuted; font.pixelSize: theme.scale(11); horizontalAlignment: index === 0 ? Text.AlignLeft : index === 4 ? Text.AlignRight : Text.AlignHCenter }
                         }
                     }
                 }
@@ -477,9 +477,9 @@ Item {
                 anchors.margins: 12
                 spacing: 10
                 FieldCaption { text: "VIEW" }
-                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: theme.text; font.pixelSize: 13; font.bold: true }
+                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: theme.text; font.pixelSize: theme.scale(13); font.bold: true }
                 AviationToggle { checked: !responseView; onToggled: { responseView = !checked; graph.requestPaint() } ToolTip.text: "Switch between response output and local gain." }
-                Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: theme.textMuted; font.pixelSize: 12 }
+                Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: theme.textMuted; font.pixelSize: theme.scale(12) }
                 Item { Layout.preferredWidth: 16 }
                 AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: { showEffective = checked; graph.requestPaint() } ToolTip.text: "Overlay the effective axis response after the full signal path." }
                 AviationButton {
@@ -495,7 +495,7 @@ Item {
                     ToolTip.text: "Show or hide the live signal-path detail."
                 }
                 Item { Layout.fillWidth: true }
-                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: theme.textMuted; font.pixelSize: 12; font.family: theme.telemetryFont; font.bold: true }
+                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: theme.textMuted; font.pixelSize: theme.scale(12); font.family: theme.telemetryFont; font.bold: true }
             }
         }
 
@@ -714,13 +714,13 @@ Item {
             }
             Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; color: theme.graphBackground; border.color: theme.graphFrame; width: 194; height: 72; visible: graph.cursorVisible
                 Column { anchors.fill: parent; anchors.margins: 9; spacing: 3
-                    Text { text: "CURSOR  " + percent(graph.cursorInput); color: theme.graphInput; font.family: "Consolas"; font.pixelSize: 12; font.bold: true }
-                    Text { text: "OUTPUT  " + percent(graph.cursorOutput); color: theme.graphOutput; font.family: "Consolas"; font.pixelSize: 12 }
-                    Text { text: "GAIN    " + graph.cursorGain.toFixed(2) + "×"; color: theme.graphPreview; font.family: "Consolas"; font.pixelSize: 12 }
+                    Text { text: "CURSOR  " + percent(graph.cursorInput); color: theme.graphInput; font.family: "Consolas"; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { text: "OUTPUT  " + percent(graph.cursorOutput); color: theme.graphOutput; font.family: "Consolas"; font.pixelSize: theme.scale(12) }
+                    Text { text: "GAIN    " + graph.cursorGain.toFixed(2) + "×"; color: theme.graphPreview; font.family: "Consolas"; font.pixelSize: theme.scale(12) }
                 }
             }
             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; color: theme.graphBackground; border.color: theme.graphFrame; width: 230; height: 30; radius: 3; visible: !!editorState.previewLabel
-                Text { anchors.centerIn: parent; text: "PREVIEW ACTIVE  ·  " + editorState.previewLabel; color: theme.graphPreview; font.pixelSize: 11; font.bold: true }
+                Text { anchors.centerIn: parent; text: "PREVIEW ACTIVE  ·  " + editorState.previewLabel; color: theme.graphPreview; font.pixelSize: theme.scale(11); font.bold: true }
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -729,7 +729,7 @@ Item {
                 text: "PHYSICAL INPUT  ·  %"
                 color: theme.graphLabel
                 font.family: theme.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: theme.scale(9)
                 font.bold: true
             }
             Text {
@@ -741,7 +741,7 @@ Item {
                 text: responseView ? "MAPPED OUTPUT  ·  %" : "LOCAL GAIN  ·  ×"
                 color: theme.graphLabel
                 font.family: theme.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: theme.scale(9)
                 font.bold: true
             }
         }
@@ -765,11 +765,11 @@ Item {
                     delegate: ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Text { text: modelData.label; color: theme.textMuted; font.pixelSize: 11; font.bold: true }
-                        Text { text: modelData.value; color: modelData.tone; font.family: "Consolas"; font.pixelSize: 17; font.bold: true }
+                        Text { text: modelData.label; color: theme.textMuted; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { text: modelData.value; color: modelData.tone; font.family: "Consolas"; font.pixelSize: theme.scale(17); font.bold: true }
                     }
                 }
-                Text { text: "COMPILE  " + (editorState.lastCurveCompileUs || 0) + " µs"; color: theme.textMuted; font.pixelSize: 11; font.family: "Consolas"; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                Text { text: "COMPILE  " + (editorState.lastCurveCompileUs || 0) + " µs"; color: theme.textMuted; font.pixelSize: theme.scale(11); font.family: "Consolas"; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
             }
         }
 
@@ -793,10 +793,10 @@ Item {
                         Layout.fillWidth: true
                         CardHeading { text: "POINT EDITING" }
                         Item { Layout.fillWidth: true }
-                        Text { text: editorState.pointEditing ? "● ACTIVE" : "OFF"; color: editorState.pointEditing ? theme.ready : theme.textMuted; font.pixelSize: 12; font.bold: true }
+                        Text { text: editorState.pointEditing ? "● ACTIVE" : "OFF"; color: editorState.pointEditing ? theme.ready : theme.textMuted; font.pixelSize: theme.scale(12); font.bold: true }
                         AviationToggle { checked: !!editorState.pointEditing; onToggled: { recordHistory(); backendObject.setCurvePointEditing(checked) } ToolTip.text: "Enable manual response-curve control points." }
                     }
-                    Text { visible: !editorState.pointEditing; Layout.fillWidth: true; text: "Enable manual response-curve point editing. Drag empty graph space to pan; drag a point to edit it."; color: theme.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    Text { visible: !editorState.pointEditing; Layout.fillWidth: true; text: "Enable manual response-curve point editing. Drag empty graph space to pan; drag a point to edit it."; color: theme.textMuted; font.pixelSize: theme.scale(12); wrapMode: Text.WordWrap }
                     AviationButton { visible: !editorState.pointEditing; text: "ENABLE POINT EDITING"; role: "primary"; onClicked: { recordHistory(); backendObject.setCurvePointEditing(true) } }
                     GridLayout {
                         visible: !!editorState.pointEditing
@@ -805,7 +805,7 @@ Item {
                         columnSpacing: 12
                         rowSpacing: 6
                         FieldCaption { text: "SELECTED POINT" }
-                        Text { text: selectedPoint >= 0 ? "POINT " + (selectedPoint + 1) : "SELECT A POINT"; color: theme.textStrong; font.pixelSize: 13; font.family: "Consolas"; font.bold: true }
+                        Text { text: selectedPoint >= 0 ? "POINT " + (selectedPoint + 1) : "SELECT A POINT"; color: theme.textStrong; font.pixelSize: theme.scale(13); font.family: "Consolas"; font.bold: true }
                         FieldCaption { text: "INPUT" }
                         AviationSpinBox { id: pointInput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1; enabled: selectedPoint >= 0 && pointAt(selectedPoint) && !pointAt(selectedPoint).locked
                             value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).input) * 1000) : 0
@@ -858,7 +858,7 @@ Item {
                         }
                         AviationButton { text: "COPY FROM"; enabled: copySelector.count > 0; onClicked: { recordHistory(); backendObject.copyCurveFromSelection(copySelector.currentValue) } }
                     }
-                    Text { visible: !!comparison.label; text: "DIFFERENCE  " + percent(comparison.difference); color: theme.textMuted; font.family: "Consolas"; font.pixelSize: 12; font.bold: true }
+                    Text { visible: !!comparison.label; text: "DIFFERENCE  " + percent(comparison.difference); color: theme.textMuted; font.family: "Consolas"; font.pixelSize: theme.scale(12); font.bold: true }
                 }
             }
 
@@ -876,20 +876,20 @@ Item {
                     anchors.margins: 16
                     spacing: 9
                     CardHeading { text: "RESPONSE / PRESETS" }
-                    Text { text: "ACTIVE"; color: theme.textMuted; font.pixelSize: 12; font.bold: true }
-                    Text { text: editorState.summary || "Linear · 0%"; color: theme.text; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                    Text { text: "Strength " + Math.round(Number(editorState.strength || 0) * 100) + "%"; color: theme.cyan; font.family: "Consolas"; font.pixelSize: 12 }
+                    Text { text: "ACTIVE"; color: theme.textMuted; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { text: editorState.summary || "Linear · 0%"; color: theme.text; font.pixelSize: theme.scale(15); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Strength " + Math.round(Number(editorState.strength || 0) * 100) + "%"; color: theme.cyan; font.family: "Consolas"; font.pixelSize: theme.scale(12) }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
                     FieldCaption { text: "PRESET / OVERLAY" }
                     AviationCombo { id: previewSelector; Layout.fillWidth: true; model: backendObject ? backendObject.curvePreviewChoices : []; textRole: "label"; valueRole: "id"; onActivated: backendObject.previewCurvePreset(currentValue) }
-                    Text { text: editorState.previewLabel ? "PREVIEW ACTIVE  ·  " + editorState.previewLabel : "Choose a preset to preview it in the graph."; color: editorState.previewLabel ? theme.orangeBright : theme.textMuted; font.pixelSize: 12; font.bold: !!editorState.previewLabel; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: editorState.previewLabel ? "PREVIEW ACTIVE  ·  " + editorState.previewLabel : "Choose a preset to preview it in the graph."; color: editorState.previewLabel ? theme.orangeBright : theme.textMuted; font.pixelSize: theme.scale(12); font.bold: !!editorState.previewLabel; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true; spacing: 8
                         AviationButton { text: "APPLY PREVIEW"; role: "primary"; enabled: !!editorState.previewLabel; onClicked: { recordHistory(); backendObject.applyCurvePreview() } }
                         AviationButton { text: "CLEAR PREVIEW"; role: "destructive"; enabled: !!editorState.previewLabel; onClicked: backendObject.clearCurvePreview() }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
                     FieldCaption { text: editorState.family === "Personal" ? "PERSONAL PRESET ACTIVE" : "PERSONAL PRESETS" }
-                    Text { text: editorState.family === "Personal" ? "This response came from a reusable personal preset." : "Save the current response as a reusable preset."; color: theme.textMuted; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: editorState.family === "Personal" ? "This response came from a reusable personal preset." : "Save the current response as a reusable preset."; color: theme.textMuted; font.pixelSize: theme.scale(12); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true; spacing: 8
                         AviationButton { text: "SAVE AS PERSONAL"; onClicked: personalDialog.open() }
                         AviationButton { text: "MANAGE PERSONAL"; onClicked: personalManageDialog.open() }
@@ -914,7 +914,7 @@ Item {
                     RowLayout { Layout.fillWidth: true
                         CardHeading { text: "RESPONSE CHARACTERISTICS" }
                         Item { Layout.fillWidth: true }
-                        Text { text: analysis.valid ? "✓ MONOTONIC" : "! CHECK CURVE"; color: analysis.valid ? theme.ready : theme.warning; font.pixelSize: 12; font.bold: true }
+                        Text { text: analysis.valid ? "✓ MONOTONIC" : "! CHECK CURVE"; color: analysis.valid ? theme.ready : theme.warning; font.pixelSize: theme.scale(12); font.bold: true }
                     }
                     GridLayout {
                         Layout.fillWidth: true
@@ -923,14 +923,14 @@ Item {
                         rowSpacing: 5
                         Repeater { model: [{n:"CENTER GAIN",v:analysis.centerGain},{n:"25% GAIN",v:analysis.quarterGain},{n:"50% GAIN",v:analysis.halfGain},{n:"75% GAIN",v:analysis.threeQuarterGain},{n:"PEAK GAIN",v:analysis.peakGain}]
                             delegate: RowLayout { Layout.fillWidth: true
-                                Text { text: modelData.n; color: theme.textMuted; font.pixelSize: 12; Layout.fillWidth: true }
-                                Text { text: Number(modelData.v || 0).toFixed(2) + "×"; color: theme.textStrong; font.family: "Consolas"; font.pixelSize: 14; font.bold: true }
+                                Text { text: modelData.n; color: theme.textMuted; font.pixelSize: theme.scale(12); Layout.fillWidth: true }
+                                Text { text: Number(modelData.v || 0).toFixed(2) + "×"; color: theme.textStrong; font.family: "Consolas"; font.pixelSize: theme.scale(14); font.bold: true }
                             }
                         }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
-                    Text { text: analysis.valid ? "✓ FULL AUTHORITY   ✓ NO OVERSHOOT" : "Curve validation needs attention."; color: analysis.valid ? theme.ready : theme.warning; font.pixelSize: 12; font.bold: true }
-                    Text { visible: !editorState.neutralMapsToNeutral; text: "ONE-SIDED J: physical neutral maps to " + percent(editorState.neutralOffset); color: theme.orangeBright; font.pixelSize: 12; font.bold: true }
+                    Text { text: analysis.valid ? "✓ FULL AUTHORITY   ✓ NO OVERSHOOT" : "Curve validation needs attention."; color: analysis.valid ? theme.ready : theme.warning; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { visible: !editorState.neutralMapsToNeutral; text: "ONE-SIDED J: physical neutral maps to " + percent(editorState.neutralOffset); color: theme.orangeBright; font.pixelSize: theme.scale(12); font.bold: true }
                 }
             }
             AviationPanel {
@@ -944,11 +944,11 @@ Item {
                     CardHeading { text: "SIGNAL PATH" }
                     Repeater { model: [{n:"INPUT",v:liveTelemetry.physicalInput},{n:"DEADZONE",v:liveTelemetry.afterDeadzone},{n:"HYSTERESIS",v:liveTelemetry.afterHysteresis},{n:"INVERT",v:liveTelemetry.afterInversion},{n:"CURVE",v:liveTelemetry.curveResponse},{n:"LIMITS",v:liveTelemetry.finalOutput},{n:"VJOY",v:liveTelemetry.finalOutput}]
                         delegate: RowLayout { Layout.fillWidth: true
-                            Text { text: modelData.n; color: theme.textMuted; font.pixelSize: 12; Layout.fillWidth: true }
-                            Text { text: rawPercent(modelData.v); color: theme.text; font.family: "Consolas"; font.pixelSize: 13; font.bold: true }
+                            Text { text: modelData.n; color: theme.textMuted; font.pixelSize: theme.scale(12); Layout.fillWidth: true }
+                            Text { text: rawPercent(modelData.v); color: theme.text; font.family: "Consolas"; font.pixelSize: theme.scale(13); font.bold: true }
                         }
                     }
-                    Text { text: "LIVE VALUES · " + editorState.runtimeLutSamples + "-SAMPLE LUT"; color: theme.textMuted; font.pixelSize: 12; font.bold: true }
+                    Text { text: "LIVE VALUES · " + editorState.runtimeLutSamples + "-SAMPLE LUT"; color: theme.textMuted; font.pixelSize: theme.scale(12); font.bold: true }
                 }
             }
         }
@@ -988,7 +988,7 @@ Item {
         contentItem: Column { width: 330; spacing: 11
             FieldCaption { text: "NAME" }
             AviationTextField { id: personalName; width: parent.width; placeholderText: "My Precision Roll"; selectByMouse: true }
-            Text { text: "Stores a copy for compatible axes. Existing applied curves are never linked."; width: parent.width; wrapMode: Text.WordWrap; color: theme.textMuted; font.pixelSize: 12 }
+            Text { text: "Stores a copy for compatible axes. Existing applied curves are never linked."; width: parent.width; wrapMode: Text.WordWrap; color: theme.textMuted; font.pixelSize: theme.scale(12) }
             Row { spacing: 8; AviationButton { text: "CANCEL"; onClicked: personalDialog.close() }
                 AviationButton { text: "SAVE"; role: "primary"; enabled: personalName.text.trim().length > 0; onClicked: { if (backendObject.saveCurrentCurveAsPersonalPreset(personalName.text)) personalDialog.close() } } }
         }
@@ -998,10 +998,10 @@ Item {
         id: personalManageDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 530; title: "Manage personal curve presets"; standardButtons: Dialog.NoButton
         background: AviationPanel { color: theme.curveDialogSurface; border.color: theme.curveDialogBorder }
         contentItem: Column { width: 480; spacing: 8
-            Text { text: "Applying always copies a definition into the selected profile and axis."; color: theme.textMuted; font.pixelSize: 12 }
+            Text { text: "Applying always copies a definition into the selected profile and axis."; color: theme.textMuted; font.pixelSize: theme.scale(12) }
             Repeater { model: backendObject ? backendObject.personalCurvePresets : []
                 delegate: RowLayout { width: parent.width; spacing: 8
-                    Text { text: modelData.summary; color: theme.text; font.pixelSize: 11; Layout.preferredWidth: 130; elide: Text.ElideRight }
+                    Text { text: modelData.summary; color: theme.text; font.pixelSize: theme.scale(11); Layout.preferredWidth: 130; elide: Text.ElideRight }
                     AviationTextField { id: managedName; text: modelData.name; selectByMouse: true; Layout.fillWidth: true }
                     AviationButton { text: "RENAME"; onClicked: backendObject.renamePersonalCurvePreset(modelData.id, managedName.text) }
                     AviationButton { text: "DELETE"; role: "destructive"; onClicked: { personalDeleteDialog.presetId = modelData.id; personalDeleteDialog.presetName = modelData.name; personalDeleteDialog.open() } }
@@ -1014,7 +1014,7 @@ Item {
         id: personalDeleteDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 340; property string presetId: ""; property string presetName: ""; title: "Delete personal preset?"; standardButtons: Dialog.NoButton
         background: AviationPanel { color: theme.curveDangerSurface; border.color: theme.curveDangerBorder }
         contentItem: Column { width: 290; spacing: 10
-            Text { text: "Delete \"" + personalDeleteDialog.presetName + "\"? Applied curves will remain unchanged."; wrapMode: Text.WordWrap; width: parent.width; color: theme.textStrong; font.pixelSize: 12 }
+            Text { text: "Delete \"" + personalDeleteDialog.presetName + "\"? Applied curves will remain unchanged."; wrapMode: Text.WordWrap; width: parent.width; color: theme.textStrong; font.pixelSize: theme.scale(12) }
             Row { spacing: 8; AviationButton { text: "CANCEL"; onClicked: personalDeleteDialog.close() }
                 AviationButton { text: "DELETE"; role: "destructive"; onClicked: { backendObject.deletePersonalCurvePreset(personalDeleteDialog.presetId); personalDeleteDialog.close() } } }
         }

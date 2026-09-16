@@ -439,7 +439,7 @@ Flickable {
             text: parent.label
             color: deck.textMuted
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
         }
         Rectangle {
@@ -459,7 +459,7 @@ Flickable {
             text: control.text
             color: control.enabled ? (control.destructive ? deck.fault : control.subdued ? deck.textSecondary : deck.primarySurface) : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -481,7 +481,7 @@ Flickable {
         color: deck.textPrimary
         placeholderTextColor: deck.textMuted
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         leftPadding: deck.space12
         rightPadding: deck.space12
         background: Rectangle {
@@ -502,7 +502,7 @@ Flickable {
             text: control.displayText
             color: control.enabled ? deck.textPrimary : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -511,7 +511,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deck.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deck.scale(16)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -530,7 +530,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -563,7 +563,7 @@ Flickable {
         implicitHeight: deck.controlHeight
         editable: true
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         contentItem: TextInput {
             z: 2
             text: control.displayText
@@ -608,7 +608,7 @@ Flickable {
             leftPadding: control.indicator.width + deck.space8
             color: deck.textPrimary
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             verticalAlignment: Text.AlignVCenter
         }
     }
@@ -643,14 +643,14 @@ Flickable {
                                 text: "AUTOMATION"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: backend.automationEngineEnabled ? "Automation is enabled" : "Automation is disabled"
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
-                                font.pixelSize: 24
+                                font.pixelSize: deck.scale(24)
                                 font.bold: true
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -659,14 +659,14 @@ Flickable {
                                 text: Number(rules.length) + " rule" + (rules.length === 1 ? "" : "s") + " configured"
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                             }
                             Text {
                                 text: "EDITOR PROFILE · " + backend.selectedProfileDisplayName
                                     + " · " + (backend.selectedProfileActive ? "ACTIVE" : "VIEWING")
                                 color: backend.selectedProfileActive ? deck.healthy : deck.focus
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                         }
@@ -692,7 +692,7 @@ Flickable {
                             text: backend.automationEngineEnabled ? "Configured rules evaluate through the existing Automation engine." : "Rules stay configured while the existing Automation engine is off."
                             color: deck.textSecondary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -701,7 +701,7 @@ Flickable {
                             text: backend.automationActiveRuleCount + " ACTIVE NOW"
                             color: deck.healthy
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                     }
@@ -768,14 +768,14 @@ Flickable {
                         text: "No automation rules yet"
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 18
+                        font.pixelSize: deck.scale(18)
                         font.bold: true
                     }
                     Text {
                         text: "Automation can change configured controller behavior when its existing conditions are met."
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -791,7 +791,7 @@ Flickable {
                 text: "No rules match this presentation-only filter."
                 color: deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
             }
 
             Repeater {
@@ -819,7 +819,7 @@ Flickable {
                                     text: String(rule.name || "Unnamed rule")
                                     color: deck.textPrimary
                                     font.family: deck.displayFont
-                                    font.pixelSize: 17
+                                    font.pixelSize: deck.scale(17)
                                     font.bold: true
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -828,7 +828,7 @@ Flickable {
                                     text: "Priority " + Number(rule.priority)
                                     color: deck.textMuted
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                 }
                             }
                             Rectangle {
@@ -841,7 +841,7 @@ Flickable {
                                 text: root.ruleState(rule)
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DeckButton {
@@ -863,14 +863,14 @@ Flickable {
                                 text: "WHEN"
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: String(rule.conditionSummary || "No condition configured")
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 12
+                                font.pixelSize: deck.scale(12)
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                             }
@@ -882,14 +882,14 @@ Flickable {
                                 text: "DO"
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: String(rule.actionSummary || "No action configured")
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 12
+                                font.pixelSize: deck.scale(12)
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                             }
@@ -899,7 +899,7 @@ Flickable {
                             text: String(rule.healthMessage)
                             color: Number(rule.health) === 2 ? deck.fault : deck.attention
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
@@ -981,7 +981,7 @@ Flickable {
                         text: String(root.draft.name || "New Automation")
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 21
+                        font.pixelSize: deck.scale(21)
                         font.bold: true
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -990,7 +990,7 @@ Flickable {
                         text: "Editing changes the saved configuration only. It never runs this rule."
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                     }
                 }
                 DeckButton {
@@ -1022,7 +1022,7 @@ Flickable {
                                 text: "Name"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DeckField {
@@ -1044,7 +1044,7 @@ Flickable {
                         text: "Give this rule a name before saving."
                         color: deck.attention
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                     }
                 }
             }
@@ -1077,7 +1077,7 @@ Flickable {
                         text: (root.draft.conditions || []).length === 1 && Number(root.draft.conditions[0].type) === 0 ? "This rule is active whenever it is enabled." : (Number(root.draft.matchMode || 0) === 0 ? "Every condition below must be true." : "Any one condition below can trigger this rule.")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1102,7 +1102,7 @@ Flickable {
                                         text: "CONDITION " + (conditionIndex + 1)
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
-                                        font.pixelSize: 9
+                                        font.pixelSize: deck.scale(9)
                                         font.bold: true
                                         Layout.fillWidth: true
                                     }
@@ -1130,7 +1130,7 @@ Flickable {
                                             text: "Axis"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 170
@@ -1142,7 +1142,7 @@ Flickable {
                                             text: [3, 4].indexOf(Number(condition.type)) >= 0 ? "From" : "Threshold"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckSpin {
                                             from: -100
@@ -1155,7 +1155,7 @@ Flickable {
                                             text: "To"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckSpin {
                                             visible: [3, 4].indexOf(Number(condition.type)) >= 0
@@ -1172,7 +1172,7 @@ Flickable {
                                             text: "Control"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             objectName: "flightDeckAutomationConditionButton_" + conditionIndex
@@ -1213,7 +1213,7 @@ Flickable {
                                             text: "Hat"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckSpin {
                                             from: 1
@@ -1235,7 +1235,7 @@ Flickable {
                                             text: "Profile"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                         objectName: "flightDeckAutomationConditionProfile_" + conditionIndex
@@ -1266,7 +1266,7 @@ Flickable {
                         text: "Game detection is configured in Profiles. This existing Automation engine uses control, axis, POV, and profile conditions; no game trigger is invented here."
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1289,7 +1289,7 @@ Flickable {
                         text: "Choose the existing controller effect this rule applies while it is active."
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1314,7 +1314,7 @@ Flickable {
                                         text: "ACTION " + (actionIndex + 1)
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
-                                        font.pixelSize: 9
+                                        font.pixelSize: deck.scale(9)
                                         font.bold: true
                                         Layout.fillWidth: true
                                     }
@@ -1342,7 +1342,7 @@ Flickable {
                                             text: "Virtual button"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             objectName: "flightDeckAutomationActionButton_" + actionIndex
@@ -1368,7 +1368,7 @@ Flickable {
                                             text: "Profile"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                         objectName: "flightDeckAutomationActionProfile_" + actionIndex
@@ -1392,7 +1392,7 @@ Flickable {
                                             text: "Target axis"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 150
@@ -1404,7 +1404,7 @@ Flickable {
                                             text: "Percent"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckSpin {
                                             from: -100
@@ -1420,7 +1420,7 @@ Flickable {
                                             text: "Target axis"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 150
@@ -1448,7 +1448,7 @@ Flickable {
                                             text: "Target"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 130
@@ -1460,7 +1460,7 @@ Flickable {
                                             text: "Source"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 130
@@ -1495,7 +1495,7 @@ Flickable {
                                             text: "Axis"
                                             color: deck.textSecondary
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: deck.scale(9)
                                         }
                                         DeckCombo {
                                             width: 160
@@ -1546,7 +1546,7 @@ Flickable {
                                 text: "Rule behavior"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DeckCombo {
@@ -1565,7 +1565,7 @@ Flickable {
                                 text: "Duration (ms)"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DeckSpin {
@@ -1583,7 +1583,7 @@ Flickable {
                                 text: "Priority"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DeckSpin {
@@ -1599,7 +1599,7 @@ Flickable {
                         text: "Higher priority wins when multiple active rules force the same axis property. Equal priorities use saved rule order."
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1623,7 +1623,7 @@ Flickable {
                         text: root.canSaveDraft() ? "This rule will be validated and saved through the existing Automation command path." : "Complete the required WHEN and DO selections to save this rule."
                         color: root.canSaveDraft() ? deck.textSecondary : deck.attention
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1632,7 +1632,7 @@ Flickable {
                         text: backend.automationValidationMessage
                         color: deck.fault
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
@@ -1679,7 +1679,7 @@ Flickable {
                 text: "This removes the automation rule. It does not delete a referenced profile or control."
                 color: deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }

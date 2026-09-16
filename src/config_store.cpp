@@ -78,8 +78,17 @@ QJsonObject nativeAxisDescriptorToJson(const NativeAxisDescriptor &descriptor)
             {u"directInputGuid"_qs, descriptor.directInputGuid.trimmed().left(96)},
             {u"directInputType"_qs, static_cast<qint64>(descriptor.directInputType)},
             {u"directInputOffset"_qs, static_cast<qint64>(descriptor.directInputOffset)},
+            {u"directInputInstance"_qs, static_cast<qint64>(descriptor.directInputInstance)},
+            {u"enumerationIndex"_qs, descriptor.enumerationIndex},
             {u"nativeMinimum"_qs, descriptor.nativeMinimum},
             {u"nativeMaximum"_qs, descriptor.nativeMaximum},
+            {u"requestedMinimum"_qs, descriptor.requestedMinimum},
+            {u"requestedMaximum"_qs, descriptor.requestedMaximum},
+            {u"rangeSetAttempted"_qs, descriptor.rangeSetAttempted},
+            {u"rangeSetResult"_qs, descriptor.rangeSetResult},
+            {u"rangeReadResult"_qs, descriptor.rangeReadResult},
+            {u"acquisitionSourceResolved"_qs, descriptor.acquisitionSourceResolved},
+            {u"acquisitionMethod"_qs, descriptor.acquisitionMethod},
             {u"relative"_qs, descriptor.relative}};
 }
 
@@ -94,8 +103,18 @@ bool nativeAxisDescriptorFromJson(const QJsonObject &json, NativeAxisDescriptor 
         json.value(u"directInputType"_qs).toVariant().toLongLong()));
     restored.directInputOffset = static_cast<quint32>(std::max<qint64>(0,
         json.value(u"directInputOffset"_qs).toVariant().toLongLong()));
+    restored.directInputInstance = static_cast<quint32>(std::max<qint64>(0,
+        json.value(u"directInputInstance"_qs).toVariant().toLongLong()));
+    restored.enumerationIndex = std::clamp(json.value(u"enumerationIndex"_qs).toInt(-1), -1, 128);
     restored.nativeMinimum = std::clamp(json.value(u"nativeMinimum"_qs).toInt(-10000), -1000000, 1000000);
     restored.nativeMaximum = std::clamp(json.value(u"nativeMaximum"_qs).toInt(10000), -1000000, 1000000);
+    restored.requestedMinimum = std::clamp(json.value(u"requestedMinimum"_qs).toInt(-10000), -1000000, 1000000);
+    restored.requestedMaximum = std::clamp(json.value(u"requestedMaximum"_qs).toInt(10000), -1000000, 1000000);
+    restored.rangeSetAttempted = json.value(u"rangeSetAttempted"_qs).toBool(false);
+    restored.rangeSetResult = json.value(u"rangeSetResult"_qs).toInt(0);
+    restored.rangeReadResult = json.value(u"rangeReadResult"_qs).toInt(0);
+    restored.acquisitionSourceResolved = json.value(u"acquisitionSourceResolved"_qs).toBool(restored.present);
+    restored.acquisitionMethod = std::clamp(json.value(u"acquisitionMethod"_qs).toInt(0), 0, 1);
     restored.relative = json.value(u"relative"_qs).toBool(false);
     if (restored.present && restored.nativeMinimum > restored.nativeMaximum) return false;
     *descriptor = std::move(restored);

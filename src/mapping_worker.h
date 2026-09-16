@@ -132,9 +132,24 @@ struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
                kMaximumDeviceRigMembers> deviceRigMemberPhysicalButtonPressed{};
     std::array<std::array<std::atomic_int, kMaximumPhysicalPovs>,
                kMaximumDeviceRigMembers> deviceRigMemberPovValues{};
+    // Per-member acquisition evidence follows the same fixed primitive rule
+    // as adaptive telemetry so the Selected Device view never borrows
+    // another Rig member's source or movement state.
+    std::array<std::array<std::atomic_int, kPhysicalAxisCount>,
+               kMaximumDeviceRigMembers> deviceRigMemberAxisAcquisitionSource{};
+    std::array<std::array<std::atomic_bool, kPhysicalAxisCount>,
+               kMaximumDeviceRigMembers> deviceRigMemberAxisLiveMovementObserved{};
+    std::array<std::array<std::atomic_int64_t, kPhysicalAxisCount>,
+               kMaximumDeviceRigMembers> deviceRigMemberAxisLastMovementAgeMs{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
+    // Runtime-only axis acquisition evidence. These fixed primitives are
+    // written by the mapper and sampled by the UI; no descriptor lookup,
+    // QString, or allocation enters the DirectInput report path.
+    std::array<std::atomic_int, kPhysicalAxisCount> axisAcquisitionSource{};
+    std::array<std::atomic_bool, kPhysicalAxisCount> axisLiveMovementObserved{};
+    std::array<std::atomic_int64_t, kPhysicalAxisCount> axisLastMovementAgeMs{};
     std::array<std::atomic_int, kPhysicalAxisCount> axisActivity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationMinimum{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationCenter{};

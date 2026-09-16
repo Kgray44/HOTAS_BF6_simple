@@ -153,7 +153,7 @@ FlightDeckDialog {
             color: !button.enabled ? deckTokens.disabled : button.destructive ? deckTokens.fault
                 : button.subdued ? deckTokens.textSecondary : deckTokens.primarySurface
             font.family: deckTokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deckTokens.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -181,7 +181,7 @@ FlightDeckDialog {
             text: combo.displayText
             color: combo.enabled ? deckTokens.textPrimary : deckTokens.disabled
             font.family: deckTokens.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deckTokens.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -190,7 +190,7 @@ FlightDeckDialog {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deckTokens.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deckTokens.scale(16)
         }
         background: Rectangle {
             radius: deckTokens.radiusControl
@@ -209,7 +209,7 @@ FlightDeckDialog {
                 text: combo.textAt(index)
                 color: deckTokens.textPrimary
                 font.family: deckTokens.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deckTokens.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -248,14 +248,14 @@ FlightDeckDialog {
             color: check.checked ? deckTokens.accent : deckTokens.primarySurface
             border.width: check.activeFocus ? 2 : 1
             border.color: check.activeFocus ? deckTokens.focus : check.checked ? deckTokens.accent : deckTokens.border
-            Text { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: deckTokens.primarySurface; font.bold: true; font.pixelSize: 11 }
+            Text { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: deckTokens.primarySurface; font.bold: true; font.pixelSize: deckTokens.scale(11) }
         }
         contentItem: Text {
             leftPadding: check.indicator.width + check.spacing
             text: check.text
             color: check.enabled ? deckTokens.textSecondary : deckTokens.disabled
             font.family: deckTokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deckTokens.scale(9)
             wrapMode: Text.WordWrap
             verticalAlignment: Text.AlignVCenter
         }
@@ -282,7 +282,7 @@ FlightDeckDialog {
                     ? "Select a supported HOTAS BF6 package, review the authoritative preview, then confirm it. Nothing changes while you review."
                     : "Choose the profile, category, or pack to export. The existing portability service writes the unchanged supported format."
                 color: deckTokens.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deckTokens.scale(10)
                 wrapMode: Text.WordWrap
             }
 
@@ -328,14 +328,14 @@ FlightDeckDialog {
                             : control.transferKind === "category" ? "EXPORT CATEGORY" : "EXPORT PORTABLE PACK"
                         color: deckTokens.textPrimary
                         font.family: deckTokens.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deckTokens.scale(10)
                         font.bold: true
                     }
                     ColumnLayout {
                         visible: control.transferKind === "profile"
                         Layout.fillWidth: true
                         spacing: deckTokens.space4
-                        Text { text: "PROFILE"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "PROFILE"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         DeckCombo {
                             id: exportProfileChoice
                             Layout.fillWidth: true
@@ -354,7 +354,7 @@ FlightDeckDialog {
                             Layout.fillWidth: true
                             text: "Includes this profile’s portable configuration and required dependencies as defined by the existing export format."
                             color: deckTokens.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -362,7 +362,7 @@ FlightDeckDialog {
                         visible: control.transferKind === "category"
                         Layout.fillWidth: true
                         spacing: deckTokens.space4
-                        Text { text: "CATEGORY"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "CATEGORY"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         DeckCombo {
                             id: exportCategoryChoice
                             Layout.fillWidth: true
@@ -381,7 +381,7 @@ FlightDeckDialog {
                             Layout.fillWidth: true
                             text: "Includes this category, its profiles, and its existing game-association behavior."
                             color: deckTokens.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -389,7 +389,7 @@ FlightDeckDialog {
                         visible: control.transferKind === "pack"
                         Layout.fillWidth: true
                         spacing: deckTokens.space8
-                        Text { text: "PACK CONTENT"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "PACK CONTENT"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         TextField {
                             id: packName
                             Layout.fillWidth: true
@@ -397,7 +397,7 @@ FlightDeckDialog {
                             placeholderText: "Pack name"
                             color: deckTokens.textPrimary
                             font.family: deckTokens.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deckTokens.scale(10)
                             background: Rectangle { radius: deckTokens.radiusControl; color: deckTokens.primarySurface; border.color: parent.activeFocus ? deckTokens.focus : deckTokens.border; border.width: parent.activeFocus ? 2 : 1 }
                         }
                         TextField {
@@ -406,7 +406,7 @@ FlightDeckDialog {
                             placeholderText: "Optional description"
                             color: deckTokens.textPrimary
                             font.family: deckTokens.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deckTokens.scale(10)
                             background: Rectangle { radius: deckTokens.radiusControl; color: deckTokens.primarySurface; border.color: parent.activeFocus ? deckTokens.focus : deckTokens.border; border.width: parent.activeFocus ? 2 : 1 }
                         }
                         Repeater {
@@ -449,7 +449,7 @@ FlightDeckDialog {
                             Layout.fillWidth: true
                             text: "Calibration is off by default. Required curves, output requirements, and Response Preset dependencies remain governed by the established pack format."
                             color: deckTokens.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -474,7 +474,7 @@ FlightDeckDialog {
                             + " · " + String(control.preview.name || "Unnamed package")
                         color: deckTokens.textPrimary
                         font.family: deckTokens.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deckTokens.scale(10)
                         font.bold: true
                         wrapMode: Text.WordWrap
                     }
@@ -485,7 +485,7 @@ FlightDeckDialog {
                             + Number(control.preview.profileCount || 0) + " profiles · "
                             + Number(control.preview.automationCount || 0) + " Automation rules"
                         color: deckTokens.textSecondary
-                        font.pixelSize: 9
+                        font.pixelSize: deckTokens.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     Repeater {
@@ -495,7 +495,7 @@ FlightDeckDialog {
                             Layout.fillWidth: true
                             text: "CATEGORY · " + modelData.name + " · " + modelData.profileCount + " profiles · " + modelData.conflict
                             color: deckTokens.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -507,14 +507,14 @@ FlightDeckDialog {
                             text: modelData.category + " / " + modelData.name + " · " + modelData.mappedAxes
                                 + " axes · " + modelData.mappedButtons + " buttons · " + modelData.povMappings + " POV"
                             color: deckTokens.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
                     RowLayout {
                         visible: Number(control.preview.categoryCount || 0) === 1
                         Layout.fillWidth: true
-                        Text { text: "DESTINATION"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "DESTINATION"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         DeckCombo {
                             id: importDestinationCategory
                             Layout.fillWidth: true
@@ -526,7 +526,7 @@ FlightDeckDialog {
                     RowLayout {
                         visible: (control.preview.categories || []).some(function (category) { return category.exists; })
                         Layout.fillWidth: true
-                        Text { text: "EXISTING CATEGORY"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "EXISTING CATEGORY"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         Repeater {
                             model: [{ label: "MERGE", value: "merge" }, { label: "IMPORT AS NEW", value: "new" }, { label: "REPLACE", value: "replace" }]
                             delegate: DeckButton {
@@ -540,7 +540,7 @@ FlightDeckDialog {
                     RowLayout {
                         visible: Number(control.preview.adaptiveResponsePresetCount || 0) > 0
                         Layout.fillWidth: true
-                        Text { text: "PRESET CONFLICT"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                        Text { text: "PRESET CONFLICT"; color: deckTokens.textMuted; font.family: deckTokens.telemetryFont; font.pixelSize: deckTokens.scale(8); font.bold: true }
                         Repeater {
                             model: [{ label: "KEEP LOCAL", value: "keep" }, { label: "IMPORT COPY", value: "copy" }, { label: "REPLACE", value: "replace" }]
                             delegate: DeckButton {
@@ -561,7 +561,7 @@ FlightDeckDialog {
                                 Layout.fillWidth: true
                                 text: "DEVICE · " + modelData.name + " · " + modelData.axisCount + " axes · " + modelData.buttonCount + " buttons · " + modelData.state
                                 color: deckTokens.textSecondary
-                                font.pixelSize: 9
+                                font.pixelSize: deckTokens.scale(9)
                                 wrapMode: Text.WordWrap
                             }
                             DeckCombo {
@@ -585,7 +585,7 @@ FlightDeckDialog {
                         Layout.fillWidth: true
                         text: "Calibration remains local unless you explicitly opt in here. Ambiguous controllers require the existing authoritative selection."
                         color: deckTokens.attention
-                        font.pixelSize: 9
+                        font.pixelSize: deckTokens.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     Repeater {
@@ -595,7 +595,7 @@ FlightDeckDialog {
                             Layout.fillWidth: true
                             text: "REVIEW · " + modelData
                             color: deckTokens.attention
-                            font.pixelSize: 9
+                            font.pixelSize: deckTokens.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -628,7 +628,7 @@ FlightDeckDialog {
                     anchors.margins: deckTokens.space8
                     text: control.localError.length > 0 ? control.localError : String(backendObject.portableImportStatus || "")
                     color: deckTokens.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: deckTokens.scale(9)
                     wrapMode: Text.WordWrap
                 }
             }
@@ -663,7 +663,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 text: "This replaces the matching non-active category and its profiles with the imported category. General, active, and last remaining categories stay protected."
                 color: deckTokens.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deckTokens.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -692,7 +692,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 text: "Matching profile names will be replaced with imported configuration. Leave this off to import safe renamed copies."
                 color: deckTokens.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deckTokens.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {

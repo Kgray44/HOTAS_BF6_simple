@@ -13,6 +13,7 @@ namespace {
 constexpr auto kThemeKey = "presentation/uiTheme";
 constexpr auto kExperienceKey = "presentation/uxExperience";
 constexpr auto kFlightDeckAppearanceKey = "presentation/flightDeckAppearance";
+constexpr auto kTextSizeKey = "presentation/textSize";
 
 QString defaultSettingsFilePath()
 {
@@ -40,6 +41,12 @@ ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
                      hasExplicitPresentation ? u"Existing"_qs : u"Flight Deck"_qs).toString());
     m_flightDeckAppearance = normalizedFlightDeckAppearance(
         stored.value(QLatin1String(kFlightDeckAppearanceKey), u"Dark"_qs).toString());
+    // Previous versions used the current (smallest) measurements directly.
+    // New installations are comfortably readable by default while existing
+    // users can explicitly choose their preferred scale without touching a
+    // mapping, profile, or device-rig setting.
+    m_textSize = normalizedTextSize(
+        stored.value(QLatin1String(kTextSizeKey), u"Medium"_qs).toString());
     // Persist the production first-run choice.  This keeps a fresh install
     // deterministic without overwriting any presentation selection saved by
     // an earlier version.
@@ -142,6 +149,31 @@ void ThemeManager::setFlightDeckAppearance(const QString &appearance)
     emit flightDeckAppearanceChanged();
 }
 
+qreal ThemeManager::textScale() const
+{
+    if (m_textSize == u"Small"_qs) return 1.0;
+    if (m_textSize == u"Large"_qs) return 1.3;
+    if (m_textSize == u"Extra Large"_qs) return 1.5;
+    return 1.15;
+}
+
+QStringList ThemeManager::textSizeChoices() const
+{
+    return {u"Small"_qs, u"Medium"_qs, u"Large"_qs, u"Extra Large"_qs};
+}
+
+void ThemeManager::setTextSize(const QString &size)
+{
+    const QString normalized = normalizedTextSize(size);
+    if (m_textSize == normalized) return;
+
+    m_textSize = normalized;
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    stored.setValue(QLatin1String(kTextSizeKey), m_textSize);
+    stored.sync();
+    emit textSizeChanged();
+}
+
 void ThemeManager::selectPresentation(const QString &presentationId)
 {
     const QString trimmed = presentationId.trimmed();
@@ -179,6 +211,18 @@ QString ThemeManager::normalizedFlightDeckAppearance(const QString &appearance)
 {
     if (appearance.trimmed().compare(u"Light"_qs, Qt::CaseInsensitive) == 0) return u"Light"_qs;
     return u"Dark"_qs;
+}
+
+QString ThemeManager::normalizedTextSize(const QString &size)
+{
+    const QString normalized = size.trimmed();
+    if (normalized.compare(u"Small"_qs, Qt::CaseInsensitive) == 0) return u"Small"_qs;
+    if (normalized.compare(u"Large"_qs, Qt::CaseInsensitive) == 0) return u"Large"_qs;
+    if (normalized.compare(u"Extra Large"_qs, Qt::CaseInsensitive) == 0
+        || normalized.compare(u"ExtraLarge"_qs, Qt::CaseInsensitive) == 0) {
+        return u"Extra Large"_qs;
+    }
+    return u"Medium"_qs;
 }
 
 } // namespace hotas

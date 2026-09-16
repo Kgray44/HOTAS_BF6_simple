@@ -14,6 +14,8 @@ Page {
     property string selectedDeviceId: ""
     property string selectedOutputId: ""
     property var actionFeedback: ({})
+    property var outputDeletePreview: ({})
+    property bool hidhideTechnicalDetailsOpen: false
     // Main's overlay owns the visual lifetime. This page retains only enough
     // local result context to continue an in-flight operation correctly.
     property var notificationCenter: null
@@ -55,6 +57,29 @@ Page {
         }).map(function(item) {
             return { id: item.id, name: item.name + (item.connected ? " · Connected" : " · Saved / Offline") }
         })
+    }
+    function normalHidHideDimensions() {
+        const wanted = ["installation", "cloak-state", "application-access", "physical-isolation", "virtual-output"]
+        const result = []
+        const dimensions = hidhideHealth.dimensions || []
+        for (let i = 0; i < wanted.length; ++i) {
+            for (let j = 0; j < dimensions.length; ++j) {
+                if (String(dimensions[j].id || "") === wanted[i]) {
+                    result.push(dimensions[j])
+                    break
+                }
+            }
+        }
+        return result
+    }
+    function normalHidHideTitle(dimension) {
+        const id = String((dimension || {}).id || "")
+        if (id === "installation") return "HidHide"
+        if (id === "cloak-state") return "Cloaking"
+        if (id === "application-access") return "HOTAS BF6 access"
+        if (id === "physical-isolation") return "Physical controllers"
+        if (id === "virtual-output") return "Virtual output"
+        return String((dimension || {}).title || "HidHide")
     }
     function showActionFeedback(result, fallbackTitle, fallbackMessage) {
         actionFeedback = result && result.title ? result : ({ success: false, title: fallbackTitle, message: fallbackMessage })
@@ -103,6 +128,20 @@ Page {
     }
     function openDevice(id) { if (rigDetailsActions.visible) rigDetailsActions.close(); selectedDeviceId = id; physicalDeviceDialog.open() }
     function openOutput(id) { if (rigDetailsActions.visible) rigDetailsActions.close(); selectedOutputId = id; outputDetailDialog.open() }
+    function editOutput(id) {
+        if (rigDetailsActions.visible) rigDetailsActions.close()
+        selectedOutputId = String(id || "")
+        createOutputDialog.openForEdit(selectedOutputId)
+    }
+    function duplicateOutput(id) {
+        if (rigDetailsActions.visible) rigDetailsActions.close()
+        createOutputDialog.openForDuplicate(String(id || ""))
+    }
+    function reviewOutputDeletion(id) {
+        selectedOutputId = String(id || "")
+        outputDeletePreview = backendObject ? backendObject.previewVirtualOutputDelete(selectedOutputId) : ({})
+        outputDeleteDialog.open()
+    }
     // The App Health shell sets the backend's editing context before this
     // page is loaded. Complete the deep link here, where the relevant
     // physical-device or Virtual Output detail surface actually exists.
@@ -223,7 +262,7 @@ Page {
         Layout.maximumWidth: root.width
     }
     component SmallLabel: Text {
-        color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true
+        color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true
         font.family: themeTokens.topGun ? themeTokens.displayFont : root.font.family
     }
     // All Devices dialogs share a real application header. Without this
@@ -271,7 +310,8 @@ Page {
                 Layout.fillWidth: true
                 visible: backendObject !== null
                 implicitHeight: hidhideHealthContent.implicitHeight + 30
-                border.color: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor
+                border.color: String(root.hidhideHealth.freshness || "").toUpperCase() === "STALE" ? root.warningColor
+                    : String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor
                 ColumnLayout {
                     id: hidhideHealthContent
                     anchors.fill: parent; anchors.margins: 16; spacing: 8
@@ -280,18 +320,18 @@ Page {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             SmallLabel { text: "HIDHIDE HEALTH" }
-                            Text { text: root.hidhideHealth.overallState || "CHECKING"; color: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor; font.pixelSize: 18; font.bold: true }
+                            Text { text: (root.hidhideHealth.overallState || "CHECKING") + (String(root.hidhideHealth.freshness || "") === "STALE" ? " · NEEDS VERIFICATION" : ""); color: String(root.hidhideHealth.freshness || "").toUpperCase() === "STALE" ? root.warningColor : String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor; font.pixelSize: themeTokens.scale(18); font.bold: true }
                         }
-                        Text { text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking")) : ""; color: root.mutedColor; font.pixelSize: 10; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight }
+                        Text { text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking")) : ""; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight }
                     }
-                    Text { Layout.fillWidth: true; text: "HidHide Health is a read-only, contextual check. The established Setup Health transaction remains the only in-app repair authority."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: root.hidhideHealth.normalSummary || "HidHide helps keep physical controllers out of games while HOTAS BF6 uses them."; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                     Repeater {
-                        model: root.hidhideHealth.dimensions || []
-                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + String(modelData.title || "HidHide") + " · " + String(modelData.state || "UNKNOWN"); color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        model: root.normalHidHideDimensions()
+                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + root.normalHidHideTitle(modelData) + " · " + String(modelData.shortSummary || modelData.state || "Checking"); color: root.mutedColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                     }
                     Repeater {
                         model: root.hidhideHealth.physicalDevices || []
-                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.state || "UNKNOWN") + (String(modelData.state || "") === "REPAIR AVAILABLE" ? " · Visible to games — Fix Isolation" : ""); color: String(modelData.state || "") === "READY" ? root.readyColor : root.warningColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + String(modelData.friendlyName || "Physical controller") + " · " + (modelData.availabilityState || (String(modelData.state || "") === "REPAIR AVAILABLE" ? "Visible to games" : String(modelData.state || "Checking"))); color: modelData.availabilityState ? root.warningColor : String(modelData.state || "") === "READY" ? root.readyColor : root.warningColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                     }
                     Flow {
                         Layout.fillWidth: true; spacing: 8
@@ -299,6 +339,12 @@ Page {
                         ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; visible: root.hidhideHealth.inProgress; text: "CANCEL"; onTriggered: backendObject.cancelHidHideFullCheck() }
                         ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: "REVIEW REPAIR"; onTriggered: root.showActionFeedback(backendObject.reviewHidHideHealthRepair(), "No HidHide repair is available", "Run a Full Check or open Doctor for deeper diagnosis.") }
                         ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: "OPEN DOCTOR"; onTriggered: root.showActionFeedback(backendObject.openHidHideDoctor(), "HidHide Doctor is unavailable", "The optional Doctor was not found beside this build.") }
+                        ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: root.hidhideTechnicalDetailsOpen ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"; onTriggered: root.hidhideTechnicalDetailsOpen = !root.hidhideTechnicalDetailsOpen }
+                    }
+                    Repeater {
+                        visible: root.hidhideTechnicalDetailsOpen
+                        model: root.hidhideHealth.dimensions || []
+                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: String(modelData.title || "HidHide") + "\n" + String(modelData.technicalDetails || "No additional technical details."); color: root.mutedColor; font.pixelSize: themeTokens.scale(9); wrapMode: Text.WordWrap }
                     }
                 }
             }
@@ -321,12 +367,12 @@ Page {
                     spacing: 3
                     Text {
                         text: themeTokens.topGun ? "DEVICES  //  FLIGHT RIGS" : "Devices"
-                        color: themeTokens.textStrong; font.pixelSize: themeTokens.topGun ? 38 : 28
+                        color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(themeTokens.topGun ? 38 : 28)
                         font.bold: true; font.family: themeTokens.topGun ? themeTokens.displayFont : root.font.family
                     }
                     Text {
                         text: "Group physical controls into reusable rigs, then route them to clean virtual outputs."
-                        color: themeTokens.textMuted; font.pixelSize: 13
+                        color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(13)
                     }
                 }
                 Item { Layout.fillWidth: true }
@@ -345,7 +391,7 @@ Page {
                     id: firstDeviceInputsContent
                     anchors.fill: parent; anchors.margins: 14; spacing: 9
                     SmallLabel { text: "PHYSICAL INPUTS" }
-                    Text { Layout.fillWidth: true; text: "Connected and saved controllers"; color: themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
+                    Text { Layout.fillWidth: true; text: "Connected and saved controllers"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
                     Flow {
                         Layout.fillWidth: true; spacing: 10
                         Repeater {
@@ -360,8 +406,8 @@ Page {
                                 ColumnLayout {
                                     id: firstInputContent
                                     anchors.fill: parent; anchors.margins: 9; spacing: 3
-                                    Text { id: firstInputName; width: 230; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 12; font.bold: true }
-                                    Text { text: modelData.state; color: themeTokens.textMuted; font.pixelSize: 10 }
+                                    Text { id: firstInputName; width: 230; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(12); font.bold: true }
+                                    Text { text: modelData.state; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
                                     ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: modelData.id === "" ? "SET UP" : "DETAILS"
                                         onTriggered: {
                                             if (modelData.id !== "") root.openDevice(modelData.id)
@@ -385,8 +431,8 @@ Page {
                     id: emptyDevicesContent
                     anchors.fill: parent; anchors.margins: 16; spacing: 8
                     SmallLabel { text: "BUILD YOUR FIRST DEVICE RIG" }
-                    Text { Layout.fillWidth: true; text: "No physical controllers detected"; color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true }
-                    Text { Layout.fillWidth: true; text: "Connect a controller to create your first Device Rig."; color: themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "No physical controllers detected"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(20); font.bold: true }
+                    Text { Layout.fillWidth: true; text: "Connect a controller to create your first Device Rig."; color: themeTokens.text; font.pixelSize: themeTokens.scale(12); wrapMode: Text.WordWrap }
                     Flow {
                         Layout.fillWidth: true
                         spacing: 8
@@ -395,7 +441,7 @@ Page {
                         ThemedButton { objectName: "openStandaloneCreateOutputFromEmptyButton"; theme: themeTokens; text: "+ CREATE VIRTUAL OUTPUT"; tone: "secondary"
                             onTriggered: root.openStandaloneOutputCreator() }
                     }
-                    Text { Layout.fillWidth: true; text: "No saved or connected physical controllers are available yet. You can still define a Virtual Output now and attach it to a Device Rig later."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "No saved or connected physical controllers are available yet. You can still define a Virtual Output now and attach it to a Device Rig later."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                 }
             }
 
@@ -450,7 +496,7 @@ Page {
                             SmallLabel { text: configuredRig && configuredRig.inUse ? "MAPPING ROUTE IN USE" : "CONFIGURED MAPPING ROUTE" }
                             Text {
                                 text: configuredRig ? configuredRig.name : "No Device Rig configured"
-                                color: themeTokens.textStrong; font.pixelSize: 20; font.bold: true
+                                color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(20); font.bold: true
                             }
                         }
                         Item { Layout.fillWidth: true }
@@ -462,7 +508,7 @@ Page {
                             border.color: healthColor(selectedRig && selectedRig.setupNotChecked ? "not-checked" : (selectedRig ? selectedRig.health : "offline"))
                             implicitWidth: healthText.implicitWidth + 22; implicitHeight: 29
                             Text { id: healthText; anchors.centerIn: parent; text: selectedRig ? (selectedRig.setupStatus || selectedRig.healthLabel) : "Offline"
-                                color: healthColor(selectedRig && selectedRig.setupNotChecked ? "not-checked" : (selectedRig ? selectedRig.health : "offline")); font.pixelSize: 11; font.bold: true }
+                                color: healthColor(selectedRig && selectedRig.setupNotChecked ? "not-checked" : (selectedRig ? selectedRig.health : "offline")); font.pixelSize: themeTokens.scale(11); font.bold: true }
                         }
                     }
                     Text {
@@ -470,7 +516,7 @@ Page {
                         text: configuredRig ? configuredRig.members.length + " inputs  →  " + configuredRig.outputs.length
                               + (configuredRig.outputs.length === 1 ? " virtual output" : " virtual outputs")
                                           : "Create a rig to keep a controller arrangement reusable across profiles."
-                        color: themeTokens.text; font.pixelSize: 13
+                        color: themeTokens.text; font.pixelSize: themeTokens.scale(13)
                     }
                 }
             }
@@ -492,7 +538,7 @@ Page {
                             Layout.fillWidth: true
                             SmallLabel { text: "DEVICE RIGS" }
                             Item { Layout.fillWidth: true }
-                            Text { text: rigs.length; color: themeTokens.textMuted; font.pixelSize: 11; font.bold: true }
+                            Text { text: rigs.length; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); font.bold: true }
                         }
                         Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
                         Repeater {
@@ -508,10 +554,10 @@ Page {
                                     Rectangle { width: 8; height: 8; radius: 4; color: healthColor(modelData.setupNotChecked ? "not-checked" : modelData.health) }
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 1
-                                        Text { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; color: themeTokens.textStrong; font.pixelSize: 13; font.bold: true }
-                                        Text { text: (modelData.setupStatus || modelData.healthLabel) + "  ·  " + modelData.members.length + " inputs"; color: themeTokens.textMuted; font.pixelSize: 10 }
+                                        Text { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(13); font.bold: true }
+                                        Text { text: (modelData.setupStatus || modelData.healthLabel) + "  ·  " + modelData.members.length + " inputs"; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
                                     }
-                                    Text { visible: modelData.default; text: "DEFAULT"; color: themeTokens.orange; font.pixelSize: 9; font.bold: true }
+                                    Text { visible: modelData.default; text: "DEFAULT"; color: themeTokens.orange; font.pixelSize: themeTokens.scale(9); font.bold: true }
                                 }
                                 MouseArea { id: rigHover; anchors.fill: parent; hoverEnabled: true; onClicked: root.pickRig(modelData.id) }
                             }
@@ -519,7 +565,7 @@ Page {
                         Text {
                             visible: rigs.length === 0; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             text: "No Device Rigs yet. Create a Rig when you want to group one or more inputs and route them to a Virtual Output."
-                            color: themeTokens.textMuted; font.pixelSize: 12
+                            color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(12)
                         }
                     }
                 }
@@ -537,7 +583,7 @@ Page {
                             Layout.fillWidth: true
                             ColumnLayout {
                                 SmallLabel { text: selectedRig ? "RIG DETAILS" : "GET STARTED" }
-                                Text { text: selectedRig ? selectedRig.name : "Build your first Device Rig"; color: themeTokens.textStrong; font.pixelSize: 21; font.bold: true }
+                                Text { text: selectedRig ? selectedRig.name : "Build your first Device Rig"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(21); font.bold: true }
                             }
                             Item { Layout.fillWidth: true }
                             ThemedButton {
@@ -574,7 +620,7 @@ Page {
                         Text {
                             visible: !selectedRig; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             text: "A rig answers what hardware you use together. Profiles remain separate and answer how that hardware behaves."
-                            color: themeTokens.text; font.pixelSize: 13
+                            color: themeTokens.text; font.pixelSize: themeTokens.scale(13)
                         }
                         Repeater {
                             id: rigMemberRepeater
@@ -606,8 +652,8 @@ Page {
                                         Rectangle { width: 7; height: 7; radius: 4; color: modelData.ambiguous ? themeTokens.danger : modelData.connected ? themeTokens.ready : themeTokens.textMuted }
                                         ColumnLayout {
                                             Layout.fillWidth: true; spacing: 1
-                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 13; font.bold: true }
-                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: editingTarget ? "EDITING TARGET" : modelData.ambiguous ? "SELECTION REQUIRED" : !modelData.verified ? "NEEDS VERIFICATION" : "PHYSICAL DEVICE"; color: editingTarget ? themeTokens.orange : themeTokens.textMuted; font.pixelSize: 10; font.bold: editingTarget }
+                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(13); font.bold: true }
+                                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: editingTarget ? "EDITING TARGET" : modelData.ambiguous ? "SELECTION REQUIRED" : !modelData.verified ? "NEEDS VERIFICATION" : "PHYSICAL DEVICE"; color: editingTarget ? themeTokens.orange : themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: editingTarget }
                                         }
                                         ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openDevice(modelData.id) }
                                         ThemedButton { theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; visible: selectedRig && selectedRig.members.length > 1; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.removeDeviceRigMember(rigId, modelData.id), "Physical controller removed", "The saved controller is no longer part of this Device Rig.", "Physical controller was not removed", "Refresh the Device Rig and try again.") } }
@@ -643,7 +689,7 @@ Page {
                                             color: modelData.isolationNeedsAttention
                                                     ? themeTokens.warning
                                                    : modelData.hiddenFromGames ? themeTokens.ready : themeTokens.warning
-                                            font.pixelSize: 10; font.bold: true; elide: Text.ElideRight
+                                            font.pixelSize: themeTokens.scale(10); font.bold: true; elide: Text.ElideRight
                                         }
                                         ThemedButton {
                                             id: memberVisibilityControl
@@ -662,7 +708,7 @@ Page {
                                         Layout.fillWidth: true
                                         text: "Physical game visibility is controlled only here. Automatic profile selection never hides or shows this device."
                                         color: themeTokens.textMuted
-                                        font.pixelSize: 9
+                                        font.pixelSize: themeTokens.scale(9)
                                         wrapMode: Text.WordWrap
                                     }
                                     RowLayout {
@@ -700,12 +746,12 @@ Page {
                                         Rectangle { width: 7; height: 7; radius: 4; color: modelData.ready ? themeTokens.ready : themeTokens.warning }
                                         ColumnLayout {
                                             Layout.fillWidth: true; spacing: 1
-                                            Text { Layout.fillWidth: true; text: (modelData.primary ? "PRIMARY · " : "") + modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
-                                            Text { Layout.fillWidth: true; text: (modelData.ready ? "Ready" : modelData.status || "Needs verification") + "  ·  " + (modelData.routeCount || 0) + " configured routes"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                                            Text { Layout.fillWidth: true; text: (modelData.primary ? "PRIMARY · " : "") + modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(11); font.bold: true; elide: Text.ElideRight }
+                                            Text { Layout.fillWidth: true; text: (modelData.ready ? "Ready" : modelData.status || "Needs verification") + "  ·  " + (modelData.routeCount || 0) + " configured routes"; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); elide: Text.ElideRight }
                                         }
                                         ThemedButton { theme: themeTokens; text: modelData.primary ? "PRIMARY" : "MAKE PRIMARY"; compact: true; tone: "secondary"; enabled: !modelData.primary && !!modelData.enabled; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigPrimaryOutput(rigId, modelData.id), "Rig primary output updated", "Profiles assigned to this Rig now use this Virtual Output.", "Rig primary output was not updated", "Choose an enabled Virtual Output in this Rig.") } }
                                         ThemedCheckBox { theme: themeTokens; text: "Use"; checked: !!modelData.enabled; onToggled: function(value) { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.setDeviceRigOutputEnabled(rigId, modelData.id, value), "Virtual Output state updated", value ? "This Virtual Output is included in the rig." : "This Virtual Output is excluded from the rig.", "Virtual Output state was not updated", "Refresh the Device Rig and try again.") } }
-                                        Text { text: !modelData.visibilityManaged ? "VISIBLE" : modelData.hiddenFromGames ? "HIDDEN" : "VISIBLE"; color: !modelData.visibilityManaged || !modelData.visibilityKnown ? themeTokens.textMuted : modelData.hiddenFromGames ? themeTokens.warning : themeTokens.ready; font.pixelSize: 9; font.bold: true }
+                                        Text { text: !modelData.visibilityManaged ? "VISIBLE" : modelData.hiddenFromGames ? "HIDDEN" : "VISIBLE"; color: !modelData.visibilityManaged || !modelData.visibilityKnown ? themeTokens.textMuted : modelData.hiddenFromGames ? themeTokens.warning : themeTokens.ready; font.pixelSize: themeTokens.scale(9); font.bold: true }
                                         ThemedButton { theme: themeTokens; text: "DETAILS"; compact: true; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
                                         ThemedButton { visible: selectedRig && selectedRig.outputs.length > 1; theme: themeTokens; text: "REMOVE"; compact: true; tone: "danger"; onTriggered: { const rigId = selectedRig ? selectedRig.id : ""; root.reportBooleanAction(!!rigId && backendObject.removeDeviceRigOutput(rigId, modelData.id), "Virtual Output removed", "The output is no longer part of this Device Rig.", "Virtual Output was not removed", "Refresh the Device Rig and try again.") } }
                                     }
@@ -726,7 +772,7 @@ Page {
                             text: root.selectedEditingCount() > 1
                                 ? "Multiple physical inputs are selected. Route changes require one source; compatible processing edits can be reviewed and applied together."
                                 : "Editing context changes what you view and edit across the application. It never switches the active hardware rig."
-                            color: themeTokens.textMuted; font.pixelSize: 11
+                            color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11)
                         }
                         ThemedButton {
                             visible: selectedRig && root.selectedEditingCount() > 1
@@ -755,7 +801,7 @@ Page {
                         Text {
                             Layout.fillWidth: true
                             text: "Automatic game activation is controlled by this Category's ordered Profiles: Preferred candidates first, then Fallback. Legacy rig auto-activation, priority, and fallback values are retained for compatibility but do not override a Profile / Device Rig route."
-                            color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap
+                            color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -790,8 +836,8 @@ Page {
                                 implicitWidth: Math.max(190, deviceName.implicitWidth + 28); implicitHeight: modelData.id === "" && modelData.connected ? 82 : 52
                                 radius: themeTokens.controlRadius; color: root.legacy ? "#e9161d23" : themeTokens.panelRaised; border.color: modelData.connected ? themeTokens.ready : themeTokens.border
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 2
-                                    Text { id: deviceName; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; width: 210 }
-                                    Text { text: modelData.state; color: themeTokens.textMuted; font.pixelSize: 9 }
+                                    Text { id: deviceName; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(12); font.bold: true; elide: Text.ElideRight; width: 210 }
+                                    Text { text: modelData.state; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(9) }
                                     ThemedButton { theme: themeTokens; visible: modelData.id === "" && modelData.connected; text: "SET UP"; compact: true; emphasis: "ready"
                                         onTriggered: { if (backendObject.selectNewController(modelData.directInputId)) root.requestVerification("", "")
                                                        else root.showActionFeedback({ success: false, title: "Device setup could not start", message: "Refresh the connected controller and try again." }) } }
@@ -799,7 +845,7 @@ Page {
                                 MouseArea { anchors.fill: parent; visible: modelData.id !== ""; onClicked: root.openDevice(modelData.id) }
                             }
                         }
-                        Text { visible: controllers.length === 0; text: "Connect a controller to begin."; color: themeTokens.textMuted; font.pixelSize: 12 }
+                        Text { visible: controllers.length === 0; text: "Connect a controller to begin."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(12) }
                     }
                 }
             }
@@ -818,7 +864,7 @@ Page {
                         Item { Layout.fillWidth: true }
                         ThemedButton { objectName: "openAddVirtualInputButton"; theme: themeTokens; text: "+ ADD VIRTUAL INPUT"; tone: "secondary"; onTriggered: virtualInputDialog.open() }
                     }
-                    Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 11
+                    Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11)
                         text: "No compatible virtual input sources are currently available. vJoy devices are intentionally excluded as inputs so HOTAS BF6 cannot route one of its outputs back into itself." }
                 }
             }
@@ -842,7 +888,7 @@ Page {
                         delegate: DevicePanel {
                             required property var modelData
                             Layout.fillWidth: true
-                            implicitHeight: 64
+                            implicitHeight: 96
                             theme: root.themeTokens; legacy: root.legacy
                             color: root.legacy ? "#e9161d23" : themeTokens.panelRaised
                             border.color: modelData.ready ? themeTokens.ready : modelData.readinessState === "SAVED" ? themeTokens.border : themeTokens.warning
@@ -851,14 +897,16 @@ Page {
                                 Rectangle { width: 7; height: 7; radius: 4; color: modelData.ready ? themeTokens.ready : modelData.readinessState === "SAVED" ? themeTokens.textMuted : themeTokens.warning }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 1
-                                    Text { Layout.fillWidth: true; text: modelData.name + "  ·  vJoy " + modelData.deviceId; color: themeTokens.textStrong; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight }
-                                    Text { Layout.fillWidth: true; text: (modelData.readinessState || (modelData.ready ? "READY" : "SAVED")) + " · " + (modelData.status || "Output status unavailable") + "  ·  " + (modelData.axes || "No axes") + "  ·  " + (modelData.profileCount || 0) + " profile" + (modelData.profileCount === 1 ? "" : "s"); color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                                    Text { Layout.fillWidth: true; text: modelData.name + "  ·  Virtual Output"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(12); font.bold: true; elide: Text.ElideRight }
+                                    Text { Layout.fillWidth: true; text: "vJoy Device " + modelData.deviceId + " · " + (modelData.axes || "No axes") + " · " + (modelData.buttons || 0) + " buttons · " + (Number(modelData.continuousPovs || 0) + Number(modelData.discretePovs || 0)) + " POVs"; color: themeTokens.text; font.pixelSize: themeTokens.scale(10); elide: Text.ElideRight }
+                                    Text { Layout.fillWidth: true; text: (modelData.readinessState || (modelData.ready ? "READY" : "SAVED")) + " · " + (modelData.status || "Output status unavailable") + "  ·  " + (modelData.profileCount || 0) + " profile" + (modelData.profileCount === 1 ? "" : "s"); color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); elide: Text.ElideRight }
                                 }
+                                ThemedButton { theme: themeTokens; compact: true; text: "EDIT OUTPUT"; tone: "secondary"; onTriggered: root.editOutput(modelData.id) }
                                 ThemedButton { theme: themeTokens; compact: true; text: "DETAILS"; tone: "secondary"; onTriggered: root.openOutput(modelData.id) }
                             }
                         }
                     }
-                    Text { visible: !backendObject || backendObject.virtualOutputLayouts.length === 0; Layout.fillWidth: true; text: "No saved Virtual Outputs yet. Add one when you are ready to route a Device Rig to a vJoy controller."; color: themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                    Text { visible: !backendObject || backendObject.virtualOutputLayouts.length === 0; Layout.fillWidth: true; text: "No saved Virtual Outputs yet. Add one when you are ready to route a Device Rig to a vJoy controller."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); wrapMode: Text.WordWrap }
                 }
             }
 
@@ -967,7 +1015,7 @@ Page {
                     : (visibilityConfirmationDialog.targetHidden
                        ? "Hide the selected inactive virtual controllers from games? HOTAS BF6 will change only the virtual controllers you selected."
                        : "Show the selected virtual outputs to games? Active outputs are kept visible for game binding.") }
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10)
                 text: "HOTAS BF6 checks the result before it reports success. Technical Details contains the exact driver evidence." }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
@@ -993,7 +1041,7 @@ Page {
         background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
-            Text { Layout.fillWidth: true; text: "Add a saved physical controller to this rig. Its calibration and existing mappings remain intact."; color: themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Add a saved physical controller to this rig. Its calibration and existing mappings remain intact."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); wrapMode: Text.WordWrap }
             ThemedComboBox { id: memberPicker; theme: themeTokens; Layout.fillWidth: true; model: root.availableRigMemberChoices(); textRole: "name"; valueRole: "id" }
             ThemedCheckBox { id: addMemberOptional; theme: themeTokens; text: "Optional accessory"; checked: false }
             RowLayout {
@@ -1014,9 +1062,9 @@ Page {
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
             SmallLabel { text: "SUPPORTED INPUT SOURCES" }
-            Text { Layout.fillWidth: true; text: "No compatible virtual controllers are available to add."; color: themeTokens.textStrong; font.pixelSize: 16; font.bold: true; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: "HOTAS BF6 currently accepts physical DirectInput controllers as mapper sources. vJoy is excluded here because accepting a HOTAS BF6-owned output as an input could create a feedback loop."; color: themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: "Routing loop not allowed: a virtual output can never become its own input, directly or through a Device Rig."; color: themeTokens.warning; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "No compatible virtual controllers are available to add."; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(16); font.bold: true; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "HOTAS BF6 currently accepts physical DirectInput controllers as mapper sources. vJoy is excluded here because accepting a HOTAS BF6-owned output as an input could create a feedback loop."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Routing loop not allowed: a virtual output can never become its own input, directly or through a Device Rig."; color: themeTokens.warning; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CLOSE"; tone: "secondary"; onTriggered: virtualInputDialog.close() }
             }
@@ -1038,7 +1086,7 @@ Page {
                 model: backendObject ? backendObject.virtualOutputLayouts : []; textRole: "name"; valueRole: "id" }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             SmallLabel { text: "CREATE NEW VIRTUAL OUTPUT" }
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10)
                 text: "Create another virtual controller here. HOTAS BF6 saves its capability settings, then Check Setup explains any driver configuration it still needs." }
             ThemedButton { objectName: "openCreateOutputButton"; theme: themeTokens; Layout.fillWidth: true; text: "+ CREATE NEW VJOY DEVICE"; tone: "secondary"
                 onTriggered: { const rig = selectedRig; addOutputDialog.close(); createOutputDialog.returnToRig = false; createOutputDialog.returnToOutputInventory = false; createOutputDialog.openFor(rig ? rig.id : "") } }
@@ -1073,6 +1121,11 @@ Page {
             root.showActionFeedback(result, "Virtual Output was not created",
                 "Check the selected capabilities and try again.")
         }
+        onUpdated: function(result) {
+            root.selectedOutputId = String(result.objectId || root.selectedOutputId || "")
+            root.showActionFeedback(result, "Virtual Output was not updated",
+                String(result.message || "Review the output contract and Setup Health."))
+        }
     }
 
     DeviceDialog {
@@ -1086,12 +1139,12 @@ Page {
         background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
-            Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.name || "Saved device"; color: themeTokens.textStrong; font.pixelSize: 22; font.bold: true }
+            Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.name || "Saved device"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(22); font.bold: true }
             RowLayout { Layout.fillWidth: true
                 Rectangle { width: 9; height: 9; radius: 5; color: physicalDeviceDialog.detail.connected ? themeTokens.ready : themeTokens.textMuted }
-                Text { text: physicalDeviceDialog.detail.connected ? "Connected" : "Saved · Offline"; color: themeTokens.text; font.pixelSize: 12 }
+                Text { text: physicalDeviceDialog.detail.connected ? "Connected" : "Saved · Offline"; color: themeTokens.text; font.pixelSize: themeTokens.scale(12) }
                 Item { Layout.fillWidth: true }
-                Text { text: physicalDeviceDialog.detail.verified ? "VERIFIED" : "NEEDS VERIFICATION"; color: physicalDeviceDialog.detail.verified ? themeTokens.ready : themeTokens.warning; font.pixelSize: 10; font.bold: true }
+                Text { text: physicalDeviceDialog.detail.verified ? "VERIFIED" : "NEEDS VERIFICATION"; color: physicalDeviceDialog.detail.verified ? themeTokens.ready : themeTokens.warning; font.pixelSize: themeTokens.scale(10); font.bold: true }
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             GridLayout { Layout.fillWidth: true; columns: 2; rowSpacing: 8; columnSpacing: 20
@@ -1119,10 +1172,10 @@ Page {
                            : physicalDeviceDialog.detail.hiddenFromGames ? themeTokens.ready : themeTokens.warning
                 }
             }
-            Text { Layout.fillWidth: true; visible: !physicalDeviceDialog.detail.connected; text: "Connect " + (physicalDeviceDialog.detail.name || "this controller") + " to calibrate it."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; visible: !physicalDeviceDialog.detail.connected; text: "Connect " + (physicalDeviceDialog.detail.name || "this controller") + " to calibrate it."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
-            Text { text: "TECHNICAL DETAILS"; color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
-            Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.hidInstanceId || physicalDeviceDialog.detail.directInputId || "No current raw identity"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideMiddle }
+            Text { text: "TECHNICAL DETAILS"; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
+            Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.hidInstanceId || physicalDeviceDialog.detail.directInputId || "No current raw identity"; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); elide: Text.ElideMiddle }
             RowLayout { Layout.fillWidth: true
                 ThemedButton { theme: themeTokens; text: "CHECK DEVICE SETUP"; tone: "secondary"
                     commandEnabled: !!backendObject
@@ -1154,11 +1207,11 @@ Page {
         background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
-            Text { Layout.fillWidth: true; text: outputDetailDialog.detail.name || "Virtual output"; color: themeTokens.textStrong; font.pixelSize: 22; font.bold: true }
+            Text { Layout.fillWidth: true; text: outputDetailDialog.detail.name || "Virtual output"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(22); font.bold: true }
             RowLayout { Layout.fillWidth: true
                 Rectangle { width: 9; height: 9; radius: 5; color: outputDetailDialog.detail.ready ? themeTokens.ready : outputDetailDialog.detail.readinessState === "SAVED" ? themeTokens.textMuted : themeTokens.warning }
-                Text { Layout.fillWidth: true; text: (outputDetailDialog.detail.readinessState || (outputDetailDialog.detail.ready ? "READY" : "SAVED")) + " · " + (outputDetailDialog.detail.status || "Verify output"); color: themeTokens.text; font.pixelSize: 12; elide: Text.ElideRight }
-                Text { text: "VJOY " + (outputDetailDialog.detail.deviceId || "—"); color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                Text { Layout.fillWidth: true; text: (outputDetailDialog.detail.readinessState || (outputDetailDialog.detail.ready ? "READY" : "SAVED")) + " · " + (outputDetailDialog.detail.status || "Verify output"); color: themeTokens.text; font.pixelSize: themeTokens.scale(12); elide: Text.ElideRight }
+                Text { text: "vJoy Device " + (outputDetailDialog.detail.deviceId || "—"); color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             GridLayout { Layout.fillWidth: true; columns: 2; rowSpacing: 8; columnSpacing: 20
@@ -1170,6 +1223,8 @@ Page {
                 Text { text: (outputDetailDialog.detail.continuousPovs || 0) + " continuous · " + (outputDetailDialog.detail.discretePovs || 0) + " discrete"; color: themeTokens.text }
                 SmallLabel { text: "USED BY" }
                 Text { Layout.fillWidth: true; text: outputDetailDialog.detail.rigs || "No Device Rigs"; color: themeTokens.text; elide: Text.ElideRight }
+                SmallLabel { text: "PROFILES" }
+                Text { Layout.fillWidth: true; text: outputDetailDialog.detail.profiles || "No Profiles through a Device Rig"; color: themeTokens.text; elide: Text.ElideRight }
                 SmallLabel { text: "ROUTE USAGE" }
                 Text { text: (outputDetailDialog.detail.routeCount || 0) + " configured routes"; color: themeTokens.text }
                 SmallLabel { text: "VISIBILITY" }
@@ -1186,7 +1241,7 @@ Page {
                 visible: !outputDetailDialog.detail.managedVisibility
                 Layout.fillWidth: true; spacing: 6
                 SmallLabel { text: "TECHNICAL DETAILS" }
-                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 10
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10)
                     text: "Enter the exact virtual-controller identifier shown in Technical Details. A name alone cannot identify a controller safely." }
                 RowLayout { Layout.fillWidth: true
                     ThemedTextInput { id: outputVisibilityIdentity; theme: themeTokens; Layout.fillWidth: true; placeholderText: "HID\\VID_1234&PID_BEAD\\…" }
@@ -1209,9 +1264,12 @@ Page {
                 }
                 ThemedButton { theme: themeTokens; text: "CONFIGURE VJOY"; tone: "secondary"; onTriggered: root.reportBooleanAction(backendObject.openVjoyConfiguration(), "vJoy configuration opened", "Configure the requested Virtual Output, then return to Check Output.", "vJoy configuration could not open", "Install or repair the vJoy configuration tool, then try again.") }
                 ThemedButton {
-                    theme: themeTokens; text: "RENAME LAYOUT"; tone: "secondary"
-                    onTriggered: { outputNameField.text = outputDetailDialog.detail.name || ""; renameOutputDialog.open() }
+                    theme: themeTokens; text: "EDIT OUTPUT"; tone: "secondary"
+                    onTriggered: { outputDetailDialog.close(); root.editOutput(root.selectedOutputId) }
                 }
+                ThemedButton { theme: themeTokens; text: "DUPLICATE"; tone: "secondary"; onTriggered: { outputDetailDialog.close(); root.duplicateOutput(root.selectedOutputId) } }
+                ThemedButton { visible: root.selectedOutputId === "bf6-output"; theme: themeTokens; text: "RESTORE BF6 RECOMMENDED"; tone: "secondary"; onTriggered: root.showActionFeedback(backendObject.restoreBf6RecommendedOutputCapabilities(), "BF6 capabilities were not restored", "Review the BF6 default output and try again.") }
+                ThemedButton { theme: themeTokens; text: "DELETE"; tone: "danger"; onTriggered: { outputDetailDialog.close(); root.reviewOutputDeletion(root.selectedOutputId) } }
                 Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CLOSE"; tone: "secondary"; onTriggered: outputDetailDialog.close() }
             }
@@ -1219,20 +1277,19 @@ Page {
     }
 
     DeviceDialog {
-        id: renameOutputDialog
-        modal: true; title: "Rename Virtual Output"
-        anchors.centerIn: parent; width: Math.min(460, root.width - 48)
+        id: outputDeleteDialog
+        modal: true; title: "Delete Virtual Output"
+        anchors.centerIn: parent; width: Math.min(520, root.width - 48)
         background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
-            width: parent.width; spacing: 14
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted
-                text: "This changes the saved output label only. Its vJoy device ID, routes, visibility, and runtime behavior are unchanged." }
-            ThemedTextInput { id: outputNameField; theme: themeTokens; Layout.fillWidth: true }
-            RowLayout {
-                Layout.fillWidth: true; Item { Layout.fillWidth: true }
-                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: renameOutputDialog.close() }
-                ThemedButton { theme: themeTokens; text: "SAVE"; commandEnabled: outputNameField.text.trim().length > 0
-                    onTriggered: { const saved = backendObject.renameVirtualOutputLayout(root.selectedOutputId, outputNameField.text); root.reportBooleanAction(saved, "Virtual Output renamed", "The saved output name was updated.", "Virtual Output was not renamed", "Choose a unique output name and try again."); if (saved) renameOutputDialog.close() } }
+            width: parent.width; spacing: 12
+            Text { Layout.fillWidth: true; text: outputDeletePreview.name || "Virtual Output"; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(18); font.bold: true }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: outputDeletePreview.canDelete ? themeTokens.textMuted : themeTokens.warning; text: outputDeletePreview.canDelete ? "This output is unused and can be deleted safely." : (outputDeletePreview.reason || "Review dependencies before deleting this output.") }
+            Text { visible: (outputDeletePreview.affectedRigs || []).length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.text; text: "DEVICE RIGS\n" + (outputDeletePreview.affectedRigs || []).map(function(rig) { return "• " + String(rig.name || "Device Rig") + (rig.primary ? " — Primary Output" : "") }).join("\n") }
+            Text { visible: (outputDeletePreview.affectedProfiles || []).length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.text; text: "PROFILES\n" + (outputDeletePreview.affectedProfiles || []).map(function(profile) { return "• " + String(profile) }).join("\n") }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
+                ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: outputDeleteDialog.close() }
+                ThemedButton { theme: themeTokens; text: "DELETE OUTPUT"; tone: "danger"; commandEnabled: !!outputDeletePreview.canDelete; onTriggered: { const result = backendObject.deleteVirtualOutputLayout(root.selectedOutputId); root.showActionFeedback(result, "Virtual Output was not deleted", "Review Device Rig dependencies before deleting it."); if (result.success) outputDeleteDialog.close() } }
             }
         }
     }
@@ -1296,11 +1353,11 @@ Page {
                     required property var modelData
                     Layout.fillWidth: true
                     Rectangle { width: 7; height: 7; radius: 4; color: modelData.compatible ? themeTokens.ready : themeTokens.warning }
-                    Text { Layout.fillWidth: true; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: 12 }
-                    Text { text: "Compatible"; color: themeTokens.ready; font.pixelSize: 10; font.bold: true }
+                    Text { Layout.fillWidth: true; text: modelData.name; color: themeTokens.textStrong; font.pixelSize: themeTokens.scale(12) }
+                    Text { text: "Compatible"; color: themeTokens.ready; font.pixelSize: themeTokens.scale(10); font.bold: true }
                 }
             }
-            Text { Layout.fillWidth: true; text: "Only compatible processing settings are batched. Axis routes always require one explicit physical source."; color: themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Only compatible processing settings are batched. Axis routes always require one explicit physical source."; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ThemedButton { theme: themeTokens; text: "CANCEL"; tone: "secondary"; onTriggered: batchAxisDialog.close() }
@@ -1402,7 +1459,7 @@ Page {
                 onTriggered: { createRigDialog.close(); createOutputDialog.returnToRig = true; createOutputDialog.returnToOutputInventory = false; createOutputDialog.openFor("") } }
             Rectangle { Layout.fillWidth: true; height: 1; color: themeTokens.divider }
             SmallLabel { text: "3  ·  REVIEW" }
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: 11
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: themeTokens.textMuted; font.pixelSize: themeTokens.scale(11)
                 text: createRigDialog.selectedControllerIds().length === 0
                     ? "Connect a controller to create your first Device Rig."
                     : "This rig will use “" + createRigDialog.selectedOutputName() + "”. If a selected controller needs setup, the Setup Assistant will open next." }

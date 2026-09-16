@@ -135,6 +135,8 @@ class AppBackend final : public QObject {
     // It tells the GUI/control plane when it may project runtime state, never
     // how quickly DirectInput reports are processed or written to vJoy.
     Q_PROPERTY(QString presentationState READ presentationState NOTIFY presentationStateChanged)
+    Q_PROPERTY(QString presentationQosState READ presentationQosState NOTIFY presentationStateChanged)
+    Q_PROPERTY(int presentationDroppedFrameCount READ presentationDroppedFrameCount NOTIFY presentationStateChanged)
     Q_PROPERTY(bool physicalConnected READ physicalConnected NOTIFY stateChanged)
     Q_PROPERTY(int axisCount READ axisCount NOTIFY stateChanged)
     Q_PROPERTY(QString physicalAxisCapabilitySummary READ physicalAxisCapabilitySummary NOTIFY stateChanged)
@@ -212,6 +214,10 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString activeOutputLayoutName READ activeOutputLayoutName NOTIFY stateChanged)
     Q_PROPERTY(QString activeOutputLayoutDescriptor READ activeOutputLayoutDescriptor NOTIFY stateChanged)
     Q_PROPERTY(QVariantList virtualOutputLayouts READ virtualOutputLayouts NOTIFY stateChanged)
+    // The graphical Signal Flow editor is development-only while its
+    // replacement is under construction. Production remains on the explicit
+    // beta surface unless launched with the owner/developer flag.
+    Q_PROPERTY(bool developerSignalFlowEditorEnabled READ developerSignalFlowEditorEnabled CONSTANT)
     Q_PROPERTY(double disabledAxisValue READ disabledAxisValue NOTIFY stateChanged)
     Q_PROPERTY(bool curveTransitionSmoothingEnabled READ curveTransitionSmoothingEnabled NOTIFY stateChanged)
     Q_PROPERTY(int curveTransitionDurationMs READ curveTransitionDurationMs NOTIFY stateChanged)
@@ -429,6 +435,8 @@ public:
     bool keepRunningInTray() const;
     bool trayAvailable() const;
     QString presentationState() const;
+    QString presentationQosState() const;
+    int presentationDroppedFrameCount() const;
     int presentationSnapshotIntervalMs() const;
     int controllerDiscoveryIntervalMs() const;
     bool presentationSnapshotActive() const;
@@ -497,6 +505,7 @@ public:
     QString activeOutputLayoutName() const;
     QString activeOutputLayoutDescriptor() const;
     QVariantList virtualOutputLayouts() const;
+    bool developerSignalFlowEditorEnabled() const;
     double disabledAxisValue() const;
     bool curveTransitionSmoothingEnabled() const;
     int curveTransitionDurationMs() const;
@@ -789,6 +798,17 @@ public:
                                                             bool makeRigPrimary = false);
     Q_INVOKABLE QVariantMap retryVirtualOutputAcquire(const QString &layoutId);
     Q_INVOKABLE bool renameVirtualOutputLayout(const QString &layoutId, const QString &name);
+    // Virtual Output edits are intentionally a backend-owned two-step
+    // contract.  QML renders the plan but never infers runtime, relationship,
+    // or driver impact from the visible fields.
+    Q_INVOKABLE QVariantMap previewVirtualOutputEdit(const QString &layoutId, const QString &name,
+                                                     int deviceId, const QVariantList &axes,
+                                                     int buttons, int continuousPovs,
+                                                     int discretePovs) const;
+    Q_INVOKABLE QVariantMap applyVirtualOutputEdit(const QVariantMap &plan);
+    Q_INVOKABLE QVariantMap previewVirtualOutputDelete(const QString &layoutId) const;
+    Q_INVOKABLE QVariantMap deleteVirtualOutputLayout(const QString &layoutId);
+    Q_INVOKABLE QVariantMap restoreBf6RecommendedOutputCapabilities();
     Q_INVOKABLE bool adoptVirtualOutputVisibility(const QString &layoutId,
                                                    const QString &deviceInstanceId);
     Q_INVOKABLE void setAutomationEngineEnabled(bool enabled);
@@ -1020,6 +1040,7 @@ private:
         Minimized,
         TrayHidden,
     };
+    enum class PresentationQosState { Normal, Loaded, SeverelyLoaded };
 
     enum class InputLearningKind { None, Axis, Button, Pov, SignalFlowSource };
     enum class InputLearningPhase { Idle, Arming, Waiting, Ambiguous, Conflict, Assigned };
@@ -1157,6 +1178,10 @@ private:
     };
 
     void persistAndApply();
+    // A descriptor edit is durable immediately, but it must not make the
+    // MappingWorker release/reacquire an active vJoy device behind the
+    // owner's back.  Setup Health performs the explicit hand-off later.
+    bool persistVirtualOutputDescriptorEdit();
     // A focused edit to the owner of a shared Signal Flow conditioner remains
     // one configuration edit for every linked channel. A member edit is left
     // independent so reconciliation can surface it as an explicit split.
@@ -1218,6 +1243,8 @@ private:
     bool consumeActivationFaultForTest(const QString &stage);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
+    void updatePresentationQos(qint64 lateByMs);
+    void applyPresentationQosIntervals();
     void releasePresentationResources();
     void restorePresentationResources();
     bool rebuildControllerUiModel();
@@ -1520,6 +1547,10 @@ private:
     // Output inspection is explicit and scoped.  A rig/device check must not
     // accidentally change another saved output's readiness presentation.
     QHash<QString, ControllerReadinessPlan> m_virtualOutputReadinessPlans;
+    // A capability/device-ID edit is persisted as the desired contract, but
+    // its runtime configuration is held until the owner explicitly enters
+    // the existing Setup Health driver transaction.
+    QSet<QString> m_virtualOutputRuntimeSyncPending;
     QString m_pendingCalibrationRecordId;
     int m_presentedMappingEffectiveState = static_cast<int>(MappingEffectiveState::Off);
     ControllerReadinessService m_readiness;
@@ -1537,6 +1568,10 @@ private:
     bool m_controllerInventoryInitialized = false;
     QPointer<QWindow> m_mainWindow;
     PresentationLifecycleState m_presentationLifecycle = PresentationLifecycleState::Visible;
+    PresentationQosState m_presentationQos = PresentationQosState::Normal;
+    QElapsedTimer m_presentationTickClock;
+    int m_presentationQosStableTicks = 0;
+    int m_presentationDroppedFrameCount = 0;
     bool m_trayHidden = false;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;

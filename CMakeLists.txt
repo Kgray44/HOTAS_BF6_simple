@@ -117,6 +117,7 @@ qt_add_qml_module(HOTASMapper
         qml/AdaptiveResponsePage.qml
         qml/AutomationPage.qml
         qml/SignalFlow.qml
+        qml/SignalFlowBeta.qml
         qml/LegacyAviationPanel.qml
         qml/LegacyCurveEditor.qml
         qml/Legacy.qml
@@ -581,6 +582,7 @@ if (BUILD_TESTING)
             qml/AdaptiveResponsePage.qml
             qml/AutomationPage.qml
             qml/SignalFlow.qml
+            qml/SignalFlowBeta.qml
             qml/LegacyAviationPanel.qml
             qml/LegacyCurveEditor.qml
             qml/Legacy.qml

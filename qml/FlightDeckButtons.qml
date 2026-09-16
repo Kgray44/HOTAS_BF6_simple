@@ -297,7 +297,7 @@ Flickable {
     component SectionLabel: Text {
         color: deck.textMuted
         font.family: deck.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: deck.scale(9)
         font.bold: true
         Layout.fillWidth: true
     }
@@ -318,7 +318,7 @@ Flickable {
             text: parent.label
             color: deck.statusColor(parent.tone)
             font.family: deck.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: deck.scale(8)
             font.bold: true
         }
     }
@@ -332,7 +332,7 @@ Flickable {
             text: control.text
             color: control.enabled ? (control.subdued ? deck.textSecondary : deck.primarySurface) : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -358,7 +358,7 @@ Flickable {
             text: control.displayText
             color: control.enabled ? deck.textPrimary : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -367,7 +367,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deck.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deck.scale(16)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -388,7 +388,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -422,7 +422,7 @@ Flickable {
         onAccepted: focus = false
         color: deck.textPrimary
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         leftPadding: deck.space12
         rightPadding: deck.space12
         background: Rectangle {
@@ -445,7 +445,7 @@ Flickable {
             text: control.text
             color: root.filterMode === control.filterValue ? deck.primarySurface : deck.textSecondary
             font.family: deck.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: deck.scale(8)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -518,7 +518,7 @@ Flickable {
                         text: String(button.label || "Virtual Button " + buttonIndex)
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 16
+                        font.pixelSize: deck.scale(16)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -527,7 +527,7 @@ Flickable {
                         text: String(button.sourceSummary || "No physical input assigned")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -542,14 +542,14 @@ Flickable {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: deck.space8
-                Text { text: "→"; color: deck.accent; font.pixelSize: 20; font.bold: true }
+                Text { text: "→"; color: deck.accent; font.pixelSize: deck.scale(20); font.bold: true }
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 2
                     Text {
                         text: String(button.targetLabel || "vJoy Button " + buttonIndex)
                         color: deck.textPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: deck.scale(13)
                         font.bold: true
                         Layout.fillWidth: true
                     }
@@ -559,7 +559,7 @@ Flickable {
                             : "MIXED · " + Number(button.sourceCount || 0) + " PHYSICAL SOURCES"
                         color: Number(button.sourceCount || 0) > 1 ? deck.accent : deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                     }
                     Text {
@@ -567,7 +567,7 @@ Flickable {
                         text: "Automation · " + card.automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -588,7 +588,7 @@ Flickable {
                         : "Select a controller above"
                     color: root.selectedDeviceId().length > 0 ? deck.textPrimary : deck.attention
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     elide: Text.ElideRight
                 }
                 SectionLabel { text: "INPUT BUTTON" }
@@ -598,7 +598,7 @@ Flickable {
                         ? "Selected Device · " + root.inputDeviceName + ". Choose the physical button that should control " + String(button.targetLabel || "this output") + "."
                         : "Choose a specific controller from SELECTED DEVICE in the top bar before assigning a physical source."
                     color: root.selectedDeviceId().length > 0 ? deck.textSecondary : deck.attention
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     wrapMode: Text.WordWrap
                 }
                 DeckCombo {
@@ -638,7 +638,7 @@ Flickable {
                             : (Boolean(card.selectedInputLive.pressed) ? "Selected input is pressed" : "")
                         color: deck.healthy
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                     }
                 }
             }
@@ -681,7 +681,7 @@ Flickable {
                         text: String(button.label || button.hardwareLabel || "Button")
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 16
+                        font.pixelSize: deck.scale(16)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -692,7 +692,7 @@ Flickable {
                             + String(button.hardwareLabel || "Button " + buttonIndex)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -713,7 +713,7 @@ Flickable {
                 Text {
                     text: "→"
                     color: deck.accent
-                    font.pixelSize: 20
+                    font.pixelSize: deck.scale(20)
                     font.bold: true
                     Layout.alignment: Qt.AlignTop
                 }
@@ -724,7 +724,7 @@ Flickable {
                         text: root.assignmentForButton(button)
                         color: button.profileControlEnabled && !button.profileControlTargetAvailable
                             ? deck.attention : deck.textPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: deck.scale(13)
                         font.bold: true
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
@@ -734,7 +734,7 @@ Flickable {
                         text: "Saved game route · " + String(button.targetLabel)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                     }
                     Text {
@@ -742,7 +742,7 @@ Flickable {
                         text: "Automation · " + automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -839,7 +839,7 @@ Flickable {
                             Layout.fillWidth: true
                             text: "With: " + String(card.sharedOutput.with || "another source")
                             color: deck.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             elide: Text.ElideRight
                         }
                         DeckCombo {
@@ -861,7 +861,7 @@ Flickable {
                 Text {
                     text: "Physical control → existing vJoy button route. Changes apply through the current profile command path."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -878,7 +878,7 @@ Flickable {
                         text: Number(button.target) > 0 && virtualPressed ? "vJoy output is pressed" : ""
                         color: deck.healthy
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                     }
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
@@ -886,7 +886,7 @@ Flickable {
                 Text {
                     text: "A profile control consumes this physical input while retaining its saved game route for restoration when cleared."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -936,7 +936,7 @@ Flickable {
                             ? "References " + String(button.profileControlTargetName)
                             : "The referenced profile is unavailable. Choose another profile or clear this control."
                         color: button.profileControlTargetAvailable ? deck.textSecondary : deck.attention
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                     }
                     DeckButton {
@@ -951,7 +951,7 @@ Flickable {
                 Text {
                     text: "This existing global control is independent of the game route above."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     Layout.fillWidth: true
                 }
                 DeckCombo {
@@ -976,7 +976,7 @@ Flickable {
                                 Layout.fillWidth: true
                                 text: String(modelData.name || "Automation") + " · " + String(modelData.conditionSummary || "Uses this button")
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 elide: Text.ElideRight
                             }
                             DeckButton {
@@ -1005,7 +1005,7 @@ Flickable {
             text: String(button.label || button.hardwareLabel || "Button") + "  +"
             color: control.hovered ? deck.accent : deck.textSecondary
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -1041,7 +1041,7 @@ Flickable {
                         text: String(button.label || button.hardwareLabel || "Button")
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 16
+                        font.pixelSize: deck.scale(16)
                         font.bold: true
                     }
                     Text {
@@ -1049,7 +1049,7 @@ Flickable {
                             + String(button.hardwareLabel || "Button " + buttonIndex) + " · Unassigned"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                     }
                 }
                 DeckButton { text: "CLOSE"; subdued: true; onClicked: root.expandedButtonIndex = -1 }
@@ -1069,7 +1069,7 @@ Flickable {
             Text {
                 text: "Unassigned is intentional. Choose an existing vJoy button only when this control should have a game output."
                 color: deck.textMuted
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -1096,7 +1096,7 @@ Flickable {
                 text: String(directionInput.label || "Direction")
                 color: tile.selected || directionInput.active ? deck.textPrimary : deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
@@ -1106,7 +1106,7 @@ Flickable {
                 text: root.assignmentForPov(directionInput)
                 color: directionInput.active ? deck.healthy : deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
             }
@@ -1147,14 +1147,14 @@ Flickable {
                         text: "HAT " + card.hatIndex
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 16
+                        font.pixelSize: deck.scale(16)
                         font.bold: true
                     }
                     Text {
                         text: root.inputDeviceName + " · POV " + card.hatIndex
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                     }
                 }
                 SummaryChip {
@@ -1181,7 +1181,7 @@ Flickable {
                         anchors.centerIn: parent
                         text: hat.centered ? "●" : "◉"
                         color: hat.centered ? deck.textMuted : deck.accent
-                        font.pixelSize: 18
+                        font.pixelSize: deck.scale(18)
                     }
                 }
                 HatDirectionTile { directionInput: card.directionAt(2) }
@@ -1199,14 +1199,14 @@ Flickable {
                         text: "NATIVE vJOY POV"
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                     }
                     Text {
                         text: String(hat.nativeTargetLabel || "Off") + " · " + String(hat.nativeStatus || "OFF")
                         color: hat.nativeAvailable || !hat.nativeEnabled ? deck.textMuted : deck.attention
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -1235,7 +1235,7 @@ Flickable {
                 visible: root.nativePovChoices.length === 0
                 text: "The selected vJoy device exposes no native POV target. Direction routes above remain available."
                 color: deck.attention
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -1252,7 +1252,7 @@ Flickable {
                 Text {
                     text: "Physical POV direction → existing vJoy button route."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                 }
                 DeckCombo {
                     id: povMappingSelector
@@ -1272,7 +1272,7 @@ Flickable {
                         Layout.fillWidth: true
                         text: "Learn a physical hat direction for the current vJoy button route."
                         color: deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     DeckButton {
@@ -1327,7 +1327,7 @@ Flickable {
                             ? "References " + String(povDetail.selectedDirection.profileControlTargetName)
                             : "The referenced profile is unavailable."
                         color: povDetail.selectedDirection.profileControlTargetAvailable ? deck.textSecondary : deck.attention
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                     }
                     DeckButton {
                         text: "OPEN PROFILE"
@@ -1345,7 +1345,7 @@ Flickable {
                             Layout.fillWidth: true
                             text: "Automation · " + String(modelData.name || "Rule")
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             elide: Text.ElideRight
                         }
                         DeckButton {
@@ -1377,7 +1377,7 @@ Flickable {
                             : "select a controller to choose a source")
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -1434,7 +1434,7 @@ Flickable {
                                 : root.inputDeviceName + " is disconnected; saved routes remain editable"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                     }
                 }
@@ -1450,7 +1450,7 @@ Flickable {
                             ? root.inputDeviceName + " is disconnected. Its saved routes remain available for editing."
                             : "Virtual output needs attention. You can still inspect existing physical controls and routes."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                     }
                     DeckButton { text: "OPEN SETUP"; subdued: true; onClicked: root.navigateToPage(2) }
@@ -1464,7 +1464,7 @@ Flickable {
             Text {
                 text: "Each card is one virtual output. Its source summary shows the controller and physical button that currently own it."
                 color: deck.textMuted
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
@@ -1484,7 +1484,7 @@ Flickable {
             visible: buttonItems.length === 0
             text: "No virtual button outputs are available for the selected Profile."
             color: deck.textMuted
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             Layout.fillWidth: true
         }
         Flow {
@@ -1505,7 +1505,7 @@ Flickable {
             visible: root.povItems.length > 0
             text: "Directions use the authoritative discrete POV routes. Native vJoy POV output, when available, stays a separate existing path."
             color: deck.textMuted
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
@@ -1536,7 +1536,7 @@ Flickable {
                       + "\n\nNew source:\n    " + root.inputDeviceName + " · Button " + conflictButtonIndex
                     : "This vJoy button is already routed. Replace moves the existing route. POV directions do not support shared output routes."
                 color: deck.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -1580,7 +1580,7 @@ Flickable {
                     + " · Button " + root.conflictButtonIndex + " and "
                     + String(root.conflictOwner.ownerLabel || "the existing source") + "."
                 color: deck.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 wrapMode: Text.WordWrap
             }
             DeckCombo {

@@ -8,7 +8,9 @@ Item {
     required property var backendObject
     required property var themeTokens
     property bool topGun: false
-    property string editScope: "device"
+    // Profile Default is always a valid writable owner. A per-device layer is
+    // offered only after the user has selected one exact controller.
+    property string editScope: "profile"
     property string targetId: ""
     property string renamePresetId: ""
     property string scenario: "Human-Like Rapid Reversal"
@@ -85,6 +87,29 @@ Item {
         if (editScope === "category") return backendObject.profileCategories || []
         if (editScope === "preset") return (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn })
         return (backendObject.profiles || []).map(function(profile) { return { id: profile.id, name: profile.displayName || profile.name } })
+    }
+    function editingScopeChoices() {
+        const choices = [{name:"Profile Default", value:"profile"}, {name:"Application Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Response Preset", value:"preset"}]
+        if (backendObject.selectedDeviceIsSpecific) choices.unshift({name:"This Device", value:"device"})
+        return choices
+    }
+    function editScopeIndex() {
+        const choices = editingScopeChoices()
+        for (let i = 0; i < choices.length; ++i) if (choices[i].value === editScope) return i
+        return 0
+    }
+    function ensureValidEditContext() {
+        if (editScope === "device" && !backendObject.selectedDeviceIsSpecific) {
+            editScope = "profile"
+            targetId = ""
+        }
+    }
+    function settingsApplyTo() {
+        if (editScope === "device") return selectedTargetName()
+        if (editScope === "profile") return "Profile Default"
+        if (editScope === "global") return "Application Defaults"
+        if (editScope === "category") return selectedTargetName()
+        return selectedTargetName()
     }
     function selectedTargetId() {
         if (editScope === "device") { const choices = targetChoices(); return choices.length > 0 ? choices[0].id : "" }
@@ -282,7 +307,7 @@ Item {
         else historyInspectIndex = Math.max(0, Math.min(historyInspectIndex, historySamples.length - 1))
     }
     onHistoryPausedChanged: if (historyPaused) historyInspectIndex = historySamples.length - 1
-    Component.onCompleted: refreshViewportActivity()
+    Component.onCompleted: { ensureValidEditContext(); refreshViewportActivity() }
     Connections {
         target: backendObject
         function onStateChanged() { root.contextEpoch += 1; root.runtimeEpoch += 1 }
@@ -292,6 +317,7 @@ Item {
                 root.setPreview()
             }
         }
+        function onDeviceRigsChanged() { root.ensureValidEditContext() }
         function onInputTelemetryChanged() { root.runtimeEpoch += 1 }
     }
     Timer { interval: 33; running: root.responseLabSource === "live" && root.responseLabNearViewport && !root.historyPaused; repeat: true; triggeredOnStart: true; onTriggered: root.refreshHistory(false) }
@@ -321,7 +347,7 @@ Item {
     }
     component Caption: Text {
         color: root.themeTokens.textMuted
-        font.pixelSize: 10
+        font.pixelSize: themeTokens.scale(10)
         font.bold: true
         font.letterSpacing: 0.6
     }
@@ -330,7 +356,7 @@ Item {
         property bool accent: true
         implicitHeight: 34
         padding: 12
-        font.pixelSize: 10
+        font.pixelSize: themeTokens.scale(10)
         font.bold: true
         contentItem: Text { text: actionButton.text; color: actionButton.enabled ? root.themeTokens.textStrong : root.themeTokens.textFaint; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font: actionButton.font }
         background: Rectangle { radius: root.themeTokens.controlRadius; color: actionButton.down ? root.themeTokens.controlPressed : actionButton.hovered ? root.themeTokens.controlHover : (actionButton.accent ? root.themeTokens.buttonSurface : root.themeTokens.buttonSecondary); border.color: actionButton.accent ? root.themeTokens.orange : root.themeTokens.border }
@@ -348,7 +374,7 @@ Item {
         implicitHeight: 34
         leftPadding: 10
         rightPadding: 29
-        font.pixelSize: 10
+        font.pixelSize: themeTokens.scale(10)
         background: Rectangle {
             radius: root.themeTokens.controlRadius
             color: combo.enabled ? (combo.hovered ? root.themeTokens.controlHover : root.themeTokens.control) : root.themeTokens.controlDisabled
@@ -361,7 +387,7 @@ Item {
         }
         indicator: Text {
             x: combo.width - width - 10; y: (combo.height - height) / 2
-            text: "⌄"; color: combo.enabled ? root.themeTokens.textMuted : root.themeTokens.textFaint; font.pixelSize: 15
+            text: "⌄"; color: combo.enabled ? root.themeTokens.textMuted : root.themeTokens.textFaint; font.pixelSize: themeTokens.scale(15)
         }
         delegate: ItemDelegate {
             id: choice
@@ -378,7 +404,7 @@ Item {
             contentItem: Text {
                 leftPadding: 10; rightPadding: 10; text: combo.textAt(index)
                 color: choice.highlighted ? root.themeTokens.textStrong : root.themeTokens.text
-                verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; font.pixelSize: 10
+                verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; font.pixelSize: themeTokens.scale(10)
             }
             background: Rectangle {
                 radius: root.themeTokens.controlRadius
@@ -412,7 +438,7 @@ Item {
         leftPadding: 11
         rightPadding: 11
         onAccepted: focus = false
-        font.pixelSize: 11
+        font.pixelSize: themeTokens.scale(11)
         background: Rectangle {
             radius: root.themeTokens.controlRadius
             color: root.themeTokens.control
@@ -444,7 +470,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: themedDialog.heading.toUpperCase()
                 color: root.themeTokens.textStrong
-                font.pixelSize: root.topGun ? 17 : 15
+                font.pixelSize: themeTokens.scale(root.topGun ? 17 : 15)
                 font.bold: true
                 font.family: root.themeTokens.displayFont
                 elide: Text.ElideRight
@@ -459,7 +485,7 @@ Item {
         implicitWidth: 135; width: implicitWidth; implicitHeight: 46
         Column { width: parent.width; anchors.verticalCenter: parent.verticalCenter; spacing: 3
             Caption { width: parent.width; text: parent.parent.caption; elide: Text.ElideRight }
-            Text { width: parent.width; text: parent.parent.value; color: parent.parent.tone; font.pixelSize: 16; font.bold: true; font.family: root.themeTokens.telemetryFont; elide: Text.ElideRight }
+            Text { width: parent.width; text: parent.parent.value; color: parent.parent.tone; font.pixelSize: themeTokens.scale(16); font.bold: true; font.family: root.themeTokens.telemetryFont; elide: Text.ElideRight }
         }
     }
     component Gauge: Item {
@@ -694,12 +720,12 @@ Item {
         border.color: root.inheritedHere(propertyKey) && root.editScope !== "global" ? root.themeTokens.border : root.themeTokens.borderStrong
         RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 12
             ColumnLayout { Layout.preferredWidth: 300; Layout.maximumWidth: 360; Layout.fillWidth: true; spacing: 3
-                Text { text: tuneRow.label; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
-                Text { text: tuneRow.detail; color: root.themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Text { text: tuneRow.label; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(12); font.bold: true }
+                Text { text: tuneRow.detail; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere(tuneRow.propertyKey) ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
             }
             ThemedSlider { id: slider; Layout.fillWidth: true; Layout.minimumWidth: 180; from: tuneRow.from; to: tuneRow.to; stepSize: tuneRow.step; value: tuneRow.value; onMoved: tuneRow.changed(value) }
-            Text { Layout.preferredWidth: 78; text: tuneRow.displayValue(); color: root.themeTokens.textStrong; horizontalAlignment: Text.AlignRight; font.pixelSize: 11; font.family: root.themeTokens.telemetryFont }
+            Text { Layout.preferredWidth: 78; text: tuneRow.displayValue(); color: root.themeTokens.textStrong; horizontalAlignment: Text.AlignRight; font.pixelSize: themeTokens.scale(11); font.family: root.themeTokens.telemetryFont }
             ActionButton {
                 visible: tuneRow.propertyKey.length > 0
                 text: root.editScope === "global" ? "RESET DEFAULT" : root.inheritedHere(tuneRow.propertyKey) ? "INHERITED" : "INHERIT"
@@ -729,8 +755,8 @@ Item {
             anchors.fill: parent
             anchors.margins: 12
             spacing: 8
-            Text { text: tuneGroup.title; color: root.themeTokens.textStrong; font.pixelSize: 12; font.bold: true }
-            Text { visible: tuneGroup.detail.length > 0; text: tuneGroup.detail; color: root.themeTokens.textMuted; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+            Text { text: tuneGroup.title; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(12); font.bold: true }
+            Text { visible: tuneGroup.detail.length > 0; text: tuneGroup.detail; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); width: parent.width; wrapMode: Text.WordWrap }
         }
     }
 
@@ -745,8 +771,8 @@ Item {
                 width: parent.width
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Text { text: "Response Lab"; color: root.themeTokens.textStrong; font.pixelSize: 18; font.bold: true }
-                    Text { text: "One synchronized inspection surface. Changing source changes only the input feed; Adaptive Response settings, curves, and profile configuration remain untouched."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Response Lab"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(18); font.bold: true }
+                    Text { text: "One synchronized inspection surface. Changing source changes only the input feed; Adaptive Response settings, curves, and profile configuration remain untouched."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 Caption { text: "INPUT SOURCE" }
                 ActionButton { objectName: "responseLabInteractiveSource"; text: "INTERACTIVE"; implicitHeight: 30; padding: 9; accent: !liveSource; onClicked: root.setResponseLabSource("interactive") }
@@ -801,23 +827,23 @@ Item {
                         width: parent.width
                         spacing: 10
                         Caption { text: root.simulatorReplaying ? "REPLAY" : root.simulatorRecording ? "RECORDING" : root.simulatorPaused ? "PAUSED" : "LIVE" }
-                        Text { text: "MANUAL INPUT"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+                        Text { text: "MANUAL INPUT"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         ThemedSlider { objectName: "adaptiveSimulatorManualInput"; Layout.fillWidth: true; from: -1; to: 1; stepSize: 0.001; value: root.simulatorInput; onMoved: { root.simulatorInput = value; if (!root.simulatorPaused && !root.simulatorReplaying) root.sampleSimulator() } }
-                        Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: 13; font.bold: true; font.family: root.themeTokens.telemetryFont }
+                        Text { text: root.percent(root.simulatorInput); color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(13); font.bold: true; font.family: root.themeTokens.telemetryFont }
                     }
                     RowLayout {
                         visible: liveSource && telemetry.sourceConnected !== false
                         width: parent.width
                         Caption { text: root.liveReplaying ? "REPLAYING CAPTURE" : root.liveRecording ? "RECORDING" : root.historyPaused ? "PAUSED INSPECTION" : "LIVE CONTROLLER" }
-                        Text { text: "Latest physical-input snapshot; observable while mapping is off, suspended, or vJoy is unavailable."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Latest physical-input snapshot; observable while mapping is off, suspended, or vJoy is unavailable."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Repeater { model: [2, 5, 10, 30]
                             delegate: ActionButton { required property var modelData; text: modelData + "s"; accent: root.historyWindowSeconds === modelData; implicitHeight: 28; padding: 8; onClicked: { root.historyWindowSeconds = modelData; root.refreshHistory() } }
                         }
                     }
-                    Text { visible: liveSource && telemetry.sourceConnected === false; text: "NO PHYSICAL CONTROLLER AVAILABLE — connect or select a controller to populate this same Response Lab. No mapped output, game, or vJoy device is required for observation."; color: root.themeTokens.orange; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { visible: liveSource && telemetry.sourceConnected === false; text: "NO PHYSICAL CONTROLLER AVAILABLE — connect or select a controller to populate this same Response Lab. No mapped output, game, or vJoy device is required for observation."; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(11); width: parent.width; wrapMode: Text.WordWrap }
                     RowLayout { visible: !liveSource && (root.simulatorRecordingSamples.length > 0 || root.simulatorReplaying); width: parent.width; spacing: 7
                         Caption { text: "SLOW-MOTION PLAYBACK" }
-                        Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                        Text { text: "Replay speed"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
                         Repeater { model: [1, 2, 4, 6, 8, 10]
                             delegate: ActionButton { required property var modelData; text: modelData + "×"; implicitHeight: 27; padding: 7; accent: root.replaySlowdown === modelData; onClicked: root.replaySlowdown = modelData }
                         }
@@ -842,11 +868,11 @@ Item {
                         width: parent.width
                         ColumnLayout {
                             Layout.fillWidth: true
-                            Text { text: "Response Lab · Effective response"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Captured from the latest physical-input snapshot at 83 Hz; graphs render independently at about 30 Hz. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Response Lab · Effective response"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Captured from the latest physical-input snapshot at 83 Hz; graphs render independently at about 30 Hz. Mapping reports never drive the UI directly."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { objectName: "adaptiveResponseMonitorButton"; text: "↗"; implicitHeight: 30; padding: 9; accent: false; ToolTip.visible: hovered; ToolTip.text: "Open Adaptive Response Monitor"; onClicked: root.responseMonitorVisible = true }
-                        Text { text: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? (labTelemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: 16; font.bold: true }
+                        Text { text: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? (labTelemetry.state || "Stable") : "OFF · PREDICTOR INACTIVE"; color: (liveSource ? labTelemetry.enabled : root.effective().enabled) ? root.themeTokens.orange : root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(16); font.bold: true }
                     }
                     Flow { width: parent.width; spacing: 16
                         Metric { caption: "PHYSICAL"; value: root.percent(root.numericOr(labTelemetry.physical, 0)) }
@@ -893,16 +919,16 @@ Item {
                 Item { Layout.fillWidth: true }
                 Caption { text: "CHRONOLOGICAL · NEWEST AT RIGHT" }
             }
-            Text { text: "EFFECTIVE RESPONSE  ·  physical and mapped-output axis units"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "EFFECTIVE RESPONSE  ·  physical and mapped-output axis units"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
             HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 156; samples: root.responseLabSamples; lowerBound: -1; upperBound: 1; series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"baselineOutput", color:root.themeTokens.cyan}, {field:"adaptiveOutput", color:root.themeTokens.ready}, {field:"predictedMappedOutput", color:root.themeTokens.orange}] }
             TimeAxis { seconds: liveSource ? root.historyWindowSeconds : 5 }
             Row { spacing: 16
-                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(10) }
             }
-            Text { text: "MOTION  ·  independent velocity and acceleration scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "MOTION  ·  independent velocity and acceleration scales"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
             RowLayout { width: parent.width; spacing: 10
                 ColumnLayout { Layout.fillWidth: true
                     Caption { text: "VELOCITY / s" }
@@ -913,7 +939,7 @@ Item {
                     HistoryGraph { Layout.fillWidth: true; Layout.preferredHeight: 112; samples: root.responseLabSamples; lowerBound: -root.responseLabMagnitude(["acceleration"], 0.1); upperBound: root.responseLabMagnitude(["acceleration"], 0.1); series: [{field:"acceleration", color:root.themeTokens.orange}] }
                 }
             }
-            Text { text: "ADAPTIVE RESPONSE  ·  horizon/confidence and lead retain independent scales"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "ADAPTIVE RESPONSE  ·  horizon/confidence and lead retain independent scales"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
             RowLayout { width: parent.width; spacing: 10
                 ColumnLayout { Layout.fillWidth: true
                     Caption { text: "HORIZON / CONFIDENCE · % OF ACTIVE LIMIT" }
@@ -957,8 +983,8 @@ Item {
             RowLayout {
                 width: parent.width
                 ColumnLayout { Layout.fillWidth: true; spacing: 4
-                    Text { text: "Adaptive Response"; color: root.themeTokens.textStrong; font.pixelSize: root.topGun ? 36 : 26; font.bold: true; font.family: root.themeTokens.displayFont }
-                    Text { text: "Short-horizon physical-motion prediction that leads intentional input without smoothing or persistent offset."; color: root.themeTokens.textMuted; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Adaptive Response"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(root.topGun ? 36 : 26); font.bold: true; font.family: root.themeTokens.displayFont }
+                    Text { text: "Short-horizon physical-motion prediction that leads intentional input without smoothing or persistent offset."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(12); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 ActionButton { text: "MANAGE PRESETS"; accent: false; onClicked: presetManageDialog.open() }
                 ActionButton { text: "SAVE AS PRESET"; onClicked: savePresetDialog.open() }
@@ -968,12 +994,12 @@ Item {
                 Column { width: parent.width; spacing: 7
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Effective runtime"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Read-only worker configuration for the active profile and axis. Editing another target above never changes this view."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Effective runtime"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Read-only worker configuration for the active profile and axis. Editing another target above never changes this view."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
-                        Text { text: runtimeState.automation && runtimeState.automation.active ? "AUTOMATION ACTIVE" : "PERSISTENT"; color: runtimeState.automation && runtimeState.automation.active ? root.themeTokens.orange : root.themeTokens.ready; font.pixelSize: 10; font.bold: true }
+                        Text { text: runtimeState.automation && runtimeState.automation.active ? "AUTOMATION ACTIVE" : "PERSISTENT"; color: runtimeState.automation && runtimeState.automation.active ? root.themeTokens.orange : root.themeTokens.ready; font.pixelSize: themeTokens.scale(10); font.bold: true }
                     }
-                    Text { text: "Built-in default  →  Global: " + ((runtimeState.global && runtimeState.global.source) || "Application default") + "  →  Category: " + ((runtimeState.categoryLayer && runtimeState.categoryLayer.source) || "Inherited") + "  →  Profile: " + ((runtimeState.profileLayer && runtimeState.profileLayer.source) || "Inherited") + "  →  Automation: " + root.runtimeAutomationText() + "  →  Effective runtime"; color: root.themeTokens.text; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
+                    Text { text: "Built-in default  →  Global: " + ((runtimeState.global && runtimeState.global.source) || "Application default") + "  →  Category: " + ((runtimeState.categoryLayer && runtimeState.categoryLayer.source) || "Inherited") + "  →  Profile: " + ((runtimeState.profileLayer && runtimeState.profileLayer.source) || "Inherited") + "  →  Automation: " + root.runtimeAutomationText() + "  →  Effective runtime"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(11); wrapMode: Text.WordWrap; width: parent.width }
                     Row { spacing: 28
                         Metric { caption: "PROFILE"; value: runtimeState.profile || "—" }
                         Metric { caption: "CATEGORY"; value: runtimeState.category || "General" }
@@ -989,11 +1015,11 @@ Item {
             Card {
                 RowLayout { width: parent.width; spacing: 14
                     ColumnLayout { Layout.preferredWidth: 170
-                        Caption { text: "EDIT LEVEL" }
-                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: [{name:"Selected Device Channel", value:"device"}, {name:"Global Defaults", value:"global"}, {name:"Category", value:"category"}, {name:"Game Profile", value:"profile"}, {name:"Response Preset", value:"preset"}]; textRole: "name"; valueRole: "value"; currentIndex: root.editScope === "device" ? 0 : root.editScope === "global" ? 1 : root.editScope === "category" ? 2 : root.editScope === "preset" ? 4 : 3; onChoiceActivated: function(index, value) { root.editScope = String(value); root.targetId = ""; root.setPreview() } }
+                        Caption { text: "SETTINGS APPLY TO" }
+                        ResponseCombo { objectName: "adaptiveEditScopeSelector"; Layout.fillWidth: true; model: root.editingScopeChoices(); textRole: "name"; valueRole: "value"; currentIndex: root.editScopeIndex(); onChoiceActivated: function(index, value) { root.editScope = String(value); root.targetId = ""; root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 220
-                        Caption { text: "TARGET" }
+                        Caption { text: root.editScope === "device" ? "THIS DEVICE" : "PROFILE" }
                         ResponseCombo { objectName: "adaptiveTargetSelector"; Layout.fillWidth: true; model: root.targetChoices(); textRole: "name"; valueRole: "id"; currentIndex: root.targetIndex(); onChoiceActivated: function(index, value) { if (root.editScope === "profile") backendObject.selectProfileForEditing(String(value)); else root.targetId = String(value); root.setPreview() } }
                     }
                     ColumnLayout { Layout.preferredWidth: 240
@@ -1002,8 +1028,9 @@ Item {
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: root.themeTokens.divider }
                     ColumnLayout { Layout.fillWidth: true
-                        Caption { text: "EDITING CONTEXT" }
-                        Text { text: root.editScope === "preset" ? "Response Preset → " + root.selectedTargetName() + " → " + (root.state.axisLabel || "Axis") : "Editing " + root.editScope.toUpperCase() + " · " + root.selectedTargetName() + " · " + (scopeInfo().source || "Inherited") + " · " + (root.state.axisLabel || "Axis"); color: root.themeTokens.text; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Caption { text: "ACTIVE EDITING TARGET" }
+                        Text { text: root.settingsApplyTo() + " · " + (root.state.axisLabel || "Axis") + (root.editScope === "device" && root.inheritedHere("enabled") ? "\nUsing Profile Default until you customize this device." : ""); color: root.themeTokens.text; font.pixelSize: themeTokens.scale(12); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        ActionButton { visible: backendObject.selectedDeviceIsSpecific && root.editScope === "profile"; text: "CUSTOMIZE THIS DEVICE"; accent: false; onClicked: { root.editScope = "device"; root.targetId = ""; root.setPreview() } }
                     }
                 }
             }
@@ -1012,10 +1039,17 @@ Item {
                 Column { width: parent.width; spacing: 12
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Simple controls"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Choose a response level for " + root.state.axisLabel + ". The configured horizon is a maximum; response remains adaptive at every level."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Simple controls"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Choose a response level for " + root.state.axisLabel + ". The configured horizon is a maximum; response remains adaptive at every level."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
-                        Text { text: scopeInfo().source || "Inherited"; color: root.themeTokens.orange; font.pixelSize: 11; font.bold: true }
+                        Text { text: scopeInfo().source || "Inherited"; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(11); font.bold: true }
+                    }
+                    RowLayout { width: parent.width; visible: root.editScope !== "preset"
+                        ColumnLayout { Layout.fillWidth: true; spacing: 2
+                            Text { text: "Adaptive Response"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(13); font.bold: true }
+                            Caption { text: "This switch changes " + root.settingsApplyTo() + "." }
+                        }
+                        ThemedSwitch { objectName: "adaptiveResponseEnabled"; checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "enabled", checked); root.setPreview() } }
                     }
                     Flow { width: parent.width; spacing: 8
                         Repeater { model: backendObject.adaptiveResponsePresets
@@ -1036,8 +1070,8 @@ Item {
                 Column { width: parent.width; spacing: 10
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Repeatable realistic HOTAS motion through this selected axis’s exact static mapping. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
+                            Text { text: "Static response preview"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Repeatable realistic HOTAS motion through this selected axis’s exact static mapping. This chart never touches the mapper hot path."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11) }
                         }
                         ResponseCombo { id: scenarioSelector; objectName: "adaptiveScenarioSelector"; Layout.preferredWidth: 216; model: ["Human-Like Rapid Reversal", "Fast Full Sweep", "Very-Fast Full Sweep", "Same-Side Reversal", "Rapid Center Crossing", "Evasive Left/Right", "Sudden Stop", "Precision Correction"]; currentIndex: Math.max(0, model.indexOf(root.scenario)); onChoiceActivated: function(index, value) { root.scenario = String(value); root.setPreview() } }
                     }
@@ -1084,17 +1118,17 @@ Item {
                         Connections { target: root; function onPreviewSamplesChanged() { graph.requestPaint() } function onShowPhysicalTraceChanged() { graph.requestPaint() } function onShowBaselineTraceChanged() { graph.requestPaint() } function onShowPredictedTraceChanged() { graph.requestPaint() } function onShowFinalTraceChanged() { graph.requestPaint() } }
                     }
                     Row { spacing: 16
-                        Text { visible: root.showPhysicalTrace; text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { visible: root.showBaselineTrace; text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                        Text { visible: root.showFinalTrace; text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                        Text { visible: root.showPredictedTrace; text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                        Text { visible: root.showPhysicalTrace; text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
+                        Text { visible: root.showBaselineTrace; text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: themeTokens.scale(10) }
+                        Text { visible: root.showFinalTrace; text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: themeTokens.scale(10) }
+                        Text { visible: root.showPredictedTrace; text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(10) }
                     }
                     RowLayout { width: parent.width
                         Repeater { model: root.staticTimeTickLabels()
                             delegate: Caption { required property int index; required property var modelData; text: modelData; Layout.fillWidth: true; horizontalAlignment: index === 0 ? Text.AlignLeft : index === 5 ? Text.AlignRight : Text.AlignHCenter }
                         }
                     }
-                    Text { visible: root.scenario === "Instant Reversal Torture"; text: "INSTANTANEOUS REVERSAL — worst-case synthetic torture test; not representative of physically smooth human HOTAS movement."; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
+                    Text { visible: root.scenario === "Instant Reversal Torture"; text: "INSTANTANEOUS REVERSAL — worst-case synthetic torture test; not representative of physically smooth human HOTAS movement."; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: themeTokens.scale(10); width: parent.width; wrapMode: Text.WordWrap }
                     Rectangle { width: parent.width; height: 1; color: root.themeTokens.divider }
                     Column { id: staticLeadDetail; width: parent.width; spacing: 5
                         property real configuredMaximum: Math.max(0.001, root.numericOr(root.effective().maximumLead, 0.01))
@@ -1106,8 +1140,8 @@ Item {
                         }
                         RowLayout { width: parent.width
                             ColumnLayout { Layout.fillWidth: true
-                                Text { text: "MAGNIFIED MAPPED-OUTPUT LEAD"; color: root.themeTokens.text; font.pixelSize: 11; font.bold: true }
-                                Text { text: "Scale is the configured maximum mapped-output lead: ±" + root.percent(staticLeadDetail.configuredMaximum); color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                                Text { text: "MAGNIFIED MAPPED-OUTPUT LEAD"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(11); font.bold: true }
+                                Text { text: "Scale is the configured maximum mapped-output lead: ±" + root.percent(staticLeadDetail.configuredMaximum); color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
                             }
                             Caption { text: "CURRENT " + root.percent(staticLeadDetail.currentLead) + "  ·  PEAK " + root.percent(staticLeadDetail.peakLead) + "  ·  ACTIVE HORIZON " + (root.previewSamples.length > 0 ? root.numericOr(root.previewSamples[root.previewSamples.length - 1].horizonMs, 0).toFixed(1) : "0.0") + " ms" }
                         }
@@ -1133,8 +1167,8 @@ Item {
                 Column { width: parent.width; spacing: 9
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "A / B comparison"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "A is the context currently being edited. Compare its prediction trace against a saved Response Preset or another profile state before applying any change."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "A / B comparison"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "A is the context currently being edited. Compare its prediction trace against a saved Response Preset or another profile state before applying any change."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         Caption { text: "B" }
                         ResponseCombo { objectName: "adaptiveComparisonSelector"; Layout.preferredWidth: 260; model: root.comparisonChoices(); textRole: "label"; currentIndex: root.comparisonIndex(); onChoiceActivated: function(index) { const choice = root.comparisonChoices()[index]; root.comparisonScope = choice.scope; root.comparisonTargetId = choice.id; root.setPreview() } }
@@ -1156,9 +1190,9 @@ Item {
                         Connections { target: root; function onPreviewSamplesChanged() { comparisonGraph.requestPaint() } function onComparisonSamplesChanged() { comparisonGraph.requestPaint() } }
                     }
                     Row { spacing: 16
-                        Text { text: "— Physical baseline"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                        Text { text: "— A predicted"; color: root.themeTokens.orange; font.pixelSize: 10 }
-                        Text { text: "– – B predicted"; color: root.themeTokens.ready; font.pixelSize: 10 }
+                        Text { text: "— Physical baseline"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
+                        Text { text: "— A predicted"; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(10) }
+                        Text { text: "– – B predicted"; color: root.themeTokens.ready; font.pixelSize: themeTokens.scale(10) }
                     }
                     Flow { width: parent.width; spacing: 16
                         Metric { caption: "A PEAK LEAD"; value: root.percent(root.numericOr(root.testLabMetrics.peakLead, 0)); tone: root.themeTokens.orange }
@@ -1175,8 +1209,8 @@ Item {
                 Column { width: parent.width; spacing: 8
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Advanced tuning"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Property overrides stay at the selected level; clear an override to inherit it again."; color: root.themeTokens.textMuted; font.pixelSize: 11 }
+                            Text { text: "Advanced tuning"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Property overrides stay at the selected level; clear an override to inherit it again."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11) }
                         }
                         ActionButton { text: root.advancedExpanded ? "HIDE" : "SHOW"; accent: false; onClicked: root.advancedExpanded = !root.advancedExpanded }
                         ActionButton { text: "RESET LAYER"; accent: false; onClicked: backendObject.resetAdaptiveResponseAxisAtContext(root.editScope, root.selectedTargetId(), root.state.axis) }
@@ -1185,7 +1219,7 @@ Item {
                         TuneGroup { title: "MODE AND OWNERSHIP"; detail: "Enablement and estimator model are independent overrides. Each row states whether this editing context owns the value or inherits it."
                             RowLayout { visible: root.editScope !== "preset"; width: parent.width
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { text: "Predictor enabled"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                                    Text { text: "Predictor enabled"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(12); font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("enabled") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
                                 }
                                 ThemedSwitch { checked: !!effective().enabled; onToggled: { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "enabled", checked); root.setPreview() } }
@@ -1193,7 +1227,7 @@ Item {
                             }
                             RowLayout { width: parent.width
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                                    Text { text: "Prediction model"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(12); font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("model") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }
                                 }
                                 ResponseCombo { objectName: "adaptivePredictorSelector"; Layout.preferredWidth: 210; model: ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"]; currentIndex: Math.max(0, model.indexOf(effective().model || "auto")); onChoiceActivated: function(index) { backendObject.setAdaptiveResponsePropertyAtContext(root.editScope, root.selectedTargetId(), root.state.axis, "model", ["auto", "velocity", "alpha-beta", "alpha-beta-gamma"][index]); root.setPreview() } }
@@ -1244,13 +1278,13 @@ Item {
                 Column { width: parent.width; spacing: 8
                     RowLayout { width: parent.width
                         ColumnLayout { Layout.fillWidth: true
-                            Text { text: "Test Lab"; color: root.themeTokens.textStrong; font.pixelSize: 17; font.bold: true }
-                            Text { text: "Compare an instantaneous reversal torture case with a rounded human-like reversal, then inspect prediction and final-output step metrics before launching a game."; color: root.themeTokens.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Test Lab"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(17); font.bold: true }
+                            Text { text: "Compare an instantaneous reversal torture case with a rounded human-like reversal, then inspect prediction and final-output step metrics before launching a game."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { text: root.testLabExpanded ? "COLLAPSE" : "OPEN"; accent: false; onClicked: root.testLabExpanded = !root.testLabExpanded }
                     }
                     Column { visible: root.testLabExpanded; width: parent.width; spacing: 4
-                        Text { text: root.scenario.toUpperCase() + " · " + root.numericOr(testLabMetrics.sampleCount, 0) + " estimator samples"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
+                        Text { text: root.scenario.toUpperCase() + " · " + root.numericOr(testLabMetrics.sampleCount, 0) + " estimator samples"; color: root.themeTokens.text; font.pixelSize: themeTokens.scale(12); font.bold: true }
                         Flow { width: parent.width; spacing: 16
                             Metric { caption: "PEAK LEAD"; value: percent(root.numericOr(testLabMetrics.peakLead, 0)); tone: root.themeTokens.orange }
                             Metric { caption: "MEDIAN LEAD"; value: percent(root.numericOr(testLabMetrics.medianLead, 0)) }
@@ -1282,7 +1316,7 @@ Item {
                             Metric { caption: "PREDICTOR-ONLY STEP"; value: percent(root.numericOr(testLabMetrics.maximumArtificialPredictorStep, 0)) }
                             Metric { caption: "VIRTUAL OUTPUT STEP"; value: percent(root.numericOr(testLabMetrics.maximumVirtualOutputStep, 0)) }
                         }
-                        Text { text: "Prediction error compares each prediction with ground-truth physical position at that sample’s active horizon. Reversal latency and opposite-lead reacquisition are measured from ground-truth physical reversal. Settling requires lead < 0.2%, horizon < 0.25 ms, predicted ≈ physical, and Stable state for " + root.numericOr(testLabMetrics.settlingPersistenceMs, 48).toFixed(0) + " ms."; color: root.themeTokens.textMuted; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
+                        Text { text: "Prediction error compares each prediction with ground-truth physical position at that sample’s active horizon. Reversal latency and opposite-lead reacquisition are measured from ground-truth physical reversal. Settling requires lead < 0.2%, horizon < 0.25 ms, predicted ≈ physical, and Stable state for " + root.numericOr(testLabMetrics.settlingPersistenceMs, 48).toFixed(0) + " ms."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(11); wrapMode: Text.WordWrap; width: parent.width }
                     }
                 }
             }
@@ -1314,8 +1348,8 @@ Item {
                 Layout.fillWidth: true
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Text { text: "ADAPTIVE RESPONSE MONITOR"; color: root.themeTokens.textStrong; font.pixelSize: 18; font.bold: true }
-                    Text { text: "Read-only view of the same UI telemetry snapshots used by Response Lab."; color: root.themeTokens.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "ADAPTIVE RESPONSE MONITOR"; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(18); font.bold: true }
+                    Text { text: "Read-only view of the same UI telemetry snapshots used by Response Lab."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 Caption { text: "PIN / ALWAYS ON TOP" }
                 ThemedSwitch { objectName: "adaptiveResponseMonitorPin"; checked: root.responseMonitorPinned; onToggled: root.responseMonitorPinned = checked }
@@ -1341,13 +1375,13 @@ Item {
                 Gauge { caption: "CONFIDENCE"; value: root.numericOr(responseMonitor.monitorTelemetry.confidence, 0); maximum: 1; tone: root.themeTokens.textStrong }
                 Gauge { caption: "PREDICTIVE AUTHORITY"; value: root.numericOr(responseMonitor.monitorTelemetry.motionUrgency, 0); maximum: 1; tone: root.themeTokens.ready }
             }
-            Text { text: "EFFECTIVE RESPONSE  ·  same synchronized graph history"; color: root.themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
+            Text { text: "EFFECTIVE RESPONSE  ·  same synchronized graph history"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); font.bold: true }
             HistoryGraph { Layout.fillWidth: true; Layout.fillHeight: true; samples: root.responseLabSamples; lowerBound: -1; upperBound: 1; series: [{field:"physical", color:root.themeTokens.textMuted}, {field:"baselineOutput", color:root.themeTokens.cyan}, {field:"adaptiveOutput", color:root.themeTokens.ready}, {field:"predictedMappedOutput", color:root.themeTokens.orange}] }
             Row { spacing: 16
-                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: 10 }
-                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: 10 }
-                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: 10 }
-                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: 10 }
+                Text { text: "— Physical"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Baseline output"; color: root.themeTokens.cyan; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Adaptive output"; color: root.themeTokens.ready; font.pixelSize: themeTokens.scale(10) }
+                Text { text: "— Predicted mapped target"; color: root.themeTokens.orange; font.pixelSize: themeTokens.scale(10) }
             }
         }
     }
@@ -1376,23 +1410,23 @@ Item {
         width: Math.min(680, root.width - 36)
         contentItem: ScrollView { clip: true; contentWidth: availableWidth; implicitHeight: Math.min(440, root.height - 140)
             ColumnLayout { width: presetManageDialog.width - 30; spacing: 8
-                Text { text: "Custom presets can be edited directly, renamed, duplicated, exported with their required Pack dependencies, or deleted once all references are resolved."; color: root.themeTokens.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Text { text: "Custom presets can be edited directly, renamed, duplicated, exported with their required Pack dependencies, or deleted once all references are resolved."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Repeater { model: (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn })
                     delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 74; radius: root.themeTokens.controlRadius; color: root.themeTokens.panelInset; border.color: root.themeTokens.border
                         ColumnLayout { anchors.fill: parent; anchors.margins: 9; spacing: 3
                             RowLayout { Layout.fillWidth: true
-                                Text { text: modelData.name; color: root.themeTokens.textStrong; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
+                                Text { text: modelData.name; color: root.themeTokens.textStrong; font.pixelSize: themeTokens.scale(12); font.bold: true; Layout.fillWidth: true }
                                 ActionButton { text: "EDIT"; accent: false; onClicked: { root.editScope = "preset"; root.targetId = modelData.id; presetManageDialog.close() } }
                                 ActionButton { text: "RENAME"; accent: false; onClicked: { root.renamePresetId = modelData.id; renamePresetName.text = modelData.name; renamePresetError.text = ""; renamePresetDialog.open() } }
                                 ActionButton { text: "DUPLICATE"; accent: false; onClicked: backendObject.duplicateAdaptiveResponsePreset(modelData.id, modelData.name + " Copy") }
                                 ActionButton { text: "DELETE"; accent: false; enabled: backendObject.adaptiveResponsePresetDependencies(modelData.id).length === 0; onClicked: backendObject.deleteAdaptiveResponsePreset(modelData.id) }
                             }
-                            Text { text: modelData.description || "No description"; color: root.themeTokens.textMuted; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Text { visible: backendObject.adaptiveResponsePresetDependencies(modelData.id).length > 0; text: "IN USE: " + backendObject.adaptiveResponsePresetDependencies(modelData.id).join(" · "); color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: 8; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: modelData.description || "No description"; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { visible: backendObject.adaptiveResponsePresetDependencies(modelData.id).length > 0; text: "IN USE: " + backendObject.adaptiveResponsePresetDependencies(modelData.id).join(" · "); color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: themeTokens.scale(8); Layout.fillWidth: true; elide: Text.ElideRight }
                         }
                     }
                 }
-                Text { visible: (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn }).length === 0; text: "No custom Response Presets yet. Save a current setup to create one."; color: root.themeTokens.textMuted; font.pixelSize: 10 }
+                Text { visible: (backendObject.adaptiveResponsePresets || []).filter(function(preset) { return !preset.builtIn }).length === 0; text: "No custom Response Presets yet. Save a current setup to create one."; color: root.themeTokens.textMuted; font.pixelSize: themeTokens.scale(10) }
             }
         }
         footer: Rectangle { implicitHeight: 56; color: root.themeTokens.panel; border.color: root.themeTokens.border
@@ -1407,7 +1441,7 @@ Item {
         contentItem: ColumnLayout { spacing: 10
             Text { text: "Names must be unique and cannot reuse a built-in Response Preset name."; color: root.themeTokens.textMuted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             ResponseTextField { id: renamePresetName; Layout.fillWidth: true; placeholderText: "Preset name" }
-            Text { id: renamePresetError; visible: text.length > 0; text: ""; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { id: renamePresetError; visible: text.length > 0; text: ""; color: root.themeTokens.warning || root.themeTokens.orange; font.pixelSize: themeTokens.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ActionButton { text: "CANCEL"; accent: false; onClicked: renamePresetDialog.close() }

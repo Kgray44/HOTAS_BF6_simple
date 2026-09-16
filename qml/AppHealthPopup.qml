@@ -48,15 +48,15 @@ Popup {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
-                Text { text: "APP HEALTH"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                Text { text: root.health.ready ? "Everything important is ready" : root.health.label || "Needs attention"; color: root.health.ready ? root.readyColor : root.warningColor; font.pixelSize: 16; font.bold: true }
+                Text { text: "APP HEALTH"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.bold: true }
+                Text { text: root.health.ready ? "Everything important is ready" : root.health.label || "Needs attention"; color: root.health.ready ? root.readyColor : root.warningColor; font.pixelSize: theme.scale(16); font.bold: true }
             }
             Button { text: "×"; Layout.alignment: Qt.AlignTop; implicitWidth: 32; implicitHeight: 32; padding: 0; onClicked: root.close()
                 background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: parent.hovered ? root.borderColor : "transparent"; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
-                contentItem: Text { text: parent.text; color: root.mutedColor; font.pixelSize: 20; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                contentItem: Text { text: parent.text; color: root.mutedColor; font.pixelSize: theme.scale(20); horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
             }
         }
-        Text { visible: root.health.ready && root.health.noteCount > 0; Layout.fillWidth: true; text: root.health.noteCount + " non-blocking note" + (root.health.noteCount === 1 ? "" : "s") + " remain available below."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+        Text { visible: root.health.ready && root.health.noteCount > 0; Layout.fillWidth: true; text: root.health.noteCount + " non-blocking note" + (root.health.noteCount === 1 ? "" : "s") + " remain available below."; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
         Repeater {
             model: root.issues
             delegate: Rectangle {
@@ -73,20 +73,20 @@ Popup {
                     Rectangle { width: 7; height: 7; radius: root.legacy ? 1 : 4; color: root.tone(modelData); Layout.alignment: Qt.AlignTop }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 2
-                        Text { Layout.fillWidth: true; text: modelData.title || "Needs attention"; color: root.textColor; font.pixelSize: 11; font.bold: true; wrapMode: Text.WordWrap }
-                        Text { Layout.fillWidth: true; text: modelData.explanation || "Review this item for the next step."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: modelData.title || "Needs attention"; color: root.textColor; font.pixelSize: theme.scale(11); font.bold: true; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: modelData.explanation || "Review this item for the next step."; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
                     }
                     Button { visible: !!(modelData.navigationTarget && modelData.navigationTarget.page !== undefined); text: "REVIEW"; onClicked: root.openIssue(modelData)
-                        contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: theme.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : (root.theme ? root.theme.buttonSecondary : "#222c32"); border.color: root.borderColor; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
                     }
                 }
             }
         }
-        Text { visible: root.issues.length === 0; Layout.fillWidth: true; text: "No unresolved application issues."; color: root.mutedColor; font.pixelSize: 10 }
+        Text { visible: root.issues.length === 0; Layout.fillWidth: true; text: "No unresolved application issues."; color: root.mutedColor; font.pixelSize: theme.scale(10) }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
         Button { text: "OPEN DIAGNOSTICS"; Layout.alignment: Qt.AlignRight; onClicked: { root.navigationRequested({ page: 3, objectType: "diagnostics" }); root.close() }
-            contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+            contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: theme.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
             background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: root.borderColor; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
         }
     }

@@ -66,7 +66,7 @@ Dialog {
                 text: control.heading
                 color: control.tokens.textPrimary
                 font.family: control.tokens.displayFont
-                font.pixelSize: 18
+                font.pixelSize: tokens.scale(18)
                 font.bold: true
                 wrapMode: Text.WordWrap
             }

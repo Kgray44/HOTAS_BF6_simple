@@ -235,7 +235,7 @@ Flickable {
         color: !actionEnabled ? theme.controlDisabled : hit.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (destructive ? Qt.rgba(root.danger.r, root.danger.g, root.danger.b, 0.16) : subdued ? theme.buttonSecondary : theme.buttonSurface)
         border.color: !actionEnabled ? root.border : destructive ? root.danger : subdued ? root.border : root.accent
         opacity: actionEnabled ? 1 : 0.5
-        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.danger : root.text; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: parent.destructive ? root.danger : root.text; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; enabled: parent.actionEnabled; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
     component SelectionToggle: Item {
@@ -250,9 +250,9 @@ Flickable {
         Row { id: row; spacing: 7; anchors.verticalCenter: parent.verticalCenter
             Rectangle { width: 15; height: 15; radius: 3; border.width: 1; border.color: root.border
                 color: selectionToggle.checked ? root.accent : root.inset
-                Text { anchors.centerIn: parent; visible: selectionToggle.checked; text: "✓"; color: root.panel; font.pixelSize: 11; font.bold: true }
+                Text { anchors.centerIn: parent; visible: selectionToggle.checked; text: "✓"; color: root.panel; font.pixelSize: theme.scale(11); font.bold: true }
             }
-            Text { text: selectionToggle.label; color: root.text; font.pixelSize: 9; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: selectionToggle.label; color: root.text; font.pixelSize: theme.scale(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
         }
         MouseArea { anchors.fill: parent; enabled: selectionToggle.actionEnabled; cursorShape: Qt.PointingHandCursor
             onClicked: { selectionToggle.checked = !selectionToggle.checked; selectionToggle.toggled(selectionToggle.checked) }
@@ -282,13 +282,13 @@ Flickable {
         property color tone: root.good
         implicitWidth: pillText.implicitWidth + 15; implicitHeight: 21; radius: theme.topGun ? 1 : 11
         color: Qt.rgba(tone.r, tone.g, tone.b, 0.13); border.color: tone
-        Text { id: pillText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+        Text { id: pillText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: theme.scale(8); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
     component Section: RowLayout {
         property string label: "SECTION"
         Layout.fillWidth: true; spacing: 8
         Rectangle { width: theme.topGun ? 13 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: root.accent }
-        Text { text: parent.label; color: root.muted; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+        Text { text: parent.label; color: root.muted; font.pixelSize: theme.scale(10); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.border }
     }
     component Field: TextField {
@@ -321,7 +321,7 @@ Flickable {
                 anchors.verticalCenter: parent.verticalCenter
                 text: themedDialog.heading.toUpperCase()
                 color: root.text
-                font.pixelSize: theme.topGun ? 16 : 14
+                font.pixelSize: theme.scale(theme.topGun ? 16 : 14)
                 font.bold: true
                 font.family: theme.topGun ? theme.displayFont : ""
                 elide: Text.ElideRight
@@ -334,12 +334,12 @@ Flickable {
         implicitHeight: 33
         contentItem: Text {
             leftPadding: 10; rightPadding: themedComboBox.indicator.width + 16
-            text: themedComboBox.displayText; color: root.text; font.pixelSize: 10
+            text: themedComboBox.displayText; color: root.text; font.pixelSize: theme.scale(10)
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
         }
         indicator: Text {
             x: themedComboBox.width - width - 10; y: (themedComboBox.height - height) / 2
-            text: "v"; color: root.muted; font.pixelSize: 10; font.bold: true
+            text: "v"; color: root.muted; font.pixelSize: theme.scale(10); font.bold: true
         }
         background: Rectangle {
             radius: theme.topGun ? 1 : 5; color: themedComboBox.pressed ? root.panel : root.inset
@@ -352,7 +352,7 @@ Flickable {
             contentItem: Text {
                 leftPadding: 10; rightPadding: 10
                 text: themedComboBox.textRole.length > 0 ? modelData[themedComboBox.textRole] : modelData
-                color: root.text; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                color: root.text; font.pixelSize: theme.scale(10); verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
             }
             background: Rectangle { color: parent.highlighted ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18) : root.panel }
             onClicked: {
@@ -380,8 +380,8 @@ Flickable {
         RowLayout { Layout.fillWidth: true; spacing: 10
             ActionButton { visible: root.view !== "library"; label: "← LIBRARY"; subdued: true; onTriggered: root.returnToLibrary() }
             ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { text: root.view === "library" ? (theme.topGun ? "PROFILE LIBRARY" : "Profile Library") : root.view === "category" ? root.categoryNameFor(root.selectedCategoryId) : root.detail.displayName || "Profile Detail"; color: root.text; font.pixelSize: theme.topGun ? 25 : 25; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                Text { text: root.view === "library" ? "Game-aware configurations, safe switching, and portable Profile and Pack files." : root.view === "category" ? "Category behavior, profile defaults, and automatic game detection." : "Configuration summary and navigation hub. Changes apply only at configuration boundaries."; color: root.muted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: root.view === "library" ? (theme.topGun ? "PROFILE LIBRARY" : "Profile Library") : root.view === "category" ? root.categoryNameFor(root.selectedCategoryId) : root.detail.displayName || "Profile Detail"; color: root.text; font.pixelSize: theme.scale(theme.topGun ? 25 : 25); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                Text { text: root.view === "library" ? "Game-aware configurations, safe switching, and portable Profile and Pack files." : root.view === "category" ? "Category behavior, profile defaults, and automatic game detection." : "Configuration summary and navigation hub. Changes apply only at configuration boundaries."; color: root.muted; font.pixelSize: theme.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             ActionButton { visible: root.view === "library"; label: "IMPORT / EXPORT"; onTriggered: root.openTransfer("import", "profile", "", "") }
             ActionButton { visible: root.view === "library"; label: "+ CATEGORY"; subdued: true; onTriggered: newCategoryDialog.open() }
@@ -398,7 +398,7 @@ Flickable {
                     Layout.fillWidth: true
                     text: root.activationNotice
                     color: root.text
-                    font.pixelSize: 10
+                    font.pixelSize: theme.scale(10)
                     wrapMode: Text.WordWrap
                 }
                 ActionButton {
@@ -415,20 +415,20 @@ Flickable {
                 Card { Layout.fillWidth: true; cardAccent: root.accent
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: backendObject.activeProfileDisplayName; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                            Text { text: "ACTIVE CATEGORY / PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                            Text { text: backendObject.activeProfileDisplayName; color: root.text; font.pixelSize: theme.scale(16); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                            Text { text: "ACTIVE CATEGORY / PROFILE"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                         }
                         Pill { label: backendObject.automaticGameDetection ? "GAME DETECTION ON" : "MANUAL"; tone: backendObject.automaticGameDetection ? root.good : root.warning }
                     }
                 }
                 RowLayout { Layout.fillWidth: true; spacing: 7
-                    Text { text: "GAME DETECTION"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
-                    Text { text: "CATEGORY"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
-                    Text { text: "PROFILE"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                    Text { text: "→"; color: root.accent; font.pixelSize: 12; font.bold: true }
-                    Text { text: "VIRTUAL OUTPUT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "GAME DETECTION"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { text: "CATEGORY"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { text: "PROFILE"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: "→"; color: root.accent; font.pixelSize: theme.scale(12); font.bold: true }
+                    Text { text: "VIRTUAL OUTPUT"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     Item { Layout.fillWidth: true }
                 }
                 Section { label: "CATEGORIES" }
@@ -437,13 +437,13 @@ Flickable {
                         delegate: Card { required property var modelData; Layout.fillWidth: true; Layout.preferredHeight: 168; cardAccent: modelData.active ? root.accent : root.border
                             RowLayout { Layout.fillWidth: true
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: Number(modelData.profileCount || 0) + " PROFILE" + (Number(modelData.profileCount || 0) === 1 ? "" : "S") + (modelData.active ? "  ·  ACTIVE: " + String(backendObject.activeProfileName || "") : ""); color: root.muted; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: theme.scale(15); font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: Number(modelData.profileCount || 0) + " PROFILE" + (Number(modelData.profileCount || 0) === 1 ? "" : "S") + (modelData.active ? "  ·  ACTIVE: " + String(backendObject.activeProfileName || "") : ""); color: root.muted; font.pixelSize: theme.scale(8); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
-                            Text { Layout.fillWidth: true; text: "GAME DETECTION: " + (modelData.executableRules.length > 0 ? modelData.executableRules.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
-                            Text { Layout.fillWidth: true; text: "AUTOMATIC: category Profile order (Preferred, then Fallback)"; color: root.muted; font.pixelSize: 9; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: "GAME DETECTION: " + (modelData.executableRules.length > 0 ? modelData.executableRules.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: theme.scale(9); elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: "AUTOMATIC: category Profile order (Preferred, then Fallback)"; color: root.muted; font.pixelSize: theme.scale(9); elide: Text.ElideRight }
                             Item { Layout.fillHeight: true }
                             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "OPEN"; subdued: true; onTriggered: root.openCategory(modelData.id) } }
                         }
@@ -457,13 +457,13 @@ Flickable {
                             onClicked: root.openProfile(modelData.id)
                             RowLayout { Layout.fillWidth: true
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: 14; font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: String(modelData.categoryName || "").toUpperCase(); color: root.muted; font.pixelSize: 8; font.bold: true }
+                                    Text { text: String(modelData.name || ""); color: root.text; font.pixelSize: theme.scale(14); font.bold: true; font.family: theme.topGun ? theme.displayFont : ""; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: String(modelData.categoryName || "").toUpperCase(); color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                                 }
                                 Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             }
-                            Text { text: modelData.mappedAxes + " AXES  ·  " + modelData.mappedButtons + " BUTTONS  ·  " + modelData.mappedPovs + " POV"; color: root.muted; font.pixelSize: 9; font.family: theme.telemetryFont }
-                            Text { text: modelData.customCurves + " CUSTOM CURVES  ·  " + modelData.automationCount + " AUTOMATIONS  ·  RIG OUTPUT · vJoy " + modelData.outputDeviceId; color: root.muted; font.pixelSize: 8; font.family: theme.telemetryFont }
+                            Text { text: modelData.mappedAxes + " AXES  ·  " + modelData.mappedButtons + " BUTTONS  ·  " + modelData.mappedPovs + " POV"; color: root.muted; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont }
+                            Text { text: modelData.customCurves + " CUSTOM CURVES  ·  " + modelData.automationCount + " AUTOMATIONS  ·  RIG OUTPUT · vJoy " + modelData.outputDeviceId; color: root.muted; font.pixelSize: theme.scale(8); font.family: theme.telemetryFont }
                             Item { Layout.fillHeight: true }
                             RowLayout { Layout.fillWidth: true
                                 ActionButton { label: "DETAIL"; subdued: true; onTriggered: root.openProfile(modelData.id) }
@@ -482,8 +482,8 @@ Flickable {
                 Card { Layout.fillWidth: true; cardAccent: root.accent
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: root.selectedCategory ? root.selectedCategory.profileCount + " Profiles" : ""; color: root.text; font.pixelSize: 14; font.bold: true }
-                            Text { text: "When detected, evaluates ordered Preferred Profiles, then Fallback Profiles."; color: root.muted; font.pixelSize: 9 }
+                            Text { text: root.selectedCategory ? root.selectedCategory.profileCount + " Profiles" : ""; color: root.text; font.pixelSize: theme.scale(14); font.bold: true }
+                            Text { text: "When detected, evaluates ordered Preferred Profiles, then Fallback Profiles."; color: root.muted; font.pixelSize: theme.scale(9) }
                         }
                         ActionButton { label: "RENAME"; subdued: true; onTriggered: { renameCategoryDialog.categoryId = root.selectedCategoryId; renameCategoryDialog.categoryName = root.selectedCategory.name; renameCategoryDialog.open() } }
                         ActionButton { label: "EXPORT CATEGORY"; subdued: true; onTriggered: root.openTransfer("export", "category", "", root.selectedCategoryId) }
@@ -494,8 +494,8 @@ Flickable {
                 Card { Layout.fillWidth: true
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: "Automatically activate this category when one of these games is running."; color: root.text; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            Text { text: backendObject.automaticGameDetection ? "Detection is enabled globally." : "Detection is paused globally; this category can still be activated manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: "Automatically activate this category when one of these games is running."; color: root.text; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: backendObject.automaticGameDetection ? "Detection is enabled globally." : "Detection is paused globally; this category can still be activated manually."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { label: backendObject.automaticGameDetection ? "DETECTION ON" : "DETECTION OFF"; subdued: true; onTriggered: backendObject.setAutomaticGameDetection(!backendObject.automaticGameDetection) }
                     }
@@ -504,39 +504,39 @@ Flickable {
                             readonly property var runningApplication: root.runningApplicationFor(modelData)
                             RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
                                 ColumnLayout { Layout.fillWidth: true; spacing: 1
-                                    Text { text: root.friendlyGameName(modelData); color: root.text; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelData + "  ·  " + (gameRuleRow.runningApplication ? "RUNNING" : "NOT RUNNING"); color: gameRuleRow.runningApplication ? root.good : root.muted; font.pixelSize: 8; font.bold: true }
+                                    Text { text: root.friendlyGameName(modelData); color: root.text; font.pixelSize: theme.scale(10); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: modelData + "  ·  " + (gameRuleRow.runningApplication ? "RUNNING" : "NOT RUNNING"); color: gameRuleRow.runningApplication ? root.good : root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                                 }
                                 ActionButton { label: "EDIT"; subdued: true; onTriggered: { addGameDialog.editingRule = modelData; addGameDialog.mode = "manual"; addGameDialog.open() } }
                                 ActionButton { label: "REMOVE"; subdued: true; onTriggered: root.removeGameRule(modelData) }
                             }
                         }
                     }
-                    Text { visible: !root.selectedCategory || root.selectedCategory.executableRules.length === 0; text: "No games are linked to this category. This category can still be activated manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: !root.selectedCategory || root.selectedCategory.executableRules.length === 0; text: "No games are linked to this category. This category can still be activated manually."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "+ ADD GAME"; onTriggered: { addGameDialog.editingRule = ""; addGameDialog.mode = "running"; addGameDialog.open() } } }
                 }
                 Section { label: "AUTOMATIC ACTIVATION" }
                 Card { Layout.fillWidth: true
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: root.selectedCategory && root.selectedCategory.enabled ? "Automatic activation is enabled" : "Automatic activation is disabled"; color: root.text; font.pixelSize: 10; font.bold: true }
-                            Text { text: "Game detection ignores disabled categories without changing their profiles or game rules."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: root.selectedCategory && root.selectedCategory.enabled ? "Automatic activation is enabled" : "Automatic activation is disabled"; color: root.text; font.pixelSize: theme.scale(10); font.bold: true }
+                            Text { text: "Game detection ignores disabled categories without changing their profiles or game rules."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         ActionButton { label: root.selectedCategory && root.selectedCategory.enabled ? "DISABLE" : "ENABLE"; subdued: true; actionEnabled: !root.selectedCategory || !root.selectedCategory.active; onTriggered: backendObject.setProfileCategoryEnabled(root.selectedCategoryId, !root.selectedCategory.enabled) }
                     }
                 }
                 Section { label: "AUTOMATIC SELECTION" }
                 Card { Layout.fillWidth: true
-                    Text { text: "Automatic selection follows the visible Category Profile order: eligible Preferred routes first, then eligible Fallback routes. Manual Only Profiles are excluded. Reorder Profiles or change their policy in Flight Deck Profiles."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { text: "Legacy default and restore-last metadata is retained only to preserve older configuration files; it does not compete with the Activation Resolver."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Automatic selection follows the visible Category Profile order: eligible Preferred routes first, then eligible Fallback routes. Manual Only Profiles are excluded. Reorder Profiles or change their policy in Flight Deck Profiles."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Legacy default and restore-last metadata is retained only to preserve older configuration files; it does not compete with the Activation Resolver."; color: root.warning; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 Section { label: "CATEGORY PROFILES" }
                 Repeater { model: root.profilesForCategory(root.selectedCategoryId)
                     delegate: Card { required property var modelData; Layout.fillWidth: true
                         RowLayout { Layout.fillWidth: true
                             ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                Text { text: modelData.name; color: root.text; font.pixelSize: 13; font.bold: true }
-                                Text { text: modelData.mappedAxes + " AXES  ·  " + modelData.mappedButtons + " BUTTONS  ·  " + modelData.customCurves + " CURVES"; color: root.muted; font.pixelSize: 8; font.family: theme.telemetryFont }
+                                Text { text: modelData.name; color: root.text; font.pixelSize: theme.scale(13); font.bold: true }
+                                Text { text: modelData.mappedAxes + " AXES  ·  " + modelData.mappedButtons + " BUTTONS  ·  " + modelData.customCurves + " CURVES"; color: root.muted; font.pixelSize: theme.scale(8); font.family: theme.telemetryFont }
                             }
                             Pill { visible: modelData.active; label: "ACTIVE"; tone: root.good }
                             ActionButton { label: "OPEN"; subdued: true; onTriggered: root.openProfile(modelData.id) }
@@ -556,8 +556,8 @@ Flickable {
                 Card { Layout.fillWidth: true; cardAccent: root.detail.active ? root.good : root.accent
                     RowLayout { Layout.fillWidth: true
                         ColumnLayout { Layout.fillWidth: true; spacing: 3
-                            Text { text: root.detail.name || ""; color: root.text; font.pixelSize: 19; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                            Text { text: (root.detail.category || "").toUpperCase() + "  ·  " + (root.detail.active ? "ACTIVE" : "INACTIVE") + "  ·  " + (root.detail.enabled ? "ENABLED" : "DISABLED"); color: root.muted; font.pixelSize: 9; font.bold: true }
+                            Text { text: root.detail.name || ""; color: root.text; font.pixelSize: theme.scale(19); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                            Text { text: (root.detail.category || "").toUpperCase() + "  ·  " + (root.detail.active ? "ACTIVE" : "INACTIVE") + "  ·  " + (root.detail.enabled ? "ENABLED" : "DISABLED"); color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
                         }
                         ActionButton { label: "EXPORT PROFILE"; subdued: true; onTriggered: root.openTransfer("export", "profile", root.selectedProfileId, "") }
                         ActionButton { label: root.detail.active ? "ACTIVE" : "SET ACTIVE"; actionEnabled: Boolean(!root.detail.active && root.detail.enabled); onTriggered: root.activateProfile(root.selectedProfileId) }
@@ -573,76 +573,76 @@ Flickable {
                 }
                 GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; rowSpacing: 13; columnSpacing: 13
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "AXIS DETAILS"; color: root.text; font.pixelSize: 11; font.bold: true }
+                        Text { text: "AXIS DETAILS"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
                         Repeater { model: root.detail.axes || []; delegate: RowLayout { required property var modelData; Layout.fillWidth: true
-                            Text { text: modelData.physical; color: root.text; font.pixelSize: 10; Layout.preferredWidth: 92 }
-                            Text { text: "→ " + modelData.virtual + "  ·  " + modelData.curve + "  ·  DZ " + Number(modelData.deadzone).toFixed(1) + "%"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: modelData.physical; color: root.text; font.pixelSize: theme.scale(10); Layout.preferredWidth: 92 }
+                            Text { text: "→ " + modelData.virtual + "  ·  " + modelData.curve + "  ·  DZ " + Number(modelData.deadzone).toFixed(1) + "%"; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; elide: Text.ElideRight }
                         } }
                         ActionButton { label: "OPEN AXES"; subdued: true; onTriggered: root.navigateToPage(0) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "BUTTONS & POV"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: "Mapped Buttons: " + root.detail.mappedButtons; color: root.text; font.pixelSize: 10; font.bold: true }
-                        Text { text: "Profile-Control Buttons: " + root.detail.profileControlButtons; color: root.muted; font.pixelSize: 9 }
-                        Text { text: "Mapped POV Hats: " + root.detail.mappedPovHats; color: root.muted; font.pixelSize: 9 }
-                        Text { text: "Direct POV Outputs: " + root.detail.directPovOutputs; color: root.muted; font.pixelSize: 9 }
+                        Text { text: "BUTTONS & POV"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { text: "Mapped Buttons: " + root.detail.mappedButtons; color: root.text; font.pixelSize: theme.scale(10); font.bold: true }
+                        Text { text: "Profile-Control Buttons: " + root.detail.profileControlButtons; color: root.muted; font.pixelSize: theme.scale(9) }
+                        Text { text: "Mapped POV Hats: " + root.detail.mappedPovHats; color: root.muted; font.pixelSize: theme.scale(9) }
+                        Text { text: "Direct POV Outputs: " + root.detail.directPovOutputs; color: root.muted; font.pixelSize: theme.scale(9) }
                         ActionButton { label: "OPEN BUTTONS"; subdued: true; onTriggered: root.navigateToPage(1) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "CURVES"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Repeater { model: root.detail.curves || []; delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.axis + "  ·  " + modelData.summary; color: root.muted; font.pixelSize: 9; elide: Text.ElideRight } }
-                        Text { visible: (root.detail.curves || []).length === 0; text: "Linear curves only"; color: root.muted; font.pixelSize: 9 }
+                        Text { text: "CURVES"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Repeater { model: root.detail.curves || []; delegate: Text { required property var modelData; Layout.fillWidth: true; text: modelData.axis + "  ·  " + modelData.summary; color: root.muted; font.pixelSize: theme.scale(9); elide: Text.ElideRight } }
+                        Text { visible: (root.detail.curves || []).length === 0; text: "Linear curves only"; color: root.muted; font.pixelSize: theme.scale(9) }
                         ActionButton { label: "OPEN CURVES"; subdued: true; onTriggered: root.navigateToPage(6) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "ADVANCED CONTROLS"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: "CURVE TRANSITION SMOOTHING"; color: root.text; font.pixelSize: 10; font.bold: true }
-                        Text { text: "Bumpless transfer prevents mapper-created virtual-axis jumps. It does not filter physical stick movement."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "ADVANCED CONTROLS"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { text: "CURVE TRANSITION SMOOTHING"; color: root.text; font.pixelSize: theme.scale(10); font.bold: true }
+                        Text { text: "Bumpless transfer prevents mapper-created virtual-axis jumps. It does not filter physical stick movement."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         SelectionToggle { label: "Override for This Profile"; checked: !!root.detail.curveTransitionSmoothingOverride
                             onToggled: backendObject.setProfileCurveTransitionSmoothingOverride(root.selectedProfileId, checked) }
-                        Text { visible: !root.detail.curveTransitionSmoothingOverride; text: "Use Global Setting  ·  " + (root.detail.globalCurveTransitionSmoothingEnabled ? "Enabled" : "Disabled") + "  ·  " + root.detail.globalCurveTransitionDurationMs + " ms"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: !root.detail.curveTransitionSmoothingOverride; text: "Use Global Setting  ·  " + (root.detail.globalCurveTransitionSmoothingEnabled ? "Enabled" : "Disabled") + "  ·  " + root.detail.globalCurveTransitionDurationMs + " ms"; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout { visible: !!root.detail.curveTransitionSmoothingOverride; Layout.fillWidth: true; spacing: 8
                             SelectionToggle { label: "Enabled"; checked: !!root.detail.curveTransitionSmoothingEnabled
                                 onToggled: backendObject.setProfileCurveTransitionSmoothingEnabled(root.selectedProfileId, checked) }
                             Item { Layout.fillWidth: true }
-                            Text { text: "TIME"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                            Text { text: "TIME"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                             Rectangle { implicitWidth: 54; implicitHeight: 26; radius: theme.topGun ? 1 : 4; color: root.inset; border.color: root.border; opacity: root.detail.curveTransitionSmoothingEnabled ? 1.0 : 0.5
-                                TextInput { anchors.fill: parent; anchors.margins: 6; text: Number(root.detail.curveTransitionDurationMs).toFixed(0); enabled: Boolean(root.detail.curveTransitionSmoothingEnabled); color: root.text; font.pixelSize: 9; horizontalAlignment: Text.AlignHCenter; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
+                                TextInput { anchors.fill: parent; anchors.margins: 6; text: Number(root.detail.curveTransitionDurationMs).toFixed(0); enabled: Boolean(root.detail.curveTransitionSmoothingEnabled); color: root.text; font.pixelSize: theme.scale(9); horizontalAlignment: Text.AlignHCenter; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
                                     onEditingFinished: { backendObject.setProfileCurveTransitionDurationMs(root.selectedProfileId, Number(text)); text = Number(root.detail.curveTransitionDurationMs).toFixed(0) } }
                             }
-                            Text { text: "ms"; color: root.muted; font.pixelSize: 9; font.bold: true }
+                            Text { text: "ms"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
                         }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "AUTOMATION"; color: root.text; font.pixelSize: 11; font.bold: true }
+                        Text { text: "AUTOMATION"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
                         Repeater { model: root.detail.automations || []; delegate: RowLayout { required property var modelData; Layout.fillWidth: true
-                            Text { text: modelData.name; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true }
+                            Text { text: modelData.name; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true }
                             Pill { label: modelData.enabled ? "ENABLED" : "DISABLED"; tone: modelData.enabled ? root.good : root.warning }
                         } }
-                        Text { visible: (root.detail.automations || []).length === 0; text: "No profile-linked Automation"; color: root.muted; font.pixelSize: 9 }
+                        Text { visible: (root.detail.automations || []).length === 0; text: "No profile-linked Automation"; color: root.muted; font.pixelSize: theme.scale(9) }
                         ActionButton { label: "OPEN AUTOMATION"; subdued: true; onTriggered: root.navigateToPage(7) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "OUTPUT PROVIDED BY DEVICE RIG"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: root.detail.deviceRigName + "  ·  " + root.detail.outputName + "  ·  vJoy Device " + root.detail.vjoyDevice; color: root.text; font.pixelSize: 10; font.bold: true }
-                        Text { text: "Active output axes: " + root.detail.outputAxes + "  ·  Unmapped output axes: " + root.detail.unmappedOutputAxes; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "OUTPUT PROVIDED BY DEVICE RIG"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { text: root.detail.deviceRigName + "  ·  " + root.detail.outputName + "  ·  vJoy Device " + root.detail.vjoyDevice; color: root.text; font.pixelSize: theme.scale(10); font.bold: true }
+                        Text { text: "Active output axes: " + root.detail.outputAxes + "  ·  Unmapped output axes: " + root.detail.unmappedOutputAxes; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Pill { label: root.detail.vjoyReady ? "READY" : "REVIEW OUTPUT"; tone: root.detail.vjoyReady ? root.good : root.warning }
-                        Text { text: root.detail.controllerName ? "CURRENT CONTROLLER: " + root.detail.controllerName : "No current controller"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.detail.controllerName ? "CURRENT CONTROLLER: " + root.detail.controllerName : "No current controller"; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "GAME / CATEGORY"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { text: "Category: " + (root.detail.category || "General"); color: root.text; font.pixelSize: 10; font.bold: true }
-                        Text { text: "Games: " + ((root.detail.categoryGames || []).length > 0 ? root.detail.categoryGames.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Automatic selection: ordered Preferred routes, then Fallback routes. Legacy category defaults do not control the resolver."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "GAME / CATEGORY"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { text: "Category: " + (root.detail.category || "General"); color: root.text; font.pixelSize: theme.scale(10); font.bold: true }
+                        Text { text: "Games: " + ((root.detail.categoryGames || []).length > 0 ? root.detail.categoryGames.map(root.friendlyGameName).join(", ") : "Manual only"); color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Automatic selection: ordered Preferred routes, then Fallback routes. Legacy category defaults do not control the resolver."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         ActionButton { label: "OPEN CATEGORY"; subdued: true; onTriggered: root.openCategory(root.detail.categoryId) }
                     }
                     Card { Layout.fillWidth: true; cardAccent: root.border
-                        Text { text: "RELATIONSHIPS"; color: root.text; font.pixelSize: 11; font.bold: true }
-                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length > 0; text: "REFERENCED BY"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                        Repeater { model: (root.detail.relationships || {}).referencedBy || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: 9 } }
-                        Text { visible: ((root.detail.relationships || {}).references || []).length > 0; text: "REFERENCES"; color: root.muted; font.pixelSize: 8; font.bold: true }
-                        Repeater { model: (root.detail.relationships || {}).references || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: 9 } }
-                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length === 0 && ((root.detail.relationships || {}).references || []).length === 0; text: "No profile dependencies."; color: root.muted; font.pixelSize: 9 }
+                        Text { text: "RELATIONSHIPS"; color: root.text; font.pixelSize: theme.scale(11); font.bold: true }
+                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length > 0; text: "REFERENCED BY"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                        Repeater { model: (root.detail.relationships || {}).referencedBy || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: theme.scale(9) } }
+                        Text { visible: ((root.detail.relationships || {}).references || []).length > 0; text: "REFERENCES"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                        Repeater { model: (root.detail.relationships || {}).references || []; delegate: Text { required property var modelData; text: modelData.profile + " · " + modelData.via; color: root.muted; font.pixelSize: theme.scale(9) } }
+                        Text { visible: ((root.detail.relationships || {}).referencedBy || []).length === 0 && ((root.detail.relationships || {}).references || []).length === 0; text: "No profile dependencies."; color: root.muted; font.pixelSize: theme.scale(9) }
                     }
                 }
                 RowLayout { Layout.fillWidth: true
@@ -666,26 +666,26 @@ Flickable {
     }
     Dialog { id: deleteCategoryDialog; property string categoryId: ""; property string categoryName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 408; title: "Delete Empty Category?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 380; spacing: 12
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete the empty category \"" + deleteCategoryDialog.categoryName + "\"? Categories with profiles or the active category cannot be deleted."; color: root.text; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete the empty category \"" + deleteCategoryDialog.categoryName + "\"? Categories with profiles or the active category cannot be deleted."; color: root.text; font.pixelSize: theme.scale(10) }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteCategoryDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfileCategory(deleteCategoryDialog.categoryId)) { deleteCategoryDialog.close(); root.returnToLibrary() } } } }
         }
     }
     ThemedDialog { id: newCategoryDialog; heading: "New Category"; width: 368
         contentItem: ColumnLayout { width: 340; spacing: 10
-            Text { text: "CATEGORY NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { text: "CATEGORY NAME"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             Field { id: categoryName; Layout.fillWidth: true; placeholderText: "Battlefield 6" }
-            Text { text: "Use a category to group profiles and optional game-detection rules."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: "Use a category to group profiles and optional game-detection rules."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: newCategoryDialog.close() } ActionButton { label: "CREATE"; actionEnabled: categoryName.text.trim().length > 0; onTriggered: { if (backendObject.createProfileCategory(categoryName.text)) newCategoryDialog.close() } } }
         }
         onOpened: { categoryName.text = ""; categoryName.forceActiveFocus() }
     }
     ThemedDialog { id: createProfileDialog; property string categoryId: ""; property string creationMode: "blank"; heading: "New Profile"; width: 388
         contentItem: ColumnLayout { width: 360; spacing: 10
-            Text { text: "PROFILE NAME"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { text: "PROFILE NAME"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             Field { id: newProfileName; Layout.fillWidth: true; placeholderText: "Helicopter" }
-            Text { text: "CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { text: "CATEGORY"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             ThemedComboBox { id: newProfileCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: 0; onCurrentIndexChanged: createProfileDialog.categoryId = String(currentValue || "") }
-            Text { text: "CREATION MODE"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { text: "CREATION MODE"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             RowLayout {
                 Layout.fillWidth: true
                 ActionButton { label: "CREATE BLANK PROFILE"; subdued: createProfileDialog.creationMode !== "blank"; Layout.fillWidth: true; onTriggered: createProfileDialog.creationMode = "blank" }
@@ -697,9 +697,9 @@ Flickable {
                 wrapMode: Text.WordWrap
                 text: "Starts with all physical inputs disabled. No mappings, buttons, hats, or automation relationships are copied."
                 color: root.muted
-                font.pixelSize: 9
+                font.pixelSize: theme.scale(9)
             }
-            Text { visible: createProfileDialog.creationMode === "copy"; text: "COPY FROM"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { visible: createProfileDialog.creationMode === "copy"; text: "COPY FROM"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             ThemedComboBox { id: newProfileSource; visible: createProfileDialog.creationMode === "copy"; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: backendObject.activeProfileIndex }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: createProfileDialog.close() } ActionButton { label: "CREATE"; actionEnabled: newProfileName.text.trim().length > 0 && (createProfileDialog.creationMode === "blank" || newProfileSource.currentIndex >= 0); onTriggered: { const sourceId = createProfileDialog.creationMode === "copy" ? String(newProfileSource.currentValue || "") : ""; if (backendObject.createProfileInCategory(newProfileName.text, createProfileDialog.categoryId, sourceId)) createProfileDialog.close() } } }
         }
@@ -714,7 +714,7 @@ Flickable {
     }
     Dialog { id: moveProfileDialog; property string profileId: ""; property string categoryId: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 368; title: "Move Profile"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 340; spacing: 10
-            Text { text: "DESTINATION CATEGORY"; color: root.muted; font.pixelSize: 9; font.bold: true }
+            Text { text: "DESTINATION CATEGORY"; color: root.muted; font.pixelSize: theme.scale(9); font.bold: true }
             ThemedComboBox { id: moveCategory; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === moveProfileDialog.categoryId) return i; return 0 } }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: moveProfileDialog.close() } ActionButton { label: "MOVE"; onTriggered: { if (backendObject.moveProfileToCategory(moveProfileDialog.profileId, moveCategory.currentValue)) moveProfileDialog.close() } } }
         }
@@ -729,15 +729,15 @@ Flickable {
     }
     Dialog { id: deleteProfileDialog; property string profileId: ""; property string profileName: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 408; title: "Delete Profile?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 380; spacing: 12
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete \"" + deleteProfileDialog.profileName + "\"? References from profile controls and Automation are disabled rather than silently retargeted."; color: root.text; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Delete \"" + deleteProfileDialog.profileName + "\"? References from profile controls and Automation are disabled rather than silently retargeted."; color: root.text; font.pixelSize: theme.scale(10) }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: deleteProfileDialog.close() } ActionButton { label: "DELETE"; destructive: true; onTriggered: { if (backendObject.deleteProfile(deleteProfileDialog.profileId)) { deleteProfileDialog.close(); root.returnToLibrary() } } } }
         }
     }
     Dialog { id: addGameDialog; property string mode: "running"; property string editingRule: ""; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(610, root.width - 36); title: ""; standardButtons: Dialog.NoButton; padding: 0
         header: Rectangle { implicitHeight: 66; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
             ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
-                Text { text: addGameDialog.editingRule.length > 0 ? "EDIT GAME" : "ADD GAME"; color: root.text; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                Text { text: "Choose a running application, browse for an EXE, or enter one manually."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: addGameDialog.editingRule.length > 0 ? "EDIT GAME" : "ADD GAME"; color: root.text; font.pixelSize: theme.scale(15); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                Text { text: "Choose a running application, browse for an EXE, or enter one manually."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
         }
         background: Rectangle { color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7 }
@@ -747,7 +747,7 @@ Flickable {
                     delegate: ActionButton { required property var modelData; label: modelData.label; subdued: addGameDialog.mode !== modelData.value; onTriggered: addGameDialog.mode = modelData.value }
                 }
             }
-            Text { visible: addGameDialog.mode === "running"; text: "Select an application currently running on this PC. System and background processes are filtered out."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { visible: addGameDialog.mode === "running"; text: "Select an application currently running on this PC. System and background processes are filtered out."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             ScrollView { visible: addGameDialog.mode === "running"; Layout.fillWidth: true; Layout.preferredHeight: 230; clip: true
                 contentWidth: availableWidth
                 ColumnLayout { width: addGameDialog.width - 30; spacing: 6
@@ -755,28 +755,28 @@ Flickable {
                         delegate: Rectangle { required property var modelData; Layout.fillWidth: true; implicitHeight: 52; radius: theme.topGun ? 1 : 5; color: root.inset; border.color: root.border
                             RowLayout { anchors.fill: parent; anchors.margins: 9; spacing: 8
                                 ColumnLayout { Layout.fillWidth: true; spacing: 1
-                                    Text { text: modelData.name; color: root.text; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelData.executable; color: root.muted; font.pixelSize: 8 }
+                                    Text { text: modelData.name; color: root.text; font.pixelSize: theme.scale(10); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: modelData.executable; color: root.muted; font.pixelSize: theme.scale(8) }
                                 }
                                 ActionButton { label: "ADD"; onTriggered: { if (root.saveGameRule(modelData.executable, addGameDialog.editingRule)) addGameDialog.close() } }
                             }
                         }
                     }
-                    Text { visible: root.runningApplications.length === 0; text: "No suitable running applications were found. You can still browse for an EXE or enter one manually."; color: root.muted; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Text { visible: root.runningApplications.length === 0; text: "No suitable running applications were found. You can still browse for an EXE or enter one manually."; color: root.muted; font.pixelSize: theme.scale(9); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 }
             }
             ColumnLayout { visible: addGameDialog.mode === "browse"; Layout.fillWidth: true; spacing: 8
-                Text { text: "Choose the game's executable. HOTAS BF6 saves only the filename, so detection continues to work after an install moves or is reinstalled."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Choose the game's executable. HOTAS BF6 saves only the filename, so detection continues to work after an install moves or is reinstalled."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout { Layout.fillWidth: true
                     Field { id: browseGamePath; Layout.fillWidth: true; readOnly: true; placeholderText: "No executable selected" }
                     ActionButton { label: "BROWSE"; onTriggered: gameExecutableDialog.open() }
                 }
-                Text { visible: browseGamePath.text.length > 0; text: "Game: " + root.friendlyGameName(browseGamePath.text) + "  ·  Executable: " + browseGamePath.text.split(/[\\/]/).pop(); color: root.text; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: browseGamePath.text.length > 0; text: "Game: " + root.friendlyGameName(browseGamePath.text) + "  ·  Executable: " + browseGamePath.text.split(/[\\/]/).pop(); color: root.text; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             ColumnLayout { visible: addGameDialog.mode === "manual"; Layout.fillWidth: true; spacing: 8
-                Text { text: "Enter an executable filename for an advanced manual rule."; color: root.muted; font.pixelSize: 9 }
+                Text { text: "Enter an executable filename for an advanced manual rule."; color: root.muted; font.pixelSize: theme.scale(9) }
                 Field { id: manualGameExecutable; Layout.fillWidth: true; placeholderText: "bf6.exe" }
-                Text { text: manualGameExecutable.text.trim().length > 0 ? "Game: " + root.friendlyGameName(manualGameExecutable.text) + "  ·  Executable: " + manualGameExecutable.text.split(/[\\/]/).pop() : ""; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: manualGameExecutable.text.trim().length > 0 ? "Game: " + root.friendlyGameName(manualGameExecutable.text) + "  ·  Executable: " + manualGameExecutable.text.split(/[\\/]/).pop() : ""; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: addGameDialog.close() }
@@ -788,8 +788,8 @@ Flickable {
     Dialog { id: transferDialog; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: Math.min(820, root.width - 40); title: ""; standardButtons: Dialog.NoButton; padding: 0
         header: Rectangle { implicitHeight: 68; color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7
             ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 1
-                Text { text: "IMPORT / EXPORT"; color: root.text; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                Text { text: root.transferMode === "import" ? "Select a file, review the validated preview, then confirm the import." : "Choose exactly what to export and a destination file."; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "IMPORT / EXPORT"; color: root.text; font.pixelSize: theme.scale(16); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                Text { text: root.transferMode === "import" ? "Select a file, review the validated preview, then confirm the import." : "Choose exactly what to export and a destination file."; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
         }
         background: Rectangle { color: root.panel; border.color: root.border; radius: theme.topGun ? 1 : 7 }
@@ -802,44 +802,44 @@ Flickable {
                 Repeater { model: ["PROFILE", "CATEGORY", "PACK"]; delegate: ActionButton { required property string modelData; label: modelData; subdued: (modelData.toLowerCase() !== root.transferKind); onTriggered: root.selectTransferKind(modelData.toLowerCase()) } }
             }
             Card { Layout.fillWidth: true; cardAccent: root.accent
-                Text { text: root.transferMode === "import" ? "Nothing changes until the imported Profile, Category, or Pack has passed validation and you confirm it below." : root.transferKind === "profile" ? "One individual HOTAS configuration." : root.transferKind === "category" ? "One Category and all profiles it contains." : "A portable collection of selected configuration items."; color: root.text; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: root.transferMode === "import" ? "Nothing changes until the imported Profile, Category, or Pack has passed validation and you confirm it below." : root.transferKind === "profile" ? "One individual HOTAS configuration." : root.transferKind === "category" ? "One Category and all profiles it contains." : "A portable collection of selected configuration items."; color: root.text; font.pixelSize: theme.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "profile"; Layout.fillWidth: true; spacing: 5
-                    Text { text: "PROFILE TO EXPORT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "PROFILE TO EXPORT"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     ThemedComboBox { id: exportProfileChoice; Layout.fillWidth: true; model: root.profiles; textRole: "displayName"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (model[i].id === root.transferProfileId) return i; return backendObject.activeProfileIndex } onActivated: root.transferProfileId = currentValue }
-                    Text { text: "The complete Profile behavior, required curves, profile controls, Automation relationships, vJoy contract, and safe source-controller compatibility summary are included."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "The complete Profile behavior, required curves, profile controls, Automation relationships, vJoy contract, and safe source-controller compatibility summary are included."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "category"; Layout.fillWidth: true; spacing: 5
-                    Text { text: "CATEGORY TO EXPORT"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "CATEGORY TO EXPORT"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     ThemedComboBox { id: exportCategoryChoice; Layout.fillWidth: true; model: root.categories; textRole: "name"; valueRole: "id"; currentIndex: { for (let i=0;i<model.length;++i) if (root.hasId(root.selectedPackCategoryIds, model[i].id)) return i; return 0 } onActivated: { root.selectedPackCategoryIds = [currentValue]; root.selectedPackProfileIds = [] } }
-                    Text { text: "Includes all profiles in this category, their required curves, and the category's game-detection behavior."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Includes all profiles in this category, their required curves, and the category's game-detection behavior."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 RowLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true
-                    ColumnLayout { Layout.fillWidth: true; Text { text: "PACK NAME"; color: root.muted; font.pixelSize: 8; font.bold: true } Field { id: packName; Layout.fillWidth: true; text: "HOTAS BF6 Pack" } }
-                    ColumnLayout { Layout.fillWidth: true; Text { text: "DESCRIPTION"; color: root.muted; font.pixelSize: 8; font.bold: true } Field { id: packDescription; Layout.fillWidth: true; placeholderText: "Optional" } }
+                    ColumnLayout { Layout.fillWidth: true; Text { text: "PACK NAME"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true } Field { id: packName; Layout.fillWidth: true; text: "HOTAS BF6 Pack" } }
+                    ColumnLayout { Layout.fillWidth: true; Text { text: "DESCRIPTION"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true } Field { id: packDescription; Layout.fillWidth: true; placeholderText: "Optional" } }
                 }
                 RowLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true
                     SelectionToggle { id: includeDevices; label: "DEVICES"; checked: false; onToggled: { if (!checked) includeCalibration.checked = false } }
                     SelectionToggle { id: includeCalibration; label: "CALIBRATION"; checked: false; actionEnabled: includeDevices.checked; onToggled: { if (!includeDevices.checked) checked = false } }
-                    Text { text: "Both default OFF; imported calibration is never applied automatically."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Both default OFF; imported calibration is never applied automatically."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
-                    Text { text: "SELECT CATEGORIES OR INDIVIDUAL PROFILES"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "SELECT CATEGORIES OR INDIVIDUAL PROFILES"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     Repeater { model: root.categories; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
                         SelectionToggle { label: modelData.name.toUpperCase(); checked: root.hasId(root.selectedPackCategoryIds, modelData.id); onToggled: root.togglePackCategory(modelData.id, checked) }
                         Repeater { model: root.profilesForCategory(modelData.id); delegate: SelectionToggle { required property var modelData; label: "    " + modelData.name; checked: root.hasId(root.selectedPackCategoryIds, modelData.categoryId) || root.hasId(root.selectedPackProfileIds, modelData.id); onToggled: root.togglePackProfile(modelData.id, modelData.categoryId, checked) } }
                     } }
                 }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
-                    Text { text: "RELATED CONFIGURATION"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "RELATED CONFIGURATION"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     RowLayout { Layout.fillWidth: true
                         SelectionToggle { id: includeAutomations; label: "RELATED AUTOMATIONS"; checked: true }
                         SelectionToggle { id: includeRelationships; label: "PROFILE CONTROL RELATIONSHIPS"; checked: true }
                         SelectionToggle { id: includeGameDetection; label: "GAME DETECTION RULES"; checked: true }
                     }
-                    Text { text: "Required custom curves and vJoy requirements are always included so a selected profile never exports broken behavior."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "Required custom curves and vJoy requirements are always included so a selected profile never exports broken behavior."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 }
                 ColumnLayout { visible: root.transferMode === "export" && root.transferKind === "pack"; Layout.fillWidth: true; spacing: 3
-                    Text { text: "ADAPTIVE RESPONSE"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "ADAPTIVE RESPONSE"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     RowLayout { Layout.fillWidth: true
                         SelectionToggle { label: "ADAPTIVE RESPONSE"; checked: true; actionEnabled: false }
                         SelectionToggle { label: "GLOBAL DEFAULTS"; checked: true; actionEnabled: false }
@@ -848,47 +848,47 @@ Flickable {
                     }
                     RowLayout { Layout.fillWidth: true
                         SelectionToggle { label: "REQUIRED PRESET DEPENDENCIES"; checked: true; actionEnabled: false }
-                        Text { text: "Only presets referenced by the selected Global, Categories, Profiles, or included Automations are exported. Unrelated custom presets stay local."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Only presets referenced by the selected Global, Categories, Profiles, or included Automations are exported. Unrelated custom presets stay local."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
             }
             Card { visible: root.transferMode === "import" && root.importPreview.profileCount > 0; Layout.fillWidth: true; cardAccent: root.good
-                Text { text: "IMPORT PREVIEW  ·  " + (root.importPreview.kind || "") + "  ·  " + (root.importPreview.name || ""); color: root.text; font.pixelSize: 12; font.bold: true }
-                Text { text: "Exported by " + (root.importPreview.exporterVersion || "") + " · " + Number(root.importPreview.categoryCount || 0) + " categories · " + Number(root.importPreview.profileCount || 0) + " profiles · " + Number(root.importPreview.automationCount || 0) + " Automations · " + Number(root.importPreview.curveCount || 0) + " curves"; color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { text: "SOURCE CONTROLLER: " + ((root.importPreview.sourceController || {}).name || "Not recorded") + "  ·  CURRENT: " + (root.importPreview.currentControllerName || ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Repeater { model: root.importPreview.categories || []; delegate: Text { required property var modelData; text: "CATEGORY  " + (modelData.name || "") + " · " + Number(modelData.profileCount || 0) + " profiles · " + (modelData.conflict || "") + ((modelData.rules || []).length ? " · detects " + modelData.rules.join(", ") : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
-                Repeater { model: root.importPreview.profiles || []; delegate: Text { required property var modelData; text: (modelData.category || "") + " / " + (modelData.name || "") + " · " + Number(modelData.mappedAxes || 0) + " axes · " + Number(modelData.mappedButtons || 0) + " buttons · " + Number(modelData.povMappings || 0) + " POV · " + Number(modelData.automationCount || 0) + " Automation · " + (modelData.compatibility || "") + (modelData.nameConflict ? " · NAME CONFLICT" : ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
-                Repeater { model: root.importPreview.outputLayouts || []; delegate: Text { required property var modelData; text: "vJOY: " + (modelData.name || "") + " · Device " + Number(modelData.vjoyDevice || 0) + " · " + Number(modelData.axes || 0) + " axes · " + Number(modelData.buttons || 0) + " buttons"; color: root.muted; font.pixelSize: 9 } }
-                Text { text: "RELATED: " + Number(root.importPreview.profileControlCount || 0) + " profile controls · " + (root.importPreview.curves || []).length + " curves · " + (root.importPreview.automations || []).length + " Automations"; color: root.muted; font.pixelSize: 9 }
+                Text { text: "IMPORT PREVIEW  ·  " + (root.importPreview.kind || "") + "  ·  " + (root.importPreview.name || ""); color: root.text; font.pixelSize: theme.scale(12); font.bold: true }
+                Text { text: "Exported by " + (root.importPreview.exporterVersion || "") + " · " + Number(root.importPreview.categoryCount || 0) + " categories · " + Number(root.importPreview.profileCount || 0) + " profiles · " + Number(root.importPreview.automationCount || 0) + " Automations · " + Number(root.importPreview.curveCount || 0) + " curves"; color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "SOURCE CONTROLLER: " + ((root.importPreview.sourceController || {}).name || "Not recorded") + "  ·  CURRENT: " + (root.importPreview.currentControllerName || ""); color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: root.importPreview.categories || []; delegate: Text { required property var modelData; text: "CATEGORY  " + (modelData.name || "") + " · " + Number(modelData.profileCount || 0) + " profiles · " + (modelData.conflict || "") + ((modelData.rules || []).length ? " · detects " + modelData.rules.join(", ") : ""); color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: root.importPreview.profiles || []; delegate: Text { required property var modelData; text: (modelData.category || "") + " / " + (modelData.name || "") + " · " + Number(modelData.mappedAxes || 0) + " axes · " + Number(modelData.mappedButtons || 0) + " buttons · " + Number(modelData.povMappings || 0) + " POV · " + Number(modelData.automationCount || 0) + " Automation · " + (modelData.compatibility || "") + (modelData.nameConflict ? " · NAME CONFLICT" : ""); color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Repeater { model: root.importPreview.outputLayouts || []; delegate: Text { required property var modelData; text: "vJOY: " + (modelData.name || "") + " · Device " + Number(modelData.vjoyDevice || 0) + " · " + Number(modelData.axes || 0) + " axes · " + Number(modelData.buttons || 0) + " buttons"; color: root.muted; font.pixelSize: theme.scale(9) } }
+                Text { text: "RELATED: " + Number(root.importPreview.profileControlCount || 0) + " profile controls · " + (root.importPreview.curves || []).length + " curves · " + (root.importPreview.automations || []).length + " Automations"; color: root.muted; font.pixelSize: theme.scale(9) }
                 RowLayout { visible: Number(root.importPreview.categoryCount || 0) === 1; Layout.fillWidth: true
-                    Text { text: "PROFILE DESTINATION:"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "PROFILE DESTINATION:"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     ThemedComboBox { id: importDestinationCategory; Layout.fillWidth: true; model: [{id:"", name:"SOURCE CATEGORY (create or merge)"}].concat(root.categories); textRole: "name"; valueRole: "id" }
                 }
                 RowLayout { visible: (root.importPreview.categories || []).some(function(c) { return c.exists }); Layout.fillWidth: true
-                    Text { text: "EXISTING CATEGORY:"; color: root.muted; font.pixelSize: 8; font.bold: true }
+                    Text { text: "EXISTING CATEGORY:"; color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
                     Repeater { model: [{label:"MERGE", value:"merge"}, {label:"IMPORT AS NEW", value:"new"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.categoryConflictMode !== modelData.value; onTriggered: { root.categoryConflictMode = modelData.value; root.replaceCategoryConfirmed = false } } }
                 }
                 ColumnLayout { visible: Number(root.importPreview.adaptiveResponsePresetCount || 0) > 0; Layout.fillWidth: true; spacing: 4
-                    Text { text: "ADAPTIVE RESPONSE PRESETS  ·  " + Number(root.importPreview.adaptiveResponsePresetCount || 0) + " REQUIRED DEPENDENC" + (Number(root.importPreview.adaptiveResponsePresetCount || 0) === 1 ? "Y" : "IES"); color: root.muted; font.pixelSize: 8; font.bold: true }
-                    Text { text: "When an imported Response Preset id already exists locally with different values, choose the conflict behavior before importing."; color: root.muted; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "ADAPTIVE RESPONSE PRESETS  ·  " + Number(root.importPreview.adaptiveResponsePresetCount || 0) + " REQUIRED DEPENDENC" + (Number(root.importPreview.adaptiveResponsePresetCount || 0) === 1 ? "Y" : "IES"); color: root.muted; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: "When an imported Response Preset id already exists locally with different values, choose the conflict behavior before importing."; color: root.muted; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true
                         Repeater { model: [{label:"KEEP LOCAL", value:"keep"}, {label:"IMPORT AS COPY", value:"copy"}, {label:"REPLACE", value:"replace"}]; delegate: ActionButton { required property var modelData; label: modelData.label; subdued: root.adaptivePresetConflictMode !== modelData.value; onTriggered: root.adaptivePresetConflictMode = modelData.value } }
                     }
                 }
                 Repeater { model: root.importPreview.devices || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 2
-                    Text { text: "DEVICE: " + (modelData.name || "") + " · " + Number(modelData.axisCount || 0) + " axes · " + Number(modelData.buttonCount || 0) + " buttons · " + (modelData.state || ""); color: root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: "DEVICE: " + (modelData.name || "") + " · " + Number(modelData.axisCount || 0) + " axes · " + Number(modelData.buttonCount || 0) + " buttons · " + (modelData.state || ""); color: root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     ThemedComboBox { visible: (modelData.choices || []).length > 1; Layout.fillWidth: true; model: modelData.choices || []; textRole: "name"; valueRole: "id"; onActivated: backendObject.selectPortableImportDevice(modelData.index, currentValue) }
                 } }
                 SelectionToggle { visible: Boolean(root.importPreview.includesCalibration); label: "APPLY IMPORTED CALIBRATION TO THE MATCHED CONTROLLER"; checked: root.applyImportedCalibration; onToggled: root.applyImportedCalibration = checked }
-                Text { visible: Boolean(root.importPreview.includesCalibration); text: "Default is Keep Local Calibration. Applying requires the controller match shown above; ambiguous matches require your selection."; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Repeater { model: root.importPreview.warnings || []; delegate: Text { required property var modelData; text: "REVIEW: " + modelData; color: root.warning; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap } }
+                Text { visible: Boolean(root.importPreview.includesCalibration); text: "Default is Keep Local Calibration. Applying requires the controller match shown above; ambiguous matches require your selection."; color: root.warning; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Repeater { model: root.importPreview.warnings || []; delegate: Text { required property var modelData; text: "REVIEW: " + modelData; color: root.warning; font.pixelSize: theme.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap } }
                 RowLayout { Layout.fillWidth: true
                     SelectionToggle { id: replaceImportedProfiles; label: "REPLACE MATCHING PROFILES"; checked: false; onToggled: root.replaceProfilesConfirmed = false }
                     Item { Layout.fillWidth: true }
                     ActionButton { label: "IMPORT"; onTriggered: root.requestPortableImport() }
                 }
             }
-            Text { visible: String(backendObject.portableImportStatus || "").length > 0; text: String(backendObject.portableImportStatus || ""); color: root.transferMode === "import" && Number(root.importPreview.profileCount || 0) === 0 ? root.warning : root.muted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { visible: String(backendObject.portableImportStatus || "").length > 0; text: String(backendObject.portableImportStatus || ""); color: root.transferMode === "import" && Number(root.importPreview.profileCount || 0) === 0 ? root.warning : root.muted; font.pixelSize: theme.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: transferDialog.close() }
@@ -899,13 +899,13 @@ Flickable {
     }
     Dialog { id: replaceCategoryConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 418; title: "Replace Existing Category?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 390; spacing: 12
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "This replaces the matching non-active category and its profiles with the imported category. General, active, and last remaining categories are protected."; color: root.text; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "This replaces the matching non-active category and its profiles with the imported category. General, active, and last remaining categories are protected."; color: root.text; font.pixelSize: theme.scale(10) }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceCategoryConfirmation.close() } ActionButton { label: "REPLACE CATEGORY"; destructive: true; onTriggered: { root.replaceCategoryConfirmed = true; replaceCategoryConfirmation.close(); root.requestPortableImport() } } }
         }
     }
     Dialog { id: replaceProfilesConfirmation; parent: Overlay.overlay; modal: true; anchors.centerIn: parent; width: 418; title: "Replace Matching Profiles?"; standardButtons: Dialog.NoButton
         contentItem: ColumnLayout { width: 390; spacing: 12
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Matching profile names will be replaced with the imported configuration. Leave this unchecked to import safe renamed copies instead."; color: root.text; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Matching profile names will be replaced with the imported configuration. Leave this unchecked to import safe renamed copies instead."; color: root.text; font.pixelSize: theme.scale(10) }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { label: "CANCEL"; subdued: true; onTriggered: replaceProfilesConfirmation.close() } ActionButton { label: "REPLACE PROFILES"; destructive: true; onTriggered: { root.replaceProfilesConfirmed = true; replaceProfilesConfirmation.close(); root.requestPortableImport() } } }
         }
     }

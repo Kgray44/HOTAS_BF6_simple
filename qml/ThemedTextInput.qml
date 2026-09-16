@@ -9,7 +9,7 @@ TextField {
     enabled: controlEnabled
     color: theme.legacy ? "#e7f0f1" : theme.text
     placeholderTextColor: theme.legacy ? "#72848a" : theme.textFaint
-    font.pixelSize: 11
+    font.pixelSize: theme.scale(11)
     selectByMouse: true
     verticalAlignment: TextInput.AlignVCenter
     onAccepted: focus = false

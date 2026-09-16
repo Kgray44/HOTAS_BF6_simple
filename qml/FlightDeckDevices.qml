@@ -141,12 +141,35 @@ Flickable {
     }
 
     function hidhideHealthTone() {
+        if (String(hidhideHealth.freshness || "").toUpperCase() === "STALE") return "attention";
         const state = String(hidhideHealth.overallState || "CHECKING").toUpperCase();
         if (state === "READY") return "healthy";
         if (state.indexOf("REPAIR") >= 0 || state.indexOf("ACTION") >= 0 || state.indexOf("DOCTOR") >= 0)
             return "attention";
-        if (state === "DEGRADED") return "fault";
+        if (state === "DEGRADED") return "attention";
         return "informational";
+    }
+
+    function normalHidHideDimensions() {
+        const wanted = ["installation", "cloak-state", "application-access", "physical-isolation", "virtual-output"]
+        const result = []
+        const dimensions = hidhideHealth.dimensions || []
+        for (let i = 0; i < wanted.length; ++i) {
+            for (let j = 0; j < dimensions.length; ++j) {
+                if (String(dimensions[j].id || "") === wanted[i]) { result.push(dimensions[j]); break }
+            }
+        }
+        return result
+    }
+
+    function normalHidHideTitle(dimension) {
+        const id = String((dimension || {}).id || "")
+        if (id === "installation") return "HidHide"
+        if (id === "cloak-state") return "Cloaking"
+        if (id === "application-access") return "HOTAS BF6 access"
+        if (id === "physical-isolation") return "Physical controllers"
+        if (id === "virtual-output") return "Virtual output"
+        return String((dimension || {}).title || "HidHide")
     }
 
     function outputPublicationSummary() {
@@ -284,6 +307,18 @@ Flickable {
     function openCreateVirtualOutput(rigId) {
         createVirtualOutputDialog.openFor(String(rigId || configuredBusyRigId()
             || selectedRigId || backend.editingDeviceRigId || backend.activeDeviceRigId || ""));
+    }
+
+    function activeVirtualOutputId() {
+        for (let index = 0; index < outputLayouts.length; ++index) {
+            if (Boolean((outputLayouts[index] || {}).active)) return String(outputLayouts[index].id || "")
+        }
+        return ""
+    }
+
+    function editVirtualOutput(layoutId) {
+        const target = String(layoutId || activeVirtualOutputId() || "")
+        if (target.length) createVirtualOutputDialog.openForEdit(target)
     }
 
     function controllerCandidateId(controller) {
@@ -499,7 +534,7 @@ Flickable {
                 : control.destructive ? deck.fault
                 : control.subdued ? deck.textSecondary : (deck.light ? "white" : deck.primarySurface)
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -513,7 +548,7 @@ Flickable {
         leftPadding: deck.space12
         rightPadding: deck.space32
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         contentItem: Text {
             text: control.displayText
             color: control.enabled ? deck.textPrimary : deck.textMuted
@@ -526,7 +561,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: control.popup.visible ? "⌃" : "⌄"
             color: deck.textMuted
-            font.pixelSize: 12
+            font.pixelSize: deck.scale(12)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -542,7 +577,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -601,7 +636,7 @@ Flickable {
                 Text {
                     text: "See what is connected, what needs attention, and the real next step."
                     color: deck.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: deck.scale(12)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -645,7 +680,7 @@ Flickable {
                             anchors.centerIn: parent
                             text: root.markerFor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
                             color: deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
-                            font.pixelSize: 18
+                            font.pixelSize: deck.scale(18)
                             font.bold: true
                         }
                     }
@@ -656,14 +691,14 @@ Flickable {
                             text: "SETUP HEALTH"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: root.setupTruth.overallStatus || readiness.label || "CHECKING"
                             color: deck.statusColor(root.toneFor({ state: root.setupTruth.overallStatus || "CHECKING", severity: "" }))
                             font.family: deck.displayFont
-                            font.pixelSize: root.medium ? 22 : 18
+                            font.pixelSize: deck.scale(root.medium ? 22 : 18)
                             font.bold: true
                         }
                         Text {
@@ -671,7 +706,7 @@ Flickable {
                                 ? "Current typed setup truth for " + root.setupTruth.rigName + "."
                                 : (readiness.detail || "Checking current controller setup."))
                             color: deck.textSecondary
-                            font.pixelSize: 11
+                            font.pixelSize: deck.scale(11)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -696,7 +731,7 @@ Flickable {
                             text: parent.text
                             color: deck.light ? "white" : deck.primarySurface
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -730,14 +765,14 @@ Flickable {
                                 Text {
                                     text: root.markerFor(root.toneFor(modelData.check))
                                     color: deck.statusColor(root.toneFor(modelData.check))
-                                    font.pixelSize: 14
+                                    font.pixelSize: deck.scale(14)
                                     font.bold: true
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 0
-                                    Text { text: modelData.label.toUpperCase(); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: String(modelData.check.state || "Checking"); color: deck.textPrimary; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: modelData.label.toUpperCase(); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: String(modelData.check.state || "Checking"); color: deck.textPrimary; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                 }
                             }
                         }
@@ -753,14 +788,14 @@ Flickable {
                     focusPolicy: Qt.StrongFocus
                     onClicked: setupHealthDialog.open()
                     background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }
 
         Item { id: controllersSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
-        Text { text: "Each connected controller remains visible here. Selecting or verifying one uses the existing controller workflow."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
+        Text { text: "Each connected controller remains visible here. Selecting or verifying one uses the existing controller workflow."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
         FlightDeckCard {
             objectName: "flightDeckNoControllers"
@@ -773,8 +808,8 @@ Flickable {
                 anchors.fill: parent
                 anchors.margins: deck.space16
                 spacing: deck.space8
-                Text { text: "No controllers connected"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 17; font.bold: true }
-                Text { text: "Plug in a joystick, HOTAS, throttle, pedals, or another supported controller, then scan for devices."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "No controllers connected"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(17); font.bold: true }
+                Text { text: "Plug in a joystick, HOTAS, throttle, pedals, or another supported controller, then scan for devices."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Button {
                     objectName: "flightDeckScanDevices"
                     text: "SCAN FOR DEVICES"
@@ -782,7 +817,7 @@ Flickable {
                     focusPolicy: Qt.StrongFocus
                     onClicked: backend.refreshControllers()
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }
@@ -822,13 +857,13 @@ Flickable {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 spacing: deck.space4
-                                Text { text: "PHYSICAL CONTROLLER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                Text { text: "PHYSICAL CONTROLLER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                                 Text {
                                     objectName: "flightDeckControllerName_" + controllerCard.index
                                     text: controllerCard.controller.name || "Controller"
                                     color: deck.textPrimary
                                     font.family: deck.displayFont
-                                    font.pixelSize: 16
+                                    font.pixelSize: deck.scale(16)
                                     font.bold: true
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
@@ -841,16 +876,16 @@ Flickable {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: deck.space12
-                            Text { text: root.markerFor(root.controllerTone(controllerCard.controller)) + " " + root.controllerState(controllerCard.controller); color: deck.statusColor(root.controllerTone(controllerCard.controller)); font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
-                            Text { text: controllerCard.controller.verified ? "✓ Verified" : "! Not yet verified"; color: controllerCard.controller.verified ? deck.healthy : deck.attention; font.pixelSize: 10; font.bold: true }
+                            Text { text: root.markerFor(root.controllerTone(controllerCard.controller)) + " " + root.controllerState(controllerCard.controller); color: deck.statusColor(root.controllerTone(controllerCard.controller)); font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
+                            Text { text: controllerCard.controller.verified ? "✓ Verified" : "! Not yet verified"; color: controllerCard.controller.verified ? deck.healthy : deck.attention; font.pixelSize: deck.scale(10); font.bold: true }
                         }
-                        Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text {
                             visible: controllerCard.controller.verified && !controllerCard.controller.inDeviceRig
                             text: "NOT IN A DEVICE RIG · Add this verified controller to a Device Rig before selecting it for editing."
                             color: deck.attention
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -859,14 +894,14 @@ Flickable {
                             visible: controllerCard.controller.verified && controllerCard.controller.inDeviceRig
                             text: "Device Rig · " + String(controllerCard.controller.rigNames || "")
                             color: deck.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
-                        Text { visible: controllerCard.controller.selected; text: "Selected for editing."; color: deck.accent; font.pixelSize: 10; Layout.fillWidth: true }
-                        Text { visible: controllerCard.controller.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true }
-                        Text { visible: !controllerCard.controller.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { visible: String(controllerCard.controller.verificationDetail || "").length > 0; text: String(controllerCard.controller.verificationDetail || ""); color: deck.textSecondary; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: controllerCard.controller.selected; text: "Selected for editing."; color: deck.accent; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
+                        Text { visible: controllerCard.controller.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
+                        Text { visible: !controllerCard.controller.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: String(controllerCard.controller.verificationDetail || "").length > 0; text: String(controllerCard.controller.verificationDetail || ""); color: deck.textSecondary; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
                             Item { Layout.fillWidth: true }
@@ -899,7 +934,7 @@ Flickable {
                                         || controllerCard.controller.directInputId || ""))
                                 }
                                 background: Rectangle { radius: deck.radiusControl; color: parent.enabled && parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : (parent.enabled ? deck.accent : deck.border); border.width: parent.activeFocus ? 2 : 1 }
-                                contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
                             Button {
                                 visible: controllerCard.controller.verified && controllerCard.controller.id
@@ -909,7 +944,7 @@ Flickable {
                                 implicitHeight: deck.compactControlHeight
                                 onClicked: root.requestForgetController(controllerCard.controller.id)
                                 background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                                contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
                         }
                     }
@@ -920,7 +955,7 @@ Flickable {
         Item { id: rigsSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "DEVICE RIGS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+            Text { text: "DEVICE RIGS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
             RigButton {
                 objectName: "flightDeckCreateRig"
                 text: "+ CREATE RIG"
@@ -931,7 +966,7 @@ Flickable {
         Text {
             text: "Group the physical controllers and Virtual Outputs a Profile needs. Viewing a Rig never activates it."
             color: deck.textSecondary
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
         }
@@ -947,8 +982,8 @@ Flickable {
                 anchors.fill: parent
                 anchors.margins: deck.space16
                 spacing: deck.space8
-                Text { text: "Create your first Device Rig"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 17; font.bold: true }
-                Text { text: root.controllerItems.length ? "Choose one or more physical controllers, set Required or Optional membership, then attach the Virtual Output they will use." : "Connect or scan for a physical controller before creating a Device Rig."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Create your first Device Rig"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(17); font.bold: true }
+                Text { text: root.controllerItems.length ? "Choose one or more physical controllers, set Required or Optional membership, then attach the Virtual Output they will use." : "Connect or scan for a physical controller before creating a Device Rig."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     RigButton { text: "SCAN FOR DEVICES"; subdued: true; onClicked: backend.refreshControllers() }
@@ -987,8 +1022,8 @@ Flickable {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 spacing: deck.space4
-                                Text { text: "DEVICE RIG"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                                Text { text: String(rig.name || "Device Rig"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 17; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
+                                Text { text: "DEVICE RIG"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                                Text { text: String(rig.name || "Device Rig"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(17); font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
                             }
                             FlightDeckStatusChip { tokens: deck; label: String(rig.setupStatus || rig.healthLabel || "Offline").toUpperCase(); value: root.rigState(rig); tone: root.rigTone(rig) }
                         }
@@ -997,7 +1032,7 @@ Flickable {
                                 + "  ·  " + (rig.outputs || []).length + " Virtual Output" + ((rig.outputs || []).length === 1 ? "" : "s")
                             color: deck.textSecondary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1007,10 +1042,10 @@ Flickable {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: deck.space8
-                                Text { text: root.markerFor(root.memberTone(modelData, rig)); color: deck.statusColor(root.memberTone(modelData, rig)); font.pixelSize: 12; font.bold: true }
-                                Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: 10; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
-                                Text { text: modelData.required ? "REQUIRED" : "OPTIONAL"; color: modelData.required ? deck.textSecondary : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                Text { text: root.memberState(modelData, rig).toUpperCase(); color: deck.statusColor(root.memberTone(modelData, rig)); font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                                Text { text: root.markerFor(root.memberTone(modelData, rig)); color: deck.statusColor(root.memberTone(modelData, rig)); font.pixelSize: deck.scale(12); font.bold: true }
+                                Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight }
+                                Text { text: modelData.required ? "REQUIRED" : "OPTIONAL"; color: modelData.required ? deck.textSecondary : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                Text { text: root.memberState(modelData, rig).toUpperCase(); color: deck.statusColor(root.memberTone(modelData, rig)); font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
                             }
                         }
                         Text {
@@ -1021,7 +1056,7 @@ Flickable {
                             }).join("  ·  ")
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1030,7 +1065,7 @@ Flickable {
                             text: "NO PROFILE / UNMAPPED · Hardware is active and safe. Choose, copy, or create a Profile when you are ready to map controls."
                             color: deck.accent
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -1078,7 +1113,7 @@ Flickable {
         }
 
         Item { id: virtualOutputSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+        Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
             objectName: "flightDeckVirtualOutput"
             tokens: deck
@@ -1095,15 +1130,15 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: deck.space4
-                        Text { text: "CURRENT ACTIVE OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.virtualOutputStaleOwnership ? "Stale ownership" : (root.virtualOutputExternallyBusy ? "Configured · busy" : (root.virtualOutputOwnedByHotas ? "Configured · acquired" : (root.toneFor(root.vjoyCheck) === "healthy" ? "Online" : "Action needed"))); color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
-                        Text { text: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId + "\n" + (root.vjoyCheck.message || output.detail || "Checking virtual output."); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "CURRENT ACTIVE OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                        Text { text: root.virtualOutputStaleOwnership ? "Stale ownership" : (root.virtualOutputExternallyBusy ? "Configured · busy" : (root.virtualOutputOwnedByHotas ? "Configured · acquired" : (root.toneFor(root.vjoyCheck) === "healthy" ? "Online" : "Action needed"))); color: deck.statusColor(root.toneFor(root.vjoyCheck)); font.family: deck.displayFont; font.pixelSize: deck.scale(18); font.bold: true }
+                        Text { text: backend.activeOutputLayoutName + "\nVirtual Output · vJoy Device " + root.vjoyDeviceId + "\n" + (root.vjoyCheck.message || output.detail || "Checking virtual output."); color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text {
                             visible: Number(root.outputRuntime.activeVjoyDeviceId || 0) > 0
                             text: root.outputPublicationSummary()
                             color: root.outputRuntime.outputReportsSucceeding ? deck.healthy : deck.warning
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -1111,7 +1146,7 @@ Flickable {
                     }
                     FlightDeckStatusChip { tokens: deck; label: root.virtualOutputStaleOwnership ? "STALE DRIVER STATE" : (root.virtualOutputExternallyBusy ? "CONFIGURED · BUSY" : (root.virtualOutputOwnedByHotas ? "CONFIGURED · ACQUIRED" : (root.toneFor(root.vjoyCheck) === "healthy" ? "ONLINE" : "ACTION NEEDED"))); value: backend.activeOutputLayoutName + " · vJoy " + root.vjoyDeviceId; tone: root.toneFor(root.vjoyCheck); visible: root.medium }
                 }
-                Text { text: "Virtual output is the controller signal games receive from HOTAS BF6."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Virtual output is the controller signal games receive from HOTAS BF6."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     RigButton {
@@ -1146,17 +1181,18 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.openVjoyConfiguration()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Item { Layout.fillWidth: true }
                     RigButton { text: "CREATE VIRTUAL OUTPUT"; subdued: true; onClicked: root.openCreateVirtualOutput("") }
+                    RigButton { text: "EDIT OUTPUT"; subdued: true; enabled: root.activeVirtualOutputId().length > 0; onClicked: root.editVirtualOutput("") }
                     Button {
                         text: root.virtualDetailsOpen ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
                         onClicked: root.virtualDetailsOpen = !root.virtualDetailsOpen
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
                 Rectangle {
@@ -1171,23 +1207,23 @@ Flickable {
                         anchors.fill: parent
                         anchors.margins: deck.space12
                         spacing: deck.space4
-                        Text { text: "vJoy Device: " + root.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
-                        Text { text: "Descriptor: " + String(root.outputOwnership.descriptor || "Not inspected"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Raw status: " + String(root.outputOwnership.rawStatusName || "UNKNOWN") + " (" + String(root.outputOwnership.rawStatus === undefined ? "?" : root.outputOwnership.rawStatus) + ")"; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Owner PID: " + String(root.outputOwnership.ownerPid || "not reported"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Owner process: " + (String(root.outputOwnership.ownerProcess || "").length ? String(root.outputOwnership.ownerProcess) : "not available") + (String(root.outputOwnership.ownerProcessPath || "").length ? "\n" + String(root.outputOwnership.ownerProcessPath) : ""); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
-                        Text { text: "HOTAS BF6 PID: " + String(root.outputOwnership.hotasProcessId || "not reported"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Acquire attempt result: " + String(root.outputOwnership.acquireAttempt || "not attempted"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: "Last status transition: " + String(root.outputOwnership.lastStatusTransition || "not observed"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: root.vjoyStatus; color: deck.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: root.vjoyButtonCount + " buttons  •  " + root.vjoyContinuousPovCount + " continuous hats  •  " + root.vjoyDiscretePovCount + " discrete hats"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "vJoy Device: " + root.vjoyDeviceId; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true }
+                        Text { text: "Descriptor: " + String(root.outputOwnership.descriptor || "Not inspected"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Raw status: " + String(root.outputOwnership.rawStatusName || "UNKNOWN") + " (" + String(root.outputOwnership.rawStatus === undefined ? "?" : root.outputOwnership.rawStatus) + ")"; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Owner PID: " + String(root.outputOwnership.ownerPid || "not reported"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Owner process: " + (String(root.outputOwnership.ownerProcess || "").length ? String(root.outputOwnership.ownerProcess) : "not available") + (String(root.outputOwnership.ownerProcessPath || "").length ? "\n" + String(root.outputOwnership.ownerProcessPath) : ""); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                        Text { text: "HOTAS BF6 PID: " + String(root.outputOwnership.hotasProcessId || "not reported"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Acquire attempt result: " + String(root.outputOwnership.acquireAttempt || "not attempted"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Last status transition: " + String(root.outputOwnership.lastStatusTransition || "not observed"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.vjoyStatus; color: deck.textMuted; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.vjoyButtonCount + " buttons  •  " + root.vjoyContinuousPovCount + " continuous hats  •  " + root.vjoyDiscretePovCount + " discrete hats"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
             }
         }
 
         Item { id: isolationSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+        Text { text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
             objectName: "flightDeckDeviceIsolation"
             tokens: deck
@@ -1204,13 +1240,13 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: deck.space4
-                        Text { text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.toneFor(root.isolationCheck) === "healthy" ? "Protected" : "Action needed"; color: deck.statusColor(root.toneFor(root.isolationCheck)); font.family: deck.displayFont; font.pixelSize: 18; font.bold: true }
-                        Text { text: root.isolationCheck.message || isolation.detail || "Checking device isolation."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                        Text { text: root.toneFor(root.isolationCheck) === "healthy" ? "Protected" : "Action needed"; color: deck.statusColor(root.toneFor(root.isolationCheck)); font.family: deck.displayFont; font.pixelSize: deck.scale(18); font.bold: true }
+                        Text { text: root.isolationCheck.message || isolation.detail || "Checking device isolation."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     FlightDeckStatusChip { tokens: deck; label: "HIDHIDE"; value: String(root.isolationCheck.state || "CHECKING").toUpperCase(); tone: root.toneFor(root.isolationCheck); visible: root.medium }
                 }
-                Text { text: "Device isolation prevents games from seeing both the physical controller and virtual output."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Device isolation prevents games from seeing both the physical controller and virtual output."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: hidhideHealthSummary.implicitHeight + deck.space20
@@ -1224,23 +1260,23 @@ Flickable {
                         spacing: deck.space4
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "HIDHIDE HEALTH"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+                            Text { text: "HIDHIDE HEALTH"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true }
                             Item { Layout.fillWidth: true }
-                            Text { text: String(root.hidhideHealth.overallState || "CHECKING"); color: deck.statusColor(root.hidhideHealthTone()); font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                            Text { text: String(root.hidhideHealth.overallState || "CHECKING") + (String(root.hidhideHealth.freshness || "") === "STALE" ? " · NEEDS VERIFICATION" : ""); color: deck.statusColor(root.hidhideHealthTone()); font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                         }
-                        Text { Layout.fillWidth: true; text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking HidHide")) : "Independent health dimensions are kept separate from the existing setup transaction."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || "Checking HidHide")) : (root.hidhideHealth.normalSummary || "HidHide helps keep physical controllers out of games while HOTAS BF6 uses them."); color: deck.textSecondary; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
                         Repeater {
-                            model: root.hidhideHealth.dimensions || []
+                            model: root.normalHidHideDimensions()
                             delegate: Text {
                                 required property var modelData
                                 Layout.fillWidth: true
-                                text: "• " + String(modelData.title || "HidHide") + " · " + String(modelData.state || "UNKNOWN") + " — " + String(modelData.shortSummary || "")
-                                color: deck.textMuted; font.pixelSize: 9; wrapMode: Text.WordWrap
+                                text: "• " + root.normalHidHideTitle(modelData) + " · " + String(modelData.shortSummary || modelData.state || "Checking")
+                                color: deck.textMuted; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap
                             }
                         }
                         Repeater {
                             model: root.hidhideHealth.physicalDevices || []
-                            delegate: Text { required property var modelData; Layout.fillWidth: true; text: String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.state || "UNKNOWN") + (String(modelData.state || "") === "REPAIR AVAILABLE" ? " · Visible to games" : ""); color: deck.statusColor(String(modelData.state || "") === "READY" ? "healthy" : "attention"); font.pixelSize: 10; wrapMode: Text.WordWrap }
+                            delegate: Text { required property var modelData; Layout.fillWidth: true; text: String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.availabilityState || (String(modelData.state || "") === "REPAIR AVAILABLE" ? "Visible to games" : modelData.state || "Checking")); color: deck.statusColor(modelData.availabilityState ? "attention" : String(modelData.state || "") === "READY" ? "healthy" : "attention"); font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
                         }
                     }
                 }
@@ -1253,7 +1289,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: root.showActionFeedback(backend.runHidHideFullCheck(), "HidHide check did not start", "Try again after the current check completes.")
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         visible: root.hidhideHealth.inProgress
@@ -1262,7 +1298,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.cancelHidHideFullCheck()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: deck.border; border.width: 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         visible: String(root.hidhideHealth.overallState || "") === "REPAIR AVAILABLE"
@@ -1271,7 +1307,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: { root.hidhideRepairPlan = backend.reviewHidHideHealthRepair(); root.showActionFeedback(root.hidhideRepairPlan, "HidHide repair plan unavailable", "Run a Full Check for current evidence.") }
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.warning; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.warning; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.warning; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         visible: root.hidhideRepairPlan && root.hidhideRepairPlan.success === true
@@ -1284,7 +1320,7 @@ Flickable {
                             root.showActionFeedback(result, "HidHide repair did not start", "The current setup evidence no longer supports that repair.")
                         }
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         text: "OPEN DOCTOR"
@@ -1292,7 +1328,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: root.showActionFeedback(backend.openHidHideDoctor(), "HidHide Doctor is unavailable", "Copy evidence or install the optional Doctor alongside HOTAS BF6.")
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         visible: root.toneFor(root.isolationCheck) !== "healthy"
@@ -1301,7 +1337,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: setupHealthDialog.open()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Item { Layout.fillWidth: true }
                     Button {
@@ -1310,7 +1346,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: root.isolationDetailsOpen = !root.isolationDetailsOpen
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
                 Rectangle {
@@ -1325,17 +1361,17 @@ Flickable {
                         anchors.fill: parent
                         anchors.margins: deck.space12
                         spacing: deck.space4
-                        Text { text: "HidHide status"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
-                        Text { text: root.hidhideAvailable ? "Service and tools are available." : "Service or tools are unavailable."; color: deck.textSecondary; font.pixelSize: 10 }
-                        Text { text: root.hidhideCloakStateKnown ? (root.hidhideCloaked ? "Cloaking is enabled." : "Cloaking is disabled.") : "Cloaking state is still unknown."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: root.hidhideMapperAllowed ? "HOTAS BF6 is allow-listed." : "HOTAS BF6 is not allow-listed."; color: deck.textSecondary; font.pixelSize: 10 }
+                        Text { text: "HidHide status"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true }
+                        Text { text: root.hidhideAvailable ? "Service and tools are available." : "Service or tools are unavailable."; color: deck.textSecondary; font.pixelSize: deck.scale(10) }
+                        Text { text: root.hidhideCloakStateKnown ? (root.hidhideCloaked ? "Cloaking is enabled." : "Cloaking is disabled.") : "Cloaking state is still unknown."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: root.hidhideMapperAllowed ? "HOTAS BF6 is allow-listed." : "HOTAS BF6 is not allow-listed."; color: deck.textSecondary; font.pixelSize: deck.scale(10) }
                         Repeater {
                             model: root.hidhideHealth.checks || []
                             delegate: Text {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 text: String(modelData.operation || "CHECK") + " · " + String(modelData.state || "UNKNOWN") + (modelData.nativeError ? " · " + String(modelData.nativeError.message || "") : "")
-                                color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WrapAnywhere
+                                color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); wrapMode: Text.WrapAnywhere
                             }
                         }
                     }
@@ -1344,7 +1380,7 @@ Flickable {
         }
 
         Item { id: verificationSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "SETUP / VERIFICATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
+        Text { text: "SETUP / VERIFICATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
             objectName: "flightDeckCalibration"
             tokens: deck
@@ -1362,9 +1398,9 @@ Flickable {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: deck.space4
-                        Text { text: "CONTROLLER CALIBRATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                        Text { text: backend.calibrationActive ? "Calibration in progress" : (backend.calibrationSuccess ? "Calibration complete" : "Capture controller ranges and centered controls"); color: backend.calibrationActive ? deck.attention : backend.calibrationSuccess ? deck.healthy : deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 15; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                        Text { text: backend.calibrationStatus || "Calibration is scoped to the selected controller. Profiles, mappings, and Automation are not changed."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "CONTROLLER CALIBRATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                        Text { text: backend.calibrationActive ? "Calibration in progress" : (backend.calibrationSuccess ? "Calibration complete" : "Capture controller ranges and centered controls"); color: backend.calibrationActive ? deck.attention : backend.calibrationSuccess ? deck.healthy : deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(15); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: backend.calibrationStatus || "Calibration is scoped to the selected controller. Profiles, mappings, and Automation are not changed."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Button {
                         id: openCalibration
@@ -1375,7 +1411,7 @@ Flickable {
                         implicitHeight: deck.controlHeight
                         onClicked: calibrationDialog.open()
                         background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
             }
@@ -1390,15 +1426,15 @@ Flickable {
                 anchors.fill: parent
                 anchors.margins: parent.contentPadding
                 spacing: deck.space4
-                Text { text: "ADVANCED / TECHNICAL"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                Text { text: "For device identifiers, raw controller state, and detailed troubleshooting, use Diagnostics."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "ADVANCED / TECHNICAL"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                Text { text: "For device identifiers, raw controller state, and detailed troubleshooting, use Diagnostics."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Button {
                     text: "OPEN DIAGNOSTICS"
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
                     onClicked: root.navigateToPage(3)
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }
@@ -1483,8 +1519,8 @@ Flickable {
                 id: createRigContent
                 width: parent.width
                 spacing: deck.space12
-                Text { text: "A Device Rig is the canonical physical-controller and Virtual Output group used by Profiles and Automatic Activation."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "A Device Rig is the canonical physical-controller and Virtual Output group used by Profiles and Automatic Activation."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                 TextField {
                     id: rigCreateName
                     objectName: "flightDeckCreateRigName"
@@ -1495,8 +1531,8 @@ Flickable {
                     font.family: deck.bodyFont
                     background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                 }
-                Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
-                Text { text: "Include every controller used by this setup. Required controllers gate automatic activation; missing Optional controllers reduce capability without blocking it."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "Include every controller used by this setup. Required controllers gate automatic activation; missing Optional controllers reduce capability without blocking it."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Repeater {
                     model: root.controllerItems
                     delegate: Rectangle {
@@ -1517,16 +1553,16 @@ Flickable {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 spacing: 2
-                                Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: modelData.connected ? (modelData.verified ? "Connected · verified" : "Connected · setup needed") : "Saved / Offline"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: modelData.connected ? (modelData.verified ? "Connected · verified" : "Connected · setup needed") : "Saved / Offline"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; elide: Text.ElideRight }
                             }
                             RigButton { text: createRigDialog.included(controllerId) ? "INCLUDED" : "INCLUDE"; subdued: !createRigDialog.included(controllerId); onClicked: createRigDialog.setIncluded(modelData, !createRigDialog.included(controllerId)) }
                             RigButton { visible: createRigDialog.included(controllerId); text: createRigDialog.required(controllerId) ? "REQUIRED" : "OPTIONAL"; subdued: createRigDialog.required(controllerId) === false; onClicked: createRigDialog.setRequired(controllerId, !createRigDialog.required(controllerId)) }
                         }
                     }
                 }
-                Text { visible: root.controllerItems.length === 0; text: "No physical controllers are available. Scan for devices before creating a Rig."; color: deck.attention; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
+                Text { visible: root.controllerItems.length === 0; text: "No physical controllers are available. Scan for devices before creating a Rig."; color: deck.attention; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
                 RowLayout {
                     Layout.fillWidth: true
                     RigCombo {
@@ -1545,8 +1581,8 @@ Flickable {
                     }
                     RigButton { text: "CREATE OUTPUT"; subdued: true; onClicked: createRigDialog.createOutput() }
                 }
-                Text { text: root.outputLayouts.length ? "Choose the existing Virtual Output this Rig should own. You can add more outputs in Rig Details." : "Create a Virtual Output before this Rig can be saved."; color: deck.textMuted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                Text { visible: rigCreateName.text.trim().length === 0 || createRigDialog.draftMembers.length === 0 || !createRigDialog.outputLayoutId; text: "Enter a name, include at least one controller, and select a Virtual Output to continue."; color: deck.attention; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: root.outputLayouts.length ? "Choose the existing Virtual Output this Rig should own. You can add more outputs in Rig Details." : "Create a Virtual Output before this Rig can be saved."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: rigCreateName.text.trim().length === 0 || createRigDialog.draftMembers.length === 0 || !createRigDialog.outputLayoutId; text: "Enter a name, include at least one controller, and select a Virtual Output to continue."; color: deck.attention; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     Item { Layout.fillWidth: true }
@@ -1575,6 +1611,10 @@ Flickable {
         onFailed: function(result) {
             root.showActionFeedback(result, "Virtual Output was not created",
                 "Review the name, vJoy Device ID, and capabilities, then try again.")
+        }
+        onUpdated: function(result) {
+            root.showActionFeedback(result, "Virtual Output was not updated",
+                String(result.message || "Review the output contract and Setup Health."))
         }
     }
 
@@ -1609,14 +1649,14 @@ Flickable {
                 readonly property var rig: root.selectedRig()
                 width: parent.width
                 spacing: deck.space12
-                Text { text: rigDetailsContent.rig ? "Rig ID  ·  " + String(rigDetailsContent.rig.id || "") : "This Rig is no longer available."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                Text { text: rigDetailsContent.rig ? "Rig ID  ·  " + String(rigDetailsContent.rig.id || "") : "This Rig is no longer available."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                 RowLayout {
                     Layout.fillWidth: true
                     FlightDeckStatusChip { tokens: deck; label: rigDetailsContent.rig ? String(rigDetailsContent.rig.setupStatus || rigDetailsContent.rig.healthLabel || "Offline").toUpperCase() : "OFFLINE"; value: root.rigState(rigDetailsContent.rig); tone: root.rigTone(rigDetailsContent.rig) }
-                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "Setup has not been checked yet. Run Setup Health to verify the controller, Virtual Output, and isolation." : (rigDetailsContent.rig && rigDetailsContent.rig.unmapped ? "Hardware is active with no Profile mapped. You may create, copy, or choose a Profile without reactivating this Rig." : (rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it.")); color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "Setup has not been checked yet. Run Setup Health to verify the controller, Virtual Output, and isolation." : (rigDetailsContent.rig && rigDetailsContent.rig.unmapped ? "Hardware is active with no Profile mapped. You may create, copy, or choose a Profile without reactivating this Rig." : (rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it.")); color: deck.textSecondary; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
                     RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE" : "SET ACTIVE"; enabled: rigDetailsContent.rig && rigDetailsContent.rig.enabled && !rigDetailsContent.rig.configured; onClicked: root.activateRig(rigDetailsContent.rig) }
                 }
-                Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                 RowLayout {
                     Layout.fillWidth: true
                     TextField {
@@ -1630,7 +1670,7 @@ Flickable {
                     RigButton { text: "SAVE NAME"; enabled: rigDetailsContent.rig && rigRename.text.trim().length > 0 && rigRename.text.trim() !== String(rigDetailsContent.rig.name || ""); onClicked: root.reportBooleanAction(backend.renameDeviceRig(String(rigDetailsContent.rig.id || ""), rigRename.text), "Rig renamed", "The canonical Device Rig name was updated.", "Rig name was not updated", "Names must be unique and contain text.") }
                 }
 
-                Text { text: "DEFAULT PROFILE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "DEFAULT PROFILE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                 RigCombo {
                     id: defaultRigProfile
                     Layout.fillWidth: true
@@ -1654,10 +1694,10 @@ Flickable {
                             "Rig default Profile was not updated", "Choose a Profile assigned to this Device Rig.");
                     }
                 }
-                Text { text: "Automatic uses compatible Profile resolution. None keeps this Rig active without mapping. An explicit Profile is attempted only after the hardware Rig is active."; color: deck.textSecondary; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Automatic uses compatible Profile resolution. None keeps this Rig active without mapping. An explicit Profile is attempted only after the hardware Rig is active."; color: deck.textSecondary; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
-                Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
-                Text { text: "Required controllers must be connected, identity-safe, and verified for automatic activation. Optional controllers can be absent without blocking the Rig."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "Required controllers must be connected, identity-safe, and verified for automatic activation. Optional controllers can be absent without blocking the Rig."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Repeater {
                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.members || []) : []
                     delegate: Rectangle {
@@ -1674,16 +1714,16 @@ Flickable {
                             spacing: deck.space6
                             RowLayout {
                                 Layout.fillWidth: true
-                                Text { text: root.markerFor(root.memberTone(modelData, rigDetailsContent.rig)); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: 14; font.bold: true }
+                                Text { text: root.markerFor(root.memberTone(modelData, rigDetailsContent.rig)); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: deck.scale(14); font.bold: true }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: root.memberState(modelData, rigDetailsContent.rig) + (modelData.connected ? "" : modelData.required ? " — required controllers block automatic selection while offline." : " — optional controllers do not block automatic selection while offline."); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: root.memberState(modelData, rigDetailsContent.rig) + (modelData.connected ? "" : modelData.required ? " — required controllers block automatic selection while offline." : " — optional controllers do not block automatic selection while offline."); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
                                 RigButton { text: modelData.required ? "REQUIRED" : "OPTIONAL"; subdued: !modelData.required; onClicked: root.reportBooleanAction(backend.setDeviceRigMemberRequired(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.required), "Controller requirement updated", !modelData.required ? "This controller is now required for automatic activation." : "This controller is now optional and will not block automatic activation while offline.", "Controller requirement was not updated", "Refresh the Rig and try again.") }
                             }
-                            Text { text: "Expected identity  ·  " + String(modelData.expectedIdentity || "Not recorded") + (modelData.seenIdentity ? "\nSeen identity  ·  " + String(modelData.seenIdentity) : "") + (String(modelData.verificationDetail || "").length ? "\nVerification  ·  " + String(modelData.verificationDetail || "") : ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                            Text { text: "Expected identity  ·  " + String(modelData.expectedIdentity || "Not recorded") + (modelData.seenIdentity ? "\nSeen identity  ·  " + String(modelData.seenIdentity) : "") + (String(modelData.verificationDetail || "").length ? "\nVerification  ·  " + String(modelData.verificationDetail || "") : ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                             RowLayout {
                                 Layout.fillWidth: true
                                 RigCombo {
@@ -1737,7 +1777,7 @@ Flickable {
                     RigButton { text: "ADD CONTROLLER"; enabled: rigMemberAdder.currentIndex >= 0; onClicked: { const controller = root.controllerForCandidate(rigDetailsDialog.addMemberId); const added = controller && controller.id ? backend.addDeviceRigMember(String(rigDetailsContent.rig.id || ""), String(controller.id || ""), true) : controller ? backend.addDetectedDeviceToRig(String(rigDetailsContent.rig.id || ""), String(controller.directInputId || ""), true) : false; root.reportBooleanAction(added, "Controller added", "Review the controller routes and requirement before activation.", "Controller was not added", "Refresh devices or choose a controller that is not already in this Rig."); rigDetailsDialog.resetChoices(); } }
                 }
 
-                Text { text: "VIRTUAL OUTPUTS · PRIMARY REQUIRED"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "VIRTUAL OUTPUTS · PRIMARY REQUIRED"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
                 Repeater {
                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.outputs || []) : []
                     delegate: Rectangle {
@@ -1755,8 +1795,8 @@ Flickable {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                Text { text: (modelData.primary ? "PRIMARY · " : "") + String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: String(modelData.status || "Output unavailable") + "  ·  " + Number(modelData.routeCount || 0) + " configured routes"; color: modelData.ready ? deck.textMuted : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: (modelData.primary ? "PRIMARY · " : "") + String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: String(modelData.status || "Output unavailable") + "  ·  " + Number(modelData.routeCount || 0) + " configured routes"; color: modelData.ready ? deck.textMuted : deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                             RigButton { text: "OPEN"; subdued: true; onClicked: { rigDetailsDialog.close(); root.openRigOutput(String(modelData.id || "")); } }
                             RigButton { text: modelData.primary ? "PRIMARY" : "MAKE PRIMARY"; subdued: !!modelData.primary; enabled: !modelData.primary && !!modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigPrimaryOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Rig primary output updated", "Profiles assigned to this Rig now use this Virtual Output.", "Rig primary output was not updated", "Choose an enabled Virtual Output in this Rig.") }
@@ -1787,9 +1827,9 @@ Flickable {
                     RigButton { text: "CREATE OUTPUT"; subdued: true; onClicked: root.openCreateVirtualOutput(String(rigDetailsContent.rig.id || "")) }
                 }
 
-                Text { visible: root.availableOutputChoices(rigDetailsContent.rig).length === 0; text: "No unused Virtual Output is available for this Rig. Create one, or remove an existing output from another Rig first."; color: deck.textMuted; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: root.availableOutputChoices(rigDetailsContent.rig).length === 0; text: "No unused Virtual Output is available for this Rig. Create one, or remove an existing output from another Rig first."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
-                Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "CHECK & SET UP RIG" : "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
@@ -1813,9 +1853,9 @@ Flickable {
         contentItem: ColumnLayout {
             width: deleteRigDialog.availableWidth
             spacing: deck.space12
-            Text { text: deleteRigDialog.rig ? "Delete “" + String(deleteRigDialog.rig.name || "Device Rig") + "”? This cannot be undone." : "This Device Rig is no longer available."; color: deck.textPrimary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Text { text: root.profilesReferencingRig(deleteRigDialog.rigId).length ? root.profilesReferencingRig(deleteRigDialog.rigId).length + " Profile(s) reference this Rig. Their Device Rig assignment will be cleared through the canonical configuration path; no Profile will be remapped automatically." : "No Profiles currently reference this Rig. Saved physical-controller records remain available for other Rigs."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Text { visible: deleteRigDialog.rig && deleteRigDialog.rig.configured; text: "This Rig is currently configured. HOTAS BF6 will use its existing safe configuration transition when the canonical delete command clears it."; color: deck.attention; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: deleteRigDialog.rig ? "Delete “" + String(deleteRigDialog.rig.name || "Device Rig") + "”? This cannot be undone." : "This Device Rig is no longer available."; color: deck.textPrimary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: root.profilesReferencingRig(deleteRigDialog.rigId).length ? root.profilesReferencingRig(deleteRigDialog.rigId).length + " Profile(s) reference this Rig. Their Device Rig assignment will be cleared through the canonical configuration path; no Profile will be remapped automatically." : "No Profiles currently reference this Rig. Saved physical-controller records remain available for other Rigs."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { visible: deleteRigDialog.rig && deleteRigDialog.rig.configured; text: "This Rig is currently configured. HOTAS BF6 will use its existing safe configuration transition when the canonical delete command clears it."; color: deck.attention; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -1874,7 +1914,7 @@ Flickable {
                 id: repairContent
                 width: parent.width
                 spacing: deck.space12
-                Text { text: "HOTAS BF6 will apply only the scoped changes listed below, then verify the resulting controller state. Windows may request administrator permission."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "HOTAS BF6 will apply only the scoped changes listed below, then verify the resulting controller state. Windows may request administrator permission."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: repairPlan.implicitHeight + deck.space24
@@ -1886,12 +1926,12 @@ Flickable {
                         anchors.fill: parent
                         anchors.margins: deck.space12
                         spacing: deck.space4
-                        Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                        Text { text: "PLANNED CHANGES"; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                         Repeater {
                             model: root.setupRepairPlan
-                            delegate: Text { text: "• " + (modelData.title || modelData.message || "Scoped repair"); color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            delegate: Text { text: "• " + (modelData.title || modelData.message || "Scoped repair"); color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
-                        Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "• Preserve unrelated HidHide rules and the existing mapping choice."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
                 RowLayout {
@@ -1903,14 +1943,14 @@ Flickable {
                         focusPolicy: Qt.StrongFocus
                         onClicked: repairConfirmation.close()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         text: "REPAIR SETUP"
                         focusPolicy: Qt.StrongFocus
                         onClicked: { repairConfirmation.close(); backend.repairSetupHealth() }
                         background: Rectangle { radius: deck.radiusControl; color: deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
             }
@@ -1942,7 +1982,7 @@ Flickable {
                     Layout.fillWidth: true
                     text: backend.calibrationStatus || "Calibration is ready when a selected controller is connected."
                     color: deck.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     wrapMode: Text.WordWrap
                 }
                 Rectangle {
@@ -1963,11 +2003,11 @@ Flickable {
                                     ? "Calibration completed through the existing controller-scoped command path. You can begin another calibration when ready."
                                     : "Start calibration only when the selected controller is stable and available."
                         color: deck.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: deck.scale(11)
                         wrapMode: Text.WordWrap
                     }
                 }
-                Text { text: "AXIS RANGE STATUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
+                Text { text: "AXIS RANGE STATUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true }
                 Repeater {
                     model: root.axisItems
                     delegate: Rectangle {
@@ -1986,29 +2026,29 @@ Flickable {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Text { text: String(modelData.label || "Axis").toUpperCase(); color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: backend.calibrationStage === "RANGE" ? "CAPTURING RANGE" : backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING" ? "CAPTURING CENTER" : (modelData.calibrationEnabled ? "CALIBRATED" : "RAW DEFAULT"); color: backend.calibrationActive ? deck.attention : modelData.calibrationEnabled ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                Text { text: String(modelData.label || "Axis").toUpperCase(); color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: backend.calibrationStage === "RANGE" ? "CAPTURING RANGE" : backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING" ? "CAPTURING CENTER" : (modelData.calibrationEnabled ? "CALIBRATED" : "RAW DEFAULT"); color: backend.calibrationActive ? deck.attention : modelData.calibrationEnabled ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
                             }
                             ColumnLayout {
                                 Layout.preferredWidth: 58
-                                Text { text: "MIN"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                Text { text: Number(modelData.calibrationMinimum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                                Text { text: "MIN"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                Text { text: Number(modelData.calibrationMinimum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10) }
                             }
                             ColumnLayout {
                                 Layout.preferredWidth: 58
-                                Text { text: "NOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                Text { text: Number(modelData.raw || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                                Text { text: "NOW"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                Text { text: Number(modelData.raw || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10) }
                             }
                             ColumnLayout {
                                 Layout.preferredWidth: 58
-                                Text { text: "MAX"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                Text { text: Number(modelData.calibrationMaximum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10 }
+                                Text { text: "MAX"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                Text { text: Number(modelData.calibrationMaximum || 0).toFixed(3); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10) }
                             }
                         }
                     }
                 }
-                Text { text: "CALIBRATION HISTORY"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true }
-                Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for the selected and saved controllers appear here."; color: deck.textMuted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "CALIBRATION HISTORY"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true }
+                Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for the selected and saved controllers appear here."; color: deck.textMuted; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Repeater {
                     model: backend.calibrationHistory
                     delegate: Text {
@@ -2016,7 +2056,7 @@ Flickable {
                         Layout.fillWidth: true
                         text: String(modelData.name || "Controller") + (modelData.currentDevice ? " · CURRENT DEVICE" : "") + "\n" + String(modelData.when || "") + " · " + String(modelData.axes || 0) + " axes calibrated"
                         color: modelData.currentDevice ? deck.healthy : deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -2029,7 +2069,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: calibrationDialog.close()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         objectName: "flightDeckCalibrationReset"
@@ -2039,7 +2079,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.resetCalibration()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Item { Layout.fillWidth: true }
                     Button {
@@ -2051,7 +2091,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.beginCalibration()
                         background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? deck.accent : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         objectName: "flightDeckCalibrationCenter"
@@ -2061,7 +2101,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.beginCalibrationCenterCapture()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.accentMuted; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         objectName: "flightDeckCalibrationSave"
@@ -2071,7 +2111,7 @@ Flickable {
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.saveCalibration()
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.accentMuted; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        contentItem: Text { text: parent.text; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
             }
@@ -2093,7 +2133,7 @@ Flickable {
                 text: "Forget \"" + String(root.forgetConsequences.name || "this controller") + "\"?"
                 color: deck.textPrimary
                 font.family: deck.displayFont
-                font.pixelSize: 16
+                font.pixelSize: deck.scale(16)
                 font.bold: true
                 wrapMode: Text.WordWrap
             }
@@ -2105,7 +2145,7 @@ Flickable {
                         : "")
                     + " If it is still connected, it may immediately reappear as a new unverified controller."
                 color: deck.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 wrapMode: Text.WordWrap
             }
             Text {
@@ -2113,7 +2153,7 @@ Flickable {
                 text: "IT WILL BE REMOVED FROM"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             Repeater {
@@ -2125,7 +2165,7 @@ Flickable {
                         + (modelData.required ? " · REQUIRED — the Rig will need another controller" : " · Optional")
                         + (modelData.willRemoveRig ? " · empty Rig will be removed" : "")
                     color: modelData.required ? deck.attention : deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     wrapMode: Text.WordWrap
                 }
             }
@@ -2140,7 +2180,7 @@ Flickable {
                         ? String(root.forgetConsequences.automationReferenceCount) + " controller-specific Automation reference"
                             + (Number(root.forgetConsequences.automationReferenceCount) === 1 ? " will" : "s will") + " be removed." : "")
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -2150,7 +2190,7 @@ Flickable {
                     focusPolicy: Qt.StrongFocus
                     onClicked: forgetControllerConfirmation.close()
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
                 Item { Layout.fillWidth: true }
                 Button {
@@ -2167,7 +2207,7 @@ Flickable {
                                 : "The controller changed before the forget transaction could be applied." }, "", "", 5000)
                     }
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.selected : deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.attention; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }
@@ -2183,7 +2223,7 @@ Flickable {
         contentItem: ColumnLayout {
             width: undoConfirmation.availableWidth
             spacing: deck.space12
-            Text { text: "HOTAS BF6 will reverse only entries it added during this repair and then verify physical-controller access."; color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: "HOTAS BF6 will reverse only entries it added during this repair and then verify physical-controller access."; color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2192,14 +2232,14 @@ Flickable {
                     focusPolicy: Qt.StrongFocus
                     onClicked: undoConfirmation.close()
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
                 Button {
                     text: "UNDO REPAIR"
                     focusPolicy: Qt.StrongFocus
                     onClicked: { undoConfirmation.close(); backend.undoControllerReadiness() }
                     background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: parent.activeFocus ? deck.focus : deck.attention; border.width: parent.activeFocus ? 2 : 1 }
-                    contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }

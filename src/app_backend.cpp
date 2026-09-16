@@ -68,13 +68,19 @@ using namespace Qt::StringLiterals;
 namespace {
 
 constexpr int kVisibleSnapshotIntervalMs = 33;
+constexpr int kLoadedSnapshotIntervalMs = 66;
+constexpr int kSeverelyLoadedSnapshotIntervalMs = 125;
 constexpr int kVisibleButtonTelemetryIntervalMs = 16;
+constexpr int kLoadedButtonTelemetryIntervalMs = 50;
+constexpr int kSeverelyLoadedButtonTelemetryIntervalMs = 125;
 constexpr int kMinimizedButtonTelemetryIntervalMs = 250;
 constexpr int kVisibleLegacyButtonTelemetryIntervalMs = 100;
 constexpr int kMinimizedLegacyButtonTelemetryIntervalMs = 500;
 // Capture more diagnostic detail than the renderer consumes. This remains a
 // GUI-thread read of existing atomics, never a MappingWorker callback.
 constexpr int kAdaptiveResponseHistoryIntervalMs = 12;
+constexpr int kLoadedAdaptiveResponseHistoryIntervalMs = 50;
+constexpr int kSeverelyLoadedAdaptiveResponseHistoryIntervalMs = 125;
 constexpr int kMinimizedSnapshotIntervalMs = 250;
 constexpr int kVisibleNumericTelemetryIntervalMs = 100;
 constexpr int kMinimizedNumericTelemetryIntervalMs = 500;
@@ -593,6 +599,7 @@ AppBackend::AppBackend(QObject *parent)
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
     m_snapshotTimer.setInterval(kVisibleSnapshotIntervalMs);
     m_snapshotTimer.start();
+    m_presentationTickClock.start();
     m_buttonTelemetryTimer.setInterval(kVisibleButtonTelemetryIntervalMs);
     m_buttonTelemetryTimer.start();
     m_legacyButtonTelemetryTimer.setInterval(kVisibleLegacyButtonTelemetryIntervalMs);
@@ -793,8 +800,47 @@ QVariantList AppBackend::axisConfiguration() const
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"nativeIdentity"_qs, physicalAxisKey(axis).toUpper());
         item.insert(u"nativeObjectName"_qs, descriptor.nativeName);
+        item.insert(u"axisDiscovered"_qs, descriptor.present);
+        item.insert(u"nativeType"_qs, descriptor.relative ? u"Relative axis"_qs : u"Absolute axis"_qs);
+        item.insert(u"directInputGuid"_qs, descriptor.directInputGuid);
+        item.insert(u"directInputType"_qs, QString(u"0x%1"_qs)
+            .arg(descriptor.directInputType, 8, 16, QLatin1Char('0')).toUpper());
+        item.insert(u"directInputOffset"_qs, descriptor.directInputOffset);
+        item.insert(u"directInputInstance"_qs, descriptor.directInputInstance);
+        item.insert(u"enumerationIndex"_qs, descriptor.enumerationIndex);
         item.insert(u"nativeRangeMinimum"_qs, descriptor.nativeMinimum);
         item.insert(u"nativeRangeMaximum"_qs, descriptor.nativeMaximum);
+        item.insert(u"requestedRangeMinimum"_qs, descriptor.requestedMinimum);
+        item.insert(u"requestedRangeMaximum"_qs, descriptor.requestedMaximum);
+        item.insert(u"rangeSetAttempted"_qs, descriptor.rangeSetAttempted);
+        item.insert(u"rangeSetResult"_qs, descriptor.rangeSetResult);
+        item.insert(u"rangeReadResult"_qs, descriptor.rangeReadResult);
+        const int acquisitionMethod = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisAcquisitionSource[static_cast<size_t>(index)].load())
+            : descriptor.acquisitionMethod;
+        const bool liveMovementObserved = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLiveMovementObserved[static_cast<size_t>(index)].load())
+            : false;
+        const qint64 lastMovementAgeMs = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLastMovementAgeMs[static_cast<size_t>(index)].load())
+            : -1;
+        item.insert(u"acquisitionSourceResolved"_qs,
+            descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
+        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 1
+            ? u"Buffered DirectInput object"_qs
+            : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
+            : u"Not resolved"_qs);
+        item.insert(u"liveMovementObserved"_qs, liveMovementObserved);
+        item.insert(u"lastMovementAgeMs"_qs, lastMovementAgeMs);
         item.insert(u"sourceDevice"_qs, sourceName);
         item.insert(u"sourceConnected"_qs, sourceConnected);
         item.insert(u"specificSource"_qs, sourceRecord != nullptr);
@@ -907,8 +953,47 @@ QVariantList AppBackend::axes() const
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"nativeIdentity"_qs, physicalAxisKey(axis).toUpper());
         item.insert(u"nativeObjectName"_qs, descriptor.nativeName);
+        item.insert(u"axisDiscovered"_qs, descriptor.present);
+        item.insert(u"nativeType"_qs, descriptor.relative ? u"Relative axis"_qs : u"Absolute axis"_qs);
+        item.insert(u"directInputGuid"_qs, descriptor.directInputGuid);
+        item.insert(u"directInputType"_qs, QString(u"0x%1"_qs)
+            .arg(descriptor.directInputType, 8, 16, QLatin1Char('0')).toUpper());
+        item.insert(u"directInputOffset"_qs, descriptor.directInputOffset);
+        item.insert(u"directInputInstance"_qs, descriptor.directInputInstance);
+        item.insert(u"enumerationIndex"_qs, descriptor.enumerationIndex);
         item.insert(u"nativeRangeMinimum"_qs, descriptor.nativeMinimum);
         item.insert(u"nativeRangeMaximum"_qs, descriptor.nativeMaximum);
+        item.insert(u"requestedRangeMinimum"_qs, descriptor.requestedMinimum);
+        item.insert(u"requestedRangeMaximum"_qs, descriptor.requestedMaximum);
+        item.insert(u"rangeSetAttempted"_qs, descriptor.rangeSetAttempted);
+        item.insert(u"rangeSetResult"_qs, descriptor.rangeSetResult);
+        item.insert(u"rangeReadResult"_qs, descriptor.rangeReadResult);
+        const int acquisitionMethod = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisAcquisitionSource[static_cast<size_t>(index)].load())
+            : descriptor.acquisitionMethod;
+        const bool liveMovementObserved = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLiveMovementObserved[static_cast<size_t>(index)].load())
+            : false;
+        const qint64 lastMovementAgeMs = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLastMovementAgeMs[static_cast<size_t>(index)].load())
+            : -1;
+        item.insert(u"acquisitionSourceResolved"_qs,
+            descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
+        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 1
+            ? u"Buffered DirectInput object"_qs
+            : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
+            : u"Not resolved"_qs);
+        item.insert(u"liveMovementObserved"_qs, liveMovementObserved);
+        item.insert(u"lastMovementAgeMs"_qs, lastMovementAgeMs);
         item.insert(u"sourceDevice"_qs, sourceName);
         item.insert(u"sourceConnected"_qs, sourceConnected);
         item.insert(u"specificSource"_qs, sourceRecord != nullptr);
@@ -5608,11 +5693,14 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
     const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId.trimmed());
     if (!layout) return {};
     QStringList axes;
+    QVariantList axisIds;
     QStringList rigNames;
+    QStringList profileNames;
     int routeCount = 0;
     for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
         if (layout->requirements.axes[static_cast<size_t>(axis)]) {
             axes.append(virtualAxisLabel(static_cast<VirtualAxis>(axis)));
+            axisIds.append(axis);
         }
     }
     for (const DeviceRig &rig : m_configuration.deviceRigs) {
@@ -5637,6 +5725,11 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
     for (const ControllerProfile &profile : m_configuration.profiles) {
         const DeviceRig *profileRig = findDeviceRig(m_configuration, profile.deviceRigId);
         if (!profileRig) continue;
+        if (std::any_of(profileRig->outputs.cbegin(), profileRig->outputs.cend(), [layout](const auto &output) {
+                return output.outputLayoutId == layout->id;
+            })) {
+            profileNames.append(profile.name);
+        }
         for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
             const auto member = std::find_if(profileRig->members.cbegin(), profileRig->members.cend(),
                 [&mapping](const DeviceRigMember &candidate) {
@@ -5674,17 +5767,30 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
         ? u"Saved output — choose Check Output to inspect this vJoy device."_qs
         : hidden ? u"This virtual output is hidden from games."_qs
         : readiness->vjoySummary;
+    QVariantList actualAxes;
+    if (inspected && readiness->vjoy.inspectionComplete) {
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            if (readiness->vjoy.axes[static_cast<size_t>(axis)]) actualAxes.append(axis);
+        }
+    }
     return {{u"id"_qs, layout->id}, {u"name"_qs, layout->name},
             {u"deviceId"_qs, layout->requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
+            {u"axesList"_qs, axisIds},
             {u"buttons"_qs, layout->requirements.buttons},
             {u"continuousPovs"_qs, layout->requirements.continuousPovs},
             {u"discretePovs"_qs, layout->requirements.discretePovs},
-            {u"rigs"_qs, rigNames.join(u" · "_qs)}, {u"routeCount"_qs, routeCount},
+            {u"rigs"_qs, rigNames.join(u" · "_qs)},
+            {u"profiles"_qs, profileNames.join(u" · "_qs)}, {u"routeCount"_qs, routeCount},
             {u"managedVisibility"_qs, layout->hidhideManaged},
             {u"visibilityPrepared"_qs, !layout->hidHideDeviceInstanceId.isEmpty()},
             {u"visibilityKnown"_qs, layout->hidhideManaged && hidhide.cloakKnown},
             {u"hiddenFromGames"_qs, hidden},
             {u"ready"_qs, outputReady}, {u"inspected"_qs, inspected},
+            {u"actualObserved"_qs, inspected && readiness->vjoy.inspectionComplete},
+            {u"actualAxes"_qs, actualAxes},
+            {u"actualButtons"_qs, inspected ? readiness->vjoy.buttons : 0},
+            {u"actualContinuousPovs"_qs, inspected ? readiness->vjoy.continuousPovs : 0},
+            {u"actualDiscretePovs"_qs, inspected ? readiness->vjoy.discretePovs : 0},
             {u"readinessState"_qs, readinessState}, {u"status"_qs, readinessStatus}};
 }
 
@@ -7017,6 +7123,21 @@ QString AppBackend::presentationState() const
     return u"Visible"_qs;
 }
 
+QString AppBackend::presentationQosState() const
+{
+    switch (m_presentationQos) {
+    case PresentationQosState::Normal: return u"NORMAL"_qs;
+    case PresentationQosState::Loaded: return u"LOADED"_qs;
+    case PresentationQosState::SeverelyLoaded: return u"SEVERELY LOADED"_qs;
+    }
+    return u"NORMAL"_qs;
+}
+
+int AppBackend::presentationDroppedFrameCount() const
+{
+    return m_presentationDroppedFrameCount;
+}
+
 int AppBackend::presentationSnapshotIntervalMs() const
 {
     return m_snapshotTimer.isActive() ? m_snapshotTimer.interval() : 0;
@@ -7225,6 +7346,115 @@ QVariantMap AppBackend::hidhideHealth() const
         ? hidHideHealthStateLabel(m_hidhideHealthLastKnownGoodSnapshot.overallState) : QString{});
     result.insert(u"lastKnownGoodAt"_qs, currentContextMatchesLastKnownGood
         ? m_hidhideHealthLastKnownGoodSnapshot.lastChecked.toString(Qt::ISODateWithMs) : QString{});
+
+    // The Full Check is intentionally a separate, bounded read-only worker.
+    // Its most recent attempt is valuable diagnostic evidence, but an
+    // endpoint timeout must not erase a healthy configuration that this same
+    // context verified earlier. Preserve individual known dimensions while
+    // still surfacing the exact latest attempt in Technical Details.
+    const auto refreshResult = [&]() {
+        if (m_hidhideHealthSnapshot.cancelled) return u"Cancelled"_qs;
+        const bool timedOut = std::any_of(m_hidhideHealthSnapshot.checks.cbegin(),
+            m_hidhideHealthSnapshot.checks.cend(), [](const HidHideReadObservation &check) {
+                return check.state == HidHideReadState::TimedOut;
+            });
+        if (timedOut) return u"Timed out"_qs;
+        const bool failed = std::any_of(m_hidhideHealthSnapshot.checks.cbegin(),
+            m_hidhideHealthSnapshot.checks.cend(), [](const HidHideReadObservation &check) {
+                return check.state != HidHideReadState::Pass;
+            });
+        return failed ? u"Could not complete"_qs : u"Verified"_qs;
+    }();
+    const bool hasFailedDirectRefresh = m_hidhideHealthSnapshot.scanDepth == HidHideHealthScanDepth::Full
+        && (!m_hidhideHealthSnapshot.checks.isEmpty()
+            || m_hidhideHealthSnapshot.cancelled)
+        && refreshResult != u"Verified"_qs;
+    const bool isRefreshInProgress = m_hidhideHealthSnapshot.inProgress
+        && m_hidhideHealthSnapshot.scanDepth == HidHideHealthScanDepth::Full;
+    const bool canUseLastKnownGood = currentContextMatchesLastKnownGood
+        && (hasFailedDirectRefresh || isRefreshInProgress);
+    QVariantList retainedDimensionIds;
+    bool currentFreshActionableState = false;
+    if (canUseLastKnownGood) {
+        const QVariantList latestDimensions = result.value(u"dimensions"_qs).toList();
+        const QVariantList knownDimensions = m_hidhideHealthLastKnownGoodSnapshot.toVariantMap()
+            .value(u"dimensions"_qs).toList();
+        QHash<QString, QVariantMap> knownById;
+        for (const QVariant &entry : knownDimensions) {
+            const QVariantMap dimension = entry.toMap();
+            knownById.insert(dimension.value(u"id"_qs).toString(), dimension);
+        }
+        QVariantList presentationDimensions;
+        if (latestDimensions.isEmpty()) {
+            for (const QVariant &entry : knownDimensions) {
+                QVariantMap retained = entry.toMap();
+                retained.insert(u"evidenceSource"_qs, u"Last successfully verified check"_qs);
+                retained.insert(u"lastSuccessfulVerification"_qs,
+                    m_hidhideHealthLastKnownGoodSnapshot.lastChecked.toString(Qt::ISODateWithMs));
+                retained.insert(u"latestRefreshAttempt"_qs,
+                    m_hidhideHealthSnapshot.inspectionStartedAt.toString(Qt::ISODateWithMs));
+                retained.insert(u"latestRefreshResult"_qs, u"Checking in background"_qs);
+                retained.insert(u"stale"_qs, false);
+                presentationDimensions.append(retained);
+                retainedDimensionIds.append(retained.value(u"id"_qs));
+            }
+        } else {
+            for (const QVariant &entry : latestDimensions) {
+                QVariantMap latest = entry.toMap();
+                const QString id = latest.value(u"id"_qs).toString();
+                const QString state = latest.value(u"state"_qs).toString();
+                const bool contradictory = latest.value(u"contradiction"_qs).toBool()
+                    || latest.value(u"shortSummary"_qs).toString().contains(u"contradict"_qs,
+                        Qt::CaseInsensitive);
+                const bool transientUnknown = state == u"UNKNOWN"_qs || state == u"DOCTOR RECOMMENDED"_qs;
+                const auto foundKnown = knownById.constFind(id);
+                if (!contradictory && transientUnknown && foundKnown != knownById.cend()) {
+                    QVariantMap retained = foundKnown.value();
+                    retained.insert(u"evidenceSource"_qs, u"Last successfully verified check"_qs);
+                    retained.insert(u"lastSuccessfulVerification"_qs,
+                        m_hidhideHealthLastKnownGoodSnapshot.lastChecked.toString(Qt::ISODateWithMs));
+                    retained.insert(u"latestRefreshAttempt"_qs,
+                        m_hidhideHealthSnapshot.lastChecked.toString(Qt::ISODateWithMs));
+                    retained.insert(u"latestRefreshResult"_qs, refreshResult);
+                    retained.insert(u"latestRefreshTechnicalDetails"_qs,
+                        latest.value(u"technicalDetails"_qs));
+                    retained.insert(u"stale"_qs, hasFailedDirectRefresh);
+                    retained.insert(u"contradiction"_qs, false);
+                    presentationDimensions.append(retained);
+                    retainedDimensionIds.append(id);
+                } else {
+                    if (state == u"REPAIR AVAILABLE"_qs || state == u"USER ACTION REQUIRED"_qs
+                        || state == u"RESTART REQUIRED"_qs || contradictory) {
+                        currentFreshActionableState = true;
+                    }
+                    presentationDimensions.append(latest);
+                }
+            }
+        }
+        if (!retainedDimensionIds.isEmpty()) {
+            result.insert(u"dimensions"_qs, presentationDimensions);
+            result.insert(u"retainedDimensionIds"_qs, retainedDimensionIds);
+            result.insert(u"usingLastKnownGood"_qs, true);
+            const bool stale = hasFailedDirectRefresh;
+            result.insert(u"freshness"_qs, stale ? u"STALE"_qs : u"CHECKING"_qs);
+            result.insert(u"latestRefreshResult"_qs, refreshResult);
+            result.insert(u"normalSummary"_qs, stale
+                ? u"The latest refresh did not finish. Showing the last successfully verified HidHide configuration."_qs
+                : u"Showing the last verified HidHide configuration while a refresh runs in the background."_qs);
+            if (!currentFreshActionableState) {
+                result.insert(u"overallState"_qs,
+                    hidHideHealthStateLabel(m_hidhideHealthLastKnownGoodSnapshot.overallState));
+            }
+        }
+    }
+    if (!result.contains(u"freshness"_qs)) {
+        result.insert(u"usingLastKnownGood"_qs, false);
+        result.insert(u"freshness"_qs, m_hidhideHealthSnapshot.inProgress ? u"CHECKING"_qs : u"CURRENT"_qs);
+        result.insert(u"latestRefreshResult"_qs, refreshResult);
+        result.insert(u"normalSummary"_qs, m_hidhideHealthSnapshot.inProgress
+            ? u"Checking HidHide in the background."_qs
+            : u"Showing the latest HidHide check."_qs);
+    }
     return result;
 }
 
@@ -9526,13 +9756,17 @@ bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConf
     const QString setupSessionId = m_setupConvergenceSessionId;
     const quint64 setupCheckGeneration = m_setupConvergenceCheckGeneration;
     const QString setupTargetRigId = m_setupConvergenceTargetRigId;
+    // A Virtual Output capability edit intentionally deferred runtime
+    // publication.  The worker is already released by this explicit Setup
+    // Health transaction, making this the first safe point to publish it.
+    const bool synchronizeDeferredRuntime = m_virtualOutputRuntimeSyncPending.contains(layoutId);
     m_verificationInProgress = true;
     emit stateChanged();
 
     auto repair = std::make_shared<ControllerReadinessService>();
     QThread *thread = QThread::create([this, repair, layoutId, configuration, requirements, physical,
                                        mappingWasRequested, issueId, setupSessionId, setupCheckGeneration,
-                                       setupTargetRigId] {
+                                       setupTargetRigId, synchronizeDeferredRuntime] {
         bool prepared = m_worker.prepareForDriverConfiguration();
         bool completed = false;
         bool alreadyMatched = false;
@@ -9551,10 +9785,16 @@ bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConf
                 completed = true;
                 alreadyMatched = true;
             }
+            if (completed && synchronizeDeferredRuntime) {
+                // The explicit repair hand-off owns this configuration
+                // change.  It is never performed by the edit dialog.
+                m_worker.updateConfiguration(configuration);
+            }
             restored = m_worker.restoreAfterDriverConfiguration(mappingWasRequested);
         }
         QMetaObject::invokeMethod(this, [this, repair, layoutId, issueId, requirements,
                                          prepared, completed, alreadyMatched, cancelled, restored,
+                                         synchronizeDeferredRuntime,
                                          setupSessionId, setupCheckGeneration, setupTargetRigId] {
             if (m_setupConvergenceSessionId != setupSessionId
                 || m_setupConvergenceCheckGeneration != setupCheckGeneration
@@ -9572,6 +9812,7 @@ bool AppBackend::applyScopedVJoyRepair(const QString &layoutId, const MapperConf
                     u"CANCELLED"_qs, QVariantMap{{u"layoutId"_qs, layoutId},
                         {u"deviceId"_qs, repair->plan().vjoy.deviceId}});
             } else if (completed && restored && !repair->plan().vjoyNeedsChanges) {
+                if (synchronizeDeferredRuntime) m_virtualOutputRuntimeSyncPending.remove(layoutId);
                 const bool contractExpanded = reconcileOutputLayoutRequirements(layoutId, requirements);
                 if (contractExpanded) {
                     // Persist the exact contract that the helper just proved.
@@ -9789,8 +10030,22 @@ QVariantList AppBackend::appIssues() const
         if (code == u"LiveInputNotTested"_qs || code == u"LiveOutputNotTested"_qs) continue;
         issues.append(issue);
     }
+    const QVariantMap presentedHidHide = hidhideHealth();
+    const QSet<QString> retainedHidHideDimensions = [&presentedHidHide] {
+        QSet<QString> ids;
+        for (const QVariant &entry : presentedHidHide.value(u"retainedDimensionIds"_qs).toList()) {
+            ids.insert(entry.toString());
+        }
+        return ids;
+    }();
     for (const QVariant &entry : HidHideHealthService::appIssues(m_hidhideHealthSnapshot)) {
-        issues.append(entry);
+        const QVariantMap issue = entry.toMap();
+        // The direct probe's failed attempt remains in Technical Details, but
+        // it is not an App Health defect when this exact context still has a
+        // verified state. A fresh contradiction/actionable fact is never in
+        // retainedHidHideDimensions and therefore remains visible here.
+        if (retainedHidHideDimensions.contains(issue.value(u"scopeId"_qs).toString())) continue;
+        issues.append(issue);
     }
 
     const auto append = [&issues](const QString &code, const QString &category,
@@ -10137,6 +10392,7 @@ QVariantList AppBackend::virtualOutputLayouts() const
         const QVariantMap detail = virtualOutputDetail(layout.id);
         result.append(QVariantMap{{u"id"_qs, layout.id}, {u"name"_qs, layout.name},
             {u"deviceId"_qs, layout.requirements.deviceId}, {u"axes"_qs, axes.join(u" · "_qs)},
+            {u"axesList"_qs, detail.value(u"axesList"_qs)},
             {u"buttons"_qs, layout.requirements.buttons},
             {u"continuousPovs"_qs, layout.requirements.continuousPovs},
             {u"discretePovs"_qs, layout.requirements.discretePovs},
@@ -10145,10 +10401,24 @@ QVariantList AppBackend::virtualOutputLayouts() const
             {u"inspected"_qs, detail.value(u"inspected"_qs, false)},
             {u"readinessState"_qs, detail.value(u"readinessState"_qs, u"SAVED"_qs)},
             {u"status"_qs, detail.value(u"status"_qs, u"Saved output"_qs)},
+            {u"profiles"_qs, detail.value(u"profiles"_qs)},
             {u"managedVisibility"_qs, layout.hidhideManaged},
             {u"visibilityPrepared"_qs, !layout.hidHideDeviceInstanceId.isEmpty()}});
     }
     return result;
+}
+
+bool AppBackend::developerSignalFlowEditorEnabled() const
+{
+#ifdef HOTAS_STARTUP_TESTING
+    // Isolated presentation tests exercise the existing editor contract. The
+    // production executable never receives this compile definition.
+    return true;
+#else
+    // This is deliberately an opt-in launch flag, not a user preference: the
+    // in-progress graph cannot become a production workflow by accident.
+    return qEnvironmentVariableIntValue("HOTAS_ENABLE_SIGNAL_FLOW_EDITOR") > 0;
+#endif
 }
 
 double AppBackend::disabledAxisValue() const
@@ -16313,6 +16583,295 @@ bool AppBackend::renameVirtualOutputLayout(const QString &layoutId, const QStrin
     return true;
 }
 
+QVariantMap AppBackend::previewVirtualOutputEdit(const QString &layoutId, const QString &name,
+                                                 int deviceId, const QVariantList &axes,
+                                                 int buttons, int continuousPovs,
+                                                 int discretePovs) const
+{
+    const auto invalid = [&layoutId](const QString &message) {
+        return QVariantMap{{u"valid"_qs, false}, {u"layoutId"_qs, layoutId.trimmed()},
+                           {u"error"_qs, message}};
+    };
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId.trimmed());
+    if (!layout) return invalid(u"Choose an existing Virtual Output before editing it."_qs);
+
+    const QString trimmedName = name.trimmed().left(64);
+    if (trimmedName.isEmpty()) return invalid(u"An output name is required."_qs);
+    if (deviceId < 1 || deviceId > 16) {
+        return invalid(u"Choose a vJoy Device from 1 through 16."_qs);
+    }
+    for (const VirtualOutputLayout &candidate : m_configuration.outputLayouts) {
+        if (candidate.id == layout->id) continue;
+        if (candidate.name.compare(trimmedName, Qt::CaseInsensitive) == 0) {
+            return invalid(u"Output names must be unique."_qs);
+        }
+        if (candidate.requirements.deviceId == deviceId) {
+            return invalid(QString(u"vJoy Device %1 is already assigned to %2."_qs)
+                           .arg(deviceId).arg(candidate.name));
+        }
+    }
+
+    ControllerVJoyRequirements proposed = layout->requirements;
+    proposed.deviceId = deviceId;
+    proposed.axes.fill(false);
+    QSet<int> selectedAxes;
+    for (const QVariant &axisValue : axes) {
+        bool converted = false;
+        const int axis = axisValue.toInt(&converted);
+        if (!converted || axis < 1 || axis >= kVirtualAxisSlotCount || selectedAxes.contains(axis)) {
+            return invalid(u"Choose each supported virtual axis at most once."_qs);
+        }
+        selectedAxes.insert(axis);
+        proposed.axes[static_cast<size_t>(axis)] = true;
+    }
+    if (selectedAxes.isEmpty()) return invalid(u"Enable at least one virtual axis."_qs);
+    if (buttons < 0 || buttons > kMaximumVirtualButtons) {
+        return invalid(QString(u"Choose a button count from 0 through %1."_qs)
+                       .arg(kMaximumVirtualButtons));
+    }
+    if (continuousPovs < 0 || continuousPovs > kMaximumPhysicalPovs
+        || discretePovs < 0 || discretePovs > kMaximumPhysicalPovs) {
+        return invalid(QString(u"Choose up to %1 continuous or discrete POVs."_qs)
+                       .arg(kMaximumPhysicalPovs));
+    }
+    if (continuousPovs > 0 && discretePovs > 0) {
+        return invalid(u"Choose continuous or discrete POVs, not both."_qs);
+    }
+    proposed.buttons = buttons;
+    proposed.continuousPovs = continuousPovs;
+    proposed.discretePovs = discretePovs;
+
+    const auto axesList = [](const ControllerVJoyRequirements &requirements) {
+        QVariantList values;
+        for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) {
+            if (requirements.axes[static_cast<size_t>(axis)]) values.append(axis);
+        }
+        return values;
+    };
+    const auto contract = [&axesList](const QString &outputName,
+                                      const ControllerVJoyRequirements &requirements) {
+        return QVariantMap{{u"name"_qs, outputName}, {u"deviceId"_qs, requirements.deviceId},
+            {u"axes"_qs, axesList(requirements)}, {u"axisCount"_qs, axesList(requirements).size()},
+            {u"buttons"_qs, requirements.buttons},
+            {u"continuousPovs"_qs, requirements.continuousPovs},
+            {u"discretePovs"_qs, requirements.discretePovs}};
+    };
+    const bool deviceIdChanged = proposed.deviceId != layout->requirements.deviceId;
+    const bool descriptorChanged = deviceIdChanged || proposed.axes != layout->requirements.axes
+        || proposed.buttons != layout->requirements.buttons
+        || proposed.continuousPovs != layout->requirements.continuousPovs
+        || proposed.discretePovs != layout->requirements.discretePovs;
+    const bool nameChanged = trimmedName != layout->name;
+    const VirtualOutputLayout *activeLayout = activeOutputLayout();
+    const bool active = activeLayout && activeLayout->id == layout->id;
+
+    QVariantList affectedRigs;
+    QVariantList affectedProfiles;
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const auto output = std::find_if(rig.outputs.cbegin(), rig.outputs.cend(), [layout](const auto &candidate) {
+            return candidate.outputLayoutId == layout->id;
+        });
+        if (output == rig.outputs.cend()) continue;
+        affectedRigs.append(QVariantMap{{u"id"_qs, rig.id}, {u"name"_qs, rig.name},
+            {u"primary"_qs, deviceRigPrimaryOutputLayoutId(rig) == layout->id},
+            {u"active"_qs, rig.id == m_configuration.activeDeviceRigId}});
+        for (const ControllerProfile &profile : m_configuration.profiles) {
+            if (profile.deviceRigId == rig.id) {
+                affectedProfiles.append(QVariantMap{{u"id"_qs, profile.id}, {u"name"_qs, profile.name},
+                    {u"rigId"_qs, rig.id}, {u"rigName"_qs, rig.name}});
+            }
+        }
+    }
+
+    QVariantMap actual;
+    const ControllerReadinessPlan *readiness = virtualOutputReadinessPlan(layout->id);
+    const bool actualObserved = readiness && readiness->vjoy.inspectionComplete;
+    if (actualObserved) {
+        ControllerVJoyRequirements observed;
+        observed.axes = readiness->vjoy.axes;
+        observed.buttons = readiness->vjoy.buttons;
+        observed.continuousPovs = readiness->vjoy.continuousPovs;
+        observed.discretePovs = readiness->vjoy.discretePovs;
+        observed.deviceId = readiness->vjoy.deviceId;
+        actual = contract(QString{}, observed);
+    }
+    const bool actualMatchesDesired = actualObserved && !readiness->vjoyNeedsChanges
+        && !readiness->vjoy.staleOwnership;
+    const QString planKey = QString::number(m_configurationGeneration) + u":"_qs + layout->id + u":"_qs
+        + trimmedName + u":"_qs + QString::number(proposed.deviceId) + u":"_qs
+        + QString::number(proposed.buttons) + u":"_qs + QString::number(proposed.continuousPovs)
+        + u":"_qs + QString::number(proposed.discretePovs) + u":"_qs
+        + QStringList([&selectedAxes] {
+              QStringList values;
+              for (const int axis : selectedAxes) values.append(QString::number(axis));
+              std::sort(values.begin(), values.end());
+              return values;
+          }()).join(u","_qs);
+
+    return {{u"valid"_qs, true}, {u"planKey"_qs, planKey}, {u"layoutId"_qs, layout->id},
+            {u"configurationGeneration"_qs, static_cast<qulonglong>(m_configurationGeneration)},
+            {u"current"_qs, contract(layout->name, layout->requirements)},
+            {u"proposed"_qs, contract(trimmedName, proposed)},
+            {u"proposedAxes"_qs, axesList(proposed)}, {u"nameChanged"_qs, nameChanged},
+            {u"metadataOnly"_qs, nameChanged && !descriptorChanged},
+            {u"descriptorChanged"_qs, descriptorChanged}, {u"deviceIdChanged"_qs, deviceIdChanged},
+            {u"activeOutput"_qs, active},
+            {u"requiresActiveOutputReview"_qs, active && descriptorChanged},
+            {u"setupHealthRequired"_qs, descriptorChanged},
+            {u"runtimeRestartRequired"_qs, false},
+            {u"gameRebindRisk"_qs, deviceIdChanged},
+            {u"hidHideIdentityWillBeInvalidated"_qs, deviceIdChanged
+                && (!layout->hidHideDeviceInstanceId.isEmpty() || layout->hidhideManaged)},
+            {u"actualObserved"_qs, actualObserved}, {u"actual"_qs, actual},
+            {u"actualMatchesCurrentDesired"_qs, actualMatchesDesired},
+            {u"affectedRigs"_qs, affectedRigs}, {u"affectedProfiles"_qs, affectedProfiles}};
+}
+
+QVariantMap AppBackend::applyVirtualOutputEdit(const QVariantMap &plan)
+{
+    const QVariantMap proposed = plan.value(u"proposed"_qs).toMap();
+    const QString layoutId = plan.value(u"layoutId"_qs).toString();
+    const QVariantMap fresh = previewVirtualOutputEdit(layoutId, proposed.value(u"name"_qs).toString(),
+        proposed.value(u"deviceId"_qs).toInt(), plan.value(u"proposedAxes"_qs).toList(),
+        proposed.value(u"buttons"_qs).toInt(), proposed.value(u"continuousPovs"_qs).toInt(),
+        proposed.value(u"discretePovs"_qs).toInt());
+    if (!fresh.value(u"valid"_qs).toBool()) {
+        return actionResult(false, u"Virtual Output was not updated"_qs, fresh.value(u"error"_qs).toString(),
+                            u"virtualOutput"_qs, layoutId, u"review-output"_qs);
+    }
+    if (plan.value(u"planKey"_qs).toString() != fresh.value(u"planKey"_qs).toString()) {
+        return actionResult(false, u"Virtual Output changed while reviewing"_qs,
+            u"Review the refreshed impact before applying this edit. No output configuration was changed."_qs,
+            u"virtualOutput"_qs, layoutId, u"review-output"_qs);
+    }
+    VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId);
+    if (!layout) {
+        return actionResult(false, u"Virtual Output is unavailable"_qs,
+            u"Refresh Devices and choose the output again."_qs, u"virtualOutput"_qs, layoutId);
+    }
+    const ControllerVJoyRequirements before = layout->requirements;
+    const QString previousName = layout->name;
+    layout->name = proposed.value(u"name"_qs).toString().trimmed();
+    layout->requirements.deviceId = proposed.value(u"deviceId"_qs).toInt();
+    layout->requirements.axes.fill(false);
+    for (const QVariant &axisValue : fresh.value(u"proposedAxes"_qs).toList()) {
+        const int axis = axisValue.toInt();
+        if (axis > 0 && axis < kVirtualAxisSlotCount) layout->requirements.axes[static_cast<size_t>(axis)] = true;
+    }
+    layout->requirements.buttons = proposed.value(u"buttons"_qs).toInt();
+    layout->requirements.continuousPovs = proposed.value(u"continuousPovs"_qs).toInt();
+    layout->requirements.discretePovs = proposed.value(u"discretePovs"_qs).toInt();
+
+    const bool descriptorChanged = fresh.value(u"descriptorChanged"_qs).toBool();
+    const bool deviceIdChanged = fresh.value(u"deviceIdChanged"_qs).toBool();
+    if (deviceIdChanged) {
+        // A HID interface path belongs to the old vJoy device.  Keeping it
+        // would make a later HidHide operation target the wrong controller.
+        layout->hidHideDeviceInstanceId.clear();
+        layout->hidhideManaged = false;
+    }
+    m_virtualOutputReadinessPlans.remove(layout->id);
+    if (descriptorChanged) {
+        if (!persistVirtualOutputDescriptorEdit()) {
+            layout->name = previousName;
+            layout->requirements = before;
+            return actionResult(false, u"Virtual Output was not updated"_qs,
+                u"HOTAS BF6 could not save the proposed capability contract. The driver and runtime were left unchanged."_qs,
+                u"virtualOutput"_qs, layoutId);
+        }
+        m_virtualOutputRuntimeSyncPending.insert(layout->id);
+        appendEvent(QString(u"Virtual Output contract updated: %1. Setup Health must verify vJoy Device %2 before mapping uses the new descriptor."_qs)
+            .arg(layout->name).arg(layout->requirements.deviceId));
+        emit deviceRigsChanged();
+        return actionResult(true, u"Virtual Output contract saved"_qs,
+            deviceIdChanged
+                ? u"The new vJoy Device identity needs Setup Health verification. Windows and games may treat it as a different controller; existing in-game bindings may need to be recreated."_qs
+                : u"The desired capability contract was saved. Setup Health must verify and, if needed, update the vJoy descriptor before mapping uses it."_qs,
+            u"virtualOutput"_qs, layout->id, u"check-output"_qs);
+    }
+    persistAndApply();
+    appendEvent(QString(u"Renamed virtual output: %1"_qs).arg(layout->name));
+    emit deviceRigsChanged();
+    return actionResult(true, u"Virtual Output renamed"_qs,
+        u"The saved name changed. Its stable ID, vJoy Device assignment, Device Rig relationships, Profiles, mappings, and HidHide identity are unchanged."_qs,
+        u"virtualOutput"_qs, layout->id);
+}
+
+QVariantMap AppBackend::previewVirtualOutputDelete(const QString &layoutId) const
+{
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, layoutId.trimmed());
+    if (!layout) return {{u"valid"_qs, false}, {u"error"_qs, u"Choose an existing Virtual Output."_qs}};
+    QVariantList rigs;
+    QVariantList profiles;
+    for (const DeviceRig &rig : m_configuration.deviceRigs) {
+        const bool uses = std::any_of(rig.outputs.cbegin(), rig.outputs.cend(), [layout](const auto &output) {
+            return output.outputLayoutId == layout->id;
+        });
+        if (!uses) continue;
+        rigs.append(QVariantMap{{u"id"_qs, rig.id}, {u"name"_qs, rig.name},
+            {u"primary"_qs, deviceRigPrimaryOutputLayoutId(rig) == layout->id},
+            {u"active"_qs, rig.id == m_configuration.activeDeviceRigId}});
+        for (const ControllerProfile &profile : m_configuration.profiles) {
+            if (profile.deviceRigId == rig.id) profiles.append(profile.name);
+        }
+    }
+    const bool builtIn = layout->id == defaultOutputLayoutId();
+    const bool active = activeOutputLayout() && activeOutputLayout()->id == layout->id;
+    const bool canDelete = !builtIn && !active && rigs.isEmpty();
+    const QString reason = builtIn ? u"The protected BF6 default output remains available as the recovery contract."_qs
+        : active ? u"Deactivate or switch away from this active output before deleting it."_qs
+        : !rigs.isEmpty() ? u"Remove or reassign this output from every listed Device Rig before deleting it."_qs
+        : QString{};
+    return {{u"valid"_qs, true}, {u"layoutId"_qs, layout->id}, {u"name"_qs, layout->name},
+            {u"builtIn"_qs, builtIn}, {u"active"_qs, active}, {u"affectedRigs"_qs, rigs},
+            {u"affectedProfiles"_qs, profiles}, {u"canDelete"_qs, canDelete}, {u"reason"_qs, reason}};
+}
+
+QVariantMap AppBackend::deleteVirtualOutputLayout(const QString &layoutId)
+{
+    const QVariantMap preview = previewVirtualOutputDelete(layoutId);
+    if (!preview.value(u"canDelete"_qs).toBool()) {
+        return actionResult(false, u"Virtual Output cannot be deleted"_qs,
+            preview.value(u"reason"_qs).toString(), u"virtualOutput"_qs, layoutId, u"review-dependencies"_qs);
+    }
+    const QString id = preview.value(u"layoutId"_qs).toString();
+    const auto position = std::find_if(m_configuration.outputLayouts.begin(), m_configuration.outputLayouts.end(),
+        [&id](const VirtualOutputLayout &layout) { return layout.id == id; });
+    if (position == m_configuration.outputLayouts.end()) {
+        return actionResult(false, u"Virtual Output is unavailable"_qs,
+            u"Refresh Devices and choose the output again."_qs, u"virtualOutput"_qs, layoutId);
+    }
+    const QString name = position->name;
+    m_configuration.outputLayouts.erase(position);
+    m_virtualOutputReadinessPlans.remove(id);
+    m_virtualOutputRuntimeSyncPending.remove(id);
+    persistAndApply();
+    appendEvent(QString(u"Deleted unused virtual output: %1"_qs).arg(name));
+    emit deviceRigsChanged();
+    return actionResult(true, u"Virtual Output deleted"_qs,
+        u"The unused output was removed. No Device Rig, Profile, or active mapping relationship was changed."_qs,
+        u"virtualOutput"_qs, id);
+}
+
+QVariantMap AppBackend::restoreBf6RecommendedOutputCapabilities()
+{
+    const VirtualOutputLayout *layout = findOutputLayout(m_configuration, defaultOutputLayoutId());
+    if (!layout) {
+        return actionResult(false, u"BF6 default output is unavailable"_qs,
+            u"Restore requires the protected BF6 default output layout."_qs, u"virtualOutput"_qs);
+    }
+    QVariantList axes;
+    for (int axis = 1; axis < kVirtualAxisSlotCount; ++axis) axes.append(axis);
+    const QVariantMap plan = previewVirtualOutputEdit(layout->id, layout->name, 1, axes, 32, 0, 0);
+    if (!plan.value(u"valid"_qs).toBool()) {
+        return actionResult(false, u"BF6 capabilities were not restored"_qs,
+            plan.value(u"error"_qs).toString(), u"virtualOutput"_qs, layout->id);
+    }
+    // The existing friendly name is passed through unchanged.  This action
+    // restores only the recommended driver capability contract.
+    return applyVirtualOutputEdit(plan);
+}
+
 bool AppBackend::adoptVirtualOutputVisibility(const QString &layoutId,
                                                const QString &deviceInstanceId)
 {
@@ -19273,9 +19832,13 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         // Project the latest worker atomics before the visible QML tree has a
         // chance to render. This is presentation work only; MappingWorker has
         // remained awake and independent throughout the transition.
+        m_presentationTickClock.restart();
         refreshUiSnapshot();
+        applyPresentationQosIntervals();
         break;
     case PresentationLifecycleState::Minimized:
+        m_presentationQos = PresentationQosState::Normal;
+        m_presentationQosStableTicks = 0;
         m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);
         m_buttonTelemetryTimer.start(kMinimizedButtonTelemetryIntervalMs);
         m_legacyButtonTelemetryTimer.start(kMinimizedLegacyButtonTelemetryIntervalMs);
@@ -19286,6 +19849,8 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         }
         break;
     case PresentationLifecycleState::TrayHidden:
+        m_presentationQos = PresentationQosState::Normal;
+        m_presentationQosStableTicks = 0;
         m_snapshotTimer.stop();
         m_buttonTelemetryTimer.stop();
         m_legacyButtonTelemetryTimer.stop();
@@ -19297,6 +19862,54 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         releasePresentationResources();
         break;
     }
+    emit presentationStateChanged();
+}
+
+void AppBackend::applyPresentationQosIntervals()
+{
+    if (m_presentationLifecycle != PresentationLifecycleState::Visible) return;
+    const int snapshotInterval = m_presentationQos == PresentationQosState::Normal
+        ? kVisibleSnapshotIntervalMs : m_presentationQos == PresentationQosState::Loaded
+            ? kLoadedSnapshotIntervalMs : kSeverelyLoadedSnapshotIntervalMs;
+    const int buttonInterval = m_presentationQos == PresentationQosState::Normal
+        ? kVisibleButtonTelemetryIntervalMs : m_presentationQos == PresentationQosState::Loaded
+            ? kLoadedButtonTelemetryIntervalMs : kSeverelyLoadedButtonTelemetryIntervalMs;
+    const int historyInterval = m_presentationQos == PresentationQosState::Normal
+        ? kAdaptiveResponseHistoryIntervalMs : m_presentationQos == PresentationQosState::Loaded
+            ? kLoadedAdaptiveResponseHistoryIntervalMs : kSeverelyLoadedAdaptiveResponseHistoryIntervalMs;
+    m_snapshotTimer.setInterval(snapshotInterval);
+    m_buttonTelemetryTimer.setInterval(buttonInterval);
+    m_legacyButtonTelemetryTimer.setInterval(std::max(100, snapshotInterval * 2));
+    m_numericTelemetryTimer.setInterval(std::max(100, snapshotInterval * 2));
+    m_adaptiveResponseHistoryTimer.setInterval(historyInterval);
+}
+
+void AppBackend::updatePresentationQos(qint64 lateByMs)
+{
+    if (m_presentationLifecycle != PresentationLifecycleState::Visible) return;
+    PresentationQosState desired = m_presentationQos;
+    if (lateByMs >= 250) {
+        desired = PresentationQosState::SeverelyLoaded;
+        m_presentationQosStableTicks = 0;
+        m_presentationDroppedFrameCount += static_cast<int>(lateByMs / kVisibleSnapshotIntervalMs);
+    } else if (lateByMs >= 50) {
+        desired = m_presentationQos == PresentationQosState::SeverelyLoaded
+            ? PresentationQosState::SeverelyLoaded : PresentationQosState::Loaded;
+        m_presentationQosStableTicks = 0;
+        m_presentationDroppedFrameCount += static_cast<int>(lateByMs / kVisibleSnapshotIntervalMs);
+    } else {
+        ++m_presentationQosStableTicks;
+        // Recover slowly. This avoids a loaded host oscillating between a
+        // dense renderer and a reduced renderer on alternate timer ticks.
+        if (m_presentationQosStableTicks >= 120) {
+            desired = m_presentationQos == PresentationQosState::SeverelyLoaded
+                ? PresentationQosState::Loaded : PresentationQosState::Normal;
+            m_presentationQosStableTicks = 0;
+        }
+    }
+    if (desired == m_presentationQos) return;
+    m_presentationQos = desired;
+    applyPresentationQosIntervals();
     emit presentationStateChanged();
 }
 
@@ -19663,10 +20276,59 @@ void AppBackend::processInputLearning()
 
 void AppBackend::refreshUiSnapshot()
 {
+    // QTimer coalesces missed timeouts, so this observes only the newest
+    // worker atomics and never replays a presentation backlog. When the GUI
+    // was late, lower the display sampling rate before scheduling more work;
+    // MappingWorker is intentionally not consulted or throttled here.
+    if (m_presentationTickClock.isValid() && m_snapshotTimer.isActive()
+        && m_presentationLifecycle == PresentationLifecycleState::Visible) {
+        const qint64 elapsed = m_presentationTickClock.restart();
+        const qint64 lateBy = std::max<qint64>(0, elapsed - m_snapshotTimer.interval());
+        updatePresentationQos(lateBy);
+    }
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
     processInputLearning();
+    // A fallback source becomes durable only after the mapper has observed a
+    // contradiction for this exact selected controller. This GUI-side commit
+    // is deliberately outside the report loop: the worker writes a small
+    // atomic method value, and this bounded presentation tick persists it.
+    const QString acquisitionRecordId = selectedEditingControllerId();
+    if (!acquisitionRecordId.isEmpty()) {
+        int sourceMemberIndex = -1;
+        const AtomicAdaptiveTelemetry *source = adaptiveTelemetrySource(nullptr, &sourceMemberIndex);
+        const bool sourceConnected = source && (sourceMemberIndex < 0
+            ? m_worker.runtime().physicalConnected.load(std::memory_order_relaxed)
+            : m_worker.runtime().deviceRigMemberPhysicalConnected[
+                static_cast<size_t>(sourceMemberIndex)].load(std::memory_order_relaxed));
+        if (sourceConnected) {
+            auto record = std::find_if(m_configuration.savedControllers.begin(),
+                m_configuration.savedControllers.end(), [&acquisitionRecordId](const SavedControllerRecord &candidate) {
+                    return candidate.id == acquisitionRecordId;
+                });
+            bool changed = false;
+            if (record != m_configuration.savedControllers.end()) {
+                for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                    const int method = sourceMemberIndex < 0
+                        ? m_worker.runtime().axisAcquisitionSource[static_cast<size_t>(axis)].load()
+                        : m_worker.runtime().deviceRigMemberAxisAcquisitionSource[
+                            static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
+                    NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(axis)];
+                    if (descriptor.present && method == 1 && descriptor.acquisitionMethod != 1) {
+                        descriptor.acquisitionMethod = 1;
+                        descriptor.acquisitionSourceResolved = true;
+                        changed = true;
+                    }
+                }
+            }
+            if (changed && ConfigStore::save(m_configuration)) {
+                ++m_configurationGeneration;
+                m_worker.updateConfiguration(m_configuration);
+                appendEvent(u"DirectInput object acquisition evidence saved for the selected controller"_qs);
+            }
+        }
+    }
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
@@ -20087,6 +20749,31 @@ void AppBackend::persistAndApply()
     // covers topology, profile, and output edits without adding work to the
     // DirectInput → MappingWorker → vJoy report path.
     scheduleActivationResolution(u"configuration changed"_qs);
+}
+
+bool AppBackend::persistVirtualOutputDescriptorEdit()
+{
+    // This is deliberately narrower than persistAndApply().  The desired
+    // contract is durable and immediately visible in Devices, while the
+    // already-acquired worker keeps its proven configuration until the owner
+    // explicitly enters Setup Health.  That prevents an edit dialog from
+    // silently releasing or reacquiring a game-facing vJoy controller.
+    m_configuration.activationManualOverride = false;
+    m_configuration.manualOverrideProfileId.clear();
+    reconcileSignalFlowState(&m_configuration);
+    if (!ConfigStore::save(m_configuration)) return false;
+    ++m_configurationGeneration;
+    rebuildSelectedAxisCurve();
+    rebuildCurveAxisChoices();
+    rebuildButtonUiModel();
+    emit selectedAxisCurveChanged();
+    emit selectedProfileChanged();
+    emit inputTelemetryChanged();
+    emit buttonTelemetryChanged();
+    emit stateChanged();
+    emit signalFlowChanged();
+    scheduleActivationResolution(u"virtual output contract changed"_qs);
+    return true;
 }
 
 void AppBackend::persistAxisProcessorEdit(const QString &kind, int physicalAxis)

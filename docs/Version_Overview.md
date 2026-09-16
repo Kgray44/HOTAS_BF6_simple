@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.5**
+**Current version: v2.6.6**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.6 — Polish, editable Virtual Outputs, and axis acquisition evidence
+
+A release candidate that improves operational clarity while preserving Device Rig authority and the allocation-free DirectInput-to-vJoy report path.
+
+- Virtual Outputs are first-class durable configurations: Devices and Flight Deck expose a shared Create/Edit/Duplicate editor, typed impact preview, safe deletion guardrails, relationship visibility, and an explicit Setup Health handoff for descriptor changes. Friendly HOTAS BF6 names remain distinct from the underlying vJoy Device ID.
+- HidHide Health preserves separately labeled last-known-good evidence through a failed or delayed refresh, leaves disconnected managed devices as availability information rather than invented faults, and keeps repair authority in the existing qualified setup workflow.
+- Adaptive Response defaults to a valid Profile Default context and offers a device-specific layer only after one exact physical controller is selected. Presentation supports accessible text scale, bounded coalescing under GUI load, and a protected Signal Flow beta surface.
+- Physical axis technical details now record discovery, DirectInput object identity, observed native range, requested-range result, resolved acquisition source, and live movement evidence. The mapper compiles offset-based bindings before polling and can corroborate a conflicting standard state field with bounded buffered DirectInput object data without allocating in the report path.
+- The Saitek Pro Flight Rudder Pedals Z Rotation defect remains a physical-hardware acceptance gate: this candidate does not claim a fix until the exact build has passed real three-axis, vJoy, reconnect, and restart validation on the owner's pedals.
 
 ## v2.6.5 — HidHide Health, diagnostics, and safe in-app repair
 

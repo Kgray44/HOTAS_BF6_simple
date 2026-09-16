@@ -17,6 +17,21 @@ QtObject {
     readonly property string name: manager ? manager.currentTheme : "Standard"
     readonly property string displayFont: topGun ? "Arial Narrow" : "Segoe UI Variable"
     readonly property string telemetryFont: topGun ? "Consolas" : "Consolas"
+    readonly property real textScale: manager ? manager.textScale : 1.15
+    readonly property int tinyTechnical: scale(8)
+    readonly property int caption: scale(9)
+    readonly property int bodySmall: scale(10)
+    readonly property int body: scale(11)
+    readonly property int bodyStrong: scale(12)
+    readonly property int controlText: scale(13)
+    readonly property int sectionTitle: scale(16)
+    readonly property int cardTitle: scale(18)
+    readonly property int pageTitle: scale(26)
+    // Controls and dense rows must grow with their labels.  Signal Flow uses
+    // these shared metrics so accessibility scaling cannot turn a fixed row
+    // into overlapping text.
+    readonly property int compactControlHeight: Math.round(32 * textScale)
+    readonly property int controlHeight: Math.round(40 * textScale)
     readonly property int panelRadius: topGun ? 2 : dayOps ? 4 : 6
     readonly property int controlRadius: topGun ? 1 : dayOps ? 3 : 4
 
@@ -139,5 +154,9 @@ QtObject {
         if (severity === "error") return danger
         if (severity === "warning") return warning
         return ready
+    }
+
+    function scale(value) {
+        return Math.round(value * textScale)
     }
 }

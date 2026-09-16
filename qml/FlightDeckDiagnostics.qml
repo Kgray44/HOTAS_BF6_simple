@@ -76,7 +76,7 @@ Flickable {
         text: label
         color: deck.textMuted
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         font.bold: true
         Layout.fillWidth: true
     }
@@ -96,7 +96,7 @@ Flickable {
             text: outlineButton.text
             color: deck.statusColor(outlineButton.tone)
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -115,7 +115,7 @@ Flickable {
             text: technicalRow.label.toUpperCase()
             color: deck.textMuted
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             Layout.preferredWidth: root.medium ? 148 : 112
             elide: Text.ElideRight
@@ -124,7 +124,7 @@ Flickable {
             text: technicalRow.value
             color: deck.statusColor(technicalRow.valueTone)
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             wrapMode: Text.WrapAnywhere
             Layout.fillWidth: true
         }
@@ -148,7 +148,7 @@ Flickable {
                 text: metricTile.label
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -157,7 +157,7 @@ Flickable {
                 text: metricTile.value
                 color: deck.statusColor(metricTile.tone)
                 font.family: deck.displayFont
-                font.pixelSize: 16
+                font.pixelSize: deck.scale(16)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -166,7 +166,7 @@ Flickable {
                 visible: text.length > 0
                 text: metricTile.detail
                 color: deck.textSecondary
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -381,7 +381,7 @@ Flickable {
                 Text {
                     text: "System health, signal routing, live technical state, and recovery navigation."
                     color: deck.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: deck.scale(12)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -415,14 +415,14 @@ Flickable {
                             text: "SYSTEM HEALTH"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: readiness.label || "CHECKING"
                             color: deck.statusColor(readiness.tone || "informational")
                             font.family: deck.displayFont
-                            font.pixelSize: root.medium ? 25 : 21
+                            font.pixelSize: deck.scale(root.medium ? 25 : 21)
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -430,7 +430,7 @@ Flickable {
                         Text {
                             text: readiness.detail || "Checking current setup state."
                             color: deck.textSecondary
-                            font.pixelSize: 11
+                            font.pixelSize: deck.scale(11)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -491,13 +491,13 @@ Flickable {
                                 text: modelData.label
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                                 font.bold: true
                             }
                             Text {
                                 text: modelData.value
                                 color: deck.textPrimary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -578,7 +578,7 @@ Flickable {
                 Text {
                     text: "The active selected-controller route is shown from physical input through the configured virtual output."
                     color: deck.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -633,14 +633,14 @@ Flickable {
                                     text: modelData.label
                                     color: deck.textMuted
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 8
+                                    font.pixelSize: deck.scale(8)
                                     font.bold: true
                                 }
                                 Text {
                                     text: modelData.title
                                     color: deck.textPrimary
                                     font.family: deck.displayFont
-                                    font.pixelSize: 15
+                                    font.pixelSize: deck.scale(15)
                                     font.bold: true
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -658,7 +658,7 @@ Flickable {
                                     Text {
                                         text: modelData.detail
                                         color: deck.textSecondary
-                                        font.pixelSize: 9
+                                        font.pixelSize: deck.scale(9)
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
                                     }
@@ -676,7 +676,7 @@ Flickable {
                     text: "CURRENT AXIS ROUTES"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     font.bold: true
                 }
                 Repeater {
@@ -688,7 +688,7 @@ Flickable {
                             text: modelData.label
                             color: deck.textPrimary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             font.bold: true
                             Layout.preferredWidth: root.medium ? 140 : 88
                             elide: Text.ElideRight
@@ -696,14 +696,14 @@ Flickable {
                         Text {
                             text: "→"
                             color: deck.accent
-                            font.pixelSize: 15
+                            font.pixelSize: deck.scale(15)
                             font.bold: true
                         }
                         Text {
                             text: modelData.target || "Disabled"
                             color: deck.textPrimary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -720,7 +720,7 @@ Flickable {
                     visible: root.routedAxes().length === 0
                     text: "No active physical axis snapshot is available for the selected controller."
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                 }
             }
         }
@@ -760,14 +760,14 @@ Flickable {
                                 text: "PHYSICAL INPUT"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: inputHealth.title || "Checking"
                                 color: deck.statusColor(inputHealth.tone || "informational")
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -783,7 +783,7 @@ Flickable {
                     Text {
                         text: inputHealth.detail || "Physical input state is still being checked."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -791,7 +791,7 @@ Flickable {
                         text: deviceName || "No active physical controller"
                         color: deck.textPrimary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         font.bold: true
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -800,7 +800,7 @@ Flickable {
                         text: backend.axisCount + " axes  •  " + backend.buttonCount + " buttons  •  " + backend.povCount + " POV"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -870,7 +870,7 @@ Flickable {
                                 text: "VIRTUAL OUTPUT"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
@@ -878,7 +878,7 @@ Flickable {
                                     : vjoyReady ? "Online" : "Action needed"
                                 color: deck.statusColor(outputHealth.tone || "informational")
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                         }
@@ -895,7 +895,7 @@ Flickable {
                             ? "Waiting for first mapped report."
                             : vjoyStatus || outputHealth.detail || "Virtual output status is not available."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -903,7 +903,7 @@ Flickable {
                         text: backend.virtualAxisStatus
                         color: deck.textPrimary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -973,14 +973,14 @@ Flickable {
                                 text: "DEVICE ISOLATION"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: String(root.hidhideHealth.overallState || (isolationHealth.tone === "healthy" ? "READY" : readableTone(isolationHealth.tone || "informational")))
                                 color: deck.statusColor(String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? "healthy" : isolationHealth.tone || "informational")
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                         }
@@ -995,14 +995,14 @@ Flickable {
                     Text {
                                 text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "% · " + String(root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking")) : (root.hidhideHealth.currentStage || isolationHealth.detail || "HidHide status has not been checked yet.")
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
                     Text {
                         text: "HidHide prevents a game from seeing both the physical controller and virtual output."
                         color: deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1114,14 +1114,14 @@ Flickable {
                                 text: "ROUTING"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: root.routeProblems().length > 0 ? root.routeProblems().length + " route issue" + (root.routeProblems().length === 1 ? "" : "s") : "Routes available"
                                 color: deck.statusColor(root.routeProblems().length > 0 ? "attention" : "healthy")
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                         }
@@ -1135,7 +1135,7 @@ Flickable {
                     Text {
                         text: root.routeProblems().length > 0 ? root.routeStatus(root.routeProblems()[0]).detail : "Current effective axis routes are shown in the signal path and Live Inspection sections."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1163,14 +1163,14 @@ Flickable {
                         text: "ACTIVE CONFIGURATION"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                     }
                     Text {
                         text: profileHealth.title || "No active profile"
                         color: deck.statusColor(profileHealth.tone || "informational")
                         font.family: deck.displayFont
-                        font.pixelSize: 18
+                        font.pixelSize: deck.scale(18)
                         font.bold: true
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -1179,14 +1179,14 @@ Flickable {
                         text: "Category: " + (readinessState.activeCategoryName || backend.activeCategoryName || "Not available")
                         color: deck.textPrimary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
                     Text {
                         text: profileHealth.detail || "Profile runtime source is not available."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1195,7 +1195,7 @@ Flickable {
                         text: "Automatic Activation: " + String(activation.explanation || "Checking resolver state.")
                         color: activation.valid ? deck.textMuted : deck.statusColor("attention")
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1230,14 +1230,14 @@ Flickable {
                         text: "GAME DETECTION"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                     }
                     Text {
                         text: gameHealth.title || "No supported game detected"
                         color: deck.statusColor(gameHealth.tone || "informational")
                         font.family: deck.displayFont
-                        font.pixelSize: 18
+                        font.pixelSize: deck.scale(18)
                         font.bold: true
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -1245,14 +1245,14 @@ Flickable {
                     Text {
                         text: gameHealth.detail || "No game process data is currently available."
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
                     Text {
                         text: backend.automaticGameDetection ? "Automatic detection is enabled." : "Automatic detection is paused; manual profile selection remains available."
                         color: deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1279,14 +1279,14 @@ Flickable {
                                 text: "AUTOMATION"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: automationRuleCount === 0 ? "No rules configured" : automationRuleCount + " rules configured"
                                 color: deck.statusColor(root.automationTone())
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                         }
@@ -1301,7 +1301,7 @@ Flickable {
                     Text {
                         text: invalidAutomationCount() > 0 ? invalidAutomationCount() + " rule" + (invalidAutomationCount() === 1 ? " needs attention." : "s need attention.") : enabledAutomationCount() + " enabled  •  " + automationActiveRuleCount + " active"
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1309,7 +1309,7 @@ Flickable {
                         visible: automationValidationMessage.length > 0
                         text: automationValidationMessage
                         color: deck.attention
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1341,14 +1341,14 @@ Flickable {
                                 text: "ADAPTIVE RESPONSE"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: adaptive.enabled ? "Enabled" : "Off"
                                 color: deck.statusColor(root.adaptiveTone())
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                         }
@@ -1363,14 +1363,14 @@ Flickable {
                         text: "Physical " + percent(adaptive.physical) + "  •  Output " + percent(adaptive.virtualOutput) + "  •  " + String(adaptive.model || "auto").toUpperCase()
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
                     Text {
                         text: adaptive.safetyLimited ? "Safety limiting is currently active." : "Telemetry is read-only and follows the selected-axis snapshot."
                         color: adaptive.safetyLimited ? deck.attention : deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -1407,7 +1407,7 @@ Flickable {
                 Text {
                     text: physicalConnected ? "Selected-controller UI snapshot. Values update on the existing presentation cadence." : "No active controller snapshot. Stale live values are intentionally not presented as active input."
                     color: physicalConnected ? deck.textSecondary : deck.attention
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -1415,7 +1415,7 @@ Flickable {
                     text: "AXES"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     font.bold: true
                 }
                 Repeater {
@@ -1436,7 +1436,7 @@ Flickable {
                                 text: modelData.label || "Axis"
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                                 Layout.preferredWidth: root.medium ? 130 : 72
                                 elide: Text.ElideRight
@@ -1445,7 +1445,7 @@ Flickable {
                                 text: physicalConnected ? "RAW " + percent(modelData.raw) : "RAW —"
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -1453,7 +1453,7 @@ Flickable {
                                 text: physicalConnected ? "NORMAL " + percent(modelData.calibrated) : "NORMAL —"
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -1461,7 +1461,7 @@ Flickable {
                                 text: physicalConnected && modelData.virtualValid ? "OUTPUT " + percent(modelData.virtualValue) : "OUTPUT —"
                                 color: deck.statusColor(root.routeStatus(modelData).tone)
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -1479,7 +1479,7 @@ Flickable {
                     text: "BUTTONS"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     font.bold: true
                 }
                 Flow {
@@ -1502,7 +1502,7 @@ Flickable {
                     text: "POV / HATS"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     font.bold: true
                 }
                 Flow {
@@ -1542,14 +1542,14 @@ Flickable {
                             text: "ADAPTIVE TELEMETRY"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: "Selected-axis read-only snapshot"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 17
+                            font.pixelSize: deck.scale(17)
                             font.bold: true
                         }
                     }
@@ -1632,7 +1632,7 @@ Flickable {
                 Text {
                     text: "Existing instrumentation only. These values are informational; the page does not define a separate performance-health threshold."
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -1712,13 +1712,13 @@ Flickable {
                             text: "TECHNICAL DETAILS"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 18
+                            font.pixelSize: deck.scale(18)
                             font.bold: true
                         }
                         Text {
                             text: "Identifiers, raw status, and existing support evidence stay subordinate to the health summary."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1764,7 +1764,7 @@ Flickable {
                         text: "CONNECTED CONTROLLERS"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                         Layout.fillWidth: true
                     }
@@ -1781,7 +1781,7 @@ Flickable {
                         text: "ROUTE CONFIGURATION"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                         Layout.fillWidth: true
                     }
@@ -1809,7 +1809,7 @@ Flickable {
                         Text {
                             text: backend.controllerDiagnosticsAvailable ? "Existing redacted support report" : "Copy Diagnostics is available when setup needs attention."
                             color: deck.textMuted
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             horizontalAlignment: Text.AlignRight
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -1826,7 +1826,7 @@ Flickable {
                             text: "EVENT LOG"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             Layout.fillWidth: true
                         }
@@ -1853,7 +1853,7 @@ Flickable {
                             text: modelData
                             color: ListView.view && index === ListView.view.count - 1 ? deck.textPrimary : deck.textSecondary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             wrapMode: Text.WrapAnywhere
                         }
                     }
