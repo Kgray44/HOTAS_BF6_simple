@@ -1,7 +1,9 @@
 # Whole-App Responsiveness Phase 1 — Non-blocking Configuration Persistence
 
-**Candidate implementation commit:** `ca29bbaea091b56e06005d98ec1a9355abfe1965`  
-**Stack base / Phase 0 head:** `f137c5405698989b6cb664aa039a8d4b9486026b`  
+**Candidate implementation commit:** `ca29bbaea091b56e06005d98ec1a9355abfe1965`
+
+**Stack base / Phase 0 head:** `f137c5405698989b6cb664aa039a8d4b9486026b`
+
 **`origin/main` observed before the worktree was created:** `5d5df526d93cccbef4b9e72068c6929ea7f11f7c`
 
 This is a stacked Phase 1 candidate, not a release. It does not change the version, schema version, installer/updater manifests, tag, release assets, or protected `main`. Phase 0 remains unchanged on its own draft branch/PR.
