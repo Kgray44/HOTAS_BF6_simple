@@ -1171,7 +1171,7 @@ Item {
         implicitHeight: deck.compactControlHeight
         padding: deck.space10
         font.family: deck.bodyFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         font.bold: true
         Accessible.name: text
         contentItem: Text { text: deckButton.text; color: !deckButton.enabled ? deck.disabled : deckButton.emphasized ? deck.applicationBackground : deck.textPrimary; font: deckButton.font; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
@@ -1193,7 +1193,7 @@ Item {
         property bool destination: false
         property bool isSelected: false
         property bool isCompatible: false
-        implicitHeight: 31
+        implicitHeight: deck.compactControlHeight
         radius: deck.radiusControl
         color: isSelected ? deck.accentMuted : isCompatible ? deck.selected : dropTarget.containsDrag ? deck.selected : hover.containsMouse ? deck.secondarySurface : "transparent"
         border.width: isSelected || isCompatible || dropTarget.containsDrag ? 1 : 0
@@ -1204,8 +1204,8 @@ Item {
             anchors.rightMargin: deck.space8
             spacing: deck.space6
             Rectangle { Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4; color: !flowPort.port || !flowPort.port.available ? deck.disabled : flowPort.port.mapped ? (flowPort.destination ? deck.healthy : deck.informational) : deck.textMuted }
-            Text { Layout.fillWidth: true; text: flowPort.port && flowPort.port.label ? flowPort.port.label : ""; color: flowPort.port && flowPort.port.available ? deck.textPrimary : deck.disabled; font.family: deck.bodyFont; font.pixelSize: 10; elide: Text.ElideRight }
-            Text { text: flowPort.port && flowPort.port.mapped && !flowPort.destination ? "LIVE" : ""; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+            Text { Layout.fillWidth: true; text: flowPort.port && flowPort.port.label ? flowPort.port.label : ""; color: flowPort.port && flowPort.port.available ? deck.textPrimary : deck.disabled; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); elide: Text.ElideRight }
+            Text { text: flowPort.port && flowPort.port.mapped && !flowPort.destination ? "LIVE" : ""; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
         }
         Drag.active: sourceDrag.active
         Drag.source: flowPort
@@ -1280,9 +1280,9 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
-                Text { text: "Signal Flow"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 25; font.bold: true }
-                Text { text: "Device Rig: " + (root.graph.deviceRigName || "Profile-local input scope") + " · Profile: " + (root.graph.profileName || "active profile"); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { visible: Boolean(root.graph.editingDiffersFromEffective); text: "Effective runtime profile: " + (root.graph.effectiveProfileName || "unknown") + " · editing remains on " + (root.graph.profileName || "selected profile"); color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { text: "Signal Flow"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(25); font.bold: true }
+                Text { text: "Device Rig: " + (root.graph.deviceRigName || "Profile-local input scope") + " · Profile: " + (root.graph.profileName || "active profile"); color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { visible: Boolean(root.graph.editingDiffersFromEffective); text: "Effective runtime profile: " + (root.graph.effectiveProfileName || "unknown") + " · editing remains on " + (root.graph.profileName || "selected profile"); color: deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; elide: Text.ElideRight }
             }
             DeckButton { text: "Profile…"; helpText: "Choose the active profile whose durable Signal Flow topology is being edited."; onClicked: deckProfileContextMenu.open() }
             DeckButton { text: "Device Rig…"; helpText: "Choose the Device Rig context. A multi-device rig stays visible until one input card is selected for editing."; onClicked: deckRigContextMenu.open() }
@@ -1336,7 +1336,7 @@ Item {
                 DeckButton { text: "Default map"; helpText: "Preview deterministic mappings for unassigned routes before applying them."; enabled: root.mode === "configured" && root.graph.editable; onClicked: root.preview("unassigned") }
                 DeckButton { text: "Replace all"; destructive: true; helpText: "Preview every replacement before rewriting current routes."; enabled: root.mode === "configured" && root.graph.editable; onClicked: root.preview("replace-all") }
                 DeckButton { text: "−"; Accessible.name: "Zoom out"; helpText: "Zoom out. Shortcut: Ctrl+-"; onClicked: root.keyboardAction("zoom-out") }
-                Text { text: Math.round(root.zoom * 100) + "%"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9 }
+                Text { text: Math.round(root.zoom * 100) + "%"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9) }
                 DeckButton { text: "+"; Accessible.name: "Zoom in"; helpText: "Zoom in. Shortcut: Ctrl++"; onClicked: root.keyboardAction("zoom-in") }
             }
         }
@@ -1349,7 +1349,7 @@ Item {
             contentPadding: deck.cardPaddingCompact
             color: root.noticeError ? Qt.rgba(deck.fault.r, deck.fault.g, deck.fault.b, 0.12) : root.mode === "effective" ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.10) : Qt.rgba(deck.healthy.r, deck.healthy.g, deck.healthy.b, 0.10)
             border.color: root.noticeError ? deck.fault : root.mode === "effective" ? deck.attention : deck.healthy
-            Text { id: alertText; anchors.fill: parent; text: root.notice.length > 0 ? root.notice : root.graph.effectiveSummary; color: root.noticeError ? deck.fault : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            Text { id: alertText; anchors.fill: parent; text: root.notice.length > 0 ? root.notice : root.graph.effectiveSummary; color: root.noticeError ? deck.fault : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); wrapMode: Text.WordWrap }
         }
 
         RowLayout {
@@ -1366,8 +1366,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: parent.contentPadding
                     spacing: deck.space8
-                    Text { text: "SOURCE BUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                    Text { text: root.source && root.source.label ? root.source.label : "Pick a physical control"; color: root.source && root.source.label ? deck.accent : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                    Text { text: "SOURCE BUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                    Text { text: root.source && root.source.label ? root.source.label : "Pick a physical control"; color: root.source && root.source.label ? deck.accent : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); Layout.fillWidth: true; elide: Text.ElideRight }
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -1384,8 +1384,9 @@ Item {
                                     width: parent.width; spacing: 2
                                     Row {
                                         width: parent.width; spacing: 4
-                                        Text { width: parent.width - 34; text: parent.parent.groupName + " · " + root.groupPorts("input", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                                        DeckButton { width: 28; height: 20; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("input", parent.parent.groupName, !parent.parent.collapsed) }
+                                        height: deck.compactControlHeight
+                                        Text { width: parent.width - deck.scale(32); anchors.verticalCenter: parent.verticalCenter; text: parent.parent.groupName + " · " + root.groupPorts("input", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        DeckButton { width: deck.scale(28); height: parent.height; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("input", parent.parent.groupName, !parent.parent.collapsed) }
                                     }
                                     Repeater {
                                         visible: !parent.collapsed
@@ -1395,7 +1396,7 @@ Item {
                                     }
                                 }
                             }
-                            Text { visible: root.sourcePorts().length === 0; width: parent.width; text: "No source ports match."; color: deck.textMuted; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                            Text { visible: root.sourcePorts().length === 0; width: parent.width; text: "No source ports match."; color: deck.textMuted; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
                         }
                     }
                 }
@@ -1570,17 +1571,18 @@ Item {
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: 250
-                            height: 118
+                            height: Math.max(deck.scale(118), inputNodeContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
                             ColumnLayout {
+                                id: inputNodeContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                Text { text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: inputNode.nodeData.detail || "Physical source"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                Text { text: "PORTS " + root.sourcePorts().length; color: deck.informational; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                Text { text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: inputNode.nodeData.detail || "Physical source"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
+                                Text { text: "PORTS " + root.sourcePorts().length; color: deck.informational; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                             }
                             MouseArea {
                                 anchors.fill: parent
@@ -1607,17 +1609,18 @@ Item {
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: 250
-                                height: 118
+                                height: Math.max(deck.scale(118), secondaryInputNodeContent.implicitHeight + contentPadding * 2)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                                 contentPadding: deck.cardPaddingCompact
                                 color: modelData.missingReference ? Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.12) : deck.secondarySurface
                                 ColumnLayout {
+                                    id: secondaryInputNodeContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                    Text { text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: modelData.detail || "Saved Device Rig member"; color: modelData.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                    Text { text: modelData.connected ? "SAVED INPUT · READY" : modelData.missingReference ? "MISSING REFERENCE" : "SAVED INPUT · OFFLINE"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                    Text { text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: modelData.detail || "Saved Device Rig member"; color: modelData.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
+                                    Text { text: modelData.connected ? "SAVED INPUT · READY" : modelData.missingReference ? "MISSING REFERENCE" : "SAVED INPUT · OFFLINE"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -1643,7 +1646,10 @@ Item {
                                 Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: 180
-                                height: 88 + Math.max(0, Number(modelData.sharedChannelCount || 0) - 1) * 20
+                                height: Math.max(deck.scale(88)
+                                                 + Math.max(0, Number(modelData.sharedChannelCount || 0) - 1)
+                                                     * deck.compactControlHeight,
+                                                 processorNodeContent.implicitHeight + contentPadding * 2)
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
                                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -1651,16 +1657,17 @@ Item {
                                 contentPadding: deck.cardPaddingCompact
                                 color: deck.elevatedSurface
                                 ColumnLayout {
+                                    id: processorNodeContent
                                     anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: 4
-                                    Text { text: modelData.label; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: modelData.detail; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                    Text { visible: Boolean(modelData.shared); text: "SHARED · " + Number(modelData.sharedChannelCount || 0) + " CHANNELS"; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true }
+                                    Text { text: modelData.label; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: modelData.detail; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
+                                    Text { visible: Boolean(modelData.shared); text: "SHARED · " + Number(modelData.sharedChannelCount || 0) + " CHANNELS"; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; Layout.fillWidth: true }
                                     Repeater {
                                         model: modelData.shared ? Math.min(4, Number(modelData.sharedChannelCount || 0)) : 0
                                         delegate: Row {
                                             spacing: 3
                                             Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: deck.informational }
-                                            Text { text: "channel " + (index + 1) + "  →"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8 }
+                                            Text { text: "channel " + (index + 1) + "  →"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8) }
                                             Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: deck.healthy }
                                         }
                                     }
@@ -1687,17 +1694,18 @@ Item {
                             Behavior on x { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                             width: 250
-                            height: 118
+                            height: Math.max(deck.scale(118), outputNodeContent.implicitHeight + contentPadding * 2)
                             z: 2
                             opacity: root.xrayMode ? 0.58 : 1.0
                             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
                             contentPadding: deck.cardPaddingCompact
                             color: deck.secondarySurface
                             ColumnLayout {
+                                id: outputNodeContent
                                 anchors.fill: parent; anchors.margins: parent.contentPadding; spacing: deck.space6
-                                Text { text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: outputNode.nodeData.detail || "vJoy destination"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
-                                Text { text: "DESTINATIONS " + root.destinationPorts().length; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                                Text { text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(13); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: outputNode.nodeData.detail || "vJoy destination"; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2 }
+                                Text { text: "DESTINATIONS " + root.destinationPorts().length; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                             }
                             MouseArea {
                                 anchors.fill: parent
@@ -1711,19 +1719,19 @@ Item {
                         }
                         Column {
                             x: 470; y: 660; width: 620; spacing: 4
-                            Text { text: "ROUTE LANES · click to inspect"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                            Text { text: "ROUTE LANES · click to inspect"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                             Repeater {
                                 model: root.graph.routes || []
                                 delegate: Rectangle {
                                     required property var modelData
-                                    width: parent.width; height: 25; radius: deck.radiusControl
+                                    width: parent.width; height: deck.compactControlHeight; radius: deck.radiusControl
                                     color: routeHit.containsMouse || processorDrop.containsDrag || (root.inspectedRoute && root.inspectedRoute.id === modelData.id) ? deck.selected : "transparent"
                                     RowLayout {
                                         anchors.fill: parent
                                         anchors.leftMargin: deck.space8
                                         anchors.rightMargin: deck.space8
-                                        Text { Layout.fillWidth: true; text: modelData.sourceLabel + "  →  " + (modelData.viaNodeId ? "Mixer  →  " : "") + modelData.destinationLabel; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; elide: Text.ElideRight }
-                                        Text { text: modelData.effective ? "ACTIVE" : String(modelData.health || "configured").toUpperCase().replace("-", " "); color: modelData.effective ? deck.healthy : modelData.health === "conflict" ? deck.danger : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                        Text { Layout.fillWidth: true; text: modelData.sourceLabel + "  →  " + (modelData.viaNodeId ? "Mixer  →  " : "") + modelData.destinationLabel; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); elide: Text.ElideRight }
+                                        Text { text: modelData.effective ? "ACTIVE" : String(modelData.health || "configured").toUpperCase().replace("-", " "); color: modelData.effective ? deck.healthy : modelData.health === "conflict" ? deck.danger : deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
                                     }
                                     DropArea {
                                         id: processorDrop
@@ -1764,7 +1772,7 @@ Item {
                         }
                     }
                 }
-                Text { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: deck.space12; text: root.connectionPreview && root.connectionPreview.message ? root.connectionPreview.message : "Click-click or drag to route · drop a processor chip on a route lane · right-click a wire for processing · right-click a card to pin · Delete disconnects"; color: deck.graphLabel; font.family: deck.bodyFont; font.pixelSize: 9 }
+                Text { anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: deck.space12; text: root.connectionPreview && root.connectionPreview.message ? root.connectionPreview.message : "Click-click or drag to route · drop a processor chip on a route lane · right-click a wire for processing · right-click a card to pin · Delete disconnects"; color: deck.graphLabel; font.family: deck.bodyFont; font.pixelSize: deck.scale(9) }
             }
 
             FlightDeckCard {
@@ -1776,16 +1784,16 @@ Item {
                     anchors.fill: parent
                     anchors.margins: parent.contentPadding
                     spacing: deck.space8
-                    Text { text: root.inspectedNode && root.inspectedNode.id ? "CARD BUS" : "DESTINATION BUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
-                    Text { text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode && root.inspectedNode.id ? root.inspectedNode.label : "Select a route or destination"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: String(root.inspectedNode.detail || "") + (root.inspectedNode.capabilitySummary ? "\n" + root.inspectedNode.capabilitySummary : ""); color: root.inspectedNode && root.inspectedNode.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: Number(root.inspectedNode.routeCount || 0) + " configured route" + (Number(root.inspectedNode.routeCount || 0) === 1 ? "" : "s") + (root.inspectedNode.connected ? " · READY" : " · OFFLINE / UNAVAILABLE"); color: root.inspectedNode && root.inspectedNode.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: root.inspectedNode && root.inspectedNode.id ? "CARD BUS" : "DESTINATION BUS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                    Text { text: root.inspectedRoute && root.inspectedRoute.id ? root.inspectedRoute.sourceLabel + " → " + root.inspectedRoute.destinationLabel : root.inspectedNode && root.inspectedNode.id ? root.inspectedNode.label : "Select a route or destination"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: String(root.inspectedNode.detail || "") + (root.inspectedNode.capabilitySummary ? "\n" + root.inspectedNode.capabilitySummary : ""); color: root.inspectedNode && root.inspectedNode.missingReference ? deck.attention : deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedNode && root.inspectedNode.id); text: Number(root.inspectedNode.routeCount || 0) + " configured route" + (Number(root.inspectedNode.routeCount || 0) === 1 ? "" : "s") + (root.inspectedNode.connected ? " · READY" : " · OFFLINE / UNAVAILABLE"); color: root.inspectedNode && root.inspectedNode.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "input" && root.inspectedNode.scopeEditable === false && root.inspectedNode.controllerRecordId); text: "Edit this input scope"; helpText: "Make this saved Device Rig member the explicit input scope before changing its routes."; Layout.fillWidth: true; onClicked: root.useInputScope(root.inspectedNode) }
                     DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: root.inspectedNode && root.inspectedNode.kind === "input" ? "Open input setup" : "Open output setup"; helpText: "Open Devices & setup while preserving this Flight Deck Signal Flow card selection for return."; Layout.fillWidth: true; onClicked: root.openCardSettings(root.inspectedNode) }
-                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: root.inspectedRoute && root.inspectedRoute.processors && root.inspectedRoute.processors.length ? "Conditioning nodes: " + root.inspectedRoute.processors.length + (root.inspectedRoute.viaNodeId ? " · explicit mixer" : "") : "Direct route — no visible conditioning node."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { visible: Boolean(root.inspectedRoute && root.processorDetail("adaptive-response").settingsSummary); text: "ADAPTIVE RESPONSE · " + String(root.processorDetail("adaptive-response").settingsSummary); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : root.inspectedRoute.health === "conflict" ? deck.danger : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id && (root.signalFocus || root.liveMode)); text: "LIVE SAMPLE " + Number(root.routeLive(root.inspectedRoute).value || 0).toFixed(3) + (root.routeIsLive(root.inspectedRoute) ? " · MOVING" : " · STEADY"); color: root.routeIsLive(root.inspectedRoute) ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: root.inspectedRoute && root.inspectedRoute.processors && root.inspectedRoute.processors.length ? "Conditioning nodes: " + root.inspectedRoute.processors.length + (root.inspectedRoute.viaNodeId ? " · explicit mixer" : "") : "Direct route — no visible conditioning node."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedRoute && root.processorDetail("adaptive-response").settingsSummary); text: "ADAPTIVE RESPONSE · " + String(root.processorDetail("adaptive-response").settingsSummary); color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : root.inspectedRoute.health === "conflict" ? deck.danger : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id && (root.signalFocus || root.liveMode)); text: "LIVE SAMPLE " + Number(root.routeLive(root.inspectedRoute).value || 0).toFixed(3) + (root.routeIsLive(root.inspectedRoute) ? " · MOVING" : " · STEADY"); color: root.routeIsLive(root.inspectedRoute) ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     DeckButton { text: "Explain route"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; onClicked: root.explainRoute() }
                     DeckButton { text: "Open Curve Editor"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "curve")); helpText: "Open the authoritative Curve Editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("curve", root.inspectedRoute) }
                     DeckButton { text: "Open Adaptive Response"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "adaptive-response")); helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("adaptive-response", root.inspectedRoute) }
@@ -1809,8 +1817,9 @@ Item {
                                     width: parent.width; spacing: 2
                                     Row {
                                         width: parent.width; spacing: 4
-                                        Text { width: parent.width - 34; text: parent.parent.groupName + " · " + root.groupPorts("output", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                                        DeckButton { width: 28; height: 20; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("output", parent.parent.groupName, !parent.parent.collapsed) }
+                                        height: deck.compactControlHeight
+                                        Text { width: parent.width - deck.scale(32); anchors.verticalCenter: parent.verticalCenter; text: parent.parent.groupName + " · " + root.groupPorts("output", parent.parent.groupName, 999).length; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; elide: Text.ElideRight }
+                                        DeckButton { width: deck.scale(28); height: parent.height; padding: 0; text: parent.parent.collapsed ? "+" : "−"; Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + parent.parent.groupName; onClicked: root.setGroup("output", parent.parent.groupName, !parent.parent.collapsed) }
                                     }
                                     Repeater {
                                         visible: !parent.collapsed
@@ -1820,7 +1829,7 @@ Item {
                                     }
                                 }
                             }
-                            Text { visible: root.destinationPorts().length === 0; width: parent.width; text: "No destinations match."; color: deck.textMuted; font.pixelSize: 10 }
+                            Text { visible: root.destinationPorts().length === 0; width: parent.width; text: "No destinations match."; color: deck.textMuted; font.pixelSize: deck.scale(10) }
                         }
                     }
                 }
@@ -1964,7 +1973,7 @@ Item {
                 Layout.fillWidth: true
                 model: ["average", "sum-clamped", "highest-magnitude"]
                 font.family: deck.bodyFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Accessible.name: "Analog mixer mode"
             }
             RowLayout {
@@ -1996,8 +2005,8 @@ Item {
         title: "Explain route"
         contentItem: ColumnLayout {
             spacing: deck.space8
-            Text { Layout.fillWidth: true; text: root.routeExplanation.summary || "Select a current route to explain it."; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 12; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: root.routeExplanation.runtimeDetail || ""; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.routeExplanation.summary || "Select a current route to explain it."; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(12); wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.routeExplanation.runtimeDetail || ""; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
             ScrollView {
                 Layout.fillWidth: true; Layout.preferredHeight: Math.min(220, explainSteps.implicitHeight); clip: true
                 Column {
@@ -2009,15 +2018,15 @@ Item {
                             width: parent.width; implicitHeight: stepText.implicitHeight + deck.space12
                             radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border
                             Column { id: stepText; anchors.fill: parent; anchors.margins: deck.space6; spacing: 2
-                                Text { width: parent.width; text: modelData.label || "Signal step"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; font.bold: true }
-                                Text { width: parent.width; text: modelData.detail || ""; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { width: parent.width; text: modelData.label || "Signal step"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); font.bold: true }
+                                Text { width: parent.width; text: modelData.detail || ""; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap }
                             }
                         }
                     }
                 }
             }
-            CheckBox { id: deckTechnical; text: "Technical details"; font.family: deck.bodyFont; font.pixelSize: 10 }
-            TextArea { visible: deckTechnical.checked; Layout.fillWidth: true; Layout.preferredHeight: 100; readOnly: true; text: root.routeExplanation.technicalDetails || ""; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 9; background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border } }
+            CheckBox { id: deckTechnical; text: "Technical details"; font.family: deck.bodyFont; font.pixelSize: deck.scale(10) }
+            TextArea { visible: deckTechnical.checked; Layout.fillWidth: true; Layout.preferredHeight: 100; readOnly: true; text: root.routeExplanation.technicalDetails || ""; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border } }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2036,7 +2045,7 @@ Item {
         title: "Processor palette"
         contentItem: ColumnLayout {
             spacing: deck.space8
-            Text { Layout.fillWidth: true; text: "Drag a processor chip onto a route lane, or click it to atomically add/remove it from the selected source chain. The same source setting is visible in its focused editor."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Drag a processor chip onto a route lane, or click it to atomically add/remove it from the selected source chain. The same source setting is visible in its focused editor."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
             Flow {
                 Layout.fillWidth: true; spacing: deck.space8
                 Repeater {
@@ -2052,7 +2061,7 @@ Item {
                         width: Math.max(118, chipLabel.implicitWidth + 20); height: deck.compactControlHeight; radius: deck.radiusControl
                         color: root.processorEnabled(processorKind) ? deck.accent : deck.secondarySurface
                         border.color: chipDrag.active ? deck.attention : deck.border; border.width: 1
-                        Text { id: chipLabel; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? deck.applicationBackground : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 10; font.bold: true }
+                        Text { id: chipLabel; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? deck.applicationBackground : deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); font.bold: true }
                         Drag.active: chipDrag.active
                         Drag.source: deckProcessorChip
                         Drag.keys: ["signal-flow-processor"]
@@ -2110,14 +2119,14 @@ Item {
         }
         contentItem: ColumnLayout {
             spacing: deck.space12
-            Text { Layout.fillWidth: true; text: "The first selected route owns the existing processor setting. Signal Flow mirrors that durable setting to every selected axis; split a route later to edit it independently."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "The first selected route owns the existing processor setting. Signal Flow mirrors that durable setting to every selected axis; split a route later to edit it independently."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
             ComboBox {
                 id: deckShareKind
                 Layout.fillWidth: true
                 model: shareDialog.processorKinds
                 textRole: "label"
                 font.family: deck.bodyFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Accessible.name: "Processor to share"
                 onActivated: {
                     const item = shareDialog.processorKinds[currentIndex]
@@ -2141,12 +2150,12 @@ Item {
                             checked: Boolean(modelData.selected)
                             text: modelData.label
                             onToggled: shareDialog.setChoice(index, checked)
-                            contentItem: Text { text: parent.text; color: deck.textPrimary; leftPadding: parent.indicator.width + deck.space8; verticalAlignment: Text.AlignVCenter; font.family: deck.bodyFont; font.pixelSize: 10; elide: Text.ElideRight }
+                            contentItem: Text { text: parent.text; color: deck.textPrimary; leftPadding: parent.indicator.width + deck.space8; verticalAlignment: Text.AlignVCenter; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); elide: Text.ElideRight }
                         }
                     }
                 }
             }
-            Text { Layout.fillWidth: true; text: "Select at least two distinct physical axis sources. Existing members remain selected when extending a shared object."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Select at least two distinct physical axis sources. Existing members remain selected when extending a shared object."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2176,9 +2185,9 @@ Item {
         }
         contentItem: ColumnLayout {
             spacing: deck.space12
-            Text { Layout.fillWidth: true; text: "Move an axis, press a button, or move a POV direction. Flight Deck identifies the physical source first, then presents compatible destinations in the route map."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: backendObject.inputLearning.message || "Preparing safe source detection…"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; wrapMode: Text.WordWrap }
-            Text { visible: String(backendObject.inputLearning.sourceLabel || "").length > 0; Layout.fillWidth: true; text: backendObject.inputLearning.sourceLabel || ""; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: 11; font.bold: true }
+            Text { Layout.fillWidth: true; text: "Move an axis, press a button, or move a POV direction. Flight Deck identifies the physical source first, then presents compatible destinations in the route map."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: backendObject.inputLearning.message || "Preparing safe source detection…"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.scale(11); wrapMode: Text.WordWrap }
+            Text { visible: String(backendObject.inputLearning.sourceLabel || "").length > 0; Layout.fillWidth: true; text: backendObject.inputLearning.sourceLabel || ""; color: deck.healthy; font.family: deck.telemetryFont; font.pixelSize: deck.scale(11); font.bold: true }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2200,8 +2209,8 @@ Item {
         onOpened: { choices = root.destinationPorts().filter(function(port) { return port.kind === "axis" || port.kind === "button" }) }
         contentItem: ColumnLayout {
             spacing: deck.space12
-            Text { Layout.fillWidth: true; text: "Choose the virtual destination, then move the physical control to use. Flight Deck keeps the resulting route highlighted in this workspace."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            ComboBox { id: deckLearnChoices; Layout.fillWidth: true; model: learnDialog.choices; textRole: "label"; font.family: deck.bodyFont; font.pixelSize: 10; Accessible.name: "Learn destination" }
+            Text { Layout.fillWidth: true; text: "Choose the virtual destination, then move the physical control to use. Flight Deck keeps the resulting route highlighted in this workspace."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
+            ComboBox { id: deckLearnChoices; Layout.fillWidth: true; model: learnDialog.choices; textRole: "label"; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); Accessible.name: "Learn destination" }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2223,9 +2232,9 @@ Item {
         onOpened: { axes = root.ports("output").filter(function(port) { return port.kind === "axis" }); deckAliasText.text = axes.length > 0 && axes[0].label !== axes[0].technicalLabel ? axes[0].label : "" }
         contentItem: ColumnLayout {
             spacing: deck.space12
-            Text { Layout.fillWidth: true; text: "An alias only changes the label in this profile. The vJoy axis and runtime route are unchanged."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
-            ComboBox { id: deckAliasAxis; Layout.fillWidth: true; model: aliasDialog.axes; textRole: "technicalLabel"; font.family: deck.bodyFont; font.pixelSize: 10; onCurrentIndexChanged: { const choice = aliasDialog.axes[currentIndex]; deckAliasText.text = choice && choice.label !== choice.technicalLabel ? choice.label : "" } }
-            TextField { id: deckAliasText; Layout.fillWidth: true; placeholderText: "Optional alias"; color: deck.textPrimary; selectByMouse: true; font.family: deck.bodyFont; font.pixelSize: 10; background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border } }
+            Text { Layout.fillWidth: true; text: "An alias only changes the label in this profile. The vJoy axis and runtime route are unchanged."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
+            ComboBox { id: deckAliasAxis; Layout.fillWidth: true; model: aliasDialog.axes; textRole: "technicalLabel"; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); onCurrentIndexChanged: { const choice = aliasDialog.axes[currentIndex]; deckAliasText.text = choice && choice.label !== choice.technicalLabel ? choice.label : "" } }
+            TextField { id: deckAliasText; Layout.fillWidth: true; placeholderText: "Optional alias"; color: deck.textPrimary; selectByMouse: true; font.family: deck.bodyFont; font.pixelSize: deck.scale(10); background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.color: deck.border } }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2251,8 +2260,8 @@ Item {
             ScrollView {
                 Layout.fillWidth: true; Layout.preferredHeight: Math.min(220, defaultRows.implicitHeight); clip: true
                 Column { id: defaultRows; width: parent.availableWidth; spacing: 4
-                    Repeater { model: defaultsDialog.preview.changes || []; delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? deck.attention : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 10; elide: Text.ElideRight } }
-                    Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No route would change."; color: deck.healthy; font.family: deck.bodyFont; font.pixelSize: 10 }
+                    Repeater { model: defaultsDialog.preview.changes || []; delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? deck.attention : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); elide: Text.ElideRight } }
+                    Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No route would change."; color: deck.healthy; font.family: deck.bodyFont; font.pixelSize: deck.scale(10) }
                 }
             }
             RowLayout {

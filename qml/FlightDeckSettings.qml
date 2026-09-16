@@ -57,7 +57,7 @@ Flickable {
         rightPadding: deck.space12
         focusPolicy: Qt.StrongFocus
         font.family: deck.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: deck.scale(9)
         font.bold: true
 
         contentItem: Text {
@@ -110,7 +110,7 @@ Flickable {
         implicitHeight: deck.compactControlHeight
         editable: false
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
 
         contentItem: Text {
             text: stepper.textFromValue(stepper.value, stepper.locale)
@@ -171,7 +171,7 @@ Flickable {
                 text: "+"
                 color: !stepper.enabled ? deck.disabled : stepper.up.hovered ? deck.accent : deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 13
+                font.pixelSize: deck.scale(13)
                 font.bold: true
             }
         }
@@ -194,7 +194,7 @@ Flickable {
                 text: "−"
                 color: !stepper.enabled ? deck.disabled : stepper.down.hovered ? deck.accent : deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 13
+                font.pixelSize: deck.scale(13)
                 font.bold: true
             }
         }
@@ -258,7 +258,7 @@ Flickable {
             text: parent.title.toUpperCase()
             color: deck.textMuted
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
         }
         Rectangle {
@@ -287,7 +287,7 @@ Flickable {
                 text: group.title
                 color: deck.textPrimary
                 font.family: deck.displayFont
-                font.pixelSize: 15
+                font.pixelSize: deck.scale(15)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -296,7 +296,7 @@ Flickable {
                 visible: group.detail.length > 0
                 text: group.detail
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -330,7 +330,7 @@ Flickable {
                     text: rowRoot.title
                     color: rowRoot.enabled ? deck.textPrimary : deck.disabled
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     font.bold: true
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
@@ -339,7 +339,7 @@ Flickable {
                     visible: rowRoot.detail.length > 0
                     text: rowRoot.detail
                     color: rowRoot.enabled ? deck.textSecondary : deck.textMuted
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -368,7 +368,7 @@ Flickable {
         implicitHeight: deck.compactControlHeight
         focusPolicy: Qt.StrongFocus
         font.family: deck.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: deck.scale(9)
         font.bold: true
         contentItem: Text {
             text: segment.text
@@ -413,7 +413,7 @@ Flickable {
                     text: card.choice.label.toUpperCase()
                     color: deck.textPrimary
                     font.family: deck.telemetryFont
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     font.bold: true
                     Layout.fillWidth: true
                     elide: Text.ElideRight
@@ -422,7 +422,7 @@ Flickable {
             Text {
                 text: card.choice.description
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 wrapMode: Text.WordWrap
@@ -434,7 +434,7 @@ Flickable {
                     text: card.selected ? "CURRENT" : "USE EXPERIENCE"
                     color: card.selected ? deck.healthy : deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     font.bold: true
                     Layout.fillWidth: true
                 }
@@ -547,7 +547,6 @@ Flickable {
             SettingsRow {
                 title: "FLIGHT DECK COLOR MODE"
                 detail: "Flight Deck has independent Light and Dark semantic resources. System color mode is not provided by this application version."
-                last: true
                 RowLayout {
                     spacing: deck.space8
                     AppearanceSegment {
@@ -561,6 +560,26 @@ Flickable {
                         text: "LIGHT"
                         selected: themeManager.flightDeckAppearance === "Light"
                         onClicked: themeManager.setFlightDeckAppearance("Light")
+                    }
+                }
+            }
+            SettingsRow {
+                title: "TEXT SIZE"
+                detail: "Changes application text and control spacing only. Profiles, mappings, and Device Rigs are unchanged."
+                last: true
+                Flow {
+                    Layout.fillWidth: root.narrow
+                    spacing: deck.space8
+                    Repeater {
+                        model: themeManager.textSizeChoices
+                        delegate: AppearanceSegment {
+                            required property string modelData
+                            objectName: "flightDeckTextSize_" + modelData.replace(" ", "")
+                            text: modelData.toUpperCase()
+                            implicitWidth: modelData === "Extra Large" ? deck.scale(116) : deck.scale(88)
+                            selected: themeManager.textSize === modelData
+                            onClicked: themeManager.setTextSize(modelData)
+                        }
                     }
                 }
             }
@@ -654,7 +673,7 @@ Flickable {
                         }
                         color: deck.textPrimary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         onAccepted: focus = false
                         onEditingFinished: {
                             backend.setDisabledAxisValue(Number(text));
@@ -671,7 +690,7 @@ Flickable {
                         text: "%"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         font.bold: true
                     }
                 }
@@ -704,7 +723,7 @@ Flickable {
                         }
                         color: enabled ? deck.textPrimary : deck.disabled
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         onAccepted: focus = false
                         onEditingFinished: {
                             backend.setCurveTransitionDurationMs(Number(text));
@@ -721,7 +740,7 @@ Flickable {
                         text: "ms"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         font.bold: true
                     }
                 }
@@ -789,7 +808,7 @@ Flickable {
                                 rightPadding: deck.space24
                                 text: visibilityLayout.displayText
                                 color: visibilityLayout.enabled ? deck.textPrimary : deck.disabled
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 verticalAlignment: Text.AlignVCenter
                                 elide: Text.ElideRight
                             }
@@ -804,7 +823,7 @@ Flickable {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: "⌄"
                                 color: deck.textMuted
-                                font.pixelSize: 11
+                                font.pixelSize: deck.scale(11)
                             }
                         }
                         TextField {
@@ -815,7 +834,7 @@ Flickable {
                             placeholderText: "Exact vJoy HID instance from HidHide"
                             selectByMouse: true
                             color: deck.textPrimary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             placeholderTextColor: deck.textSecondary
                             onAccepted: focus = false
                             background: Rectangle {
@@ -937,7 +956,7 @@ Flickable {
             Text {
                 text: maintenanceDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, Automation, and saved data remain by default." : maintenanceDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles and Automation remain." : maintenanceDialog.action === "calibration" ? "This clears calibration only for the active controller. Profiles, curves, and mappings remain." : "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and Automation are reset as part of the application configuration."
                 color: deck.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }

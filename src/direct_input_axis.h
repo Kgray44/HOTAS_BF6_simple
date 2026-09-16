@@ -11,6 +11,8 @@ namespace hotas {
 // decide which DIJOYSTATE2 field backs a physical axis.
 int physicalAxisIndexForDirectInputOffset(DWORD offset);
 LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis);
+LONG directInputAxisValueAtOffset(const DIJOYSTATE2 &state, DWORD offset);
+float normalizeDirectInputAxisValue(LONG value, const NativeAxisDescriptor &descriptor);
 
 // Capture object metadata before the mapper requests its normalized report
 // range.  This data is durable device capability evidence, never a report-path
@@ -18,6 +20,14 @@ LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis);
 NativeAxisDescriptor describeDirectInputAxisObject(LPDIRECTINPUTDEVICE8W device,
                                                    const DIDEVICEOBJECTINSTANCEW &instance);
 void configureDirectInputAxisRange(LPDIRECTINPUTDEVICE8W device,
-                                   const DIDEVICEOBJECTINSTANCEW &instance);
+                                   const DIDEVICEOBJECTINSTANCEW &instance,
+                                   NativeAxisDescriptor *descriptor = nullptr);
+
+// Buffered object data is deliberately enabled at acquisition time, not in
+// the report path. It is a bounded evidence/fallback channel keyed by the
+// enumerated object offset; failure leaves standard DIJOYSTATE2 sampling
+// intact.
+HRESULT configureDirectInputBufferedEvents(LPDIRECTINPUTDEVICE8W device,
+                                           DWORD capacity = 32);
 
 } // namespace hotas

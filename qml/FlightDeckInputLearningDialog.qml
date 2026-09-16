@@ -216,7 +216,7 @@ FlightDeckDialog {
             color: button.enabled ? (button.subdued ? control.tokens.textSecondary : control.tokens.primarySurface)
                 : control.tokens.disabled
             font.family: control.tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: control.tokens.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -247,7 +247,7 @@ FlightDeckDialog {
             text: selector.displayText
             color: selector.enabled ? control.tokens.textPrimary : control.tokens.disabled
             font.family: control.tokens.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: control.tokens.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -286,7 +286,7 @@ FlightDeckDialog {
                 text: parent.text
                 color: parent.highlighted ? control.tokens.accent : control.tokens.textPrimary
                 font.family: control.tokens.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: control.tokens.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -320,7 +320,7 @@ FlightDeckDialog {
                 ? "Assign each available virtual axis in sequence. This uses the existing input-learning command and does not start mapping output."
                 : "Assign each available virtual button in sequence. This uses the existing input-learning command and does not press or execute a button."
             color: control.tokens.textSecondary
-            font.pixelSize: 11
+            font.pixelSize: control.tokens.scale(11)
             wrapMode: Text.WordWrap
         }
         Text {
@@ -332,7 +332,7 @@ FlightDeckDialog {
                     ? "Move the desired hat direction when the existing learning command is ready."
                     : "Move the desired physical axis when the existing learning command is ready."
             color: control.tokens.textSecondary
-            font.pixelSize: 11
+            font.pixelSize: control.tokens.scale(11)
             wrapMode: Text.WordWrap
         }
         OutputSelector {
@@ -359,7 +359,7 @@ FlightDeckDialog {
                     : String(control.currentTarget.label || "vJoy Button"))
             color: control.tokens.textPrimary
             font.family: control.tokens.displayFont
-            font.pixelSize: 15
+            font.pixelSize: control.tokens.scale(15)
             font.bold: true
             wrapMode: Text.WordWrap
         }
@@ -369,7 +369,7 @@ FlightDeckDialog {
             text: String(control.learning.targetLabel || "Configured output")
             color: control.tokens.textMuted
             font.family: control.tokens.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: control.tokens.scale(10)
             font.bold: true
         }
         Text {
@@ -377,7 +377,7 @@ FlightDeckDialog {
             visible: control.startError.length > 0 || control.learning.active
             text: control.startError.length > 0 ? control.startError : String(control.learning.message || "Preparing input learning…")
             color: control.startError.length > 0 ? control.tokens.attention : control.tokens.textSecondary
-            font.pixelSize: 11
+            font.pixelSize: control.tokens.scale(11)
             wrapMode: Text.WordWrap
         }
         Text {
@@ -385,7 +385,7 @@ FlightDeckDialog {
             visible: control.quickWorkflow && !control.quickAxes && control.confirmResetButtons
             text: "Reset every button route in the active profile? Click CONFIRM RESET to continue, or CANCEL to keep the current routes."
             color: control.tokens.attention
-            font.pixelSize: 10
+            font.pixelSize: control.tokens.scale(10)
             wrapMode: Text.WordWrap
         }
         Text {
@@ -394,7 +394,7 @@ FlightDeckDialog {
             text: "ASSIGNED · " + String(control.learning.sourceLabel || "Input")
             color: control.tokens.healthy
             font.family: control.tokens.telemetryFont
-            font.pixelSize: 11
+            font.pixelSize: control.tokens.scale(11)
             font.bold: true
             wrapMode: Text.WordWrap
         }
@@ -406,7 +406,7 @@ FlightDeckDialog {
                 text: control.complete ? "QUICK MAP COMPLETE" : "COMPLETED"
                 color: control.complete ? control.tokens.healthy : control.tokens.textMuted
                 font.family: control.tokens.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: control.tokens.scale(9)
                 font.bold: true
             }
             Repeater {
@@ -417,7 +417,7 @@ FlightDeckDialog {
                     text: "✓ " + String(control.targets[index].label || control.targets[index].target || "Output")
                         + " · " + String(modelData)
                     color: control.tokens.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: control.tokens.scale(10)
                     wrapMode: Text.WordWrap
                 }
             }

@@ -30,6 +30,12 @@ struct HidHidePhysicalDeviceHealth final {
     bool hiddenStateKnown = false;
     bool expectedHidden = true;
     bool actualHidden = false;
+    // A disconnected saved controller is an availability condition, not a
+    // visibility failure.  Keep that fact separate from the last known
+    // visibility state so ordinary unplug/replug cycles do not manufacture a
+    // HidHide fault.
+    QString availabilityState;
+    bool visibilityDeferred = false;
     HidHideHealthState state = HidHideHealthState::Unknown;
     HidHideRepairability repairability = HidHideRepairability::None;
     QString technicalDetails;
@@ -102,6 +108,15 @@ struct HidHideHealthDimension final {
     QString technicalDetails;
     QStringList checkIds;
     HidHideRepairability repairability = HidHideRepairability::None;
+    // These fields intentionally separate the configuration fact from the
+    // most recent attempt to refresh it.  A timeout can make evidence stale,
+    // but cannot turn a previously verified cloak or allowlist into Unknown.
+    QString evidenceSource;
+    QDateTime lastSuccessfulVerification;
+    QDateTime latestRefreshAttempt;
+    QString latestRefreshResult;
+    bool stale = false;
+    bool contradiction = false;
 
     QVariantMap toVariantMap() const;
 };

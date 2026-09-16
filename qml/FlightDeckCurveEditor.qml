@@ -113,7 +113,7 @@ Flickable {
         text: caption
         color: tokens.textMuted
         font.family: tokens.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: tokens.scale(9)
         font.bold: true
         font.letterSpacing: 1.1
         elide: Text.ElideRight
@@ -131,7 +131,7 @@ Flickable {
             color: !control.enabled ? tokens.disabled : control.destructive ? tokens.fault
                 : control.subdued ? tokens.textPrimary : tokens.primarySurface
             font.family: tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: tokens.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -160,7 +160,7 @@ Flickable {
             text: control.displayText
             color: control.enabled ? tokens.textPrimary : tokens.disabled
             font.family: tokens.bodyFont
-            font.pixelSize: 10
+            font.pixelSize: tokens.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -169,7 +169,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: tokens.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: tokens.scale(16)
         }
         background: Rectangle {
             radius: tokens.radiusControl
@@ -187,7 +187,7 @@ Flickable {
                 text: control.textAt(index)
                 color: tokens.textPrimary
                 font.family: tokens.bodyFont
-                font.pixelSize: 10
+                font.pixelSize: tokens.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -223,7 +223,7 @@ Flickable {
             text: parent.value
             color: tokens.textPrimary
             font.family: tokens.telemetryFont
-            font.pixelSize: 11
+            font.pixelSize: tokens.scale(11)
             font.bold: true
             Layout.fillWidth: true
             elide: Text.ElideRight
@@ -262,7 +262,7 @@ Flickable {
                                 + "  ·  " + (editorState.summary || "Linear response")
                             color: tokens.textPrimary
                             font.family: tokens.displayFont
-                            font.pixelSize: 17
+                            font.pixelSize: tokens.scale(17)
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -280,7 +280,7 @@ Flickable {
                             text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"
                             color: backendObject && backendObject.mappingActive ? tokens.healthy : tokens.textMuted
                             font.family: tokens.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: tokens.scale(8)
                             font.bold: true
                         }
                     }
@@ -353,7 +353,7 @@ Flickable {
                             visible: editorState.family !== "Advanced" && editorState.family !== "Personal" && editorState.family !== "Custom"
                             text: "No external source"
                             color: tokens.textMuted
-                            font.pixelSize: 10
+                            font.pixelSize: tokens.scale(10)
                         }
                     }
                 }
@@ -371,7 +371,7 @@ Flickable {
                                 text: Math.round(Number(editorState.strength || 0) * 100) + "%"
                                 color: strengthSlider.enabled ? tokens.accent : tokens.textMuted
                                 font.family: tokens.telemetryFont
-                                font.pixelSize: 13
+                                font.pixelSize: tokens.scale(13)
                                 font.bold: true
                             }
                         }
@@ -431,7 +431,7 @@ Flickable {
                             text: responseView ? "Input → configured response" : "Local response gain"
                             color: tokens.textPrimary
                             font.family: tokens.displayFont
-                            font.pixelSize: 16
+                            font.pixelSize: tokens.scale(16)
                             font.bold: true
                         }
                     }
@@ -614,9 +614,9 @@ Flickable {
                 Flow {
                     Layout.fillWidth: true
                     spacing: tokens.space12
-                    Text { text: "SOLID · CONFIGURED"; color: tokens.healthy; font.family: tokens.telemetryFont; font.pixelSize: 8; font.bold: true }
-                    Text { text: "DASHED · REFERENCE / OVERLAY"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 8; font.bold: true }
-                    Text { visible: editorState.pointEditing; text: addingPoint ? "CLICK GRAPH TO ADD" : "DRAG A POINT TO EDIT"; color: tokens.attention; font.family: tokens.telemetryFont; font.pixelSize: 8; font.bold: true }
+                    Text { text: "SOLID · CONFIGURED"; color: tokens.healthy; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(8); font.bold: true }
+                    Text { text: "DASHED · REFERENCE / OVERLAY"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(8); font.bold: true }
+                    Text { visible: editorState.pointEditing; text: addingPoint ? "CLICK GRAPH TO ADD" : "DRAG A POINT TO EDIT"; color: tokens.attention; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(8); font.bold: true }
                 }
             }
         }
@@ -637,7 +637,7 @@ Flickable {
                         Layout.fillWidth: true
                         spacing: 2
                         SectionLabel { caption: "OVERLAY & WORKSPACE TOOLS" }
-                        Text { text: "Compare or preview a response without changing the active curve."; color: tokens.textSecondary; font.pixelSize: 10 }
+                        Text { text: "Compare or preview a response without changing the active curve."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10) }
                     }
                     DeckButton { text: detailsExpanded ? "HIDE DETAILS" : "CURVE DETAILS"; subdued: true; onClicked: detailsExpanded = !detailsExpanded }
                 }
@@ -677,7 +677,7 @@ Flickable {
                     text: "Previewing · " + editorState.previewLabel
                     color: tokens.attention
                     font.family: tokens.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: tokens.scale(9)
                     font.bold: true
                 }
             }
@@ -704,7 +704,7 @@ Flickable {
                             Layout.fillWidth: true
                             spacing: 2
                             SectionLabel { caption: "CUSTOM POINTS" }
-                            Text { text: editorState.pointEditing ? "Point editing is active" : "Use custom points only when the family needs manual shaping."; color: tokens.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            Text { text: editorState.pointEditing ? "Point editing is active" : "Use custom points only when the family needs manual shaping."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                         DeckButton {
                             text: editorState.pointEditing ? "POINTS ON" : "ENABLE POINTS"
@@ -745,7 +745,7 @@ Flickable {
                                 onActivated: selectedPoint = currentIndex
                                 delegate: ItemDelegate {
                                     width: ListView.view.width; height: 32
-                                    contentItem: Text { leftPadding: tokens.space12; text: "Point " + (index + 1); color: tokens.textPrimary; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+                                    contentItem: Text { leftPadding: tokens.space12; text: "Point " + (index + 1); color: tokens.textPrimary; verticalAlignment: Text.AlignVCenter; font.pixelSize: tokens.scale(10) }
                                 }
                             }
                         }
@@ -762,7 +762,7 @@ Flickable {
                     RowLayout {
                         visible: !!editorState.pointEditing && selectedPoint >= 0
                         Layout.fillWidth: true
-                        Text { text: pointAt(selectedPoint) ? "Input " + percent(pointAt(selectedPoint).input) + " · Output " + percent(pointAt(selectedPoint).output) : "Select a point in the graph"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true }
+                        Text { text: pointAt(selectedPoint) ? "Input " + percent(pointAt(selectedPoint).input) + " · Output " + percent(pointAt(selectedPoint).output) : "Select a point in the graph"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); Layout.fillWidth: true }
                         DeckButton {
                             text: "RESET POINT"
                             subdued: true
@@ -787,7 +787,7 @@ Flickable {
                             Layout.fillWidth: true
                             spacing: 2
                             SectionLabel { caption: "CURVE ANALYSIS" }
-                            Text { text: analysis.valid ? "Compiled response is monotonic and bounded" : "Curve validation needs attention"; color: analysis.valid ? tokens.healthy : tokens.attention; font.pixelSize: 11; font.bold: true }
+                            Text { text: analysis.valid ? "Compiled response is monotonic and bounded" : "Curve validation needs attention"; color: analysis.valid ? tokens.healthy : tokens.attention; font.pixelSize: tokens.scale(11); font.bold: true }
                         }
                         DeckButton { text: "SAVE PERSONAL"; subdued: true; onClicked: personalDialog.open() }
                     }
@@ -813,8 +813,8 @@ Flickable {
                         delegate: RowLayout {
                             required property var modelData
                             Layout.fillWidth: true
-                            Text { text: modelData.label; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true }
-                            Text { text: root.rawPercent(modelData.value); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: 10; font.bold: true }
+                            Text { text: modelData.label; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(8); Layout.fillWidth: true }
+                            Text { text: root.rawPercent(modelData.value); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(10); font.bold: true }
                         }
                     }
                 }
@@ -834,7 +834,7 @@ Flickable {
         contentItem: ColumnLayout {
             width: 360
             spacing: tokens.space12
-            Text { text: "Save a copy of this response for compatible axes. Existing curves remain independent."; color: tokens.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: "Save a copy of this response for compatible axes. Existing curves remain independent."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             TextField {
                 id: personalName
                 Layout.fillWidth: true

@@ -8,6 +8,7 @@ import QtQuick.Layouts 6.5
 // lost when a page is unloaded.
 Item {
     id: root
+    readonly property real textScale: typeof themeManager !== "undefined" ? themeManager.textScale : 1.15
     objectName: "globalNotificationHost"
     // The host owns only the notification column, not the entire application
     // canvas.  Besides keeping its hit area honest, this lets unrelated page
@@ -263,7 +264,7 @@ Item {
                                     ? "  ×" + Number(entry.repeatCount) : "")
                                 color: root.textColor
                                 font.family: root.flightDeck ? deck.bodyFont : "Segoe UI Variable"
-                                font.pixelSize: root.flightDeck ? 12 : 11
+                                font.pixelSize: Math.round((root.flightDeck ? 12 : 11) * root.textScale)
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -280,7 +281,7 @@ Item {
                                     text: "OPEN"
                                     color: notificationCard.severityColor
                                     font.family: root.flightDeck ? deck.telemetryFont : "Segoe UI Variable"
-                                    font.pixelSize: 8
+                                    font.pixelSize: Math.round(8 * root.textScale)
                                     font.bold: true
                                 }
                             }
@@ -291,7 +292,7 @@ Item {
                             text: String(entry.message || "")
                             color: root.mutedColor
                             font.family: root.flightDeck ? deck.bodyFont : "Segoe UI Variable"
-                            font.pixelSize: root.flightDeck ? 10 : 10
+                            font.pixelSize: Math.round((root.flightDeck ? 10 : 10) * root.textScale)
                             wrapMode: Text.WordWrap
                             maximumLineCount: 3
                             elide: Text.ElideRight
@@ -302,7 +303,7 @@ Item {
                                 + " · " + String(entry.timestamp || "")
                             color: notificationCard.severityColor
                             font.family: root.flightDeck ? deck.telemetryFont : "Segoe UI Variable"
-                            font.pixelSize: root.flightDeck ? 8 : 8
+                            font.pixelSize: Math.round((root.flightDeck ? 8 : 8) * root.textScale)
                             font.bold: true
                         }
                     }
@@ -317,7 +318,7 @@ Item {
                         color: notificationCloseMouse.containsMouse
                             ? Qt.rgba(notificationCard.severityColor.r, notificationCard.severityColor.g,
                                       notificationCard.severityColor.b, 0.16) : "transparent"
-                        Text { anchors.centerIn: parent; text: "×"; color: root.mutedColor; font.family: root.flightDeck ? deck.bodyFont : "Segoe UI Variable"; font.pixelSize: 16 }
+                        Text { anchors.centerIn: parent; text: "×"; color: root.mutedColor; font.family: root.flightDeck ? deck.bodyFont : "Segoe UI Variable"; font.pixelSize: Math.round(16 * root.textScale) }
                         MouseArea {
                             id: notificationCloseMouse
                             anchors.fill: parent
@@ -386,7 +387,7 @@ Item {
                 color: !detailButton.enabled ? deck.textMuted
                     : detailButton.primary ? (deck.light ? "white" : deck.primarySurface) : deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: Math.round(9 * root.textScale)
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -421,7 +422,7 @@ Item {
                             text: String(root.detailsNotification.severity || "information").toUpperCase()
                             color: notificationDetails.detailSeverityColor
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: Math.round(8 * root.textScale)
                             font.bold: true
                         }
                     }
@@ -430,7 +431,7 @@ Item {
                         text: String(root.detailsNotification.timestamp || "")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: Math.round(9 * root.textScale)
                         horizontalAlignment: Text.AlignRight
                         elide: Text.ElideLeft
                     }
@@ -440,7 +441,7 @@ Item {
                     text: String(root.detailsNotification.title || "")
                     color: deck.textPrimary
                     font.family: deck.bodyFont
-                    font.pixelSize: 16
+                    font.pixelSize: Math.round(16 * root.textScale)
                     font.bold: true
                     wrapMode: Text.WordWrap
                 }
@@ -449,7 +450,7 @@ Item {
                     text: String(root.detailsNotification.message || "")
                     color: deck.textSecondary
                     font.family: deck.bodyFont
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * root.textScale)
                     wrapMode: Text.WordWrap
                 }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }

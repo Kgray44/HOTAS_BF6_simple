@@ -513,7 +513,7 @@ Flickable {
             text: parent.label
             color: deck.textMuted
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
         }
         Rectangle {
@@ -538,7 +538,7 @@ Flickable {
             text: parent.label
             color: deck.textPrimary
             font.family: deck.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: deck.scale(8)
             font.bold: true
             elide: Text.ElideRight
         }
@@ -554,7 +554,7 @@ Flickable {
             text: control.text
             color: control.enabled ? (control.destructive ? deck.fault : control.subdued ? deck.textSecondary : deck.primarySurface) : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -575,7 +575,7 @@ Flickable {
         color: deck.textPrimary
         placeholderTextColor: deck.textMuted
         font.family: deck.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: deck.scale(10)
         leftPadding: deck.space12
         rightPadding: deck.space12
         onAccepted: focus = false
@@ -597,7 +597,7 @@ Flickable {
             text: control.displayText
             color: control.enabled ? deck.textPrimary : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -606,7 +606,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deck.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deck.scale(16)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -627,7 +627,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -671,7 +671,7 @@ Flickable {
             text: control.text
             color: root.profileFilter === control.filterValue ? deck.primarySurface : deck.textSecondary
             font.family: deck.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: deck.scale(8)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -702,9 +702,9 @@ Flickable {
             anchors.leftMargin: row.category ? deck.space8 : deck.space20
             anchors.rightMargin: deck.space8
             spacing: deck.space8
-            Text { text: row.category ? "▾" : "•"; color: row.selected ? deck.accent : deck.textMuted; font.pixelSize: row.category ? 12 : 10; Layout.preferredWidth: 12 }
-            Text { text: row.text; color: row.selected ? deck.textPrimary : deck.textSecondary; font.family: row.category ? deck.bodyFont : deck.telemetryFont; font.pixelSize: row.category ? 11 : 9; font.bold: row.category; Layout.fillWidth: true; elide: Text.ElideRight }
-            Text { visible: row.secondary.length > 0; text: row.secondary; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight }
+            Text { text: row.category ? "▾" : "•"; color: row.selected ? deck.accent : deck.textMuted; font.pixelSize: deck.scale(row.category ? 12 : 10); Layout.preferredWidth: 12 }
+            Text { text: row.text; color: row.selected ? deck.textPrimary : deck.textSecondary; font.family: row.category ? deck.bodyFont : deck.telemetryFont; font.pixelSize: deck.scale(row.category ? 11 : 9); font.bold: row.category; Layout.fillWidth: true; elide: Text.ElideRight }
+            Text { visible: row.secondary.length > 0; text: row.secondary; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); elide: Text.ElideRight }
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -782,7 +782,7 @@ Flickable {
                         text: String(category.name || "Unnamed category")
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 17
+                        font.pixelSize: deck.scale(17)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -792,7 +792,7 @@ Flickable {
                         text: Number(category.profileCount !== undefined ? category.profileCount : categoryProfiles.length) + " profile" + (categoryProfiles.length === 1 ? "" : "s")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         elide: Text.ElideRight
@@ -822,7 +822,7 @@ Flickable {
             Text {
                 text: (category.executableRules || []).length > 0 ? (category.executableRules || []).map(root.friendlyGameName).join(" · ") : "No game association — activate this category manually."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
@@ -837,7 +837,7 @@ Flickable {
                 text: "WHEN SELECTED  ·  " + root.categoryBehavior(category)
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 font.bold: true
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
@@ -866,7 +866,7 @@ Flickable {
                             text: String(modelData.name || "Profile") + (modelData.active ? "  ACTIVE" : "")
                             color: deck.textSecondary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                             elide: Text.ElideRight
                         }
@@ -877,7 +877,7 @@ Flickable {
                 visible: categoryProfiles.length === 0
                 text: "No profiles yet. Create one to define this category's controller setup."
                 color: deck.textMuted
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -889,7 +889,7 @@ Flickable {
                     text: Number(category.adaptiveOverrideAxes) + " category Response override" + (Number(category.adaptiveOverrideAxes) === 1 ? "" : "s")
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     elide: Text.ElideRight
                 }
                 DeckButton {
@@ -927,7 +927,7 @@ Flickable {
                         text: String(profile.name || "Unnamed profile")
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 15
+                        font.pixelSize: deck.scale(15)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -937,7 +937,7 @@ Flickable {
                         text: String(profile.categoryName || "General")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -958,7 +958,7 @@ Flickable {
                 text: Number(profile.mappedAxes || 0) + " axes configured  ·  " + Number(profile.mappedButtons || 0) + " buttons assigned  ·  " + Number(profile.mappedPovs || 0) + " POV routes"
                 color: deck.textSecondary
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -973,7 +973,7 @@ Flickable {
                     text: Number(profile.automationCount || 0) + " Automation relationship" + (Number(profile.automationCount || 0) === 1 ? "" : "s")
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     elide: Text.ElideRight
                 }
             }
@@ -988,7 +988,7 @@ Flickable {
                     text: String(profile.deviceRigName || "No Device Rig") + (profile.deviceRigReady ? "  ·  READY" : "  ·  REVIEW RIG")
                     color: profile.deviceRigReady ? deck.textMuted : deck.statusColor("attention")
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     elide: Text.ElideRight
                 }
             }
@@ -998,7 +998,7 @@ Flickable {
                     + (Number(profile.outputDeviceId || 0) > 0 ? " · vJoy " + Number(profile.outputDeviceId) : "")
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 elide: Text.ElideRight
             }
             RowLayout {
@@ -1057,7 +1057,7 @@ Flickable {
                     text: root.view === "library" ? "Browse categories and profiles without changing what is active." : root.view === "category" ? "Game association, category behavior, and contained profiles" : "Viewing this profile does not activate it."
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
@@ -1113,8 +1113,8 @@ Flickable {
                             Layout.fillWidth: true
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Text { text: "CONFIGURATION LIBRARY"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 15; font.bold: true }
-                                Text { text: "Categories contain profiles"; color: deck.textMuted; font.pixelSize: 9 }
+                                Text { text: "CONFIGURATION LIBRARY"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(15); font.bold: true }
+                                Text { text: "Categories contain profiles"; color: deck.textMuted; font.pixelSize: deck.scale(9) }
                             }
                             DeckButton { objectName: "flightDeckNewProfile"; text: "+ PROFILE"; enabled: !root.usingPresentationFixture && root.categories.length > 0; onClicked: root.openNewProfile(root.selectedCategoryId || backend.activeCategoryId) }
                         }
@@ -1170,7 +1170,7 @@ Flickable {
                                 text: "+ NEW CATEGORY"
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             DropArea {
@@ -1195,7 +1195,7 @@ Flickable {
                                 }
                             }
                         }
-                        Text { visible: root.categories.length === 0; text: "Create a category, then add a profile to define a controller setup."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: root.categories.length === 0; text: "Create a category, then add a profile to define a controller setup."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
                             DeckButton { objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
@@ -1221,12 +1221,12 @@ Flickable {
                             Layout.fillWidth: true
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Text { text: root.selectedProfileId.length ? String(root.selectedDetail.name || "Profile") : String((root.selectedCategory || {}).name || "Select a profile"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: 20; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: root.selectedProfileId.length ? String(root.selectedDetail.category || "General") + " · " + (root.selectedDetail.active ? "ACTIVE AT RUNTIME" : "VIEWING ONLY") : "Choose a profile in the library to review its configuration."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: root.selectedProfileId.length ? String(root.selectedDetail.name || "Profile") : String((root.selectedCategory || {}).name || "Select a profile"); color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(20); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: root.selectedProfileId.length ? String(root.selectedDetail.category || "General") + " · " + (root.selectedDetail.active ? "ACTIVE AT RUNTIME" : "VIEWING ONLY") : "Choose a profile in the library to review its configuration."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                             SummaryChip { visible: root.selectedProfileId.length > 0 && !!root.selectedDetail.active; label: "ACTIVE NOW"; tone: "healthy" }
                         }
-                        Text { visible: root.selectedProfileId.length; text: root.selectedDetail.active ? "This is the profile currently used by HOTAS BF6." : "Viewing a profile never activates it."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: root.selectedProfileId.length; text: root.selectedDetail.active ? "This is the profile currently used by HOTAS BF6." : "Viewing a profile never activates it."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         GridLayout {
                             visible: root.selectedProfileId.length
                             Layout.fillWidth: true
@@ -1248,8 +1248,8 @@ Flickable {
                                     color: deck.primarySurface
                                     border.color: deck.border
                                     Column { anchors.fill: parent; anchors.margins: deck.space8; spacing: 2
-                                        Text { text: modelData.label; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                        Text { text: modelData.value; color: deck.textPrimary; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight; width: parent.width }
+                                        Text { text: modelData.label; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                        Text { text: modelData.value; color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; elide: Text.ElideRight; width: parent.width }
                                     }
                                 }
                             }
@@ -1273,7 +1273,7 @@ Flickable {
                             }
                             Item { Layout.fillWidth: true }
                         }
-                        Text { visible: !root.selectedProfileId.length && root.selectedCategoryId.length; text: String((root.selectedCategory || {}).profileCount || 0) + " profiles · " + root.categoryBehavior(root.selectedCategory); color: deck.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { visible: !root.selectedProfileId.length && root.selectedCategoryId.length; text: String((root.selectedCategory || {}).profileCount || 0) + " profiles · " + root.categoryBehavior(root.selectedCategory); color: deck.textSecondary; font.pixelSize: deck.scale(11); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                 }
             }
@@ -1307,7 +1307,7 @@ Flickable {
                                 text: "ACTIVE NOW"
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                             }
                             Item {
@@ -1322,7 +1322,7 @@ Flickable {
                             text: backend.activeProfileDisplayName || backend.activeProfileName || "No active profile"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 23
+                            font.pixelSize: deck.scale(23)
                             font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -1333,7 +1333,7 @@ Flickable {
                                 text: "CATEGORY  ·  " + (backend.activeCategoryName || "General")
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Rectangle {
@@ -1345,7 +1345,7 @@ Flickable {
                                 text: "SOURCE  ·  " + (backend.profileSourceLabel || "Manual base profile")
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Item {
@@ -1393,7 +1393,7 @@ Flickable {
                     visible: root.categories.length === 0
                     text: "No categories yet. Create a category first, then add a profile to define a controller setup."
                     color: deck.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -1416,7 +1416,7 @@ Flickable {
                     visible: root.profiles.length === 0
                     text: "No profiles are available. A profile stores the controller mappings for a category."
                     color: deck.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -1424,7 +1424,7 @@ Flickable {
                     visible: root.profiles.length > 0 && root.profiles.filter(root.profileMatchesFilter).length === 0
                     text: "No profiles match this filter. Filtering changes only this view."
                     color: deck.textMuted
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                 }
                 Flow {
@@ -1472,7 +1472,7 @@ Flickable {
                                     text: String((root.selectedCategory || {}).name || "Category")
                                     color: deck.textPrimary
                                     font.family: deck.displayFont
-                                    font.pixelSize: 20
+                                    font.pixelSize: deck.scale(20)
                                     font.bold: true
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -1481,7 +1481,7 @@ Flickable {
                                     text: Number((root.selectedCategory || {}).profileCount || 0) + " profiles  ·  " + root.categoryBehavior(root.selectedCategory)
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
                                 }
@@ -1500,7 +1500,7 @@ Flickable {
                         Text {
                             text: "Viewing a category never activates it. Use ‘Activate category now’ only when you deliberately want its configured behavior to choose a profile."
                             color: deck.textMuted
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1555,7 +1555,7 @@ Flickable {
                         Text {
                             text: backend.automaticGameDetection ? "When a configured game runs, HOTAS BF6 selects this category." : "Game detection is currently disabled globally; these associations are retained but will not select a category."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1580,7 +1580,7 @@ Flickable {
                                         Text {
                                             text: root.friendlyGameName(modelData)
                                             color: deck.textPrimary
-                                            font.pixelSize: 11
+                                            font.pixelSize: deck.scale(11)
                                             font.bold: true
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
@@ -1589,7 +1589,7 @@ Flickable {
                                             text: modelData + "  ·  " + (application ? "RUNNING" : "CONFIGURED — NOT RUNNING")
                                             color: application ? deck.healthy : deck.textMuted
                                             font.family: deck.telemetryFont
-                                            font.pixelSize: 8
+                                            font.pixelSize: deck.scale(8)
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
                                         }
@@ -1607,7 +1607,7 @@ Flickable {
                             visible: ((root.selectedCategory || {}).executableRules || []).length === 0
                             text: "No games are associated. This category remains available for manual activation."
                             color: deck.textMuted
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1650,7 +1650,7 @@ Flickable {
                         Text {
                             text: "The resolver considers this category's ordered profiles: valid Preferred configurations first, then valid Fallback configurations. Manual Only never switches automatically. A valid active configuration remains stable until it becomes unavailable."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1686,7 +1686,7 @@ Flickable {
                         Text {
                             text: String(root.selectedCategoryActivation.explanation || "Checking automatic configuration.")
                             color: deck.textPrimary
-                            font.pixelSize: 11
+                            font.pixelSize: deck.scale(11)
                             font.bold: true
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -1696,7 +1696,7 @@ Flickable {
                             text: String(root.selectedCategoryActivation.profileName || "Profile") + "  →  " + String(root.selectedCategoryActivation.deviceRigName || "Device Rig") + "  →  " + String(root.selectedCategoryActivation.outputLayoutName || "Virtual Output")
                             color: deck.textSecondary
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1715,7 +1715,7 @@ Flickable {
                                         + String(modelData.mode || "preferred").toUpperCase() + "]"
                                     color: modelData.selected ? deck.accent : modelData.eligible ? deck.textSecondary : deck.textMuted
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                     wrapMode: Text.WordWrap
                                 }
                                 Repeater {
@@ -1725,7 +1725,7 @@ Flickable {
                                         Layout.fillWidth: true
                                         text: "  blocked: " + String(modelData)
                                         color: deck.statusColor("attention")
-                                        font.pixelSize: 8
+                                        font.pixelSize: deck.scale(8)
                                         wrapMode: Text.WordWrap
                                     }
                                 }
@@ -1736,7 +1736,7 @@ Flickable {
                                         Layout.fillWidth: true
                                         text: "  notice: " + String(modelData)
                                         color: deck.textMuted
-                                        font.pixelSize: 8
+                                        font.pixelSize: deck.scale(8)
                                         wrapMode: Text.WordWrap
                                     }
                                 }
@@ -1748,7 +1748,7 @@ Flickable {
                                 required property var modelData
                                 text: "• " + String(modelData)
                                 color: deck.statusColor("attention")
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -1763,7 +1763,7 @@ Flickable {
                     visible: root.profilesForCategory(root.selectedCategoryId).length === 0
                     text: "No profiles are in this category yet."
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                 }
                 Flow {
@@ -1831,7 +1831,7 @@ Flickable {
                                     text: String(root.selectedDetail.name || "Profile")
                                     color: deck.textPrimary
                                     font.family: deck.displayFont
-                                    font.pixelSize: 21
+                                    font.pixelSize: deck.scale(21)
                                     font.bold: true
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -1840,7 +1840,7 @@ Flickable {
                                     text: String(root.selectedDetail.category || "General") + "  /  " + String(root.selectedDetail.name || "Profile")
                                     color: deck.textMuted
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                 }
@@ -1853,7 +1853,7 @@ Flickable {
                         Text {
                             text: root.selectedDetail.active ? "This is the base profile currently selected by HOTAS BF6." : "This profile is selected for editing only. It is not active until you explicitly activate it."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1898,7 +1898,7 @@ Flickable {
                             text: "Device Rig"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                         }
                         DeckCombo {
@@ -1926,7 +1926,7 @@ Flickable {
                         Text {
                             text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1935,7 +1935,7 @@ Flickable {
                                 + (Number(root.selectedDetail.vjoyDevice || 0) > 0 ? " · vJoy " + Number(root.selectedDetail.vjoyDevice) : "")
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -1943,7 +1943,7 @@ Flickable {
                             text: "Automatic policy"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                         }
                         DeckCombo {
@@ -1970,7 +1970,7 @@ Flickable {
                                 Layout.fillWidth: true
                                 text: "Automatic order follows the Configuration Order on this profile's category page."
                                 color: deck.textMuted
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 wrapMode: Text.WordWrap
                             }
                             DeckButton {
@@ -2009,20 +2009,20 @@ Flickable {
                                 text: "AXES"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: Number(root.selectedDetail.mappedAxes || 0) + " configured"
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
-                                font.pixelSize: 18
+                                font.pixelSize: deck.scale(18)
                                 font.bold: true
                             }
                             Text {
                                 text: "Open the native Axes workspace for this selected Profile. Viewing never activates it."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2048,14 +2048,14 @@ Flickable {
                                 text: "BUTTONS & HATS"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: Number(root.selectedDetail.mappedButtons || 0) + " buttons assigned  ·  " + Number(root.selectedDetail.mappedPovs || 0) + " POV routes"
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
-                                font.pixelSize: 16
+                                font.pixelSize: deck.scale(16)
                                 font.bold: true
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
@@ -2063,7 +2063,7 @@ Flickable {
                             Text {
                                 text: "Open the native Buttons workspace for this selected Profile. No activation is performed here."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2089,14 +2089,14 @@ Flickable {
                                 text: "ADAPTIVE RESPONSE"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: Number(root.selectedDetail.adaptiveProfileOverrideAxes || 0) > 0 ? Number(root.selectedDetail.adaptiveProfileOverrideAxes) + " custom profile override" + (Number(root.selectedDetail.adaptiveProfileOverrideAxes) === 1 ? "" : "s") : "No profile-specific overrides"
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
-                                font.pixelSize: 16
+                                font.pixelSize: deck.scale(16)
                                 font.bold: true
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
@@ -2104,7 +2104,7 @@ Flickable {
                             Text {
                                 text: String(root.selectedDetail.adaptiveSource || "Inherited response defaults")
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2129,14 +2129,14 @@ Flickable {
                                 text: "AUTOMATION"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: Number(root.selectedDetail.automationCount || 0) + " related rule" + (Number(root.selectedDetail.automationCount || 0) === 1 ? "" : "s")
                                 color: deck.textPrimary
                                 font.family: deck.displayFont
-                                font.pixelSize: 16
+                                font.pixelSize: deck.scale(16)
                                 font.bold: true
                             }
                             Text {
@@ -2144,7 +2144,7 @@ Flickable {
                                     return rule.name || "Rule";
                                 }).join(" · ") : "No Automation rule currently references this profile."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2184,7 +2184,7 @@ Flickable {
                         Text {
                             text: "Axes, buttons, and hats are stored with this profile. Adaptive Response can inherit Global → Category defaults until this profile defines an override."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -2192,7 +2192,7 @@ Flickable {
                             text: "Adaptive Response: " + String(root.selectedDetail.adaptiveSource || "Built-in response defaults") + "  ·  Curve transfer: " + (root.selectedDetail.curveTransitionSmoothingOverride ? "Custom for this profile" : "Inherited from global settings")
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
@@ -2220,19 +2220,19 @@ Flickable {
                                 text: "CATEGORY & GAMES"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
                                 text: String(root.selectedDetail.category || "General")
                                 color: deck.textPrimary
-                                font.pixelSize: 14
+                                font.pixelSize: deck.scale(14)
                                 font.bold: true
                             }
                             Text {
                                 text: (root.selectedDetail.categoryGames || []).length > 0 ? (root.selectedDetail.categoryGames || []).map(root.friendlyGameName).join(" · ") : "Manual category — no games linked"
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2240,7 +2240,7 @@ Flickable {
                                 text: String(root.selectedDetail.categoryActivationBehavior || "Category behavior unavailable")
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -2259,7 +2259,7 @@ Flickable {
                                 text: "PROFILE REFERENCES"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Repeater {
@@ -2268,7 +2268,7 @@ Flickable {
                                     required property var modelData
                                     text: "Used by  ·  " + String(modelData.profile || "Profile control") + "  ·  " + String(modelData.via || "Reference")
                                     color: deck.textSecondary
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
                                 }
@@ -2279,7 +2279,7 @@ Flickable {
                                     required property var modelData
                                     text: "References  ·  " + String(modelData.profile || "Profile") + "  ·  " + String(modelData.via || "Reference")
                                     color: deck.textSecondary
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
                                 }
@@ -2288,7 +2288,7 @@ Flickable {
                                 visible: ((root.selectedDetail.relationships || {}).referencedBy || []).length === 0 && ((root.selectedDetail.relationships || {}).references || []).length === 0
                                 text: "No profile-control references were found."
                                 color: deck.textMuted
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                             }
                         }
                     }
@@ -2401,7 +2401,7 @@ Flickable {
                 color: parent.subdued ? rigSwitchActivationDialog.tokens.textSecondary
                     : rigSwitchActivationDialog.tokens.primarySurface
                 font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -2426,7 +2426,7 @@ Flickable {
                 text: "PROFILE  ·  " + String(rigSwitchActivationDialog.activationRequest.requestedProfileName || "Profile")
                 color: rigSwitchActivationDialog.tokens.textPrimary
                 font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 font.bold: true
                 wrapMode: Text.WordWrap
             }
@@ -2446,13 +2446,13 @@ Flickable {
                         text: "ACTIVE HARDWARE RIG"
                         color: rigSwitchActivationDialog.tokens.textMuted
                         font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: String(rigSwitchActivationDialog.activationRequest.currentDeviceRigName || "No Device Rig")
                         color: rigSwitchActivationDialog.tokens.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: deck.scale(11)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
@@ -2460,13 +2460,13 @@ Flickable {
                         text: "PROFILE'S CONFIGURED RIG"
                         color: rigSwitchActivationDialog.tokens.accent
                         font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: String(rigSwitchActivationDialog.activationRequest.configuredDeviceRigName || "Device Rig assignment required")
                         color: rigSwitchActivationDialog.tokens.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: deck.scale(11)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
@@ -2476,7 +2476,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: "To activate this Profile, HOTAS BF6 will switch the active hardware Rig to the Profile's configured Rig. This does not change the Profile's Rig assignment or its mappings."
                 color: rigSwitchActivationDialog.tokens.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -2520,7 +2520,7 @@ Flickable {
                 text: "CATEGORY NAME"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckField {
@@ -2536,7 +2536,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: newCategoryDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 wrapMode: Text.WordWrap
             }
             Text {
@@ -2544,7 +2544,7 @@ Flickable {
                     ? "Name the new category. The dragged profile will move here when you create it."
                     : "Categories group profiles and can optionally be selected when a configured game is running."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -2615,7 +2615,7 @@ Flickable {
                 text: "PROFILE NAME"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckField {
@@ -2630,14 +2630,14 @@ Flickable {
                 Layout.fillWidth: true
                 text: newProfileDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 wrapMode: Text.WordWrap
             }
             Text {
                 text: "CATEGORY"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckCombo {
@@ -2654,7 +2654,7 @@ Flickable {
                 text: "CREATION MODE"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             RowLayout {
@@ -2680,7 +2680,7 @@ Flickable {
                 text: "COPY FROM"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckCombo {
@@ -2697,7 +2697,7 @@ Flickable {
                 text: "This Profile will be prepared for the active Device Rig. It will open for editing and will not activate until you choose ACTIVATE."
                 color: deck.accent
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -2706,7 +2706,7 @@ Flickable {
                     ? "Copies the selected Profile's configuration. Creating it does not activate it."
                     : "Starts with every physical axis, button, and POV disabled. Creating it does not activate it."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -2786,7 +2786,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: renameCategoryDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -2836,7 +2836,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: renameProfileDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -2881,7 +2881,7 @@ Flickable {
                 text: "NEW PROFILE NAME"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckField {
@@ -2894,13 +2894,13 @@ Flickable {
                 Layout.fillWidth: true
                 text: duplicateProfileDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
             }
             Text {
                 text: "DESTINATION CATEGORY"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckCombo {
@@ -2919,7 +2919,7 @@ Flickable {
             Text {
                 text: "This copies the profile's stored configuration. Category game rules and global Automation ownership are not duplicated."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -2964,7 +2964,7 @@ Flickable {
                 text: "DESTINATION CATEGORY"
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 font.bold: true
             }
             DeckCombo {
@@ -3013,7 +3013,7 @@ Flickable {
             Text {
                 text: "Delete ‘" + deleteProfileDialog.name + "’? This removes this profile and its profile-specific configuration. Active and protected baseline profiles cannot be deleted."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -3056,7 +3056,7 @@ Flickable {
             Text {
                 text: "Delete category ‘" + deleteCategoryDialog.name + "’?"
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -3064,7 +3064,7 @@ Flickable {
                 text: "This will also delete " + deleteCategoryDialog.profileNames.length + " profile"
                     + (deleteCategoryDialog.profileNames.length === 1 ? ":" : "s:")
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 visible: deleteCategoryDialog.profileNames.length > 0
             }
@@ -3075,7 +3075,7 @@ Flickable {
                     text: "• " + String(modelData || "Profile")
                     color: deck.textPrimary
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -3083,7 +3083,7 @@ Flickable {
             Text {
                 text: "This cannot be undone. Active categories cannot be deleted."
                 color: deck.fault
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -3136,7 +3136,7 @@ Flickable {
             Text {
                 text: "Detect a running game, choose an executable, or enter an executable name. Adding an association never activates this category immediately."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -3200,8 +3200,8 @@ Flickable {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 1
-                                    Text { text: String(modelData.name || root.friendlyGameName(modelData.executable)); color: deck.textPrimary; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: String(modelData.executable || ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: String(modelData.name || root.friendlyGameName(modelData.executable)); color: deck.textPrimary; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text { text: String(modelData.executable || ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; elide: Text.ElideRight }
                                 }
                                 DeckButton {
                                     text: "ADD"
@@ -3217,7 +3217,7 @@ Flickable {
                         visible: root.runningApplications.length === 0
                         text: "No suitable running applications were found. You can still choose an executable or enter a name."
                         color: deck.textMuted
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -3226,7 +3226,7 @@ Flickable {
                         visible: root.runningApplications.length > 0 && addGameDialog.filteredRunningApplications.length === 0
                         text: "No running game or executable matches \"" + addGameDialog.runningSearchText + "\". Clear the search to see all running applications."
                         color: deck.textMuted
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                     }
@@ -3236,7 +3236,7 @@ Flickable {
                 visible: addGameDialog.mode === "browse"
                 Layout.fillWidth: true
                 spacing: deck.space8
-                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                 RowLayout {
                     Layout.fillWidth: true
                     DeckField { Layout.fillWidth: true; readOnly: true; text: addGameDialog.browsePath; placeholderText: "No executable selected" }
@@ -3246,7 +3246,7 @@ Flickable {
                     visible: addGameDialog.browsePath.length > 0
                     text: "Game: " + root.friendlyGameName(addGameDialog.browsePath) + "  ·  Executable: " + addGameDialog.browsePath.split(/[\\/]/).pop()
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -3255,14 +3255,14 @@ Flickable {
                 visible: addGameDialog.mode === "manual"
                 Layout.fillWidth: true
                 spacing: deck.space8
-                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "EXECUTABLE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                 DeckField { id: gameExecutable; Layout.fillWidth: true; placeholderText: "bf6.exe" }
             }
             Text {
                 visible: addGameDialog.errorMessage.length > 0
                 text: addGameDialog.errorMessage
                 color: deck.fault
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }

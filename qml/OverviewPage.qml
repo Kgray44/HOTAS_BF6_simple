@@ -65,10 +65,10 @@ Flickable {
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 Rectangle { width: theme.topGun ? 12 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: parent.parent.parent.accent }
-                Text { text: parent.parent.parent.eyebrow; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+                Text { text: parent.parent.parent.eyebrow; color: root.mutedColor; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                 Item { Layout.fillWidth: true }
             }
-            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: theme.topGun ? 18 : 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: theme.scale(theme.topGun ? 18 : 16); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         }
     }
 
@@ -77,7 +77,7 @@ Flickable {
         property color tone: root.readyColor
         implicitWidth: badgeLabel.implicitWidth + 18; implicitHeight: 24
         radius: theme.topGun ? 1 : 12; color: Qt.rgba(tone.r, tone.g, tone.b, theme.topGun ? 0.16 : 0.12); border.color: tone
-        Text { id: badgeLabel; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+        Text { id: badgeLabel; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
 
     component DashboardButton: Rectangle {
@@ -88,7 +88,7 @@ Flickable {
         radius: theme.topGun ? 1 : theme.controlRadius
         color: !enabledAction ? theme.controlDisabled : buttonMouse.containsMouse ? theme.buttonHover : theme.buttonSurface
         border.color: !enabledAction ? root.borderColor : theme.topGun ? theme.orange : root.primaryColor; opacity: enabledAction ? 1.0 : 0.5
-        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+        Text { id: buttonLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: theme.scale(10); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         Rectangle { visible: theme.topGun && parent.enabledAction; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 3; width: 25; height: 2; color: theme.orangeBright }
         MouseArea { id: buttonMouse; anchors.fill: parent; enabled: parent.enabledAction; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
@@ -112,8 +112,8 @@ Flickable {
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 1
-                Text { Layout.fillWidth: true; text: root.checkTitle(check); color: root.mutedColor; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                Text { Layout.fillWidth: true; text: root.checkDetail(check); color: root.textColor; font.pixelSize: 10; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: root.checkTitle(check); color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: root.checkDetail(check); color: root.textColor; font.pixelSize: theme.scale(10); elide: Text.ElideRight }
             }
             StatusBadge {
                 label: root.checkState(check)
@@ -128,8 +128,8 @@ Flickable {
         Layout.fillWidth: true; implicitHeight: 58
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         Column { anchors.centerIn: parent; spacing: 2
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.value; color: root.textColor; font.pixelSize: 18; font.bold: true; font.family: theme.telemetryFont }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.value; color: root.textColor; font.pixelSize: theme.scale(18); font.bold: true; font.family: theme.telemetryFont }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.label; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         }
     }
 
@@ -141,12 +141,12 @@ Flickable {
         Layout.fillWidth: true; implicitHeight: 92
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         Column { anchors.fill: parent; anchors.margins: 11; spacing: 6
-            Text { text: parent.parent.label; color: root.mutedColor; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
-            Text { text: parent.parent.value; color: root.textColor; font.pixelSize: 18; font.bold: true; font.family: theme.telemetryFont }
+            Text { text: parent.parent.label; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+            Text { text: parent.parent.value; color: root.textColor; font.pixelSize: theme.scale(18); font.bold: true; font.family: theme.telemetryFont }
             Rectangle { width: parent.width; height: theme.topGun ? 5 : 6; radius: theme.topGun ? 0 : 3; color: root.panelColor
                 Rectangle { width: Math.max(2, parent.width * Math.min(1.0, Math.max(0.0, parent.parent.parent.fill))); height: parent.height; radius: parent.radius; color: parent.parent.parent.tone }
             }
-            Text { visible: theme.topGun; text: "LIVE SNAPSHOT"; color: root.mutedColor; font.pixelSize: 7; font.bold: true }
+            Text { visible: theme.topGun; text: "LIVE SNAPSHOT"; color: root.mutedColor; font.pixelSize: theme.scale(7); font.bold: true }
         }
     }
 
@@ -156,8 +156,8 @@ Flickable {
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout { spacing: 3
-                Text { text: theme.topGun ? "MISSION OVERVIEW" : "Overview"; color: root.textColor; font.pixelSize: root.legacy ? 27 : theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                Text { text: theme.topGun ? "FLIGHT CONTROL SIGNAL PATH · LIVE SYSTEM STATUS" : "Controller signal path, output readiness, and human-readable mapper telemetry."; color: root.mutedColor; font.pixelSize: 11; font.family: theme.topGun ? theme.telemetryFont : "" }
+                Text { text: theme.topGun ? "MISSION OVERVIEW" : "Overview"; color: root.textColor; font.pixelSize: theme.scale(root.legacy ? 27 : theme.topGun ? 24 : 26); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                Text { text: theme.topGun ? "FLIGHT CONTROL SIGNAL PATH · LIVE SYSTEM STATUS" : "Controller signal path, output readiness, and human-readable mapper telemetry."; color: root.mutedColor; font.pixelSize: theme.scale(11); font.family: theme.topGun ? theme.telemetryFont : "" }
             }
             Item { Layout.fillWidth: true }
             StatusBadge { label: root.statusLabel(); tone: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor }
@@ -172,36 +172,36 @@ Flickable {
             }
             ColumnLayout { anchors.fill: parent; anchors.margins: root.narrow ? 16 : 20; spacing: 10
                 RowLayout { Layout.fillWidth: true
-                    Text { text: theme.topGun ? "CONTROL CHAIN" : "Control Signal"; color: root.mutedColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+                    Text { text: theme.topGun ? "CONTROL CHAIN" : "Control Signal"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                     Item { Layout.fillWidth: true }
-                    Text { text: backend.mappingStatus; color: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+                    Text { text: backend.mappingStatus; color: backend.mappingActive ? root.readyColor : backend.mappingRequested ? root.warningColor : root.mutedColor; font.pixelSize: theme.scale(10); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
                 }
                 GridLayout { Layout.fillWidth: true; Layout.fillHeight: true; columns: root.narrow ? 1 : 5; columnSpacing: root.narrow ? 5 : 10; rowSpacing: 5
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
                         Column { anchors.centerIn: parent; width: parent.width - 22; spacing: 4
-                            Text { text: theme.topGun ? "DEVICE RIG INPUT" : "Device Rig Input"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                            Text { width: parent.width; text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : backend.physicalConnected ? backend.deviceName : "No Device Rig active"; color: root.textColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
-                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : backend.activeDeviceRigId !== "" ? "RIG NEEDS INPUT" : "CREATE RIG TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
+                            Text { text: theme.topGun ? "DEVICE RIG INPUT" : "Device Rig Input"; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true }
+                            Text { width: parent.width; text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : backend.physicalConnected ? backend.deviceName : "No Device Rig active"; color: root.textColor; font.pixelSize: theme.scale(13); font.bold: true; elide: Text.ElideRight }
+                            Text { text: backend.physicalConnected ? "DIRECTINPUT READY" : backend.activeDeviceRigId !== "" ? "RIG NEEDS INPUT" : "CREATE RIG TO BEGIN"; color: backend.physicalConnected ? root.readyColor : root.warningColor; font.pixelSize: theme.scale(8); font.bold: true }
                         }
                     }
                     Item { visible: !root.narrow; Layout.preferredWidth: 56; Layout.fillHeight: true
                         Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 2; color: backend.mappingActive ? root.readyColor : root.borderColor }
-                        Text { anchors.centerIn: parent; text: "››"; color: backend.mappingActive ? root.readyColor : root.mutedColor; font.pixelSize: 18; font.bold: true }
+                        Text { anchors.centerIn: parent; text: "››"; color: backend.mappingActive ? root.readyColor : root.mutedColor; font.pixelSize: theme.scale(18); font.bold: true }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: theme.topGun ? "#18251f" : theme.panelRaised; border.color: backend.mappingActive ? root.readyColor : root.primaryColor
                         Column { anchors.centerIn: parent; spacing: 3
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "HOTAS BF6"; color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.mappingActive ? "PROCESSING" : "STANDBY"; color: backend.mappingActive ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "HOTAS BF6"; color: root.textColor; font.pixelSize: theme.scale(15); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.mappingActive ? "PROCESSING" : "STANDBY"; color: backend.mappingActive ? root.readyColor : root.warningColor; font.pixelSize: theme.scale(8); font.bold: true }
                         }
                     }
                     Item { visible: !root.narrow; Layout.preferredWidth: 56; Layout.fillHeight: true
                         Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 2; color: backend.mappingActive ? root.readyColor : root.borderColor }
-                        Text { anchors.centerIn: parent; text: "››"; color: backend.mappingActive ? root.readyColor : root.mutedColor; font.pixelSize: 18; font.bold: true }
+                        Text { anchors.centerIn: parent; text: "››"; color: backend.mappingActive ? root.readyColor : root.mutedColor; font.pixelSize: theme.scale(18); font.bold: true }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: root.narrow ? 54 : 78; radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: backend.vjoyReady ? root.readyColor : root.warningColor
                         Column { anchors.centerIn: parent; spacing: 4
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "VJOY " + backend.vjoyDeviceId + " · " + backend.activeOutputLayoutName.toUpperCase(); color: root.textColor; font.pixelSize: 15; font.bold: true; font.family: theme.telemetryFont; elide: Text.ElideRight; width: parent.width - 16; horizontalAlignment: Text.AlignHCenter }
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "OUTPUT NEEDS ATTENTION"; color: backend.vjoyReady ? root.readyColor : root.warningColor; font.pixelSize: 8; font.bold: true }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "VJOY " + backend.vjoyDeviceId + " · " + backend.activeOutputLayoutName.toUpperCase(); color: root.textColor; font.pixelSize: theme.scale(15); font.bold: true; font.family: theme.telemetryFont; elide: Text.ElideRight; width: parent.width - 16; horizontalAlignment: Text.AlignHCenter }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "OUTPUT NEEDS ATTENTION"; color: backend.vjoyReady ? root.readyColor : root.warningColor; font.pixelSize: theme.scale(8); font.bold: true }
                         }
                     }
                 }
@@ -216,7 +216,7 @@ Flickable {
                     StatusBadge { label: root.setupTruth.overallStatus || "CHECKING"; tone: root.checkTone({ status: root.setupTruth.overallStatus || "CHECKING" }) }
                     Item { Layout.fillWidth: true }
                 }
-                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Create or manage Device Rigs in Devices, then run Check Setup."; color: root.mutedColor; font.pixelSize: 10; elide: Text.ElideRight; font.family: theme.telemetryFont }
+                Text { Layout.fillWidth: true; text: backend.physicalConnected ? "DIRECTINPUT  ·  " + backend.deviceId : "Create or manage Device Rigs in Devices, then run Check Setup."; color: root.mutedColor; font.pixelSize: theme.scale(10); elide: Text.ElideRight; font.family: theme.telemetryFont }
                 GridLayout { Layout.fillWidth: true; columns: 3; columnSpacing: 7
                     Capability { value: backend.axisCount; label: "AXES" }
                     Capability { value: backend.buttonCount; label: "BUTTONS" }
@@ -227,14 +227,14 @@ Flickable {
                 RowLayout { Layout.fillWidth: true
                     StatusBadge { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "ACTION REQUIRED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
                     Item { Layout.fillWidth: true }
-                    Text { text: backend.vjoyStatusSeverity.toUpperCase(); color: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor; font.pixelSize: 9; font.bold: true }
+                    Text { text: backend.vjoyStatusSeverity.toUpperCase(); color: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor; font.pixelSize: theme.scale(9); font.bold: true }
                 }
-                Text { Layout.fillWidth: true; text: backend.virtualAxisStatus; color: root.textColor; font.pixelSize: 10; font.family: theme.telemetryFont; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: backend.virtualAxisStatus; color: root.textColor; font.pixelSize: theme.scale(10); font.family: theme.telemetryFont; elide: Text.ElideRight }
                 RowLayout { Layout.fillWidth: true
                     Capability { value: backend.vjoyButtonCount; label: "BUTTON CAPACITY" }
                     Capability { value: backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount; label: "POV CAPACITY" }
                 }
-                Text { Layout.fillWidth: true; text: backend.vjoyStatusSeverity === "ready" ? "Output capability is available to the mapper." : backend.vjoyStatus; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: backend.vjoyStatusSeverity === "ready" ? "Output capability is available to the mapper." : backend.vjoyStatus; color: root.mutedColor; font.pixelSize: theme.scale(9); wrapMode: Text.WordWrap }
             }
         }
 
@@ -248,13 +248,13 @@ Flickable {
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: backend.physicalConnected || backend.activeDeviceRigId !== "" ? "One guided Setup Assistant can check your physical controller, virtual controller, visibility, and controls." : "Connect a physical controller or create a Device Rig to start setup."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: backend.physicalConnected || backend.activeDeviceRigId !== "" ? "One guided Setup Assistant can check your physical controller, virtual controller, visibility, and controls." : "Connect a physical controller or create a Device Rig to start setup."; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
                 DashboardButton { objectName: "systemReadinessVerifyButton"; label: "CHECK SETUP"; enabledAction: backend.physicalConnected || backend.activeDeviceRigId !== ""; onTriggered: root.setupRequested() }
             }
         }
 
         Panel { Layout.fillWidth: true; eyebrow: "HIDHIDE HEALTH"; title: root.hidhideHealth.overallState || "CHECKING"; accent: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor
-            Text { Layout.fillWidth: true; text: root.hidhideHealth.currentStage || "HidHide Health is a separate control-plane observation. Mapping does not depend on it."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.hidhideHealth.currentStage || "HidHide Health is a separate control-plane observation. Mapping does not depend on it."; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 DashboardButton { label: root.hidhideHealth.inProgress ? "CHECKING" : "RUN FULL CHECK"; enabledAction: !root.hidhideHealth.inProgress; onTriggered: backend.runHidHideFullCheck() }
                 Item { Layout.fillWidth: true }
@@ -263,7 +263,7 @@ Flickable {
         }
 
         Panel { Layout.fillWidth: true; eyebrow: theme.topGun ? "MAPPER INSTRUMENTATION" : "Performance dashboard"; title: "Stable live telemetry"; accent: root.primaryColor
-            Text { Layout.fillWidth: true; text: "Smoothed display values. Raw high-frequency instrumentation remains on Diagnostics."; color: root.mutedColor; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "Smoothed display values. Raw high-frequency instrumentation remains on Diagnostics."; color: root.mutedColor; font.pixelSize: theme.scale(10) }
             GridLayout { Layout.fillWidth: true; columns: root.narrow ? 2 : 4; columnSpacing: 10; rowSpacing: 10
                 Meter { label: "INPUT RATE"; value: Math.round(backend.overviewInputRate) + " Hz"; fill: Math.min(1, backend.overviewInputRate / 250); tone: root.primaryColor }
                 Meter { label: "MAPPER LATENCY"; value: Math.round(backend.overviewMapperLatencyUs) + " µs"; fill: Math.min(1, backend.overviewMapperLatencyUs / 100); tone: root.readyColor }
@@ -275,20 +275,20 @@ Flickable {
         Panel { Layout.fillWidth: true; eyebrow: "ACTIVE CONFIGURATION"; title: backend.effectiveProfileDisplayName; accent: root.primaryColor
             RowLayout { Layout.fillWidth: true; spacing: 22
                 Column { spacing: 3
-                    Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.effectiveProfileDisplayName; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    Text { text: "PROFILE"; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: backend.effectiveProfileDisplayName; color: root.textColor; font.pixelSize: theme.scale(14); font.bold: true }
                 }
                 Column { spacing: 3
-                    Text { text: "MAPPED AXES"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.axes.filter(function(axis) { return axis.target !== "Disabled" }).length; color: root.textColor; font.pixelSize: 14; font.bold: true; font.family: theme.telemetryFont }
+                    Text { text: "MAPPED AXES"; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: backend.axes.filter(function(axis) { return axis.target !== "Disabled" }).length; color: root.textColor; font.pixelSize: theme.scale(14); font.bold: true; font.family: theme.telemetryFont }
                 }
                 Column { spacing: 3
-                    Text { text: "MAPPED BUTTONS"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.buttons.filter(function(button) { return button.target > 0 }).length; color: root.textColor; font.pixelSize: 14; font.bold: true; font.family: theme.telemetryFont }
+                    Text { text: "MAPPED BUTTONS"; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: backend.buttons.filter(function(button) { return button.target > 0 }).length; color: root.textColor; font.pixelSize: theme.scale(14); font.bold: true; font.family: theme.telemetryFont }
                 }
                 Column { spacing: 3
-                    Text { text: "AUTOMATION"; color: root.mutedColor; font.pixelSize: 8; font.bold: true }
-                    Text { text: backend.automationActiveRuleCount + " ACTIVE"; color: backend.automationActiveRuleCount > 0 ? root.readyColor : root.textColor; font.pixelSize: 14; font.bold: true; font.family: theme.telemetryFont }
+                    Text { text: "AUTOMATION"; color: root.mutedColor; font.pixelSize: theme.scale(8); font.bold: true }
+                    Text { text: backend.automationActiveRuleCount + " ACTIVE"; color: backend.automationActiveRuleCount > 0 ? root.readyColor : root.textColor; font.pixelSize: theme.scale(14); font.bold: true; font.family: theme.telemetryFont }
                 }
                 Item { Layout.fillWidth: true }
             }

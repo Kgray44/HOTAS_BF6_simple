@@ -277,7 +277,12 @@ QVariantMap HidHideHealthDimension::toVariantMap() const
             {QStringLiteral("severity"), hidHideHealthSeverityLabel(severity)},
             {QStringLiteral("shortSummary"), shortSummary}, {QStringLiteral("explanation"), explanation},
             {QStringLiteral("technicalDetails"), technicalDetails}, {QStringLiteral("checkIds"), checkIds},
-            {QStringLiteral("repairability"), hidHideRepairabilityLabel(repairability)}};
+            {QStringLiteral("repairability"), hidHideRepairabilityLabel(repairability)},
+            {QStringLiteral("evidenceSource"), evidenceSource},
+            {QStringLiteral("lastSuccessfulVerification"), lastSuccessfulVerification.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("latestRefreshAttempt"), latestRefreshAttempt.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("latestRefreshResult"), latestRefreshResult},
+            {QStringLiteral("stale"), stale}, {QStringLiteral("contradiction"), contradiction}};
 }
 
 QVariantMap HidHidePhysicalDeviceHealth::toVariantMap() const
@@ -288,6 +293,8 @@ QVariantMap HidHidePhysicalDeviceHealth::toVariantMap() const
             {QStringLiteral("identityResolved"), identityResolved}, {QStringLiteral("hiddenStateKnown"), hiddenStateKnown},
             {QStringLiteral("historicalOwnedHidInstanceCount"), historicalOwnedHidInstanceCount},
             {QStringLiteral("expectedHidden"), expectedHidden}, {QStringLiteral("actualHidden"), actualHidden},
+            {QStringLiteral("availabilityState"), availabilityState},
+            {QStringLiteral("visibilityDeferred"), visibilityDeferred},
             {QStringLiteral("state"), hidHideHealthStateLabel(state)},
             {QStringLiteral("repairability"), hidHideRepairabilityLabel(repairability)},
             {QStringLiteral("technicalDetails"), technicalDetails}};
@@ -713,9 +720,15 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                     [&blacklistEntries](const QString &instance) { return containsNormalized(blacklistEntries, instance); });
         }
         if (!device.connected) {
-            device.state = device.required ? HidHideHealthState::Unknown : HidHideHealthState::Ready;
-            device.technicalDetails = device.required ? QStringLiteral("Required Rig member is offline; visibility is not inferred.")
-                                                     : QStringLiteral("Optional Rig member is offline; visibility is not inferred.");
+            // A saved controller can be unavailable for an ordinary unplug or
+            // travel setup. Do not turn that into Unknown/Doctor Recommended:
+            // the configuration is still valid and exact visibility will be
+            // checked only after Windows supplies a current instance again.
+            device.state = HidHideHealthState::Ready;
+            device.availabilityState = QStringLiteral("DEVICE NOT CONNECTED");
+            device.visibilityDeferred = true;
+            device.technicalDetails = device.required ? QStringLiteral("Required Rig member is not connected; isolation will be verified when it reconnects.")
+                                                     : QStringLiteral("Optional Rig member is not connected; isolation will be verified when it reconnects.");
         } else if (!device.hiddenStateKnown) {
             device.state = HidHideHealthState::Unknown;
             device.repairability = HidHideRepairability::DoctorRecommended;
@@ -751,6 +764,8 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
         return !device.connected || device.hiddenStateKnown;
     });
     const bool anyVisible = !visibleRecords.isEmpty();
+    const int disconnectedManaged = static_cast<int>(std::count_if(devices.cbegin(), devices.cend(),
+        [](const HidHidePhysicalDeviceHealth &device) { return !device.connected; }));
     QStringList affectedPhysicalRecords = visibleRecords;
     for (const HidHidePhysicalDeviceHealth &device : devices) {
         if (device.connected && device.expectedHidden && !device.controllerRecordId.isEmpty()
@@ -780,8 +795,16 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                             {QStringLiteral("HD-CFG-001"), QStringLiteral("HD-ISO-006")}, HidHideRepairability::GuidedRepair)
             : !anyVisible
                 ? dimension(QStringLiteral("physical-isolation"), QStringLiteral("Physical-device isolation"), HidHideHealthState::Ready,
-                            HidHideHealthSeverity::Info, QStringLiteral("Physical inputs %1 / %2 isolated.").arg(isolatedManaged).arg(connectedManaged),
-                            QStringLiteral("Every connected relevant Rig member is evaluated by exact HID identity."), {QStringLiteral("HD-ISO-006")})
+                            HidHideHealthSeverity::Info,
+                            disconnectedManaged > 0
+                                ? QStringLiteral("%1 device%2 not connected. Isolation will be verified when %3 reconnect%4.")
+                                      .arg(disconnectedManaged).arg(disconnectedManaged == 1 ? QString{} : QStringLiteral("s"))
+                                      .arg(disconnectedManaged == 1 ? QStringLiteral("it") : QStringLiteral("they"))
+                                      .arg(disconnectedManaged == 1 ? QStringLiteral("s") : QString{})
+                                : QStringLiteral("Physical inputs %1 / %2 isolated.").arg(isolatedManaged).arg(connectedManaged),
+                            disconnectedManaged > 0
+                                ? QStringLiteral("Saved Device Rig membership remains valid while a controller is unavailable.")
+                                : QStringLiteral("Every connected relevant Rig member is evaluated by exact HID identity."), {QStringLiteral("HD-ISO-006")})
                 : dimension(QStringLiteral("physical-isolation"), QStringLiteral("Physical-device isolation"), HidHideHealthState::RepairAvailable,
                             HidHideHealthSeverity::Warning, QStringLiteral("Physical inputs %1 / %2 isolated; one or more are visible to games.").arg(isolatedManaged).arg(connectedManaged),
                             QStringLiteral("The existing validated physical-input visibility transaction can be reviewed before it changes only exact resolved controller identities."),
@@ -914,6 +937,23 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
     // Every emitted pre-terminal snapshot remains a real in-flight state so
     // QML cannot re-enable a Full Check while the worker still owns the probe.
     snapshot.inProgress = false;
+    const QString refreshResult = snapshot.cancelled ? QStringLiteral("Cancelled")
+        : std::any_of(snapshot.checks.cbegin(), snapshot.checks.cend(), [](const HidHideReadObservation &check) {
+              return check.state == HidHideReadState::TimedOut;
+          }) ? QStringLiteral("Timed out")
+        : std::any_of(snapshot.checks.cbegin(), snapshot.checks.cend(), [](const HidHideReadObservation &check) {
+              return check.state != HidHideReadState::Pass;
+          }) ? QStringLiteral("Could not complete") : QStringLiteral("Verified");
+    for (HidHideHealthDimension &value : snapshot.dimensions) {
+        value.evidenceSource = depth == HidHideHealthScanDepth::Full
+            ? QStringLiteral("Current HidHide check") : QStringLiteral("Current setup check");
+        value.latestRefreshAttempt = snapshot.lastChecked;
+        value.latestRefreshResult = refreshResult;
+        value.contradiction = value.shortSummary.contains(QStringLiteral("contradict"), Qt::CaseInsensitive);
+        if (value.state != HidHideHealthState::Unknown && !snapshot.cancelled) {
+            value.lastSuccessfulVerification = snapshot.lastChecked;
+        }
+    }
     if (progress) progress(snapshot);
     return snapshot;
 }

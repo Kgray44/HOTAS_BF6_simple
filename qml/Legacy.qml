@@ -8,6 +8,9 @@ Page {
     padding: 0
 
     property int currentPage: 8
+    // Legacy remains a supported presentation, so it uses the same persisted
+    // application preference even though its original palette is preserved.
+    readonly property real textScale: typeof themeManager !== "undefined" ? themeManager.textScale : 1.15
     property var notificationCenter: null
     property bool setupAssistantReturnAfterCalibration: false
     property bool deviceDetailsReturnAfterCalibration: false
@@ -29,7 +32,8 @@ Page {
         tooltip: "#151e23", selection: "#315a66", selectionCurrent: "#244650", orange: "#78aab9", cyan: "#8fc8c0",
         warning: "#d4ad69", danger: "#ca9090", divider: "#335268", ready: "#8fd5c9",
         graphBackground: "#091116", graphGrid: "#294a55", graphInput: "#d0e1e2", graphOutput: "#8fc8c0",
-        graphPreview: "#5e9caf", graphLabel: "#8ba5ad", graphFrame: "#52717c"
+        graphPreview: "#5e9caf", graphLabel: "#8ba5ad", graphFrame: "#52717c",
+        textScale: root.textScale, scale: function(value) { return Math.round(value * root.textScale) }
     })
     property var allButtons: (currentPage === 1 || currentPage === 3) ? backend.buttons : []
     property var allPovs: (currentPage === 1 || currentPage === 3) ? backend.povs : []
@@ -195,7 +199,7 @@ Page {
  anchors.centerIn: parent
  text: parent.label
  color: !parent.commandEnabled ? "#879196" : (parent.destructive ? "#ca9090" : "#f0f4f5")
- font.pixelSize: 11
+ font.pixelSize: Math.round(11 * root.textScale)
  font.bold: true }
         MouseArea { id: commandMouse
  anchors.fill: parent
@@ -222,14 +226,14 @@ Page {
             color: flightCombo.enabled ? "#dce7e8" : "#748187"
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
-            font.pixelSize: 10
+            font.pixelSize: Math.round(10 * root.textScale)
         }
         indicator: Text {
             x: flightCombo.width - width - 9
             y: (flightCombo.height - height) / 2
             text: "⌄"
             color: flightCombo.enabled ? "#94adb5" : "#64747a"
-            font.pixelSize: 15
+            font.pixelSize: Math.round(15 * root.textScale)
         }
         delegate: ItemDelegate {
             id: choiceDelegate
@@ -245,7 +249,7 @@ Page {
                 leftPadding: 10
                 rightPadding: 10
                 elide: Text.ElideRight
-                font.pixelSize: 10
+                font.pixelSize: Math.round(10 * root.textScale)
             }
             background: Rectangle {
                 radius: 3
@@ -304,7 +308,7 @@ Page {
         placeholderTextColor: "#72848a"
         verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
-        font.pixelSize: 11
+        font.pixelSize: Math.round(11 * root.textScale)
         background: Rectangle {
             radius: 4
             color: !flightTextInput.enabled ? "#0c1013" : flightTextInput.activeFocus ? "#16262d" : (flightTextInput.hovered ? "#142128" : "#10171b")
@@ -359,7 +363,7 @@ Page {
             Rectangle {
                 width: 33; height: parent.height
                 color: minusMouse.containsMouse && flightStepper.value > flightStepper.from ? "#244550" : "transparent"
-                Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? "#a8c8cf" : "#56656a"; font.pixelSize: 17 }
+                Text { anchors.centerIn: parent; text: "−"; color: flightStepper.value > flightStepper.from ? "#a8c8cf" : "#56656a"; font.pixelSize: Math.round(17 * root.textScale) }
                 MouseArea { id: minusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value > flightStepper.from
                     onClicked: flightStepper.valueEdited(Math.max(flightStepper.from, flightStepper.value - flightStepper.stepSize)) }
@@ -368,7 +372,7 @@ Page {
             TextInput { id: valueInput; width: parent.width - 68; height: parent.height
                 text: Number(flightStepper.value).toFixed(flightStepper.decimals)
                 color: "#e3eeee"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                font.pixelSize: 11; font.bold: true; font.family: "Consolas"; selectByMouse: true
+                font.pixelSize: Math.round(11 * root.textScale); font.bold: true; font.family: "Consolas"; selectByMouse: true
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                 onEditingFinished: {
                     const parsed = Number(text)
@@ -381,7 +385,7 @@ Page {
             Rectangle {
                 width: 33; height: parent.height
                 color: plusMouse.containsMouse && flightStepper.value < flightStepper.to ? "#244550" : "transparent"
-                Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? "#a8c8cf" : "#56656a"; font.pixelSize: 15 }
+                Text { anchors.centerIn: parent; text: "+"; color: flightStepper.value < flightStepper.to ? "#a8c8cf" : "#56656a"; font.pixelSize: Math.round(15 * root.textScale) }
                 MouseArea { id: plusMouse; anchors.fill: parent; hoverEnabled: true
                     enabled: flightStepper.value < flightStepper.to
                     onClicked: flightStepper.valueEdited(Math.min(flightStepper.to, flightStepper.value + flightStepper.stepSize)) }
@@ -421,7 +425,7 @@ Page {
  visible: parent.offline || !parent.valid
  text: parent.offline ? "OFFLINE" : "STANDBY"
  color: "#9d8580"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
     }
     component TelemetryItem: Item {
@@ -436,11 +440,11 @@ Page {
  spacing: 3
             Text { text: telemetryItem.caption
  color: "#8099a4"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
             Text { text: telemetryItem.value
  color: telemetryItem.tone
- font.pixelSize: 15
+ font.pixelSize: Math.round(15 * root.textScale)
  font.bold: true
  font.family: "Consolas"
  elide: Text.ElideRight
@@ -457,11 +461,11 @@ Page {
  spacing: 4
             Text { text: pageTitle.heading
  color: "#f3f7f7"
- font.pixelSize: 26
+ font.pixelSize: Math.round(26 * root.textScale)
  font.bold: true }
             Text { text: pageTitle.detail
  color: "#9aa3a7"
- font.pixelSize: 12 }
+ font.pixelSize: Math.round(12 * root.textScale) }
         }
     }
     component OfflineMapper: Item {
@@ -478,14 +482,14 @@ Page {
                 Text {
                     text: "No controller connected"
                     color: "#f0f2f0"
-                    font.pixelSize: 30
+                    font.pixelSize: Math.round(30 * root.textScale)
                     font.weight: Font.Medium
                 }
                 Item { Layout.fillWidth: true }
                 Text {
                     text: backend.mappingStatus
                     color: backend.mappingActive ? "#a9c9b3" : "#a7afb4"
-                    font.pixelSize: 10
+                    font.pixelSize: Math.round(10 * root.textScale)
                     font.bold: true
                 }
             }
@@ -493,7 +497,7 @@ Page {
                 Layout.fillWidth: true
                 text: "The mapper is idle. Connect a controller whenever you are ready and its live controls will appear here automatically."
                 color: "#9fa9ad"
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * root.textScale)
                 wrapMode: Text.WordWrap
             }
             Item { Layout.preferredHeight: 8 }
@@ -503,27 +507,27 @@ Page {
                 Column {
                     Layout.fillWidth: true
                     spacing: 7
-                    Text { text: "Physical input"; color: "#7f8a8f"; font.pixelSize: 11; font.bold: true }
-                    Text { text: "Waiting for DirectInput"; color: "#dce2e0"; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Text { text: "No axes or buttons are being captured."; color: "#899397"; font.pixelSize: 11 }
+                    Text { text: "Physical input"; color: "#7f8a8f"; font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
+                    Text { text: "Waiting for DirectInput"; color: "#dce2e0"; font.pixelSize: Math.round(16 * root.textScale); font.weight: Font.DemiBold }
+                    Text { text: "No axes or buttons are being captured."; color: "#899397"; font.pixelSize: Math.round(11 * root.textScale) }
                 }
                 FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 66 }
                 Column {
                     Layout.fillWidth: true
                     spacing: 7
-                    Text { text: "Virtual output"; color: "#7f8a8f"; font.pixelSize: 11; font.bold: true }
-                    Text { text: backend.vjoyReady ? "Device ready" : "No output device in use"; color: "#dce2e0"; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Text { text: backend.mappingActive ? "Output will resume when input returns." : backend.mappingRequested ? "Waiting for the controller; output resumes automatically." : "Mapping stays off until you start it."; color: "#899397"; font.pixelSize: 11 }
+                    Text { text: "Virtual output"; color: "#7f8a8f"; font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
+                    Text { text: backend.vjoyReady ? "Device ready" : "No output device in use"; color: "#dce2e0"; font.pixelSize: Math.round(16 * root.textScale); font.weight: Font.DemiBold }
+                    Text { text: backend.mappingActive ? "Output will resume when input returns." : backend.mappingRequested ? "Waiting for the controller; output resumes automatically." : "Mapping stays off until you start it."; color: "#899397"; font.pixelSize: Math.round(11 * root.textScale) }
                 }
             }
             Item { Layout.fillHeight: true }
             FineLine { Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Safe to leave open while your controller is disconnected."; color: "#859095"; font.pixelSize: 11 }
+                Text { text: "Safe to leave open while your controller is disconnected."; color: "#859095"; font.pixelSize: Math.round(11 * root.textScale) }
                 Item { Layout.fillWidth: true }
                 StatusDot { tone: "#b77b86" }
-                Text { text: "Waiting for device"; color: "#a9b2b4"; font.pixelSize: 11 }
+                Text { text: "Waiting for device"; color: "#a9b2b4"; font.pixelSize: Math.round(11 * root.textScale) }
             }
         }
     }
@@ -541,25 +545,25 @@ Page {
             RowLayout { Layout.fillWidth: true
                 Text { text: axisModule.info.label
  color: "#eef7f7"
- font.pixelSize: 14
+ font.pixelSize: Math.round(14 * root.textScale)
  font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
                 Text { text: axisModule.info.detail.toUpperCase() + " · ROUTE " + axisModule.info.target
  color: axisModule.info.target === "Disabled" ? "#929da1" : "#a8d1dc"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
             }
             RowLayout { Layout.fillWidth: true
                 Column { spacing: 1
-                    Text { text: "LIVE COMMAND"; color: "#7694a0"; font.pixelSize: 8; font.bold: true }
+                    Text { text: "LIVE COMMAND"; color: "#7694a0"; font.pixelSize: Math.round(8 * root.textScale); font.bold: true }
                     Text { text: root.controlValue(axisModule.info, axisModule.info.transformed)
-                        color: "#d9edf1"; font.pixelSize: 28; font.family: "Consolas"; font.weight: Font.DemiBold }
+                        color: "#d9edf1"; font.pixelSize: Math.round(28 * root.textScale); font.family: "Consolas"; font.weight: Font.DemiBold }
                 }
                 Item { Layout.fillWidth: true }
                 Column { spacing: 2
-                    Text { text: "VIRTUAL OUTPUT"; color: "#7694a0"; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
+                    Text { text: "VIRTUAL OUTPUT"; color: "#7694a0"; font.pixelSize: Math.round(8 * root.textScale); font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
                     Text { text: root.outputState(axisModule.info); color: backend.vjoyReady ? "#9fcbbb" : "#d49b62"
-                        font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
+                        font.pixelSize: Math.round(10 * root.textScale); font.bold: true; horizontalAlignment: Text.AlignRight; width: 126 }
                 }
             }
             FineLine { Layout.fillWidth: true }
@@ -567,7 +571,7 @@ Page {
  spacing: 12
                 Text { text: "INPUT"
  color: "#8c989d"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
@@ -576,7 +580,7 @@ Page {
                 Text { text: root.controlValue(axisModule.info, axisModule.info.calibrated)
  color: "#c6dce1"
  font.family: "Consolas"
- font.pixelSize: 14
+ font.pixelSize: Math.round(14 * root.textScale)
  font.weight: Font.DemiBold
  Layout.preferredWidth: 72
  horizontalAlignment: Text.AlignRight }
@@ -585,7 +589,7 @@ Page {
  spacing: 12
                 Text { text: "OUTPUT"
  color: "#8c989d"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true
  Layout.preferredWidth: 48 }
                 InstrumentMeter { Layout.fillWidth: true
@@ -596,7 +600,7 @@ Page {
                 Text { text: root.outputState(axisModule.info)
  color: backend.vjoyReady && axisModule.info.virtualValid ? "#b8d9c2" : "#c59a79"
  font.family: "Consolas"
- font.pixelSize: backend.vjoyReady && axisModule.info.virtualValid ? 14 : 9
+ font.pixelSize: Math.round((backend.vjoyReady && axisModule.info.virtualValid ? 14 : 9) * root.textScale)
  font.weight: Font.DemiBold
  Layout.preferredWidth: 72
  horizontalAlignment: Text.AlignRight }
@@ -606,7 +610,7 @@ Page {
  spacing: 10
                 Text { text: "ROUTE"
  color: "#8c989d"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                 FlightComboBox {
                     id: axisDestination
@@ -628,12 +632,12 @@ Page {
  text: axisDestination.displayText
  color: "#dce4e4"
  verticalAlignment: Text.AlignVCenter
- font.pixelSize: 11 }
+ font.pixelSize: Math.round(11 * root.textScale) }
                 }
                 Item { Layout.fillWidth: true }
                 Text { text: "INVERT"
  color: "#8c989d"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                 Switch {
                     id: invertControl
@@ -656,7 +660,7 @@ Page {
             RowLayout { Layout.fillWidth: true
                 Text { text: "DEADZONE  " + Math.round(Number(axisModule.info.deadzone) * 100) + "%"
  color: "#8c989d"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true
  Layout.preferredWidth: 90 }
                 Slider {
@@ -701,15 +705,15 @@ Page {
             anchors.margins: 14
             spacing: 6
             RowLayout { width: parent.width
-                Text { text: "LIVE TRANSFER"; color: "#dce9eb"; font.pixelSize: 11; font.bold: true }
+                Text { text: "LIVE TRANSFER"; color: "#dce9eb"; font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
                 Text { text: curveViewer.info && curveViewer.info.unipolar ? "0–100% THROTTLE DOMAIN" : "−100% TO +100% NORMALIZED DOMAIN"
-                    color: "#758f99"; font.pixelSize: 9; font.bold: true }
+                    color: "#758f99"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
                 Row { spacing: 12
-                    Text { text: "— INPUT"; color: "#c5d0d3"; font.pixelSize: 9; font.bold: true }
-                    Text { text: "— OUTPUT"; color: "#88bec8"; font.pixelSize: 9; font.bold: true }
-                    Text { text: "○ PHYSICAL"; color: "#d7e5e7"; font.pixelSize: 9; font.bold: true }
-                    Text { text: "● TRANSFORMED"; color: "#91c8c0"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "— INPUT"; color: "#c5d0d3"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
+                    Text { text: "— OUTPUT"; color: "#88bec8"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
+                    Text { text: "○ PHYSICAL"; color: "#d7e5e7"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
+                    Text { text: "● TRANSFORMED"; color: "#91c8c0"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 }
             }
             Canvas {
@@ -825,7 +829,7 @@ Page {
                 Item { Layout.fillWidth: true; Layout.preferredHeight: 29
                     Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width; visible: !buttonCard.nameEditing
                         text: buttonCard.info.customName ? buttonCard.info.customName.toUpperCase() : "BUTTON " + ("0" + buttonCard.info.index).slice(-2)
-                        elide: Text.ElideRight; color: "#edf7f7"; font.pixelSize: 13; font.weight: Font.DemiBold
+                        elide: Text.ElideRight; color: "#edf7f7"; font.pixelSize: Math.round(13 * root.textScale); font.weight: Font.DemiBold
                         MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: buttonCard.beginNameEdit() }
                     }
                     LiveDraftTextInput { id: buttonNameEditor; anchors.fill: parent; visible: buttonCard.nameEditing
@@ -835,17 +839,17 @@ Page {
                     }
                 }
                 Text { visible: !!buttonCard.info.customName; text: ("0" + buttonCard.info.index).slice(-2)
-                    color: "#8ca6ae"; font.pixelSize: 10; font.family: "Consolas"; font.bold: true }
+                    color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas"; font.bold: true }
                 Text { visible: buttonCard.info.target === 0; text: "DISABLED"
-                    color: "#8ca6ae"; font.pixelSize: 9; font.bold: true }
+                    color: "#8ca6ae"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Row { spacing: 5
                     StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                     Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
-                        color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
+                        color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
                 FlightComboBox {
                     id: buttonDestination
@@ -867,7 +871,7 @@ Page {
                         color: "#0c1013"; border.color: "#435660" }
                     contentItem: Text { leftPadding: 8
                         text: buttonDestination.displayText; color: "#dce4e4"
-                        verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 }
+                        verticalAlignment: Text.AlignVCenter; font.pixelSize: Math.round(10 * root.textScale) }
                 }
             }
             FineLine { Layout.fillWidth: true }
@@ -879,13 +883,13 @@ Page {
                     Layout.preferredWidth: 84
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 2
-                    Text { text: "PHYSICAL INPUT"; color: "#849398"; font.pixelSize: 8; font.bold: true }
+                    Text { text: "PHYSICAL INPUT"; color: "#849398"; font.pixelSize: Math.round(8 * root.textScale); font.bold: true }
                     Row {
                         spacing: 4
                         StatusDot { tone: buttonCard.info.pressed ? "#a8d9e6" : "#68747a" }
                         Text { text: buttonCard.info.pressed ? "PRESSED" : "RELEASED"
                             color: buttonCard.info.pressed ? "#d6f0f4" : "#919ca0"
-                            font.pixelSize: 9; font.bold: true; font.family: "Consolas" }
+                            font.pixelSize: Math.round(9 * root.textScale); font.bold: true; font.family: "Consolas" }
                     }
                 }
                 Item {
@@ -925,23 +929,23 @@ Page {
                         text: "▶"
                         color: buttonCard.info.target > 0 && (buttonCard.info.pressed || buttonCard.info.virtualPressed)
                             ? "#8fc8c0" : "#687d84"
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * root.textScale)
                     }
                 }
                 ColumnLayout {
                     Layout.preferredWidth: 84
                     Layout.alignment: Qt.AlignVCenter
                     spacing: 2
-                    Text { text: "VIRTUAL OUTPUT"; color: "#849398"; font.pixelSize: 8; font.bold: true }
+                    Text { text: "VIRTUAL OUTPUT"; color: "#849398"; font.pixelSize: Math.round(8 * root.textScale); font.bold: true }
                     Row {
                         spacing: 4
-                        Text { visible: buttonCard.info.target === 0; text: "○"; color: "#687d84"; font.pixelSize: 12 }
+                        Text { visible: buttonCard.info.target === 0; text: "○"; color: "#687d84"; font.pixelSize: Math.round(12 * root.textScale) }
                         StatusDot { visible: buttonCard.info.target > 0; tone: buttonCard.info.virtualPressed ? "#8fc8c0" : "#68747a" }
                         Text {
                             text: buttonCard.info.target > 0
                                 ? (buttonCard.info.virtualPressed ? "PRESSED" : "RELEASED") : "DISABLED"
                             color: buttonCard.info.target > 0 && buttonCard.info.virtualPressed ? "#b9dcc2" : "#919ca0"
-                            font.pixelSize: 9; font.bold: true; font.family: "Consolas"
+                            font.pixelSize: Math.round(9 * root.textScale); font.bold: true; font.family: "Consolas"
                         }
                     }
                 }
@@ -965,15 +969,15 @@ Page {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 6
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: "#edf7f7"; font.pixelSize: 12; font.bold: true }
+                Text { text: "POV " + nativeCard.info.index + " / HAT"; color: "#edf7f7"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
-                Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? "#98d1bd" : "#d4ad69"; font.pixelSize: 9; font.bold: true }
+                Text { text: nativeCard.info.nativeStatus; color: nativeCard.info.nativeAvailable ? "#98d1bd" : "#d4ad69"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
             }
             Text { text: nativeCard.info.centered ? "LIVE STATE   CENTERED" : "LIVE STATE   " + nativeCard.info.direction.toUpperCase() + " · " + nativeCard.info.angle + "°"
-                color: nativeCard.info.centered ? "#89969b" : "#c4e4e9"; font.pixelSize: 10; font.family: "Consolas" }
+                color: nativeCard.info.centered ? "#89969b" : "#c4e4e9"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas" }
             FineLine { Layout.fillWidth: true }
             RowLayout { Layout.fillWidth: true
-                Text { text: "NATIVE vJOY OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "NATIVE vJOY OUTPUT"; color: "#8c989d"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
                 Rectangle { id: nativeToggle; Layout.preferredWidth: 43; Layout.preferredHeight: 21; radius: 11
                     color: nativeCard.info.nativeEnabled ? "#466e78" : "#273136"; border.color: nativeCard.info.nativeEnabled ? "#8fc3c7" : "#4a5a60"
@@ -992,7 +996,7 @@ Page {
                 onActivated: backend.setNativePovOutput(nativeCard.info.index, nativeCard.info.nativeEnabled, currentValue) }
             Text { visible: root.nativePovTargetChoices.length === 0
                 text: "Unavailable · selected vJoy device exposes no POV target."
-                color: "#c69a72"; font.pixelSize: 9; font.family: "Consolas" }
+                color: "#c69a72"; font.pixelSize: Math.round(9 * root.textScale); font.family: "Consolas" }
         }
     }
 
@@ -1006,14 +1010,14 @@ Page {
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 13; spacing: 7
             RowLayout { Layout.fillWidth: true
-                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: "#edf7f7"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Text { text: "POV " + povCard.info.hat + " — " + povCard.info.label.toUpperCase(); color: "#edf7f7"; font.pixelSize: Math.round(12 * root.textScale); font.weight: Font.DemiBold }
                 Item { Layout.fillWidth: true }
-                Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: 9; font.bold: true }
+                Text { text: povCard.info.active ? "ACTIVE" : "IDLE"; color: povCard.info.active ? "#d6f0f4" : "#919ca0"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
             }
             RowLayout { Layout.fillWidth: true
-                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: 9; font.bold: true }
+                Text { text: "GAME OUTPUT"; color: "#8c989d"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
-                Text { visible: povCard.info.target > 0; text: "LEARN"; color: "#8ca6ae"; font.pixelSize: 9; font.bold: true
+                Text { visible: povCard.info.target > 0; text: "LEARN"; color: "#8ca6ae"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true
                     MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: backend.startPovLearning(povCard.info.target) }
                 }
                 FlightComboBox { id: povDestination; Layout.preferredWidth: 142
@@ -1028,7 +1032,7 @@ Page {
                 }
             }
             Text { text: povCard.info.target > 0 ? "VIRTUAL    " + (povCard.info.virtualPressed ? "DOWN" : "UP") : "VIRTUAL    UNROUTED"
-                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 9; font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
+                color: povCard.info.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: Math.round(9 * root.textScale); font.family: "Consolas"; font.bold: povCard.info.virtualPressed }
         }
     }
 
@@ -1080,7 +1084,7 @@ Page {
                 Layout.preferredWidth: 30
  Layout.preferredHeight: 30
                 text: root.menuOpen ? "×" : "☰"
-                font.pixelSize: 19
+                font.pixelSize: Math.round(19 * root.textScale)
                 onClicked: root.menuOpen = !root.menuOpen
                 background: Rectangle { radius: 5
  color: menuButton.hovered || root.menuOpen ? "#303b40" : "#20282d"
@@ -1103,11 +1107,11 @@ Page {
                 ColumnLayout { spacing: 0
                     Text { text: "HOTAS BF6"
      color: "#f1f3f1"
-     font.pixelSize: 15
+     font.pixelSize: Math.round(15 * root.textScale)
      font.bold: true }
                     Text { text: "FLIGHT CONTROL INTERFACE"
      color: "#8d989d"
-     font.pixelSize: 9
+     font.pixelSize: Math.round(9 * root.textScale)
      font.bold: true }
                 }
             }
@@ -1120,13 +1124,13 @@ Page {
                 StatusDot { tone: root.physicalStatusColor() }
                 Text { text: backend.physicalConnected ? backend.deviceName : "Controller not connected"
  color: "#c3cecf"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true
  elide: Text.ElideRight
  width: Math.min(240, implicitWidth) }
                 Text { text: backend.physicalConnected ? root.physicalStatusText() : "waiting"
  color: root.physicalStatusColor()
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
             }
             FineLine { visible: root.width >= 1420; Layout.preferredWidth: 1
@@ -1134,21 +1138,21 @@ Page {
             Row { visible: root.width >= 1420; spacing: 7
                 StatusDot { tone: backend.vjoyReady ? root.capacityColor() : "#a5afb3" }
                 Text { text: "VJOY " + backend.vjoyDeviceId
-                    color: "#c3d2d5"; font.pixelSize: 10; font.bold: true }
+                    color: "#c3d2d5"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                 Text { text: backend.vjoyReady ? root.capacityState() : "OFFLINE"
-                    color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: 10; font.bold: true }
+                    color: backend.vjoyReady ? root.capacityColor() : "#a5afb3"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             }
             FineLine { visible: root.width >= 1520 && (root.width >= 1650 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
             Row { visible: root.width >= 1520 && (root.width >= 1650 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
                 Text { text: "PROFILE"
-                    color: "#78919a"; font.pixelSize: 9; font.bold: true }
+                    color: "#78919a"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 Text { text: backend.effectiveProfileDisplayName.toUpperCase()
-                    color: "#c3d8d9"; font.pixelSize: 10; font.bold: true
+                    color: "#c3d8d9"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
                     text: "· " + backend.profileSourceLabel.toUpperCase()
-                    color: "#9ac7b1"; font.pixelSize: 9; font.bold: true }
+                    color: "#9ac7b1"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
             }
             FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
             DeviceContextSelector {
@@ -1175,7 +1179,7 @@ Page {
                 border.color: backend.appHealthSummary.ready ? "#52717c" : "#d6bd78"
                 Row { id: appHealthRow; anchors.centerIn: parent; spacing: 6
                     StatusDot { tone: backend.appHealthSummary.ready ? "#9fcbbf" : "#d6bd78" }
-                    Text { text: backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? "#a5afb3" : "#e1c887"; font.pixelSize: 9; font.bold: true }
+                    Text { text: backend.appHealthSummary.label; color: backend.appHealthSummary.ready ? "#a5afb3" : "#e1c887"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 }
                 MouseArea { id: appHealthMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appHealthPopup.open() }
                 ToolTip { visible: appHealthMouse.containsMouse; delay: 350; text: backend.appHealthSummary.ready ? "Open App Health" : "Review issues that need attention" }
@@ -1185,7 +1189,7 @@ Page {
                 width: 27; height: 24; radius: 3
                 color: updateIndicatorMouse.containsMouse ? "#345864" : "#263f49"
                 border.color: "#6e9fae"
-                Text { anchors.centerIn: parent; text: "⇧"; color: "#d9f0ed"; font.pixelSize: 16; font.bold: true }
+                Text { anchors.centerIn: parent; text: "⇧"; color: "#d9f0ed"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
                 MouseArea { id: updateIndicatorMouse; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor; onClicked: backend.handoffToLauncher() }
                 ToolTip { visible: updateIndicatorMouse.containsMouse; delay: 350
@@ -1194,7 +1198,7 @@ Page {
                     contentItem: Text {
                         text: "HOTAS BF6 " + (backend.updateAvailableVersion || "") + " is available"
                         color: "#dce7e8"
-                        font.pixelSize: 10
+                        font.pixelSize: Math.round(10 * root.textScale)
                     } }
             }
             Rectangle {
@@ -1217,7 +1221,7 @@ Page {
                 border.color: backend.mappingActive ? "#91c4a4" : backend.mappingRequested ? "#d6bd78" : "#52717c"
                 Row { id: legacyMappingRow; anchors.centerIn: parent; spacing: root.width < 720 ? 4 : 7
                     StatusDot { tone: backend.mappingActive ? "#91c4a4" : (backend.mappingRequested ? "#d6bd78" : (backend.vjoyReady ? "#91bcc8" : "#a5afb3")) }
-                    Text { text: root.width < 720 ? "MAP" : backend.mappingStatus; color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1"); font.pixelSize: 10; font.bold: true }
+                    Text { text: root.width < 720 ? "MAP" : backend.mappingStatus; color: backend.mappingActive ? "#c0d8c6" : (backend.mappingRequested ? "#e1c887" : "#b5c0c1"); font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                 }
                 MouseArea { id: legacyMappingMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: backend.toggleMapping() }
                 ToolTip { visible: legacyMappingMouse.containsMouse; delay: 350; text: backend.mappingRequested ? "Stop Mapping" : "Start Mapping" }
@@ -1269,8 +1273,8 @@ Page {
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 1
-                    Text { text: "HOTAS BF6"; color: "#edf5f4"; font.pixelSize: 13; font.bold: true }
-                    Text { text: "v" + Qt.application.version; color: "#8fa6ad"; font.pixelSize: 9; font.bold: true }
+                    Text { text: "HOTAS BF6"; color: "#edf5f4"; font.pixelSize: Math.round(13 * root.textScale); font.bold: true }
+                    Text { text: "v" + Qt.application.version; color: "#8fa6ad"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                 }
             }
             Rectangle {
@@ -1311,12 +1315,12 @@ Page {
  color: root.currentPage === modelData.page ? "#cfdbda" : "#718087" }
                         Text { text: modelData.label
  color: modelData.future ? "#7f8a8e" : (root.currentPage === modelData.page ? "#f0f3f1" : "#bdc7c8")
- font.pixelSize: 11
+ font.pixelSize: Math.round(11 * root.textScale)
  font.bold: root.currentPage === modelData.page }
                         Text { visible: modelData.future
  text: "FUTURE"
  color: "#7d878b"
- font.pixelSize: 8
+ font.pixelSize: Math.round(8 * root.textScale)
  font.bold: true }
                     }
                     MouseArea { id: navHit
@@ -1416,8 +1420,8 @@ Page {
                     color: "#e51a2328"; border.color: "#46657980"
                     RowLayout { anchors.fill: parent; anchors.margins: 16; spacing: 16
                         Column { spacing: 4; Layout.preferredWidth: 96
-                            Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: 10; font.bold: true }
-                            Text { text: root.hasPhysicalInput ? backend.physicalAxisCapabilitySummary : "WAITING"; color: "#77919a"; font.pixelSize: 9; font.bold: true }
+                            Text { text: "SELECT AXIS"; color: "#89a4ad"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                            Text { text: root.hasPhysicalInput ? backend.physicalAxisCapabilitySummary : "WAITING"; color: "#77919a"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                         }
                         FlightComboBox {
                             id: axisSelector
@@ -1436,7 +1440,7 @@ Page {
                             onActivated: backend.setSelectedAxis(currentValue)
                             background: Rectangle { radius: 3; color: "#0d1216"; border.color: "#546d78" }
                             contentItem: Text { leftPadding: 12; text: axisSelector.displayText
-                                color: "#dde9e9"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 12; font.bold: true }
+                                color: "#dde9e9"; verticalAlignment: Text.AlignVCenter; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
                         }
                     }
                 }
@@ -1461,13 +1465,13 @@ Page {
                                 ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 7
                                     RowLayout { Layout.fillWidth: true
                                         Column { spacing: 2
-                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: "#edf6f6"; font.pixelSize: 17; font.bold: true }
-                                            Text { text: (axisIdentityPanel.info.fixed ? axisIdentityPanel.info.activityLabel + " · " + axisIdentityPanel.info.activityDetail : axisIdentityPanel.info.detail).toUpperCase(); color: axisIdentityPanel.info.fixed ? "#d4ad69" : "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+                                            Text { text: axisIdentityPanel.info.label.toUpperCase(); color: "#edf6f6"; font.pixelSize: Math.round(17 * root.textScale); font.bold: true }
+                                            Text { text: (axisIdentityPanel.info.fixed ? axisIdentityPanel.info.activityLabel + " · " + axisIdentityPanel.info.activityDetail : axisIdentityPanel.info.detail).toUpperCase(); color: axisIdentityPanel.info.fixed ? "#d4ad69" : "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                                         }
                                         Item { Layout.fillWidth: true }
                                         Row { spacing: 6
                                             StatusDot { tone: root.physicalStatusColor() }
-                                            Text { text: root.physicalStatusText(); color: root.physicalStatusColor(); font.pixelSize: 10; font.bold: true }
+                                            Text { text: root.physicalStatusText(); color: root.physicalStatusColor(); font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                                         }
                                     }
                                     FineLine { Layout.fillWidth: true }
@@ -1482,15 +1486,15 @@ Page {
                                 property var info: root.selectedAxisInfo || root.emptyAxisInfo
                                 RowLayout { anchors.fill: parent; anchors.margins: 17; spacing: 20
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "CALIBRATED INPUT"; color: "#89a2ab"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.calibrated); color: "#dce8ea"; font.pixelSize: 31; font.family: "Consolas"; font.bold: true }
-                                        Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: "#718a93"; font.pixelSize: 9; font.bold: true }
+                                        Text { text: "CALIBRATED INPUT"; color: "#89a2ab"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                                        Text { text: root.controlValue(liveTelemetryPanel.info, liveTelemetryPanel.info.calibrated); color: "#dce8ea"; font.pixelSize: Math.round(31 * root.textScale); font.family: "Consolas"; font.bold: true }
+                                        Text { text: liveTelemetryPanel.info.detail.toUpperCase(); color: "#718a93"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                                     }
                                     FineLine { Layout.preferredWidth: 1; Layout.preferredHeight: 64 }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 3
-                                        Text { text: "VIRTUAL OUTPUT"; color: "#85aaa8"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: root.outputState(liveTelemetryPanel.info); color: liveTelemetryPanel.info.virtualRouted ? "#9ad0c5" : "#a5afb3"; font.pixelSize: liveTelemetryPanel.info.virtualRouted ? 31 : 18; font.family: "Consolas"; font.bold: true }
-                                        Text { text: liveTelemetryPanel.info.virtualRouted ? (backend.mappingActive ? "LIVE GAME-FACING OUTPUT" : "OUTPUT STANDBY") : "UNMAPPED VJOY AXES PARKED AT " + Number(backend.disabledAxisValue).toFixed(1) + "%"; color: "#718f8b"; font.pixelSize: 9; font.bold: true }
+                                        Text { text: "VIRTUAL OUTPUT"; color: "#85aaa8"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                                        Text { text: root.outputState(liveTelemetryPanel.info); color: liveTelemetryPanel.info.virtualRouted ? "#9ad0c5" : "#a5afb3"; font.pixelSize: Math.round((liveTelemetryPanel.info.virtualRouted ? 31 : 18) * root.textScale); font.family: "Consolas"; font.bold: true }
+                                        Text { text: liveTelemetryPanel.info.virtualRouted ? (backend.mappingActive ? "LIVE GAME-FACING OUTPUT" : "OUTPUT STANDBY") : "UNMAPPED VJOY AXES PARKED AT " + Number(backend.disabledAxisValue).toFixed(1) + "%"; color: "#718f8b"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                                     }
                                 }
                             }
@@ -1506,11 +1510,11 @@ Page {
                             Layout.preferredHeight: processingContent.implicitHeight + 32
                             color: "#ed151d22"
                             ColumnLayout { id: processingContent; anchors.fill: parent; anchors.margins: 16; spacing: 12
-                                Text { text: "AXIS PROCESSING"; color: "#e1eded"; font.pixelSize: 12; font.bold: true }
-                                Text { text: "Profile-specific settings compile into the worker between reports."; color: "#8199a1"; font.pixelSize: 9; font.bold: true }
+                                Text { text: "AXIS PROCESSING"; color: "#e1eded"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
+                                Text { text: "Profile-specific settings compile into the worker between reports."; color: "#8199a1"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "ROUTE"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     CommandButton { visible: processingPanel.info.target !== "Disabled"; label: "LEARN INPUT"; subdued: true
                                         onTriggered: backend.startAxisLearning(processingPanel.info.target) }
                                     FlightComboBox {
@@ -1526,29 +1530,29 @@ Page {
                                             }
                                         }
                                         background: Rectangle { radius: 3; color: "#0d1215"; border.color: "#455d67" }
-                                        contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: "#dce7e8"; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+                                        contentItem: Text { leftPadding: 9; text: selectedAxisDestination.displayText; color: "#dce7e8"; verticalAlignment: Text.AlignVCenter; font.pixelSize: Math.round(11 * root.textScale) }
                                     }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "AXIS NAME"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "AXIS NAME"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.customName || ""; placeholderText: processingPanel.info.hardwareLabel || "Controller axis"
                                         onEditCommitted: function(value) { backend.setAxisCustomName(processingPanel.info.index, value) } }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "RANGE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "RANGE"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     FlightComboBox { Layout.fillWidth: true; Layout.preferredHeight: 31; model: ["Centered", "One-Sided"]
                                         currentIndex: processingPanel.info.rangeMode === "oneSided" ? 1 : 0
                                         onActivated: backend.setAxisRangeMode(processingPanel.info.index, currentText) }
                                 }
                                 RowLayout { Layout.fillWidth: true; visible: processingPanel.info.target !== "Disabled"
-                                    Text { text: "GAME OUTPUT NAME"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 132 }
+                                    Text { text: "GAME OUTPUT NAME"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 132 }
                                     LiveDraftTextInput { Layout.fillWidth: true; persistedText: processingPanel.info.outputAlias || ""; placeholderText: processingPanel.info.target + " alias (e.g. R Up/Down)"
                                         onEditCommitted: function(value) { backend.setVirtualAxisAlias(processingPanel.info.target, value) } }
                                 }
                                 Text { visible: processingPanel.info.target !== "Disabled" && !processingPanel.info.targetAvailable
-                                    text: "The selected vJoy device does not expose this axis."; color: "#d4ad69"; font.pixelSize: 9; Layout.fillWidth: true }
+                                    text: "The selected vJoy device does not expose this axis."; color: "#d4ad69"; font.pixelSize: Math.round(9 * root.textScale); Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "INVERT"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "INVERT"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     Switch {
                                         id: selectedAxisInvert
                                         checked: processingPanel.info.inverted
@@ -1559,51 +1563,51 @@ Page {
                                                 anchors.verticalCenter: parent.verticalCenter; color: "#e5ecec" }
                                         }
                                     }
-                                    Text { text: processingPanel.info.inverted ? "ON" : "OFF"; color: "#99b6bb"; font.pixelSize: 10; font.bold: true }
+                                    Text { text: processingPanel.info.inverted ? "ON" : "OFF"; color: "#99b6bb"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                                     Item { Layout.fillWidth: true }
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "DEADZONE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "DEADZONE"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.deadzone) * 100).toFixed(1) + "%"; color: "#c8dce0"; font.pixelSize: Math.round(11 * root.textScale); font.family: "Consolas"; font.bold: true }
                                     }
                                     Slider { id: selectedAxisDeadzone; Layout.fillWidth: true; from: 0; to: 0.25; value: Number(processingPanel.info.deadzone)
                                         onMoved: backend.setAxisDeadzone(processingPanel.info.index, value) }
-                                    Text { text: "Rescaled around center before hysteresis."; color: "#718a93"; font.pixelSize: 9 }
+                                    Text { text: "Rescaled around center before hysteresis."; color: "#718a93"; font.pixelSize: Math.round(9 * root.textScale) }
                                 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 3
                                     RowLayout { Layout.fillWidth: true
-                                        Text { text: "HYSTERESIS"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
+                                        Text { text: "HYSTERESIS"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: "#c8dce0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true }
+                                        Text { text: (Number(processingPanel.info.hysteresis) * 100).toFixed(2) + "%"; color: "#c8dce0"; font.pixelSize: Math.round(11 * root.textScale); font.family: "Consolas"; font.bold: true }
                                     }
                                     Slider { id: selectedAxisHysteresis; Layout.fillWidth: true; from: 0; to: 0.05; value: Number(processingPanel.info.hysteresis)
                                         onMoved: backend.setAxisHysteresis(processingPanel.info.index, value) }
-                                    Text { text: "Suppresses sub-threshold report noise; no smoothing delay."; color: "#718a93"; font.pixelSize: 9 }
+                                    Text { text: "Suppresses sub-threshold report noise; no smoothing delay."; color: "#718a93"; font.pixelSize: Math.round(9 * root.textScale) }
                                 }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "OUTPUT MIN"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMinimum; from: processingPanel.info.unipolar ? 0 : -100; to: 99
                                         value: Number(processingPanel.info.outputMinimum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, nextValue / 100, Number(processingPanel.info.outputMaximum)) } }
                                     Item { Layout.fillWidth: true }
                                 }
                                 RowLayout { Layout.fillWidth: true
-                                    Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true; Layout.preferredWidth: 92 }
+                                    Text { text: "OUTPUT MAX"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; Layout.preferredWidth: 92 }
                                     FlightNumericStepper { id: outputMaximum; from: processingPanel.info.unipolar ? 1 : -99; to: 100
                                         value: Number(processingPanel.info.outputMaximum) * 100
                                         onValueEdited: function(nextValue) { backend.setAxisOutputLimits(processingPanel.info.index, Number(processingPanel.info.outputMinimum), nextValue / 100) } }
                                     Item { Layout.fillWidth: true }
                                 }
-                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: processingPanel.info.unipolar ? "One-sided transfer and limits use 0–100%; this never restores a centered response." : "Limits constrain final virtual authority, not physical calibration."; color: "#718a93"; font.pixelSize: Math.round(9 * root.textScale); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 FineLine { Layout.fillWidth: true }
                                 RowLayout { Layout.fillWidth: true
                                     ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                        Text { text: "CURVE"; color: "#a7bbc0"; font.pixelSize: 10; font.bold: true }
-                                        Text { text: processingPanel.info.curveSummary; color: "#d5e2e3"; font.pixelSize: 12; font.bold: true }
+                                        Text { text: "CURVE"; color: "#a7bbc0"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                                        Text { text: processingPanel.info.curveSummary; color: "#d5e2e3"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
                                     }
                                     CommandButton { label: "EDIT CURVE"; subdued: true; onTriggered: root.currentPage = 6 }
                                 }
@@ -1646,7 +1650,7 @@ Page {
                 }
                 Text { visible: backend.legacyControlMigrationWarning.length > 0; width: parent.width
                     text: backend.legacyControlMigrationWarning + " Configure a replacement in Automation."
-                    color: "#d4ad69"; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    color: "#d4ad69"; font.pixelSize: Math.round(10 * root.textScale); wrapMode: Text.WordWrap }
                 Panel { width: parent.width
  height: 62
                     RowLayout { anchors.fill: parent
@@ -1673,7 +1677,7 @@ Page {
                 }
                 Text { text: allButtons.length > 0 ? "PHYSICAL BUTTONS" : "NO DIRECTINPUT BUTTONS AVAILABLE"
  color: "#94a1a6"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                 GridLayout { width: parent.width
  columns: width >= 1160 ? 3 : (width >= 760 ? 2 : 1)
@@ -1683,7 +1687,7 @@ Page {
  delegate: ButtonCard { info: modelData } }
                 }
                 Text { visible: root.allPovs.length > 0; text: "POV / HAT · NATIVE vJOY OUTPUT"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                 GridLayout { visible: root.allPovs.length > 0; width: parent.width
                     columns: width >= 1160 ? 3 : (width >= 760 ? 2 : 1)
                     columnSpacing: 12
@@ -1692,7 +1696,7 @@ Page {
                         delegate: PovNativeCard { info: modelData } }
                 }
                 Text { visible: root.allPovInputs.length > 0; text: "POV DIRECTION ROUTES"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                 GridLayout { visible: root.allPovInputs.length > 0; width: parent.width
                     columns: width >= 1160 ? 4 : (width >= 760 ? 2 : 1)
                     columnSpacing: 12
@@ -1744,22 +1748,22 @@ Page {
                 Text { visible: backend.calibrationStage === "RANGE"
                     width: parent.width
                     text: "STEP 1 OF 2 — Move the stick fully left/right and forward/back, twist, throttle, paddles, sliders, and every additional axis through its complete travel several times."
-                    color: "#9dafb4"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                    color: "#9dafb4"; font.pixelSize: Math.round(11 * root.textScale); wrapMode: Text.WordWrap }
                 Text { visible: backend.calibrationStage === "CENTER" || backend.calibrationStage === "FINALIZING"
                     width: parent.width
                     text: "STEP 2 OF 2 — Release spring-centered controls and let them rest naturally. Do not touch the stick, twist, rudder, or paddles. Throttles and sliders do not need to be centered."
-                    color: "#9dafb4"; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                    color: "#9dafb4"; font.pixelSize: Math.round(11 * root.textScale); wrapMode: Text.WordWrap }
                 Panel { visible: backend.calibrationSuccess; width: parent.width; height: calibrationSuccessContent.implicitHeight + 24
                     color: "#172a2f"; border.color: "#78aab9"
                     Column { id: calibrationSuccessContent; anchors.fill: parent; anchors.margins: 12; spacing: 4
-                        Text { text: "CALIBRATION SUCCESSFUL"; color: "#abd7e2"; font.pixelSize: 13; font.bold: true }
-                        Text { text: backend.calibrationStatus; color: "#c9d6d9"; font.pixelSize: 10; width: parent.width; wrapMode: Text.WordWrap }
-                        Text { text: "You can start a new calibration whenever you are ready."; color: "#8fa1a7"; font.pixelSize: 10 }
+                        Text { text: "CALIBRATION SUCCESSFUL"; color: "#abd7e2"; font.pixelSize: Math.round(13 * root.textScale); font.bold: true }
+                        Text { text: backend.calibrationStatus; color: "#c9d6d9"; font.pixelSize: Math.round(10 * root.textScale); width: parent.width; wrapMode: Text.WordWrap }
+                        Text { text: "You can start a new calibration whenever you are ready."; color: "#8fa1a7"; font.pixelSize: Math.round(10 * root.textScale) }
                     }
                 }
                 Text { text: "AXIS RANGE STATUS"
  color: "#94a1a6"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                 GridLayout { width: parent.width
  columns: width >= 980 ? 2 : 1
@@ -1782,22 +1786,22 @@ Page {
                                 ColumnLayout { Layout.preferredWidth: 130
                                     Text { text: String(calibrationAxisCard.info.label || "").toUpperCase()
  color: "#eaf0f1"
- font.pixelSize: 12
+ font.pixelSize: Math.round(12 * root.textScale)
  font.bold: true }
                                     Text { text: backend.calibrationStage === "RANGE" ? "STEP 1 · RANGE" : backend.calibrationStage === "CENTER" ? "STEP 2 · RELEASE CENTERED" : backend.calibrationStage === "FINALIZING" ? "MEASURING CENTER" : (calibrationAxisCard.info.calibrationEnabled ? (calibrationAxisCard.info.calibrationCentered ? "CALIBRATED CENTER" : "CALIBRATED RANGE") : "RAW DEFAULT")
  color: backend.calibrationActive ? "#abd7e2" : (calibrationAxisCard.info.calibrationEnabled ? "#9fc7b1" : "#89979d")
- font.pixelSize: 9 }
+ font.pixelSize: Math.round(9 * root.textScale) }
                                 }
                                 Repeater { model: [{ n: "MIN", v: calibrationAxisCard.info.calibrationMinimum }, { n: "CURRENT", v: calibrationAxisCard.info.raw }, { n: "MAX", v: calibrationAxisCard.info.calibrationMaximum }]
                                     delegate: Column { Layout.fillWidth: true
  spacing: 5
                                         Text { text: modelData.n
  color: "#7f8d94"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                                         Text { text: Number(modelData.v).toFixed(3)
  color: "#c9d6d9"
- font.pixelSize: 13
+ font.pixelSize: Math.round(13 * root.textScale)
  font.family: "Consolas" }
                                     }
                                 }
@@ -1808,13 +1812,13 @@ Page {
                 Panel { width: parent.width; height: calibrationHistoryContent.implicitHeight + 24
                     color: "#121d22"; border.color: "#415467"
                     Column { id: calibrationHistoryContent; anchors.fill: parent; anchors.margins: 12; spacing: 8
-                        Text { text: "CALIBRATION HISTORY"; color: "#abd7e2"; font.pixelSize: 11; font.bold: true }
-                        Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for this and other saved controllers appear here."; color: "#89979d"; font.pixelSize: 10 }
+                        Text { text: "CALIBRATION HISTORY"; color: "#abd7e2"; font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
+                        Text { visible: backend.calibrationHistory.length === 0; text: "Successful calibrations for this and other saved controllers appear here."; color: "#89979d"; font.pixelSize: Math.round(10 * root.textScale) }
                         Repeater { model: backend.calibrationHistory
                             delegate: Rectangle { width: calibrationHistoryContent.width; height: 44; color: modelData.currentDevice ? "#20363d" : "#182429"; border.color: "#3a505a"; radius: 3
                                 Column { anchors.left: parent.left; anchors.leftMargin: 9; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 18; spacing: 2
-                                    Text { text: modelData.name + (modelData.currentDevice ? "  ·  CURRENT DEVICE" : ""); color: "#eaf0f1"; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; width: parent.width }
-                                    Text { text: modelData.when + "  ·  " + modelData.axes + " axes calibrated"; color: "#9dafb4"; font.pixelSize: 9 }
+                                    Text { text: modelData.name + (modelData.currentDevice ? "  ·  CURRENT DEVICE" : ""); color: "#eaf0f1"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true; elide: Text.ElideRight; width: parent.width }
+                                    Text { text: modelData.when + "  ·  " + modelData.axes + " axes calibrated"; color: "#9dafb4"; font.pixelSize: Math.round(9 * root.textScale) }
                                 }
                             }
                         }
@@ -1860,7 +1864,7 @@ Page {
                         spacing: 5
                         Text { text: "HIDHIDE HEALTH · " + String(legacyHidHideHealthDiagnostics.health.overallState || "CHECKING")
                             color: String(legacyHidHideHealthDiagnostics.health.overallState || "").indexOf("READY") >= 0 ? "#a8cfba" : "#e1c887"
-                            font.pixelSize: 11; font.bold: true }
+                            font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
                         Text { width: parent.width; text: {
                                 const tick = legacyHidHideHealthDiagnostics.hidhideElapsedTick
                                 const health = legacyHidHideHealthDiagnostics.health
@@ -1874,7 +1878,7 @@ Page {
                                 }
                                 return health.currentStage || "Read-only control-plane inspection; mapping remains independent."
                             }
-                            color: "#a5afb3"; font.pixelSize: 10; elide: Text.ElideRight }
+                            color: "#a5afb3"; font.pixelSize: Math.round(10 * root.textScale); elide: Text.ElideRight }
                         Row {
                             spacing: 8
                             Button { objectName: "legacyHidHideFullCheck"; text: legacyHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
@@ -1898,7 +1902,7 @@ Page {
                         Text { width: parent.width; text: ((legacyHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
                                 return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")
                             }).join("    "))
-                            color: "#7895a0"; font.pixelSize: 9; elide: Text.ElideRight }
+                            color: "#7895a0"; font.pixelSize: Math.round(9 * root.textScale); elide: Text.ElideRight }
                     }
                 }
                 GridLayout { width: parent.width
@@ -1935,15 +1939,15 @@ Page {
  spacing: 4
                                 Text { text: modelData.c
  color: "#7f8d94"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                                 Text { text: modelData.v
  color: modelData.t
- font.pixelSize: 16
+ font.pixelSize: Math.round(16 * root.textScale)
  font.bold: true
  font.family: "Consolas" }
                                 Text { visible: modelData.note !== undefined; text: modelData.note || ""
-                                    color: "#7895a0"; font.pixelSize: 8; font.bold: true }
+                                    color: "#7895a0"; font.pixelSize: Math.round(8 * root.textScale); font.bold: true }
                             }
                         }
                     }
@@ -1956,22 +1960,22 @@ Page {
  spacing: 7
                             Text { text: "PHYSICAL DEVICE"
  color: "#7f8d94"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                             Text { text: backend.deviceName
  color: "#e8eeee"
- font.pixelSize: 14
+ font.pixelSize: Math.round(14 * root.textScale)
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
                             Text { text: backend.axisCount + " AXES   ·   " + backend.buttonCount + " BUTTONS   ·   POV " + root.povText()
  color: "#91a0a6"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.family: "Consolas"
  width: parent.width }
                             Text { text: root.physicalStatusText() + " · DIRECTINPUT LIVE SNAPSHOT"
  color: root.physicalStatusColor()
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                         }
                     }
@@ -1982,26 +1986,26 @@ Page {
  spacing: 7
                             Text { text: "VIRTUAL DEVICE"
  color: "#7f8d94"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                             Text { text: "vJoy Device " + backend.vjoyDeviceId + " · " + (backend.vjoyReady ? "READY" : "OFFLINE")
  color: backend.vjoyReady ? "#e8eeee" : "#d49b62"
- font.pixelSize: 14
+ font.pixelSize: Math.round(14 * root.textScale)
  font.bold: true
  elide: Text.ElideRight
  width: parent.width }
                             Text { text: backend.vjoyReady ? backend.vjoyStatus : "Physical monitoring remains independent"
- color: "#91a0a6"; font.pixelSize: 10; font.family: "Consolas" }
+ color: "#91a0a6"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas" }
                             Text { text: backend.vjoyReady ? root.capacityState() + "   ·   REQUIRED " + backend.vjoyRequiredButtonCount : backend.vjoyStatus
  color: root.capacityColor()
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                         }
                     }
                 }
                 Text { text: "PHYSICAL / VIRTUAL AXIS ROUTES"
  color: "#94a1a6"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                 GridLayout { width: parent.width
  columns: width >= 1100 ? 4 : (width >= 760 ? 2 : 1)
@@ -2019,26 +2023,26 @@ Page {
  spacing: 4
                                 Text { text: String(diagnosticAxisCard.info.label || "").toUpperCase()
  color: "#aebcc0"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                                 Text { text: "RAW       " + root.valuePercent(diagnosticAxisCard.info.raw)
  color: "#dfeaec"
- font.pixelSize: 12
+ font.pixelSize: Math.round(12 * root.textScale)
  font.family: "Consolas" }
                                 Text { text: "CALIBRATED " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.calibrated)
  color: "#a9cad2"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.family: "Consolas" }
                                 Text { text: "MAPPED    " + root.controlValue(diagnosticAxisCard.info, diagnosticAxisCard.info.transformed)
  color: "#a9cad2"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.family: "Consolas" }
                                 Text { text: "OUTPUT    " + root.outputState(diagnosticAxisCard.info)
  color: diagnosticAxisCard.info.virtualValid ? "#b7d7c0" : "#c59a79"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.family: "Consolas" }
                                 Text { text: "ROUTE     " + String(diagnosticAxisCard.info.target || "").toUpperCase()
- color: "#7c97a1"; font.pixelSize: 9; font.family: "Consolas" }
+ color: "#7c97a1"; font.pixelSize: Math.round(9 * root.textScale); font.family: "Consolas" }
                             }
                         }
                     }
@@ -2047,17 +2051,17 @@ Page {
                     property var adaptive: backend.adaptiveResponseTelemetry
                     Column { anchors.fill: parent; anchors.margins: 12; spacing: 4
                         Text { text: "ADAPTIVE RESPONSE DIAGNOSTICS · " + (adaptiveDiagnosticsPanel.adaptive.state || "STABLE").toUpperCase()
-                            color: "#9aa3a7"; font.pixelSize: 9; font.bold: true }
+                            color: "#9aa3a7"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                         Text { text: "PHYSICAL " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.physical || 0) + "   ESTIMATE " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.estimated || 0) + "   PREDICTION " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.predicted || 0) + "   OUTPUT " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.virtualOutput || 0)
-                            color: "#d5e0e3"; font.pixelSize: 11; font.family: "Consolas" }
+                            color: "#d5e0e3"; font.pixelSize: Math.round(11 * root.textScale); font.family: "Consolas" }
                         Text { text: "V " + Number(adaptiveDiagnosticsPanel.adaptive.velocity || 0).toFixed(2) + "/s   A " + Number(adaptiveDiagnosticsPanel.adaptive.acceleration || 0).toFixed(2) + "/s²   HORIZON " + Number(adaptiveDiagnosticsPanel.adaptive.activeHorizonMs || 0).toFixed(2) + " ms   LEAD " + root.valuePercent(adaptiveDiagnosticsPanel.adaptive.lead || 0)
-                            color: "#9aa3a7"; font.pixelSize: 10; font.family: "Consolas" }
+                            color: "#9aa3a7"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas" }
                         Text { text: "MODEL " + String(adaptiveDiagnosticsPanel.adaptive.model || "auto").toUpperCase() + "   CONFIDENCE " + Math.round((adaptiveDiagnosticsPanel.adaptive.confidence || 0) * 100) + "%   REVERSALS " + (adaptiveDiagnosticsPanel.adaptive.reversalCount || 0) + "   SAFETY CLAMPS " + (adaptiveDiagnosticsPanel.adaptive.safetyClampCount || 0)
-                            color: "#9aa3a7"; font.pixelSize: 9; font.family: "Consolas" }
+                            color: "#9aa3a7"; font.pixelSize: Math.round(9 * root.textScale); font.family: "Consolas" }
                     }
                 }
                 Text { visible: root.allPovs.length > 0; text: "POV / HAT INPUTS"
-                    color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+                    color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
                 GridLayout { visible: root.allPovs.length > 0; width: parent.width
                     columns: width >= 1100 ? 4 : (width >= 760 ? 2 : 1)
                     columnSpacing: 10
@@ -2077,26 +2081,26 @@ Page {
                             border.color: diagnosticPovCard.info.centered ? "#43546770" : "#93a3cfda"
                             Column { anchors.fill: parent; anchors.margins: 12; spacing: 5
                                 Text { text: "POV " + diagnosticPovCard.info.index + " / HAT"
-                                    color: "#aebcc0"; font.pixelSize: 9; font.bold: true }
+                                    color: "#aebcc0"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                                 Text { text: "STATE     " + diagnosticPovCard.info.direction.toUpperCase()
                                     color: diagnosticPovCard.info.centered ? "#9ba8ac" : "#d6f0f4"
-                                    font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
+                                    font.pixelSize: Math.round(12 * root.textScale); font.family: "Consolas"; font.bold: true }
                                 Text { visible: !diagnosticPovCard.info.centered
                                     text: "ANGLE     " + diagnosticPovCard.info.angle + "°"
-                                    color: "#a9cad2"; font.pixelSize: 10; font.family: "Consolas" }
+                                    color: "#a9cad2"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas" }
                                 Text { text: "RAW       " + (diagnosticPovCard.info.centered ? "—" : diagnosticPovCard.info.raw)
-                                    color: "#7c97a1"; font.pixelSize: 10; font.family: "Consolas" }
+                                    color: "#7c97a1"; font.pixelSize: Math.round(10 * root.textScale); font.family: "Consolas" }
                                 Text { text: "NATIVE    " + diagnosticPovCard.info.nativeStatus
                                         + (diagnosticPovCard.info.nativeEnabled ? " · " + diagnosticPovCard.info.nativeTargetLabel : "")
                                     color: diagnosticPovCard.info.nativeAvailable ? "#9fcfbd" : "#c69a72"
-                                    font.pixelSize: 9; font.family: "Consolas" }
+                                    font.pixelSize: Math.round(9 * root.textScale); font.family: "Consolas" }
                                 Grid { columns: 3; columnSpacing: 9; rowSpacing: 3
                                     Repeater { model: diagnosticPovCard.directions
                                         delegate: Text { width: 50; horizontalAlignment: Text.AlignHCenter
                                             text: modelData.label
                                             color: modelData.direction !== "" && modelData.direction === diagnosticPovCard.info.direction
                                                 ? "#9fcfbd" : "#607177"
-                                            font.pixelSize: 8; font.bold: true; font.family: "Consolas" }
+                                            font.pixelSize: Math.round(8 * root.textScale); font.bold: true; font.family: "Consolas" }
                                     }
                                 }
                             }
@@ -2105,7 +2109,7 @@ Page {
                 }
                 Text { text: "BUTTON ROUTES · " + backend.buttonCount + " PHYSICAL / " + backend.vjoyButtonCount + " VIRTUAL"
  color: "#94a1a6"
- font.pixelSize: 10
+ font.pixelSize: Math.round(10 * root.textScale)
  font.bold: true }
                 GridLayout { width: parent.width
  columns: width >= 1100 ? 5 : (width >= 760 ? 3 : 2)
@@ -2120,10 +2124,10 @@ Page {
                                 Row { spacing: 7
                                     StatusDot { tone: modelData.pressed ? "#91c4d0" : "#59646a" }
                                     Text { text: modelData.label.toUpperCase() + "  " + (modelData.pressed ? "PHYSICAL DOWN" : "PHYSICAL UP")
-                                        color: modelData.pressed ? "#c9e9ee" : "#89969b"; font.pixelSize: 9; font.bold: true }
+                                        color: modelData.pressed ? "#c9e9ee" : "#89969b"; font.pixelSize: Math.round(9 * root.textScale); font.bold: true }
                                 }
                                 Text { text: modelData.target > 0 ? "ROUTE vJOY " + ("0" + modelData.target).slice(-2) + "  ·  VIRTUAL " + (modelData.virtualPressed ? "DOWN" : "UP") : "ROUTE UNASSIGNED"
-                                    color: modelData.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: 8; font.family: "Consolas" }
+                                    color: modelData.virtualPressed ? "#b9dcc2" : "#819297"; font.pixelSize: Math.round(8 * root.textScale); font.family: "Consolas" }
                             }
                         }
                     }
@@ -2135,7 +2139,7 @@ Page {
                         spacing: 5
                         Text { text: "EVENT LOG"
  color: "#7f8d94"
- font.pixelSize: 9
+ font.pixelSize: Math.round(9 * root.textScale)
  font.bold: true }
                         ListView {
                             id: eventLogView
@@ -2158,7 +2162,7 @@ Page {
                                 width: eventLogView.width - 16
                                 text: modelData
                                 color: index === eventLogView.count - 1 ? "#cbdadd" : "#839197"
-                                font.pixelSize: 10
+                                font.pixelSize: Math.round(10 * root.textScale)
                                 font.family: "Consolas"
                                 wrapMode: Text.Wrap
                             }
@@ -2292,20 +2296,20 @@ Page {
                 anchors.leftMargin: 18
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 3
-                Text { text: "NEW PROFILE"; color: "#eef6f5"; font.pixelSize: 15; font.bold: true }
-                Text { text: "Create a new controller configuration"; color: "#94adb5"; font.pixelSize: 10 }
+                Text { text: "NEW PROFILE"; color: "#eef6f5"; font.pixelSize: Math.round(15 * root.textScale); font.bold: true }
+                Text { text: "Create a new controller configuration"; color: "#94adb5"; font.pixelSize: Math.round(10 * root.textScale) }
             }
         }
         contentItem: Column { width: 358; spacing: 12
-            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             FlightTextInput { id: profileNameField; width: parent.width
                 placeholderText: "Helicopter"
                 onAccepted: { if (backend.createProfile(text, startProfile.currentValue)) newProfileDialog.close() } }
-            Text { text: "START FROM"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            Text { text: "START FROM"; color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             FlightComboBox { id: startProfile; width: parent.width
                 model: backend.profiles; textRole: "name"; valueRole: "id" }
             Text { text: "Copies the selected mapping configuration. Calibration remains global to the controller."
-                width: parent.width; wrapMode: Text.WordWrap; color: "#879ba1"; font.pixelSize: 10 }
+                width: parent.width; wrapMode: Text.WordWrap; color: "#879ba1"; font.pixelSize: Math.round(10 * root.textScale) }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: createProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: newProfileDialog.close() }
@@ -2329,7 +2333,7 @@ Page {
         standardButtons: Dialog.NoButton
         onOpened: { renameProfileField.text = profileName; renameProfileField.forceActiveFocus(); renameProfileField.selectAll() }
         contentItem: Column { width: 338; spacing: 12
-            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: 10; font.bold: true }
+            Text { text: "NAME"; color: "#94a1a6"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             TextField { id: renameProfileField; width: parent.width; color: "#e7f0f1"; selectByMouse: true
                 background: Rectangle { radius: 4; color: "#0c1013"; border.color: renameProfileField.activeFocus ? "#78aab9" : "#435660" } }
             Row { width: parent.width; spacing: 8
@@ -2355,7 +2359,7 @@ Page {
         standardButtons: Dialog.NoButton
         contentItem: Column { width: 338; spacing: 14
             Text { text: "Delete \"" + deleteProfileDialog.profileName + "\"?\n\nThis profile's mappings will be removed."
-                width: parent.width; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+                width: parent.width; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale) }
             Row { width: parent.width; spacing: 8
                 CommandButton { id: deleteProfileCancelButton; label: "CANCEL"; subdued: true
                     onTriggered: deleteProfileDialog.close() }
@@ -2400,10 +2404,10 @@ Page {
         onClosed: if (backend.inputLearning.active && backend.inputLearning.kind !== "signal-flow"
                        && !quickAssignDialog.opened && !quickMapButtonDialog.opened && !learnButtonDialog.opened) backend.cancelInputLearning()
         contentItem: Column { width: 368; spacing: 12
-            Text { width: parent.width; text: "LEARN INPUT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
-            Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 11; font.bold: true }
-            Text { width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
-            Text { visible: backend.inputLearning.phase === "assigned"; width: parent.width; text: backend.inputLearning.sourceLabel; color: "#b9dcc2"; font.pixelSize: 12; font.bold: true }
+            Text { width: parent.width; text: "LEARN INPUT"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
+            Text { width: parent.width; text: backend.inputLearning.targetLabel.toUpperCase(); color: "#8ca6ae"; font.pixelSize: Math.round(11 * root.textScale); font.bold: true }
+            Text { width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale) }
+            Text { visible: backend.inputLearning.phase === "assigned"; width: parent.width; text: backend.inputLearning.sourceLabel; color: "#b9dcc2"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
             Row { width: parent.width; spacing: 8
                 CommandButton { visible: backend.inputLearning.phase === "ambiguous"; label: "RETRY"; onTriggered: backend.retryInputLearning() }
                 CommandButton { visible: backend.inputLearning.phase === "conflict"; label: "REPLACE"; onTriggered: backend.resolveInputLearningConflict("replace") }
@@ -2447,8 +2451,8 @@ Page {
         contentItem: Column {
             width: learnButtonDialog.width - 52
             spacing: 12
-            Text { width: parent.width; text: "LEARN BUTTON"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
-            Text { text: "GAME OUTPUT"; color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            Text { width: parent.width; text: "LEARN BUTTON"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
+            Text { text: "GAME OUTPUT"; color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             FlightComboBox {
                 id: learnButtonDestination
                 width: parent.width
@@ -2462,7 +2466,7 @@ Page {
                 text: learnButtonDialog.sourceLabels().length === 1
                     ? "CURRENT PHYSICAL INPUT" : "CURRENT PHYSICAL INPUTS"
                 color: "#8ca6ae"
-                font.pixelSize: 10
+                font.pixelSize: Math.round(10 * root.textScale)
                 font.bold: true
             }
             Column {
@@ -2470,13 +2474,13 @@ Page {
                 spacing: 3
                 Repeater {
                     model: learnButtonDialog.sourceLabels()
-                    delegate: Text { text: modelData; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
+                    delegate: Text { text: modelData; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
                 }
                 Text {
                     visible: learnButtonDialog.sourceLabels().length === 0
                     text: "NO CURRENT PHYSICAL INPUT"
                     color: "#718a93"
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * root.textScale)
                 }
             }
             FineLine { width: parent.width }
@@ -2487,7 +2491,7 @@ Page {
                     + learnButtonDialog.selectedTarget + "."
                 wrapMode: Text.WordWrap
                 color: "#d5e0e3"
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * root.textScale)
             }
             Text {
                 visible: backend.inputLearning.active && backend.inputLearning.phase !== "waiting"
@@ -2495,15 +2499,15 @@ Page {
                 text: backend.inputLearning.message
                 wrapMode: Text.WordWrap
                 color: "#d5e0e3"
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * root.textScale)
             }
             Column {
                 visible: backend.inputLearning.sourceLabel.length > 0
                 width: parent.width
                 spacing: 3
-                Text { text: backend.inputLearning.phase === "assigned" ? "ASSIGNED" : "PROPOSED ROUTE"; color: "#b9dcc2"; font.pixelSize: 10; font.bold: true }
-                Text { text: backend.inputLearning.sourceLabel + "  ↓"; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
-                Text { text: "vJoy Button " + learnButtonDialog.selectedTarget; color: "#d5e0e3"; font.pixelSize: 12; font.bold: true }
+                Text { text: backend.inputLearning.phase === "assigned" ? "ASSIGNED" : "PROPOSED ROUTE"; color: "#b9dcc2"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                Text { text: backend.inputLearning.sourceLabel + "  ↓"; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
+                Text { text: "vJoy Button " + learnButtonDialog.selectedTarget; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale); font.bold: true }
             }
             Row {
                 width: parent.width
@@ -2565,16 +2569,16 @@ Page {
         onOpened: { targets = backend.quickAssignAxisTargets; assignments = []; step = 0; complete = targets.length === 0; if (!complete) startCurrent() }
         onClosed: backend.cancelInputLearning()
         contentItem: Column { width: quickAssignDialog.width - 52; spacing: 14
-            Text { text: "QUICK MAP — AXES"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
-            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            Text { text: "QUICK MAP — AXES"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
+            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             Rectangle { visible: !quickAssignDialog.complete; width: parent.width; height: 6; radius: 3; color: "#273136"
                 Rectangle { width: parent.width * (quickAssignDialog.targets.length ? quickAssignDialog.step / quickAssignDialog.targets.length : 0); height: parent.height; radius: 3; color: "#829da5" } }
-            Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " OF " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: "#d8e8ea"; font.pixelSize: 19; font.bold: true }
-            Text { visible: !quickAssignDialog.complete; text: quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].technicalLabel : ""; color: "#8ca6ae"; font.pixelSize: 10 }
-            Text { visible: !quickAssignDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+            Text { visible: !quickAssignDialog.complete; text: (quickAssignDialog.step + 1) + " OF " + quickAssignDialog.targets.length + " — " + (quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].label.toUpperCase() : ""); color: "#d8e8ea"; font.pixelSize: Math.round(19 * root.textScale); font.bold: true }
+            Text { visible: !quickAssignDialog.complete; text: quickAssignDialog.targets.length ? quickAssignDialog.targets[quickAssignDialog.step].technicalLabel : ""; color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale) }
+            Text { visible: !quickAssignDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale) }
             Column { visible: quickAssignDialog.complete; width: parent.width; spacing: 6
-                Text { text: "ASSIGNMENTS COMPLETE"; color: "#b9dcc2"; font.pixelSize: 16; font.bold: true }
-                Repeater { model: quickAssignDialog.targets; delegate: Text { width: parent.width; text: modelData.label + "    " + quickAssignDialog.assignments[index]; color: "#d5e0e3"; font.pixelSize: 12 } }
+                Text { text: "ASSIGNMENTS COMPLETE"; color: "#b9dcc2"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
+                Repeater { model: quickAssignDialog.targets; delegate: Text { width: parent.width; text: modelData.label + "    " + quickAssignDialog.assignments[index]; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale) } }
             }
             Row { width: parent.width; spacing: 8
                 CommandButton { visible: !quickAssignDialog.complete && quickAssignDialog.step > 0; label: "BACK"; subdued: true; onTriggered: { --quickAssignDialog.step; backend.cancelInputLearning(); quickAssignDialog.startCurrent() } }
@@ -2612,17 +2616,17 @@ Page {
         onOpened: { targets = backend.quickMapButtonTargets; assignments = []; step = 0; complete = targets.length === 0; if (!complete) startCurrent() }
         onClosed: backend.cancelInputLearning()
         contentItem: Column { width: quickMapButtonDialog.width - 52; spacing: 12
-            Text { text: "QUICK MAP — BUTTONS"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
-            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
+            Text { text: "QUICK MAP — BUTTONS"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
+            Text { text: "PROFILE: " + backend.activeProfileName.toUpperCase(); color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
             Rectangle { visible: !quickMapButtonDialog.complete; width: parent.width; height: 6; radius: 3; color: "#273136"
                 Rectangle { width: parent.width * (quickMapButtonDialog.targets.length ? quickMapButtonDialog.step / quickMapButtonDialog.targets.length : 0); height: parent.height; radius: 3; color: "#829da5" } }
-            Text { visible: !quickMapButtonDialog.complete; text: (quickMapButtonDialog.step + 1) + " OF " + quickMapButtonDialog.targets.length; color: "#d8e8ea"; font.pixelSize: 18; font.bold: true }
-            Text { visible: !quickMapButtonDialog.complete; text: "CURRENT OUTPUT"; color: "#8ca6ae"; font.pixelSize: 10; font.bold: true }
-            Text { visible: !quickMapButtonDialog.complete; text: quickMapButtonDialog.targets.length ? quickMapButtonDialog.targets[quickMapButtonDialog.step].label : ""; color: "#d5e0e3"; font.pixelSize: 13; font.bold: true }
-            Text { visible: !quickMapButtonDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: 12 }
+            Text { visible: !quickMapButtonDialog.complete; text: (quickMapButtonDialog.step + 1) + " OF " + quickMapButtonDialog.targets.length; color: "#d8e8ea"; font.pixelSize: Math.round(18 * root.textScale); font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; text: "CURRENT OUTPUT"; color: "#8ca6ae"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; text: quickMapButtonDialog.targets.length ? quickMapButtonDialog.targets[quickMapButtonDialog.step].label : ""; color: "#d5e0e3"; font.pixelSize: Math.round(13 * root.textScale); font.bold: true }
+            Text { visible: !quickMapButtonDialog.complete; width: parent.width; text: backend.inputLearning.message; wrapMode: Text.WordWrap; color: "#d5e0e3"; font.pixelSize: Math.round(12 * root.textScale) }
             Column { visible: quickMapButtonDialog.assignments.length > 0; width: parent.width; spacing: 4
-                Text { text: "COMPLETED"; color: "#b9dcc2"; font.pixelSize: 10; font.bold: true }
-                Repeater { model: quickMapButtonDialog.assignments; delegate: Text { visible: modelData !== undefined; text: "✓ " + quickMapButtonDialog.targets[index].label + "    " + modelData; color: "#d5e0e3"; font.pixelSize: 11 } }
+                Text { text: "COMPLETED"; color: "#b9dcc2"; font.pixelSize: Math.round(10 * root.textScale); font.bold: true }
+                Repeater { model: quickMapButtonDialog.assignments; delegate: Text { visible: modelData !== undefined; text: "✓ " + quickMapButtonDialog.targets[index].label + "    " + modelData; color: "#d5e0e3"; font.pixelSize: Math.round(11 * root.textScale) } }
             }
             Row { width: parent.width; spacing: 8
                 CommandButton { visible: !quickMapButtonDialog.complete && quickMapButtonDialog.step > 0; label: "BACK"; subdued: true; onTriggered: { --quickMapButtonDialog.step; backend.cancelInputLearning(); quickMapButtonDialog.startCurrent() } }
@@ -2661,15 +2665,15 @@ Page {
  header: Item { implicitHeight: 0 }
         contentItem: Column { width: 340
  spacing: 14
-            Text { text: "AXIS ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { text: "AXIS ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
             Text { width: parent.width
  text: "This vJoy axis already has a source. Replace it, or choose an explicit visible mixer. Signal Flow never creates a hidden analog merge."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
- font.pixelSize: 12 }
+ font.pixelSize: Math.round(12 * root.textScale) }
             Text { width: parent.width; visible: axisConflictDialog.resolutionNotice.length > 0
  text: axisConflictDialog.resolutionNotice; wrapMode: Text.WordWrap
- color: "#ff8d94"; font.pixelSize: 11 }
+ color: "#ff8d94"; font.pixelSize: Math.round(11 * root.textScale) }
             Row { spacing: 8
             CommandButton { label: "REPLACE"; onTriggered: axisConflictDialog.resolveConflict("replace") }
             CommandButton { label: "AVERAGE"; onTriggered: axisConflictDialog.resolveConflict("average") }
@@ -2691,12 +2695,12 @@ Page {
  header: Item { implicitHeight: 0 }
         contentItem: Column { width: 340
  spacing: 14
-            Text { text: "BUTTON ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: 16; font.bold: true }
+            Text { text: "BUTTON ROUTE CONFLICT"; color: "#d8e8ea"; font.pixelSize: Math.round(16 * root.textScale); font.bold: true }
             Text { width: parent.width
  text: "Choose how to handle the existing physical route for this vJoy button. Replace swaps a valid prior output; Ignore allows both physical buttons to drive it."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
- font.pixelSize: 12 }
+ font.pixelSize: Math.round(12 * root.textScale) }
             Row { spacing: 8
             CommandButton { label: "REPLACE"
  onTriggered: {
@@ -2729,7 +2733,7 @@ Page {
  text: "This restores default routes and clears calibration data."
  wrapMode: Text.WordWrap
  color: "#d5e0e3"
- font.pixelSize: 12 }
+ font.pixelSize: Math.round(12 * root.textScale) }
             CommandButton { width: parent.width
  label: "RESET CONFIGURATION"
  onTriggered: { backend.resetApplicationConfiguration()

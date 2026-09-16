@@ -57,14 +57,14 @@ Button {
                 text: "SELECTED PROFILE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
-                font.pixelSize: 7
+                font.pixelSize: tokens.scale(7)
                 font.bold: true
             }
             Text {
                 text: backendObject.selectedProfileName
                 color: tokens.textPrimary
                 font.family: tokens.bodyFont
-                font.pixelSize: 10
+                font.pixelSize: tokens.scale(10)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -75,7 +75,7 @@ Button {
                         ? "VIEWING · NONE ACTIVE" : "VIEWING"))
                 color: control.active ? tokens.healthy : tokens.textSecondary
                 font.family: tokens.telemetryFont
-                font.pixelSize: 7
+                font.pixelSize: tokens.scale(7)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -84,7 +84,7 @@ Button {
         Text {
             text: popup.visible ? "⌃" : "⌄"
             color: tokens.textSecondary
-            font.pixelSize: 14
+            font.pixelSize: tokens.scale(14)
         }
     }
     background: Rectangle {
@@ -115,7 +115,7 @@ Button {
                 text: "SELECTED PROFILE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: tokens.scale(8)
                 font.bold: true
             }
             Text {
@@ -124,13 +124,13 @@ Button {
                         ? "NO PROFILE ACTIVE · VIEWING FOR EDITING" : "VIEWING FOR EDITING")
                 color: control.active ? tokens.healthy : tokens.focus
                 font.family: tokens.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: tokens.scale(8)
                 font.bold: true
             }
             Text {
                 text: "Choose the Profile to view and edit. Activation is a separate explicit action and retains its runtime safety checks."
                 color: tokens.textSecondary
-                font.pixelSize: 9
+                font.pixelSize: tokens.scale(9)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -154,7 +154,7 @@ Button {
                                 text: String(categoryColumn.modelData.name || "General").toUpperCase()
                                 color: tokens.textMuted
                                 font.family: tokens.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: tokens.scale(8)
                                 font.bold: true
                             }
                             Repeater {
@@ -178,9 +178,9 @@ Button {
                                             anchors.leftMargin: tokens.space8
                                             anchors.rightMargin: tokens.space8
                                             Text { text: profileEntry.selected ? "✓" : ""; color: tokens.accent; font.bold: true; Layout.preferredWidth: 12 }
-                                            Text { text: String(profileEntry.modelData.name || "Profile"); color: tokens.textPrimary; font.pixelSize: 10; font.bold: profileEntry.selected; Layout.fillWidth: true; elide: Text.ElideRight }
-                                            Text { visible: profileEntry.active; text: "ACTIVE"; color: tokens.healthy; font.family: tokens.telemetryFont; font.pixelSize: 7; font.bold: true }
-                                            Text { visible: profileEntry.selected && !profileEntry.active; text: "VIEWING"; color: tokens.focus; font.family: tokens.telemetryFont; font.pixelSize: 7; font.bold: true }
+                                            Text { text: String(profileEntry.modelData.name || "Profile"); color: tokens.textPrimary; font.pixelSize: tokens.scale(10); font.bold: profileEntry.selected; Layout.fillWidth: true; elide: Text.ElideRight }
+                                            Text { visible: profileEntry.active; text: "ACTIVE"; color: tokens.healthy; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(7); font.bold: true }
+                                            Text { visible: profileEntry.selected && !profileEntry.active; text: "VIEWING"; color: tokens.focus; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(7); font.bold: true }
                                         }
                                         background: Rectangle {
                                             radius: tokens.radiusControl
@@ -202,7 +202,7 @@ Button {
                                             text: parent.text
                                             color: tokens.light ? "white" : tokens.primarySurface
                                             font.family: tokens.telemetryFont
-                                            font.pixelSize: 8
+                                            font.pixelSize: tokens.scale(8)
                                             font.bold: true
                                             horizontalAlignment: Text.AlignHCenter
                                             verticalAlignment: Text.AlignVCenter
@@ -262,7 +262,7 @@ Button {
                 color: parent.subdued ? rigSwitchActivationDialog.tokens.textSecondary
                     : rigSwitchActivationDialog.tokens.primarySurface
                 font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                font.pixelSize: 9
+                font.pixelSize: tokens.scale(9)
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -287,7 +287,7 @@ Button {
                 text: "PROFILE  ·  " + String(rigSwitchActivationDialog.activationRequest.requestedProfileName || "Profile")
                 color: rigSwitchActivationDialog.tokens.textPrimary
                 font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                font.pixelSize: 11
+                font.pixelSize: tokens.scale(11)
                 font.bold: true
                 wrapMode: Text.WordWrap
             }
@@ -307,13 +307,13 @@ Button {
                         text: "ACTIVE HARDWARE RIG"
                         color: rigSwitchActivationDialog.tokens.textMuted
                         font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: tokens.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: String(rigSwitchActivationDialog.activationRequest.currentDeviceRigName || "No Device Rig")
                         color: rigSwitchActivationDialog.tokens.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: tokens.scale(11)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
@@ -321,13 +321,13 @@ Button {
                         text: "PROFILE'S CONFIGURED RIG"
                         color: rigSwitchActivationDialog.tokens.accent
                         font.family: rigSwitchActivationDialog.tokens.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: tokens.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: String(rigSwitchActivationDialog.activationRequest.configuredDeviceRigName || "Device Rig assignment required")
                         color: rigSwitchActivationDialog.tokens.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: tokens.scale(11)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
@@ -337,7 +337,7 @@ Button {
                 Layout.fillWidth: true
                 text: "To activate this Profile, HOTAS BF6 will switch the active hardware Rig to the Profile's configured Rig. This does not change the Profile's Rig assignment or its mappings."
                 color: rigSwitchActivationDialog.tokens.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: tokens.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {

@@ -152,7 +152,7 @@ Item {
                             text: "HOTAS BF6"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 16
+                            font.pixelSize: deck.scale(16)
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -161,7 +161,7 @@ Item {
                             text: "FLIGHT DECK"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -170,7 +170,7 @@ Item {
                             text: "v" + backend.applicationVersion
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 7
+                            font.pixelSize: deck.scale(7)
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
@@ -214,7 +214,7 @@ Item {
                                 { label: "Profiles", page: 5 },
                                 { label: "Adaptive Response", page: 9 },
                                 { label: "Automation", page: 7 },
-                                { label: "Signal Flow", page: 11 },
+                                { label: "Signal Flow · Beta", page: 11 },
                                 { label: "Diagnostics", page: 3 },
                                 { label: "Settings", page: 4 }
                             ]
@@ -254,7 +254,7 @@ Item {
                             text: "SYSTEM READINESS"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         FlightDeckStatusChip {
@@ -267,7 +267,7 @@ Item {
                             visible: navigationRail.compactReadiness
                             text: readinessModel.input.title + " · " + readinessModel.game.title
                             color: deck.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2
@@ -280,21 +280,21 @@ Item {
                             Text {
                                 text: readinessModel.input.title
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
                             Text {
                                 text: readinessModel.output.title
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
                             Text {
                                 text: readinessModel.game.title + " · " + readinessModel.profile.title
                                 color: deck.textMuted
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -323,7 +323,7 @@ Item {
                         text: root.pageTitle(root.currentPage)
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 22
+                        font.pixelSize: deck.scale(22)
                         font.bold: true
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -432,7 +432,10 @@ Item {
                         active: root.currentPage === 11
                         visible: active
                         enabled: active
-                        sourceComponent: Component {
+                        sourceComponent: backend.developerSignalFlowEditorEnabled
+                            ? flightDeckSignalFlowEditorComponent : flightDeckSignalFlowBetaComponent
+                        Component {
+                            id: flightDeckSignalFlowEditorComponent
                             FlightDeckSignalFlow {
                                 anchors.fill: parent
                                 backendObject: backend
@@ -443,6 +446,10 @@ Item {
                                     root.currentPage = page
                                 }
                             }
+                        }
+                        Component {
+                            id: flightDeckSignalFlowBetaComponent
+                            SignalFlowBeta { anchors.fill: parent; tokens: deck; flightDeck: true }
                         }
                     }
                 }

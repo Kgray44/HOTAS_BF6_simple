@@ -46,8 +46,8 @@ Item {
                      : hit.containsMouse ? (control.legacy ? "#527482" : theme.borderStrong)
                                          : (control.legacy ? "#435660" : theme.border)
         Text { anchors.left: parent.left; anchors.right: arrow.left; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 10; anchors.rightMargin: 6
-            text: control.displayText; color: control.controlEnabled ? (control.legacy ? "#dce7e8" : theme.text) : theme.textFaint; font.pixelSize: 10; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
-        Text { id: arrow; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: popup.visible ? "⌃" : "⌄"; color: control.legacy ? "#94adb5" : theme.textMuted; font.pixelSize: 15 }
+            text: control.displayText; color: control.controlEnabled ? (control.legacy ? "#dce7e8" : theme.text) : theme.textFaint; font.pixelSize: theme.scale(10); elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+        Text { id: arrow; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; text: popup.visible ? "⌃" : "⌄"; color: control.legacy ? "#94adb5" : theme.textMuted; font.pixelSize: theme.scale(15) }
     }
     MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; enabled: control.controlEnabled; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: popup.visible ? popup.close() : popup.open() }
     Popup {
@@ -78,7 +78,7 @@ Item {
                                   ? (itemHit.containsMouse ? "#6f9fac" : parent.chosen ? "#527d88" : "transparent")
                                   : (parent.chosen ? theme.borderStrong : "transparent")
                 }
-                Text { anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: Text.AlignVCenter; text: control.textFor(index); color: control.legacy ? "#d0dcdd" : theme.text; font.pixelSize: 10; elide: Text.ElideRight }
+                Text { anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: Text.AlignVCenter; text: control.textFor(index); color: control.legacy ? "#d0dcdd" : theme.text; font.pixelSize: theme.scale(10); elide: Text.ElideRight }
                 MouseArea { id: itemHit; anchors.fill: parent; hoverEnabled: true; onClicked: control.choose(index) }
             }
             ScrollIndicator.vertical: ScrollIndicator { }

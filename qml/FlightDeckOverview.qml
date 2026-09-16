@@ -53,10 +53,11 @@ Flickable {
     readonly property var setupIsolation: setupGroup("isolation")
 
     function hidhideTone() {
+        if (String(hidhideHealth.freshness || "").toUpperCase() === "STALE") return "attention"
         const state = String(hidhideHealth.overallState || "CHECKING").toUpperCase()
         if (state === "READY") return "healthy"
         if (state.indexOf("REPAIR") >= 0 || state.indexOf("ACTION") >= 0 || state.indexOf("DOCTOR") >= 0) return "attention"
-        if (state === "DEGRADED") return "fault"
+        if (state === "DEGRADED") return "attention"
         return "informational"
     }
 
@@ -103,7 +104,7 @@ Flickable {
                 Text {
                     text: root.overviewMessage()
                     color: deck.textSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: deck.scale(12)
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -137,14 +138,14 @@ Flickable {
                             text: "CURRENT SETUP"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: setupTruth.overallStatus || "CHECKING"
                             color: deck.statusColor(root.setupTone(setupTruth.overallStatus || "CHECKING"))
                             font.family: deck.displayFont
-                            font.pixelSize: root.wide ? 22 : 18
+                            font.pixelSize: deck.scale(root.wide ? 22 : 18)
                             font.bold: true
                         }
                     }
@@ -169,14 +170,14 @@ Flickable {
                             text: "PHYSICAL INPUT"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: input.title || "Checking"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 15
+                            font.pixelSize: deck.scale(15)
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -184,7 +185,7 @@ Flickable {
                         Text {
                             text: input.detail || ""
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
@@ -196,14 +197,14 @@ Flickable {
                             text: "ACTIVE PROFILE"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: profile.title || "Checking"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 15
+                            font.pixelSize: deck.scale(15)
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -211,7 +212,7 @@ Flickable {
                         Text {
                             text: profile.detail || ""
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
@@ -223,14 +224,14 @@ Flickable {
                             text: "VIRTUAL OUTPUT"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: output.title || "Checking"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 15
+                            font.pixelSize: deck.scale(15)
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -238,7 +239,7 @@ Flickable {
                         Text {
                             text: output.detail || ""
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
@@ -257,14 +258,14 @@ Flickable {
                         text: "GAME"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                     }
                     Text {
                         text: game.title || "Checking"
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 12
+                        font.pixelSize: deck.scale(12)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -272,7 +273,7 @@ Flickable {
                     Text {
                         text: game.detail || ""
                         color: deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                         visible: root.wide
@@ -285,7 +286,7 @@ Flickable {
             text: "SYSTEM HEALTH"
             color: deck.textMuted
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             font.bold: true
             Layout.fillWidth: true
         }
@@ -320,8 +321,8 @@ Flickable {
                 objectName: "flightDeckHealthIsolation"
                 tokens: deck
                 eyebrow: "HIDHIDE HEALTH"
-                title: root.hidhideHealth.overallState || setupIsolation.title || "Checking"
-                detail: root.hidhideHealth.currentStage || setupIsolation.detail || ""
+                title: (root.hidhideHealth.overallState || setupIsolation.title || "Checking") + (String(root.hidhideHealth.freshness || "") === "STALE" ? " · Needs verification" : "")
+                detail: root.hidhideHealth.normalSummary || setupIsolation.detail || ""
                 tone: root.hidhideTone()
                 actionLabel: "OPEN ISOLATION"
                 onActionRequested: root.navigateToDevices("isolation")
@@ -392,13 +393,13 @@ Flickable {
                             text: "ACTIVE CONTROLS"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             font.bold: true
                         }
                         Text {
                             text: "Live values reflect the controller input currently available to HOTAS BF6."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                         }
                     }
                     Button {
@@ -419,7 +420,7 @@ Flickable {
                             text: parent.text
                             color: deck.accent
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
@@ -464,7 +465,7 @@ Flickable {
                     visible: !backend.physicalConnected
                     text: "Connect a controller to see live control activity."
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     Layout.fillWidth: true
                 }
             }

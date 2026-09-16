@@ -49,7 +49,7 @@ Button {
             text: control.label
             color: control.enabled ? (control.selected ? control.tokens.textPrimary : control.tokens.textSecondary) : control.tokens.disabled
             font.family: control.tokens.displayFont
-            font.pixelSize: 12
+            font.pixelSize: tokens.scale(12)
             font.bold: control.selected
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter

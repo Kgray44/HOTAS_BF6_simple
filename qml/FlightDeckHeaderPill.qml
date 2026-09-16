@@ -29,7 +29,7 @@ Button {
             text: control.text
             color: control.enabled ? tokens.textSecondary : tokens.disabled
             font.family: tokens.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: tokens.scale(8)
             font.bold: true
         }
         Text {
@@ -37,7 +37,7 @@ Button {
             text: control.value
             color: control.enabled ? tokens.statusColor(control.tone) : tokens.disabled
             font.family: tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: tokens.scale(9)
             font.bold: true
         }
     }

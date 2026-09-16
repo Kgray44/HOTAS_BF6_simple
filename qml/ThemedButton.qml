@@ -57,7 +57,7 @@ Rectangle {
                                         : control.flightDeck && control.tone === "primary"
                                             ? (theme.light ? "white" : theme.primarySurface)
                                             : (control.legacy ? "#f0f4f5" : theme.textStrong)
-        font.pixelSize: control.compact ? 10 : (control.flightDeck ? 9 : 11)
+        font.pixelSize: theme.scale(control.compact ? 10 : (control.flightDeck ? 9 : 11))
         font.bold: true
         font.family: control.flightDeck ? theme.telemetryFont : (theme.topGun ? theme.displayFont : "Segoe UI Variable")
         elide: Text.ElideRight

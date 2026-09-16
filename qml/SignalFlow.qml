@@ -97,6 +97,12 @@ Item {
     readonly property color graphPreview: themeTokens.graphPreview || "#377da3"
     readonly property color graphLabel: themeTokens.graphLabel || "#76909a"
     readonly property color graphFrame: themeTokens.graphFrame || "#4b7081"
+    // Legacy keeps a compact token map.  Retain that supported host by
+    // deriving these newer semantic metrics from its existing scale helper.
+    readonly property int compactControlHeight: Number(themeTokens.compactControlHeight) > 0
+        ? Number(themeTokens.compactControlHeight) : themeTokens.scale(32)
+    readonly property int controlHeight: Number(themeTokens.controlHeight) > 0
+        ? Number(themeTokens.controlHeight) : themeTokens.scale(40)
 
     // A host signal keeps Signal Flow independent of a particular shell while
     // still allowing actual deep links into the authoritative focused editors.
@@ -1250,9 +1256,9 @@ Item {
         property bool accent: false
         property bool dangerAction: false
         property string helpText: ""
-        implicitHeight: 30
+        implicitHeight: root.compactControlHeight
         padding: 10
-        font.pixelSize: 11
+        font.pixelSize: themeTokens.scale(11)
         font.bold: true
         Accessible.name: text
         contentItem: Text {
@@ -1286,7 +1292,7 @@ Item {
         property bool output: false
         property bool selected: false
         property bool compatible: false
-        implicitHeight: 27
+        implicitHeight: root.compactControlHeight
         width: parent ? parent.width : 180
         Rectangle {
             anchors.fill: parent
@@ -1314,13 +1320,13 @@ Item {
                 Layout.fillWidth: true
                 text: portRow.port && portRow.port.label ? portRow.port.label : ""
                 color: portRow.port && portRow.port.available ? root.text : root.textMuted
-                font.pixelSize: 10
+                font.pixelSize: themeTokens.scale(10)
                 elide: Text.ElideRight
             }
             Text {
                 text: portRow.port && portRow.port.mapped && !portRow.output ? "ROUTED" : ""
                 color: root.ready
-                font.pixelSize: 8
+                font.pixelSize: themeTokens.scale(8)
                 font.bold: true
             }
         }
@@ -1405,12 +1411,12 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 1
-                Text { text: "Signal Flow"; color: root.textStrong; font.pixelSize: 22; font.bold: true; font.family: root.themeTokens.displayFont }
+                Text { text: "Signal Flow"; color: root.textStrong; font.pixelSize: themeTokens.scale(22); font.bold: true; font.family: root.themeTokens.displayFont }
                 Text {
                     text: "Device Rig: " + (root.graph.deviceRigName || "Profile-local input scope")
                         + " · Profile: " + (root.graph.profileName || "the active profile")
                     color: root.textMuted
-                    font.pixelSize: 11
+                    font.pixelSize: themeTokens.scale(11)
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
@@ -1419,7 +1425,7 @@ Item {
                     text: "Effective runtime profile: " + (root.graph.effectiveProfileName || "unknown")
                         + " · editing ownership remains on " + (root.graph.profileName || "the selected profile")
                     color: root.warning
-                    font.pixelSize: 9
+                    font.pixelSize: themeTokens.scale(9)
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
@@ -1448,7 +1454,7 @@ Item {
                     id: searchField
                     Layout.preferredWidth: 190
                     Layout.fillWidth: root.width < 980
-                    implicitHeight: 30
+                    implicitHeight: root.controlHeight
                     placeholderText: "Find port or route"
                     color: root.text
                     placeholderTextColor: root.textMuted
@@ -1487,7 +1493,7 @@ Item {
                 FlowButton { text: "Defaults"; helpText: "Preview deterministic mappings for unassigned routes before applying them."; enabled: root.graph.editable && root.viewMode === "configured"; onClicked: root.previewDefaults("unassigned") }
                 FlowButton { text: "Replace all"; dangerAction: true; helpText: "Preview every replacement before rewriting current routes."; enabled: root.graph.editable && root.viewMode === "configured"; onClicked: root.previewDefaults("replace-all") }
                 FlowButton { text: "−"; Accessible.name: "Zoom out"; helpText: "Zoom out. Shortcut: Ctrl+-"; onClicked: root.keyboardAction("zoom-out") }
-                Text { text: Math.round(root.zoom * 100) + "%"; color: root.textMuted; font.pixelSize: 10 }
+                Text { text: Math.round(root.zoom * 100) + "%"; color: root.textMuted; font.pixelSize: themeTokens.scale(10) }
                 FlowButton { text: "+"; Accessible.name: "Zoom in"; helpText: "Zoom in. Shortcut: Ctrl++"; onClicked: root.keyboardAction("zoom-in") }
             }
         }
@@ -1509,7 +1515,7 @@ Item {
                 anchors.margins: 7
                 text: root.feedback.length > 0 ? root.feedback : root.graph.effectiveSummary
                 color: root.feedbackError ? root.danger : root.text
-                font.pixelSize: 10
+                font.pixelSize: themeTokens.scale(10)
                 wrapMode: Text.WordWrap
             }
         }
@@ -1530,8 +1536,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 6
-                    Text { text: "INPUT PORTS"; color: root.graphLabel; font.pixelSize: 10; font.bold: true; font.family: root.themeTokens.telemetryFont }
-                    Text { text: root.sourceLabel(); color: root.selectedSource && root.selectedSource.kind ? root.graphOutput : root.textMuted; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
+                    Text { text: "INPUT PORTS"; color: root.graphLabel; font.pixelSize: themeTokens.scale(10); font.bold: true; font.family: root.themeTokens.telemetryFont }
+                    Text { text: root.sourceLabel(); color: root.selectedSource && root.selectedSource.kind ? root.graphOutput : root.textMuted; font.pixelSize: themeTokens.scale(10); Layout.fillWidth: true; elide: Text.ElideRight }
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -1548,10 +1554,11 @@ Item {
                                     readonly property bool collapsed: root.groupCollapsed("input", modelData.group)
                                     Row {
                                         width: parent.width
+                                        height: root.compactControlHeight
                                         spacing: 4
-                                        Text { width: parent.width - 35; text: modelData.group + " · " + root.portsForGroup("input", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                                        Text { width: parent.width - themeTokens.scale(33); anchors.verticalCenter: parent.verticalCenter; text: modelData.group + " · " + root.portsForGroup("input", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
                                         Button {
-                                            width: 28; height: 20; padding: 0
+                                            width: themeTokens.scale(28); height: parent.height; padding: 0
                                             text: parent.parent.collapsed ? "+" : "−"
                                             Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + modelData.group
                                             onClicked: root.setGroupCollapsed("input", modelData.group, !parent.parent.collapsed)
@@ -1577,7 +1584,7 @@ Item {
                                 width: parent.width
                                 text: "No input ports match this filter."
                                 color: root.textMuted
-                                font.pixelSize: 10
+                                font.pixelSize: themeTokens.scale(10)
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -1765,8 +1772,13 @@ Item {
                                 Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
                                 width: node.kind === "processor" ? 155 : 238
                                 height: node.kind === "processor"
-                                    ? 82 + Math.max(0, Number(node.sharedChannelCount || 0) - 1) * 20
-                                    : Math.min(620, 86 + portColumn.implicitHeight)
+                                    ? Math.max(themeTokens.scale(82)
+                                               + Math.max(0, Number(node.sharedChannelCount || 0) - 1)
+                                                   * root.compactControlHeight,
+                                               nodeColumn.implicitHeight + themeTokens.scale(16))
+                                    : Math.min(themeTokens.scale(620),
+                                               Math.max(themeTokens.scale(86) + portColumn.implicitHeight,
+                                                        nodeColumn.implicitHeight + themeTokens.scale(16)))
                                 Behavior on height { NumberAnimation { duration: root.reducedMotion ? 0 : 190; easing.type: Easing.OutCubic } }
                                 z: 2
                                 opacity: root.xrayMode ? 0.58 : 1.0
@@ -1779,27 +1791,28 @@ Item {
                                 border.color: node.kind === "input" ? root.graphInput : node.kind === "output" ? root.graphOutput : root.borderStrong
                                 clip: true
                                 Column {
+                                    id: nodeColumn
                                     anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 4
+                                    anchors.margins: themeTokens.scale(8)
+                                    spacing: themeTokens.scale(4)
                                     Row {
                                         width: parent.width
                                         spacing: 5
                                         Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: node.connected ? root.ready : root.warning }
-                                        Text { width: parent.width - 16; text: node.label; color: root.textStrong; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
+                                        Text { width: parent.width - 16; text: node.label; color: root.textStrong; font.pixelSize: themeTokens.scale(11); font.bold: true; elide: Text.ElideRight }
                                     }
-                                    Text { width: parent.width; text: node.detail || ""; color: root.textMuted; font.pixelSize: 9; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: node.detail || ""; color: root.textMuted; font.pixelSize: themeTokens.scale(9); wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight }
                                     Column {
                                         visible: node.kind === "processor" && Boolean(node.shared)
                                         width: parent.width
                                         spacing: 1
-                                        Text { text: "SHARED · " + Number(node.sharedChannelCount || 0) + " CHANNELS"; color: root.graphOutput; font.pixelSize: 8; font.bold: true }
+                                        Text { text: "SHARED · " + Number(node.sharedChannelCount || 0) + " CHANNELS"; color: root.graphOutput; font.pixelSize: themeTokens.scale(8); font.bold: true }
                                         Repeater {
                                             model: Math.min(4, Number(node.sharedChannelCount || 0))
                                             delegate: Row {
                                                 spacing: 3
                                                 Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: root.graphInput }
-                                                Text { text: "channel " + (index + 1) + "  →"; color: root.textMuted; font.pixelSize: 8 }
+                                                Text { text: "channel " + (index + 1) + "  →"; color: root.textMuted; font.pixelSize: themeTokens.scale(8) }
                                                 Rectangle { width: 5; height: 5; radius: 3; anchors.verticalCenter: parent.verticalCenter; color: root.graphOutput }
                                             }
                                         }
@@ -1872,8 +1885,8 @@ Item {
                                     return entry.routeId === String(modelData.id || "")
                                 })[0]
                                 x: geometry ? Math.max(0, Number(geometry.focusX || (geometry.startX + geometry.endX) * 0.5) - 90) : 680
-                                y: geometry ? Math.max(0, Number(geometry.focusY || (geometry.startY + geometry.endY) * 0.5) - 10) : 80 + index * 24
-                                width: 180; height: 20
+                                y: geometry ? Math.max(0, Number(geometry.focusY || (geometry.startY + geometry.endY) * 0.5) - root.compactControlHeight * 0.5) : themeTokens.scale(80) + index * (root.compactControlHeight + themeTokens.scale(4))
+                                width: themeTokens.scale(180); height: root.compactControlHeight
                                 DropArea {
                                     id: processorDrop
                                     anchors.fill: parent
@@ -1922,7 +1935,7 @@ Item {
                         ? root.connectionPreview.message
                         : "Click-click or drag to route · drag a processor chip onto a route lane · right-click a wire for processing · right-click a card to pin · Delete disconnects"
                     color: root.graphLabel
-                    font.pixelSize: 9
+                    font.pixelSize: themeTokens.scale(9)
                 }
             }
 
@@ -1937,7 +1950,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 7
-                    Text { text: root.selectedNode && root.selectedNode.id ? "CARD / INSPECTOR" : "OUTPUT / INSPECTOR"; color: root.graphLabel; font.pixelSize: 10; font.bold: true; font.family: root.themeTokens.telemetryFont }
+                    Text { text: root.selectedNode && root.selectedNode.id ? "CARD / INSPECTOR" : "OUTPUT / INSPECTOR"; color: root.graphLabel; font.pixelSize: themeTokens.scale(10); font.bold: true; font.family: root.themeTokens.telemetryFont }
                     Text {
                         Layout.fillWidth: true
                         text: root.selectedRoute && root.selectedRoute.id
@@ -1945,7 +1958,7 @@ Item {
                             : root.selectedNode && root.selectedNode.id ? root.selectedNode.label
                             : "Choose a compatible output after selecting a source."
                         color: root.selectedRoute && root.selectedRoute.id || root.selectedNode && root.selectedNode.id ? root.textStrong : root.textMuted
-                        font.pixelSize: 11
+                        font.pixelSize: themeTokens.scale(11)
                         wrapMode: Text.WordWrap
                     }
                     Text {
@@ -1954,7 +1967,7 @@ Item {
                         text: (root.selectedNode.detail || "") + (root.selectedNode.capabilitySummary
                             ? "\n" + root.selectedNode.capabilitySummary : "")
                         color: root.selectedNode && root.selectedNode.missingReference ? root.warning : root.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     Text {
@@ -1964,7 +1977,7 @@ Item {
                             + (Number(root.selectedNode.routeCount || 0) === 1 ? "" : "s")
                             + (root.selectedNode.connected ? " · ready" : " · offline / unavailable")
                         color: root.selectedNode && root.selectedNode.connected ? root.ready : root.warning
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         font.bold: true
                     }
                     FlowButton {
@@ -1992,7 +2005,7 @@ Item {
                                 + (root.selectedRoute.viaNodeId ? "; explicit mixer included." : " projected from this axis configuration.")
                             : "No separate processor node is active for this route."
                         color: root.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     Text {
@@ -2000,7 +2013,7 @@ Item {
                         Layout.fillWidth: true
                         text: "MIXER MODE"
                         color: root.graphLabel
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         font.bold: true
                     }
                     ComboBox {
@@ -2028,7 +2041,7 @@ Item {
                         Layout.fillWidth: true
                         text: "Adaptive Response · " + String(root.processorDetail("adaptive-response").settingsSummary)
                         color: root.graphLabel
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         font.bold: true
                         wrapMode: Text.WordWrap
                     }
@@ -2039,7 +2052,7 @@ Item {
                             + " · " + (root.selectedRoute.healthDetail || "")
                         color: root.selectedRoute.health === "ready" ? root.ready
                             : root.selectedRoute.health === "conflict" ? root.warning : root.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                         font.bold: true
                         wrapMode: Text.WordWrap
                     }
@@ -2049,7 +2062,7 @@ Item {
                         text: "Live sample: " + Number(root.routeLive(root.selectedRoute).value || 0).toFixed(3)
                             + (root.routeIsLive(root.selectedRoute) ? " · moving" : " · steady")
                         color: root.routeIsLive(root.selectedRoute) ? root.ready : root.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: themeTokens.scale(9)
                     }
                     FlowButton { text: "Explain this route"; visible: Boolean(root.selectedRoute && root.selectedRoute.id); Layout.fillWidth: true; onClicked: root.explainSelected() }
                     FlowButton {
@@ -2086,10 +2099,11 @@ Item {
                                     readonly property bool collapsed: root.groupCollapsed("output", modelData.group)
                                     Row {
                                         width: parent.width
+                                        height: root.compactControlHeight
                                         spacing: 4
-                                        Text { width: parent.width - 35; text: modelData.group + " · " + root.portsForGroup("output", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
+                                        Text { width: parent.width - themeTokens.scale(33); anchors.verticalCenter: parent.verticalCenter; text: modelData.group + " · " + root.portsForGroup("output", modelData.group, 999).length; color: root.graphLabel; font.pixelSize: themeTokens.scale(8); font.bold: true; elide: Text.ElideRight }
                                         Button {
-                                            width: 28; height: 20; padding: 0
+                                            width: themeTokens.scale(28); height: parent.height; padding: 0
                                             text: parent.parent.collapsed ? "+" : "−"
                                             Accessible.name: (parent.parent.collapsed ? "Expand " : "Collapse ") + modelData.group
                                             onClicked: root.setGroupCollapsed("output", modelData.group, !parent.parent.collapsed)
@@ -2116,7 +2130,7 @@ Item {
                                 width: parent.width
                                 text: "No output ports match this filter."
                                 color: root.textMuted
-                                font.pixelSize: 10
+                                font.pixelSize: themeTokens.scale(10)
                             }
                         }
                     }
@@ -2296,8 +2310,8 @@ Item {
         title: "Explain this route"
         contentItem: ColumnLayout {
             spacing: 9
-            Text { Layout.fillWidth: true; text: root.routeExplanation.summary || "Select a current route to explain it."; color: root.text; wrapMode: Text.WordWrap; font.pixelSize: 12 }
-            Text { Layout.fillWidth: true; text: root.routeExplanation.runtimeDetail || ""; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: root.routeExplanation.summary || "Select a current route to explain it."; color: root.text; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(12) }
+            Text { Layout.fillWidth: true; text: root.routeExplanation.runtimeDetail || ""; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(230, explanationSteps.implicitHeight)
@@ -2313,8 +2327,8 @@ Item {
                             width: parent.width; implicitHeight: stepBody.implicitHeight + 12
                             radius: 4; color: root.insetPanel; border.color: root.border
                             Column { id: stepBody; anchors.fill: parent; anchors.margins: 6; spacing: 2
-                                Text { width: parent.width; text: modelData.label || "Signal step"; color: root.textStrong; font.pixelSize: 10; font.bold: true }
-                                Text { width: parent.width; text: modelData.detail || ""; color: root.textMuted; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                                Text { width: parent.width; text: modelData.label || "Signal step"; color: root.textStrong; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                Text { width: parent.width; text: modelData.detail || ""; color: root.textMuted; font.pixelSize: themeTokens.scale(9); wrapMode: Text.WordWrap }
                             }
                         }
                     }
@@ -2324,11 +2338,11 @@ Item {
                 visible: technicalDetails.checked
                 Layout.fillWidth: true; Layout.preferredHeight: 106
                 readOnly: true; text: root.routeExplanation.technicalDetails || ""
-                color: root.text; font.family: root.themeTokens.telemetryFont; font.pixelSize: 9
+                color: root.text; font.family: root.themeTokens.telemetryFont; font.pixelSize: themeTokens.scale(9)
                 background: Rectangle { color: root.control; border.color: root.border; radius: 4 }
             }
             RowLayout { Layout.fillWidth: true
-                CheckBox { id: technicalDetails; text: "Technical details"; contentItem: Text { text: parent.text; color: root.textMuted; leftPadding: parent.indicator.width + 6; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10 } }
+                CheckBox { id: technicalDetails; text: "Technical details"; contentItem: Text { text: parent.text; color: root.textMuted; leftPadding: parent.indicator.width + 6; verticalAlignment: Text.AlignVCenter; font.pixelSize: themeTokens.scale(10) } }
                 Item { Layout.fillWidth: true }
                 FlowButton { text: "Close"; onClicked: explainDialog.close() }
             }
@@ -2345,7 +2359,7 @@ Item {
         title: "Processor palette"
         contentItem: ColumnLayout {
             spacing: 9
-            Text { Layout.fillWidth: true; text: "Drag a processor onto a route lane in the canvas, or click one to atomically add/remove it from the selected source chain. Source-owned processors affect that source’s visible fan-out routes."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "Drag a processor onto a route lane in the canvas, or click one to atomically add/remove it from the selected source chain. Source-owned processors affect that source’s visible fan-out routes."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             Flow {
                 Layout.fillWidth: true
                 spacing: 7
@@ -2362,7 +2376,7 @@ Item {
                         width: Math.max(108, chipText.implicitWidth + 20); height: 30; radius: 4
                         color: root.processorEnabled(processorKind) ? root.graphOutput : root.control
                         border.color: chipDrag.active ? root.warning : root.borderStrong
-                        Text { id: chipText; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? root.pageBackground : root.textStrong; font.pixelSize: 10; font.bold: true }
+                        Text { id: chipText; anchors.centerIn: parent; text: root.processorIsShared(processorKind) ? "Split shared " + modelData.label : root.processorEnabled(processorKind) ? "Remove " + modelData.label : "Add " + modelData.label; color: root.processorEnabled(processorKind) ? root.pageBackground : root.textStrong; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         Drag.active: chipDrag.active
                         Drag.source: processorChip
                         Drag.keys: ["signal-flow-processor"]
@@ -2421,7 +2435,7 @@ Item {
         }
         contentItem: ColumnLayout {
             spacing: 10
-            Text { Layout.fillWidth: true; text: "The first selected route owns the existing processor setting. Signal Flow mirrors that durable setting to every selected axis; split a route later to edit it independently."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "The first selected route owns the existing processor setting. Signal Flow mirrors that durable setting to every selected axis; split a route later to edit it independently."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             ComboBox {
                 id: shareKind
                 Layout.fillWidth: true
@@ -2450,12 +2464,12 @@ Item {
                             checked: Boolean(modelData.selected)
                             text: modelData.label
                             onToggled: shareDialog.setChoice(index, checked)
-                            contentItem: Text { text: parent.text; color: root.text; leftPadding: parent.indicator.width + 7; verticalAlignment: Text.AlignVCenter; font.pixelSize: 10; elide: Text.ElideRight }
+                            contentItem: Text { text: parent.text; color: root.text; leftPadding: parent.indicator.width + 7; verticalAlignment: Text.AlignVCenter; font.pixelSize: themeTokens.scale(10); elide: Text.ElideRight }
                         }
                     }
                 }
             }
-            Text { Layout.fillWidth: true; text: "Select at least two distinct physical axis sources. Existing members of a shared processor stay selected when extending it."; color: root.graphLabel; wrapMode: Text.WordWrap; font.pixelSize: 9 }
+            Text { Layout.fillWidth: true; text: "Select at least two distinct physical axis sources. Existing members of a shared processor stay selected when extending it."; color: root.graphLabel; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(9) }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2485,9 +2499,9 @@ Item {
         }
         contentItem: ColumnLayout {
             spacing: 10
-            Text { Layout.fillWidth: true; text: "Move an axis, press a button, or move a POV direction. Signal Flow will identify the physical source first and then highlight only compatible destinations."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
-            Text { Layout.fillWidth: true; text: (backendObject.inputLearning.message || "Preparing safe source detection…"); color: root.text; wrapMode: Text.WordWrap; font.pixelSize: 11 }
-            Text { visible: String(backendObject.inputLearning.sourceLabel || "").length > 0; Layout.fillWidth: true; text: backendObject.inputLearning.sourceLabel || ""; color: root.ready; font.pixelSize: 11; font.bold: true }
+            Text { Layout.fillWidth: true; text: "Move an axis, press a button, or move a POV direction. Signal Flow will identify the physical source first and then highlight only compatible destinations."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
+            Text { Layout.fillWidth: true; text: (backendObject.inputLearning.message || "Preparing safe source detection…"); color: root.text; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(11) }
+            Text { visible: String(backendObject.inputLearning.sourceLabel || "").length > 0; Layout.fillWidth: true; text: backendObject.inputLearning.sourceLabel || ""; color: root.ready; font.pixelSize: themeTokens.scale(11); font.bold: true }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2509,7 +2523,7 @@ Item {
         onOpened: { choices = root.visibleOutputPorts().filter(function(port) { return port.kind === "axis" || port.kind === "button" }) }
         contentItem: ColumnLayout {
             spacing: 10
-            Text { Layout.fillWidth: true; text: "Choose a virtual axis or button, then move the physical control that should drive it. Signal Flow keeps the resulting route highlighted here."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "Choose a virtual axis or button, then move the physical control that should drive it. Signal Flow keeps the resulting route highlighted here."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             ComboBox { id: learnChoices; Layout.fillWidth: true; model: learnDialog.choices; textRole: "label"; Accessible.name: "Learn destination" }
             RowLayout {
                 Layout.fillWidth: true
@@ -2532,7 +2546,7 @@ Item {
         onOpened: { axes = root.outputPorts().filter(function(port) { return port.kind === "axis" }); aliasText.text = axes.length > 0 && axes[0].label !== axes[0].technicalLabel ? axes[0].label : "" }
         contentItem: ColumnLayout {
             spacing: 10
-            Text { Layout.fillWidth: true; text: "Aliases are labels only; they never change the vJoy axis identity or runtime route."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "Aliases are labels only; they never change the vJoy axis identity or runtime route."; color: root.textMuted; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             ComboBox { id: aliasAxis; Layout.fillWidth: true; model: aliasDialog.axes; textRole: "technicalLabel"; onCurrentIndexChanged: { const choice = aliasDialog.axes[currentIndex]; aliasText.text = choice && choice.label !== choice.technicalLabel ? choice.label : "" } }
             TextField { id: aliasText; Layout.fillWidth: true; placeholderText: "Optional alias"; color: root.text; selectByMouse: true; background: Rectangle { radius: 4; color: root.control; border.color: root.border } }
             RowLayout {
@@ -2567,9 +2581,9 @@ Item {
                     spacing: 3
                     Repeater {
                         model: defaultsDialog.preview.changes || []
-                        delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? root.warning : root.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                        delegate: Text { required property var modelData; width: parent.width; text: modelData.source + ": " + modelData.from + " → " + modelData.to + (modelData.blocked ? " · " + modelData.reason : ""); color: modelData.blocked ? root.warning : root.textMuted; font.pixelSize: themeTokens.scale(10); elide: Text.ElideRight }
                     }
-                    Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No routes would change."; color: root.ready; font.pixelSize: 10 }
+                    Text { visible: (defaultsDialog.preview.count || 0) === 0; text: "No routes would change."; color: root.ready; font.pixelSize: themeTokens.scale(10) }
                 }
             }
             RowLayout {

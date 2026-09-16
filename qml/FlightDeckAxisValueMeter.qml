@@ -29,7 +29,7 @@ Item {
                 text: root.caption
                 color: root.tokens.textMuted
                 font.family: root.tokens.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: root.tokens.scale(8)
                 font.bold: true
             }
             Item {
@@ -39,7 +39,7 @@ Item {
                 text: root.valid ? root.percentage : root.unavailableText
                 color: root.valid ? root.tokens.textPrimary : root.tokens.textMuted
                 font.family: root.tokens.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: root.tokens.scale(10)
                 font.bold: true
             }
         }

@@ -77,6 +77,24 @@ struct NativeAxisDescriptor {
     qint32 nativeMinimum = -10000;
     qint32 nativeMaximum = 10000;
     bool relative = false;
+    // Append-only after the legacy persisted identity shape. Existing test
+    // fixtures and older configuration records retain their original field
+    // ordering while newer evidence augments it.
+    int enumerationIndex = -1;
+    quint32 directInputInstance = 0;
+    // The DirectInput range request is evidence, not an assumption. Some
+    // controllers retain an unsigned/native range after DIPROP_RANGE, so the
+    // mapper must normalize the observed range rather than blindly divide by
+    // 10000.
+    qint32 requestedMinimum = -10000;
+    qint32 requestedMaximum = 10000;
+    bool rangeSetAttempted = false;
+    qint32 rangeSetResult = 0;
+    qint32 rangeReadResult = 0;
+    bool acquisitionSourceResolved = false;
+    // 0 = standard DIJOYSTATE2 field. 1 = buffered DirectInput object. The
+    // value is a fixed primitive consumed by the mapper, never a QML string.
+    int acquisitionMethod = 0;
 };
 
 enum class VirtualAxis : int {

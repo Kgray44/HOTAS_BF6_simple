@@ -13,6 +13,14 @@ FlightDeckDialog {
     property var rigItems: []
     property string viewedRigId: ""
     property bool attachToViewedRig: false
+    // Create and Edit intentionally share this one capability editor. Edit
+    // starts from the durable layout and asks AppBackend for an authoritative
+    // impact plan before any descriptor-affecting change is committed.
+    property bool editing: false
+    property string editingLayoutId: ""
+    property var impactPlan: ({})
+    property bool impactReviewVisible: false
+    property bool preparedDraft: false
     property string mode: "match-existing" // match-existing, preset, custom
     property string matchExistingId: ""
     property int presetIndex: 0
@@ -23,20 +31,21 @@ FlightDeckDialog {
     property int customDiscretePovs: 0
     property string initialNamePrefix: "Flight Deck Output"
 
-    heading: "Create Virtual Output"
+    heading: editing ? "Edit Virtual Output" : "Create Virtual Output"
     tone: "informational"
     preferredWidth: 720
 
     signal created(var result)
+    signal updated(var result)
     signal failed(var result)
 
     // Keep the user-facing output names neutral.  X/Rx/slider identifiers
     // are vJoy driver slots, not a useful default name for a configurable
     // channel; the persisted capability still uses the same canonical IDs.
     readonly property var axisOptions: [
-        { id: 1, label: "Axis 1" }, { id: 2, label: "Axis 2" }, { id: 3, label: "Axis 3" },
-        { id: 4, label: "Axis 4" }, { id: 5, label: "Axis 5" }, { id: 6, label: "Axis 6" },
-        { id: 7, label: "Axis 7" }, { id: 8, label: "Axis 8" }
+        { id: 1, label: "Axis 1 / X" }, { id: 2, label: "Axis 2 / Y" }, { id: 3, label: "Axis 3 / Z" },
+        { id: 4, label: "Axis 4 / Rx" }, { id: 5, label: "Axis 5 / Ry" }, { id: 6, label: "Axis 6 / Rz" },
+        { id: 7, label: "Axis 7 / Slider 0" }, { id: 8, label: "Axis 8 / Slider 1" }
     ]
     readonly property var presets: [
         { name: "BF6 Standard", axes: [1, 2, 3, 6], buttons: 32, continuousPovs: 0, discretePovs: 0 },
@@ -47,7 +56,9 @@ FlightDeckDialog {
     readonly property var outputLayouts: backendObject ? backendObject.virtualOutputLayouts : []
     readonly property var selectedExisting: outputFor(matchExistingId)
     readonly property var selectedPreset: presets[presetIndex] || presets[0]
-    readonly property var activeCapabilities: mode === "match-existing" ? selectedExisting
+    readonly property var activeCapabilities: editing ? ({ axesList: customAxes, buttons: customButtons,
+        continuousPovs: customContinuousPovs, discretePovs: customDiscretePovs })
+        : mode === "match-existing" ? selectedExisting
         : mode === "preset" ? selectedPreset
         : ({ axesList: customAxes, buttons: customButtons, continuousPovs: customContinuousPovs,
              discretePovs: customDiscretePovs })
@@ -101,7 +112,8 @@ FlightDeckDialog {
     function deviceAssignment() {
         for (let index = 0; index < outputLayouts.length; ++index) {
             const output = outputLayouts[index] || ({})
-            if (Number(output.deviceId || 0) === Number(selectedDeviceId)) return output
+            if (Number(output.deviceId || 0) === Number(selectedDeviceId)
+                    && String(output.id || "") !== String(editingLayoutId || "")) return output
         }
         return null
     }
@@ -176,6 +188,10 @@ FlightDeckDialog {
     }
 
     function resetDraft() {
+        editing = false
+        editingLayoutId = ""
+        impactPlan = ({})
+        impactReviewVisible = false
         const suggested = Number(backendObject ? backendObject.suggestedVirtualOutputDeviceId() : 0)
         selectedDeviceId = suggested > 0 ? suggested : 1
         outputName.text = suggested > 0 ? initialNamePrefix + " " + suggested : ""
@@ -195,8 +211,69 @@ FlightDeckDialog {
         open()
     }
 
+    function openForEdit(layoutId) {
+        const output = outputFor(layoutId)
+        if (!output || !output.id) return
+        editing = true
+        editingLayoutId = String(output.id || "")
+        viewedRigId = ""
+        attachToViewedRig = false
+        impactPlan = ({})
+        impactReviewVisible = false
+        mode = "custom"
+        outputName.text = String(output.name || "")
+        selectedDeviceId = Number(output.deviceId || 1)
+        customAxes = (output.axesList || []).map(function(value) { return Number(value) })
+        customButtons = Number(output.buttons || 0)
+        customContinuousPovs = Number(output.continuousPovs || 0)
+        customDiscretePovs = Number(output.discretePovs || 0)
+        open()
+    }
+
+    function openForDuplicate(layoutId) {
+        const source = outputFor(layoutId)
+        if (!source || !source.id) return
+        resetDraft()
+        mode = "match-existing"
+        matchExistingId = String(source.id || "")
+        let suffix = 2
+        let candidate = String(source.name || "Virtual Output") + " Copy"
+        while (outputLayouts.some(function(output) {
+            return String(output.name || "").toLowerCase() === candidate.toLowerCase()
+        })) {
+            candidate = String(source.name || "Virtual Output") + " Copy " + suffix
+            suffix += 1
+        }
+        outputName.text = candidate
+        preparedDraft = true
+        open()
+    }
+
     function saveOutput() {
         if (!saveEnabled || !backendObject) return
+        if (editing) {
+            const plan = backendObject.previewVirtualOutputEdit(editingLayoutId, outputName.text,
+                selectedDeviceId, customAxes, customButtons, customContinuousPovs, customDiscretePovs)
+            if (!plan.valid) {
+                failed({ success: false, title: "Virtual Output was not updated", message: plan.error || "Review the proposed output contract." })
+                return
+            }
+            if (plan.descriptorChanged) {
+                if (!impactReviewVisible || String(impactPlan.planKey || "") !== String(plan.planKey || "")) {
+                    impactPlan = plan
+                    impactReviewVisible = true
+                    return
+                }
+            }
+            const result = backendObject.applyVirtualOutputEdit(plan)
+            if (!result.success) {
+                failed(result)
+                return
+            }
+            updated(result)
+            close()
+            return
+        }
         const result = backendObject.createVirtualOutputLayoutResult(outputName.text,
             selectedDeviceId, selectedModeForBackend(), selectedSourceForBackend(), selectedAxesForBackend(),
             selectedButtonsForBackend(), selectedContinuousPovsForBackend(), selectedDiscretePovsForBackend(),
@@ -209,7 +286,10 @@ FlightDeckDialog {
         close()
     }
 
-    onOpened: resetDraft()
+    onOpened: {
+        if (!editing && !preparedDraft) resetDraft()
+        preparedDraft = false
+    }
 
     component DeckButton: Button {
         id: button
@@ -234,7 +314,7 @@ FlightDeckDialog {
             color: !button.enabled ? tokens.textMuted
                 : button.selected ? (tokens.light ? "white" : tokens.primarySurface) : tokens.textSecondary
             font.family: tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: tokens.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -259,7 +339,7 @@ FlightDeckDialog {
             text: toggle.label
             color: toggle.checked ? tokens.textPrimary : tokens.textSecondary
             font.family: tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: tokens.scale(9)
             font.bold: true
         }
         MouseArea {
@@ -277,7 +357,7 @@ FlightDeckDialog {
         leftPadding: tokens.space12
         rightPadding: tokens.space32
         font.family: tokens.telemetryFont
-        font.pixelSize: 10
+        font.pixelSize: tokens.scale(10)
         contentItem: Text {
             text: combo.displayText
             color: combo.enabled ? tokens.textPrimary : tokens.textMuted
@@ -290,7 +370,7 @@ FlightDeckDialog {
             anchors.verticalCenter: parent.verticalCenter
             text: combo.popup.visible ? "⌃" : "⌄"
             color: tokens.textMuted
-            font.pixelSize: 12
+            font.pixelSize: tokens.scale(12)
         }
         background: Rectangle {
             radius: tokens.radiusControl
@@ -306,7 +386,7 @@ FlightDeckDialog {
                 text: combo.textAt(index)
                 color: tokens.textPrimary
                 font.family: tokens.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: tokens.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -342,14 +422,17 @@ FlightDeckDialog {
 
             Text {
                 Layout.fillWidth: true
-                text: "Define a reusable virtual-controller capability contract. Creating it does not provision vJoy; Setup Health performs that explicit driver step."
+                text: dialog.editing
+                    ? "Edit HOTAS BF6's desired Virtual Output contract. A capability or vJoy Device change is reviewed here, then verified through Setup Health; this dialog never reconfigures the driver directly."
+                    : "Define a reusable virtual-controller capability contract. Creating it does not provision vJoy; Setup Health performs that explicit driver step."
                 color: tokens.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: tokens.scale(11)
                 wrapMode: Text.WordWrap
             }
 
-            Text { text: "CREATION MODE"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+            Text { visible: !dialog.editing; text: "CREATION MODE"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
             RowLayout {
+                visible: !dialog.editing
                 Layout.fillWidth: true
                 spacing: tokens.space8
                 DeckButton { Layout.fillWidth: true; text: "MATCH EXISTING"; selected: dialog.mode === "match-existing"; onClicked: dialog.mode = "match-existing" }
@@ -358,10 +441,10 @@ FlightDeckDialog {
             }
 
             ColumnLayout {
+                visible: !dialog.editing && dialog.mode === "match-existing"
                 Layout.fillWidth: true
                 spacing: tokens.space8
-                visible: dialog.mode === "match-existing"
-                Text { text: "SOURCE OUTPUT"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "SOURCE OUTPUT"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                 DeckCombo {
                     id: existingOutputPicker
                     Layout.fillWidth: true
@@ -371,14 +454,14 @@ FlightDeckDialog {
                     currentIndex: dialog.outputIndex(dialog.matchExistingId)
                     onActivated: dialog.matchExistingId = String(currentValue || "")
                 }
-                Text { Layout.fillWidth: true; text: dialog.selectedExisting.id ? dialog.capabilitySummary(dialog.selectedExisting) : "Choose an existing Virtual Output to inspect its capability contract."; color: tokens.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: dialog.selectedExisting.id ? dialog.capabilitySummary(dialog.selectedExisting) : "Choose an existing Virtual Output to inspect its capability contract."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
             }
 
             ColumnLayout {
+                visible: !dialog.editing && dialog.mode === "preset"
                 Layout.fillWidth: true
                 spacing: tokens.space8
-                visible: dialog.mode === "preset"
-                Text { text: "CAPABILITY PRESET"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "CAPABILITY PRESET"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                 DeckCombo {
                     Layout.fillWidth: true
                     model: dialog.presets
@@ -386,14 +469,14 @@ FlightDeckDialog {
                     currentIndex: dialog.presetIndex
                     onActivated: dialog.presetIndex = currentIndex
                 }
-                Text { Layout.fillWidth: true; text: dialog.capabilitySummary(dialog.selectedPreset); color: tokens.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: dialog.capabilitySummary(dialog.selectedPreset); color: tokens.textSecondary; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
             }
 
             ColumnLayout {
+                visible: dialog.editing || dialog.mode === "custom"
                 Layout.fillWidth: true
                 spacing: tokens.space8
-                visible: dialog.mode === "custom"
-                Text { text: "AXES"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "AXES"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                 Flow {
                     Layout.fillWidth: true
                     spacing: tokens.space8
@@ -409,33 +492,33 @@ FlightDeckDialog {
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "BUTTONS"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { text: "BUTTONS"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                     Item { Layout.fillWidth: true }
                     DeckButton { text: "−"; subdued: true; enabled: dialog.customButtons > 0; onClicked: dialog.customButtons -= 1 }
-                    Text { text: String(dialog.customButtons); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
+                    Text { text: String(dialog.customButtons); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(12); horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
                     DeckButton { text: "+"; subdued: true; enabled: dialog.customButtons < 128; onClicked: dialog.customButtons += 1 }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "CONTINUOUS POVs"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { text: "CONTINUOUS POVs"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                     Item { Layout.fillWidth: true }
                     DeckButton { text: "−"; subdued: true; enabled: dialog.customContinuousPovs > 0; onClicked: dialog.customContinuousPovs -= 1 }
-                    Text { text: String(dialog.customContinuousPovs); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
+                    Text { text: String(dialog.customContinuousPovs); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(12); horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
                     DeckButton { text: "+"; subdued: true; enabled: dialog.customContinuousPovs < 4; onClicked: { dialog.customContinuousPovs += 1; dialog.customDiscretePovs = 0 } }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Text { text: "DISCRETE POVs"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                    Text { text: "DISCRETE POVs"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                     Item { Layout.fillWidth: true }
                     DeckButton { text: "−"; subdued: true; enabled: dialog.customDiscretePovs > 0; onClicked: dialog.customDiscretePovs -= 1 }
-                    Text { text: String(dialog.customDiscretePovs); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
+                    Text { text: String(dialog.customDiscretePovs); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(12); horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
                     DeckButton { text: "+"; subdued: true; enabled: dialog.customDiscretePovs < 4; onClicked: { dialog.customDiscretePovs += 1; dialog.customContinuousPovs = 0 } }
                 }
             }
 
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: tokens.divider }
-            Text { text: "COMMON OUTPUT SETTINGS"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
-            Text { text: "OUTPUT NAME"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+            Text { text: dialog.editing ? "VIRTUAL OUTPUT" : "COMMON OUTPUT SETTINGS"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
+            Text { text: "OUTPUT NAME"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
             TextField {
                 id: outputName
                 objectName: "canonicalVirtualOutputName"
@@ -448,22 +531,22 @@ FlightDeckDialog {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "VJOY DEVICE"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 9; font.bold: true }
+                Text { text: "VJOY DEVICE"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); font.bold: true }
                 Item { Layout.fillWidth: true }
                 DeckButton { text: "−"; subdued: true; enabled: dialog.selectedDeviceId > 1; onClicked: dialog.selectedDeviceId -= 1 }
-                Text { text: String(dialog.selectedDeviceId); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
+                Text { text: String(dialog.selectedDeviceId); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(12); horizontalAlignment: Text.AlignHCenter; Layout.preferredWidth: 42 }
                 DeckButton { text: "+"; subdued: true; enabled: dialog.selectedDeviceId < 16; onClicked: dialog.selectedDeviceId += 1 }
             }
-            Text { Layout.fillWidth: true; text: "vJoy " + dialog.selectedDeviceId + " · " + dialog.deviceState(); color: dialog.deviceAssignment() ? tokens.attention : tokens.ready; font.family: tokens.telemetryFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "vJoy Device " + dialog.selectedDeviceId + " · " + dialog.deviceState(); color: dialog.deviceAssignment() ? tokens.attention : tokens.ready; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(9); wrapMode: Text.WordWrap }
 
             DeckToggle {
                 Layout.fillWidth: true
-                visible: String(dialog.viewedRigId || "").length > 0
+                visible: !dialog.editing && String(dialog.viewedRigId || "").length > 0
                 label: "ADD TO " + dialog.rigName().toUpperCase()
                 checked: dialog.attachToViewedRig
                 onToggled: function(checked) { dialog.attachToViewedRig = checked }
             }
-            Text { Layout.fillWidth: true; visible: String(dialog.viewedRigId || "").length > 0 && dialog.attachToViewedRig; text: "The output will be added to this Rig but will not replace its primary output or activate the Rig."; color: tokens.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; visible: !dialog.editing && String(dialog.viewedRigId || "").length > 0 && dialog.attachToViewedRig; text: "The output will be added to this Rig but will not replace its primary output or activate the Rig."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
 
             Rectangle {
                 Layout.fillWidth: true
@@ -475,22 +558,43 @@ FlightDeckDialog {
                     id: summaryText
                     anchors.fill: parent
                     anchors.margins: tokens.space12
-                    text: "NEW VIRTUAL OUTPUT\n\n" + (outputName.text.trim() || "Untitled output")
+                    text: (dialog.editing ? "VIRTUAL OUTPUT\n\n" : "NEW VIRTUAL OUTPUT\n\n") + (outputName.text.trim() || "Untitled output")
                         + "\n\nvJoy Device\n    " + dialog.selectedDeviceId
                         + "\n\n" + dialog.capabilitySummary(dialog.activeCapabilities)
                         + (dialog.attachToViewedRig && dialog.viewedRigId.length ? "\n\nAdd to Rig\n    " + dialog.rigName() : "")
                     color: tokens.textPrimary
                     font.family: tokens.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: tokens.scale(10)
                     wrapMode: Text.WordWrap
                 }
             }
-            Text { Layout.fillWidth: true; visible: dialog.validationReason.length > 0; text: dialog.validationReason; color: tokens.attention; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Rectangle {
+                visible: dialog.impactReviewVisible
+                Layout.fillWidth: true
+                implicitHeight: impactReview.implicitHeight + tokens.space24
+                radius: tokens.radiusControl
+                color: tokens.secondarySurface
+                border.color: tokens.attention
+                ColumnLayout {
+                    id: impactReview
+                    anchors.fill: parent
+                    anchors.margins: tokens.space12
+                    spacing: tokens.space8
+                    Text { text: "EDIT IMPACT PREVIEW"; color: tokens.attention; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(10); font.bold: true }
+                    Text { Layout.fillWidth: true; text: "CURRENT\n" + (dialog.impactPlan.current ? (String(dialog.impactPlan.current.name || "Virtual Output") + "\n" + "vJoy Device " + String(dialog.impactPlan.current.deviceId || "?") + "\n" + String(dialog.impactPlan.current.axisCount || 0) + " axes · " + String(dialog.impactPlan.current.buttons || 0) + " buttons · " + (Number(dialog.impactPlan.current.continuousPovs || 0) + Number(dialog.impactPlan.current.discretePovs || 0)) + " POVs") : "Not available") + "\n\nPROPOSED\n" + (dialog.impactPlan.proposed ? (String(dialog.impactPlan.proposed.name || "Virtual Output") + "\n" + "vJoy Device " + String(dialog.impactPlan.proposed.deviceId || "?") + "\n" + String(dialog.impactPlan.proposed.axisCount || 0) + " axes · " + String(dialog.impactPlan.proposed.buttons || 0) + " buttons · " + (Number(dialog.impactPlan.proposed.continuousPovs || 0) + Number(dialog.impactPlan.proposed.discretePovs || 0)) + " POVs") : "Not available"); color: tokens.textPrimary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                    Text { visible: (dialog.impactPlan.affectedRigs || []).length > 0; Layout.fillWidth: true; text: "USED BY\n" + (dialog.impactPlan.affectedRigs || []).map(function(rig) { return "• " + String(rig.name || "Device Rig") + (rig.primary ? " — Primary Output" : "") }).join("\n") + ((dialog.impactPlan.affectedProfiles || []).length ? "\n" + (dialog.impactPlan.affectedProfiles || []).map(function(profile) { return "• " + String(profile.name || "Profile") }).join("\n") : ""); color: tokens.textSecondary; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(dialog.impactPlan.setupHealthRequired); Layout.fillWidth: true; text: "Device configuration update required. Setup Health is the only path that may change the observed vJoy descriptor."; color: tokens.attention; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(dialog.impactPlan.activeOutput); Layout.fillWidth: true; text: "This output is currently active. Applying this review does not release or reacquire it. Run Setup Health when you are ready for the controlled driver hand-off."; color: tokens.attention; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(dialog.impactPlan.gameRebindRisk); Layout.fillWidth: true; text: "Windows/games may treat the new vJoy Device as a different controller. Existing in-game bindings may need to be recreated."; color: tokens.attention; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                    Text { visible: Boolean(dialog.impactPlan.hidHideIdentityWillBeInvalidated); Layout.fillWidth: true; text: "The prior HidHide identity belongs to the old vJoy Device and will be reverified after the change."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
+                }
+            }
+            Text { Layout.fillWidth: true; visible: dialog.validationReason.length > 0; text: dialog.validationReason; color: tokens.attention; font.pixelSize: tokens.scale(10); wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                DeckButton { text: "CANCEL"; subdued: true; onClicked: dialog.close() }
-                DeckButton { objectName: "canonicalCreateVirtualOutputConfirm"; text: "SAVE OUTPUT"; selected: true; enabled: dialog.saveEnabled; onClicked: dialog.saveOutput() }
+                DeckButton { text: dialog.impactReviewVisible ? "BACK" : "CANCEL"; subdued: true; onClicked: { if (dialog.impactReviewVisible) dialog.impactReviewVisible = false; else dialog.close() } }
+                DeckButton { objectName: "canonicalCreateVirtualOutputConfirm"; text: dialog.editing ? (dialog.impactReviewVisible ? "APPLY OUTPUT EDIT" : "REVIEW CHANGES") : "SAVE OUTPUT"; selected: true; enabled: dialog.saveEnabled; onClicked: dialog.saveOutput() }
             }
         }
     }

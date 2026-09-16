@@ -4,6 +4,7 @@ import QtQuick.Layouts 6.5
 
 Item {
     id: editor
+    readonly property real textScale: typeof themeManager !== "undefined" ? themeManager.textScale : 1.15
     // Retain the original curve-editor body and bind it to the concrete
     // v1.6.3 panel surface rather than the themed panel used elsewhere.
     component AviationPanel: LegacyAviationPanel {}
@@ -41,7 +42,7 @@ Item {
         property string role: "secondary"
         implicitHeight: 36
         implicitWidth: Math.max(104, contentItem.implicitWidth + 28)
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * editor.textScale)
         font.bold: true
         contentItem: Text {
             text: control.text; color: control.enabled ? "#edf6f6" : "#86989d"
@@ -63,20 +64,20 @@ Item {
     component AviationCombo: ComboBox {
         id: control
         implicitHeight: 36
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * editor.textScale)
         contentItem: Text {
             leftPadding: 11; rightPadding: 28; text: control.displayText
             color: control.enabled ? "#e8f0f1" : "#89999e"; font: control.font
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
         }
         indicator: Text { x: control.width - width - 9; y: (control.height - height) / 2
-            text: "⌄"; color: control.enabled ? "#9cccd2" : "#6b7f85"; font.pixelSize: 16 }
+            text: "⌄"; color: control.enabled ? "#9cccd2" : "#6b7f85"; font.pixelSize: Math.round(16 * editor.textScale) }
         background: Rectangle { radius: 4; border.width: 1
             border.color: control.activeFocus ? "#76bac5" : control.hovered ? "#587f89" : "#435e67"
             color: control.enabled ? "#121f24" : "#11181b" }
         delegate: ItemDelegate { width: control.width; height: 34; highlighted: control.highlightedIndex === index
             contentItem: Text { text: modelData[control.textRole] || modelData; color: "#dbe8e9"
-                verticalAlignment: Text.AlignVCenter; leftPadding: 11; font.pixelSize: 12; elide: Text.ElideRight }
+                verticalAlignment: Text.AlignVCenter; leftPadding: 11; font.pixelSize: Math.round(12 * editor.textScale); elide: Text.ElideRight }
             background: Rectangle { color: highlighted ? "#1b3a43" : "#111c21" }
         }
         popup: Popup { y: control.height - 1; width: control.width; padding: 1
@@ -98,22 +99,22 @@ Item {
         }
         background: Rectangle { radius: 4; color: "#0f1a1f"; border.color: control.activeFocus ? "#76bac5" : "#435e67" }
         up.indicator: Rectangle { x: control.width - width; height: control.height / 2; width: 16; color: control.up.pressed ? "#29454e" : "transparent"
-            Text { anchors.centerIn: parent; text: "▲"; color: "#8fc3c9"; font.pixelSize: 7 } }
+            Text { anchors.centerIn: parent; text: "▲"; color: "#8fc3c9"; font.pixelSize: Math.round(7 * editor.textScale) } }
         down.indicator: Rectangle { x: control.width - width; y: control.height / 2; height: control.height / 2; width: 16; color: control.down.pressed ? "#29454e" : "transparent"
-            Text { anchors.centerIn: parent; text: "▼"; color: "#8fc3c9"; font.pixelSize: 7 } }
+            Text { anchors.centerIn: parent; text: "▼"; color: "#8fc3c9"; font.pixelSize: Math.round(7 * editor.textScale) } }
     }
 
     component AviationMenuItem: MenuItem {
         id: control
         implicitHeight: 29
-        contentItem: Text { text: control.text; color: control.enabled ? "#dce9ea" : "#63757a"; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+        contentItem: Text { text: control.text; color: control.enabled ? "#dce9ea" : "#63757a"; leftPadding: 10; verticalAlignment: Text.AlignVCenter; font.pixelSize: Math.round(11 * editor.textScale) }
         background: Rectangle { color: control.highlighted ? "#1d3d47" : "#101b20" }
     }
 
     component AviationTextField: TextField {
         id: control
         implicitHeight: 36
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * editor.textScale)
         color: "#e8f0f1"
         placeholderTextColor: "#83979c"
         selectionColor: "#3f7b86"
@@ -169,7 +170,7 @@ Item {
                 text: "✓"
                 visible: control.checked
                 color: control.enabled ? "#b9e8e8" : "#819499"
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * editor.textScale)
                 font.bold: true
             }
         }
@@ -178,7 +179,7 @@ Item {
             text: control.text
             color: control.enabled ? "#d7e5e7" : "#849499"
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * editor.textScale)
             font.bold: true
         }
         ToolTip.visible: hovered && ToolTip.text.length > 0
@@ -186,13 +187,13 @@ Item {
 
     component CardHeading: Text {
         color: "#edf6f6"
-        font.pixelSize: 15
+        font.pixelSize: Math.round(15 * editor.textScale)
         font.bold: true
     }
 
     component FieldCaption: Text {
         color: "#9eb3b9"
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * editor.textScale)
         font.bold: true
     }
 
@@ -349,12 +350,12 @@ Item {
                     Layout.fillWidth: true
                     ColumnLayout {
                         spacing: 2
-                        Text { text: "CURVE EDITOR"; color: "#f1f7f7"; font.pixelSize: 23; font.bold: true }
+                        Text { text: "CURVE EDITOR"; color: "#f1f7f7"; font.pixelSize: Math.round(23 * editor.textScale); font.bold: true }
                         Text {
                             text: (backendObject ? backendObject.selectedProfileName : "Normal") + " / "
                                 + (axisSelector.currentText || "Axis 1") + " · " + (editorState.summary || "Linear · 0%")
                             color: "#a8d3d9"
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * editor.textScale)
                             font.bold: true
                         }
                     }
@@ -366,7 +367,7 @@ Item {
                         Text {
                             text: backendObject && backendObject.mappingActive ? "MAPPING LIVE" : "MAPPING STANDBY"
                             color: backendObject && backendObject.mappingActive ? "#b9dfc6" : "#dfc883"
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * editor.textScale)
                             font.bold: true
                         }
                     }
@@ -427,7 +428,7 @@ Item {
                         Layout.fillWidth: true
                         FieldCaption { text: "RESPONSE STRENGTH" }
                         Item { Layout.fillWidth: true }
-                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? "#b8e0e2" : "#9aa8ac"; font.family: "Consolas"; font.pixelSize: 16; font.bold: true }
+                        Text { text: Math.round(Number(editorState.strength || 0) * 100) + "%"; color: responseStrength.enabled ? "#b8e0e2" : "#9aa8ac"; font.family: "Consolas"; font.pixelSize: Math.round(16 * editor.textScale); font.bold: true }
                     }
                     Slider {
                         id: responseStrength
@@ -444,7 +445,7 @@ Item {
                     }
                     RowLayout { Layout.fillWidth: true
                         Repeater { model: ["0%", "25%", "50%", "75%", "100%"]
-                            delegate: Text { Layout.fillWidth: true; text: modelData; color: "#90a5aa"; font.pixelSize: 11; horizontalAlignment: index === 0 ? Text.AlignLeft : index === 4 ? Text.AlignRight : Text.AlignHCenter }
+                            delegate: Text { Layout.fillWidth: true; text: modelData; color: "#90a5aa"; font.pixelSize: Math.round(11 * editor.textScale); horizontalAlignment: index === 0 ? Text.AlignLeft : index === 4 ? Text.AlignRight : Text.AlignHCenter }
                         }
                     }
                 }
@@ -459,13 +460,13 @@ Item {
                 anchors.margins: 12
                 spacing: 10
                 FieldCaption { text: "VIEW" }
-                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: "#d6e5e7"; font.pixelSize: 13; font.bold: true }
+                Text { text: responseView ? "RESPONSE" : "LOCAL GAIN"; color: "#d6e5e7"; font.pixelSize: Math.round(13 * editor.textScale); font.bold: true }
                 AviationToggle { checked: !responseView; onToggled: { responseView = !checked; graph.requestPaint() } ToolTip.text: "Switch between response output and local gain." }
-                Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: "#a6bbc0"; font.pixelSize: 12 }
+                Text { text: responseView ? "DASHED · LINEAR REFERENCE   SOLID · CONFIGURED RESPONSE" : "Local dy/dx"; color: "#a6bbc0"; font.pixelSize: Math.round(12 * editor.textScale) }
                 Item { Layout.preferredWidth: 16 }
                 AviationCheckBox { text: "SHOW EFFECTIVE AXIS RESPONSE"; checked: showEffective; onToggled: { showEffective = checked; graph.requestPaint() } ToolTip.text: "Overlay the effective axis response after the full signal path." }
                 Item { Layout.fillWidth: true }
-                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: "#91adb4"; font.pixelSize: 12; font.family: "Consolas"; font.bold: true }
+                Text { text: "LUT " + (editorState.runtimeLutSamples || 4097) + " SAMPLES"; color: "#91adb4"; font.pixelSize: Math.round(12 * editor.textScale); font.family: "Consolas"; font.bold: true }
             }
         }
 
@@ -680,13 +681,13 @@ Item {
             }
             Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 18; color: "#102027e8"; border.color: "#547681"; width: 194; height: 72; visible: graph.cursorVisible
                 Column { anchors.fill: parent; anchors.margins: 9; spacing: 3
-                    Text { text: "CURSOR  " + percent(graph.cursorInput); color: "#d8eaec"; font.family: "Consolas"; font.pixelSize: 12; font.bold: true }
-                    Text { text: "OUTPUT  " + percent(graph.cursorOutput); color: "#9fdbd3"; font.family: "Consolas"; font.pixelSize: 12 }
-                    Text { text: "GAIN    " + graph.cursorGain.toFixed(2) + "×"; color: "#e3c87e"; font.family: "Consolas"; font.pixelSize: 12 }
+                    Text { text: "CURSOR  " + percent(graph.cursorInput); color: "#d8eaec"; font.family: "Consolas"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
+                    Text { text: "OUTPUT  " + percent(graph.cursorOutput); color: "#9fdbd3"; font.family: "Consolas"; font.pixelSize: Math.round(12 * editor.textScale) }
+                    Text { text: "GAIN    " + graph.cursorGain.toFixed(2) + "×"; color: "#e3c87e"; font.family: "Consolas"; font.pixelSize: Math.round(12 * editor.textScale) }
                 }
             }
             Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18; color: "#342b1de8"; border.color: "#a7824c"; width: 230; height: 30; radius: 3; visible: !!editorState.previewLabel
-                Text { anchors.centerIn: parent; text: "PREVIEW ACTIVE  ·  " + editorState.previewLabel; color: "#e8c77c"; font.pixelSize: 11; font.bold: true }
+                Text { anchors.centerIn: parent; text: "PREVIEW ACTIVE  ·  " + editorState.previewLabel; color: "#e8c77c"; font.pixelSize: Math.round(11 * editor.textScale); font.bold: true }
             }
         }
 
@@ -709,11 +710,11 @@ Item {
                     delegate: ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Text { text: modelData.label; color: "#9db2b8"; font.pixelSize: 11; font.bold: true }
-                        Text { text: modelData.value; color: modelData.tone; font.family: "Consolas"; font.pixelSize: 17; font.bold: true }
+                        Text { text: modelData.label; color: "#9db2b8"; font.pixelSize: Math.round(11 * editor.textScale); font.bold: true }
+                        Text { text: modelData.value; color: modelData.tone; font.family: "Consolas"; font.pixelSize: Math.round(17 * editor.textScale); font.bold: true }
                     }
                 }
-                Text { text: "COMPILE  " + (editorState.lastCurveCompileUs || 0) + " µs"; color: "#92aab0"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                Text { text: "COMPILE  " + (editorState.lastCurveCompileUs || 0) + " µs"; color: "#92aab0"; font.pixelSize: Math.round(11 * editor.textScale); font.family: "Consolas"; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
             }
         }
 
@@ -735,10 +736,10 @@ Item {
                         Layout.fillWidth: true
                         CardHeading { text: "POINT EDITING" }
                         Item { Layout.fillWidth: true }
-                        Text { text: editorState.pointEditing ? "● ACTIVE" : "OFF"; color: editorState.pointEditing ? "#9fd8c4" : "#a9b8bc"; font.pixelSize: 12; font.bold: true }
+                        Text { text: editorState.pointEditing ? "● ACTIVE" : "OFF"; color: editorState.pointEditing ? "#9fd8c4" : "#a9b8bc"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
                         AviationToggle { checked: !!editorState.pointEditing; onToggled: { recordHistory(); backendObject.setCurvePointEditing(checked) } ToolTip.text: "Enable manual response-curve control points." }
                     }
-                    Text { visible: !editorState.pointEditing; Layout.fillWidth: true; text: "Enable manual response-curve point editing. Drag empty graph space to pan; drag a point to edit it."; color: "#b0c0c4"; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    Text { visible: !editorState.pointEditing; Layout.fillWidth: true; text: "Enable manual response-curve point editing. Drag empty graph space to pan; drag a point to edit it."; color: "#b0c0c4"; font.pixelSize: Math.round(12 * editor.textScale); wrapMode: Text.WordWrap }
                     AviationButton { visible: !editorState.pointEditing; text: "ENABLE POINT EDITING"; role: "primary"; onClicked: { recordHistory(); backendObject.setCurvePointEditing(true) } }
                     GridLayout {
                         visible: !!editorState.pointEditing
@@ -747,7 +748,7 @@ Item {
                         columnSpacing: 12
                         rowSpacing: 6
                         FieldCaption { text: "SELECTED POINT" }
-                        Text { text: selectedPoint >= 0 ? "POINT " + (selectedPoint + 1) : "SELECT A POINT"; color: "#b6e0e2"; font.pixelSize: 13; font.family: "Consolas"; font.bold: true }
+                        Text { text: selectedPoint >= 0 ? "POINT " + (selectedPoint + 1) : "SELECT A POINT"; color: "#b6e0e2"; font.pixelSize: Math.round(13 * editor.textScale); font.family: "Consolas"; font.bold: true }
                         FieldCaption { text: "INPUT" }
                         AviationSpinBox { id: pointInput; from: editorState.unipolar ? 0 : -1000; to: 1000; stepSize: 1; enabled: selectedPoint >= 0 && pointAt(selectedPoint) && !pointAt(selectedPoint).locked
                             value: pointAt(selectedPoint) ? Math.round(Number(pointAt(selectedPoint).input) * 1000) : 0
@@ -799,7 +800,7 @@ Item {
                         }
                         AviationButton { text: "COPY FROM"; enabled: copySelector.count > 0; onClicked: { recordHistory(); backendObject.copyCurveFromSelection(copySelector.currentValue) } }
                     }
-                    Text { visible: !!comparison.label; text: "DIFFERENCE  " + percent(comparison.difference); color: "#b4cbd0"; font.family: "Consolas"; font.pixelSize: 12; font.bold: true }
+                    Text { visible: !!comparison.label; text: "DIFFERENCE  " + percent(comparison.difference); color: "#b4cbd0"; font.family: "Consolas"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
                 }
             }
 
@@ -817,20 +818,20 @@ Item {
                     anchors.margins: 16
                     spacing: 9
                     CardHeading { text: "RESPONSE / PRESETS" }
-                    Text { text: "ACTIVE"; color: "#9eb4ba"; font.pixelSize: 12; font.bold: true }
-                    Text { text: editorState.summary || "Linear · 0%"; color: "#dce9ea"; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                    Text { text: "Strength " + Math.round(Number(editorState.strength || 0) * 100) + "%"; color: "#a8d4d7"; font.family: "Consolas"; font.pixelSize: 12 }
+                    Text { text: "ACTIVE"; color: "#9eb4ba"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
+                    Text { text: editorState.summary || "Linear · 0%"; color: "#dce9ea"; font.pixelSize: Math.round(15 * editor.textScale); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Strength " + Math.round(Number(editorState.strength || 0) * 100) + "%"; color: "#a8d4d7"; font.family: "Consolas"; font.pixelSize: Math.round(12 * editor.textScale) }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#4a626a" }
                     FieldCaption { text: "PRESET / OVERLAY" }
                     AviationCombo { id: previewSelector; Layout.fillWidth: true; model: backendObject ? backendObject.curvePreviewChoices : []; textRole: "label"; valueRole: "id"; onActivated: backendObject.previewCurvePreset(currentValue) }
-                    Text { text: editorState.previewLabel ? "PREVIEW ACTIVE  ·  " + editorState.previewLabel : "Choose a preset to preview it in the graph."; color: editorState.previewLabel ? "#e3c178" : "#adbec2"; font.pixelSize: 12; font.bold: !!editorState.previewLabel; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: editorState.previewLabel ? "PREVIEW ACTIVE  ·  " + editorState.previewLabel : "Choose a preset to preview it in the graph."; color: editorState.previewLabel ? "#e3c178" : "#adbec2"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: !!editorState.previewLabel; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true; spacing: 8
                         AviationButton { text: "APPLY PREVIEW"; role: "primary"; enabled: !!editorState.previewLabel; onClicked: { recordHistory(); backendObject.applyCurvePreview() } }
                         AviationButton { text: "CLEAR PREVIEW"; role: "destructive"; enabled: !!editorState.previewLabel; onClicked: backendObject.clearCurvePreview() }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#4a626a" }
                     FieldCaption { text: editorState.family === "Personal" ? "PERSONAL PRESET ACTIVE" : "PERSONAL PRESETS" }
-                    Text { text: editorState.family === "Personal" ? "This response came from a reusable personal preset." : "Save the current response as a reusable preset."; color: "#adbec2"; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    Text { text: editorState.family === "Personal" ? "This response came from a reusable personal preset." : "Save the current response as a reusable preset."; color: "#adbec2"; font.pixelSize: Math.round(12 * editor.textScale); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     RowLayout { Layout.fillWidth: true; spacing: 8
                         AviationButton { text: "SAVE AS PERSONAL"; onClicked: personalDialog.open() }
                         AviationButton { text: "MANAGE PERSONAL"; onClicked: personalManageDialog.open() }
@@ -855,7 +856,7 @@ Item {
                     RowLayout { Layout.fillWidth: true
                         CardHeading { text: "RESPONSE CHARACTERISTICS" }
                         Item { Layout.fillWidth: true }
-                        Text { text: analysis.valid ? "✓ MONOTONIC" : "! CHECK CURVE"; color: analysis.valid ? "#9fd8c4" : "#dfb06f"; font.pixelSize: 12; font.bold: true }
+                        Text { text: analysis.valid ? "✓ MONOTONIC" : "! CHECK CURVE"; color: analysis.valid ? "#9fd8c4" : "#dfb06f"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
                     }
                     GridLayout {
                         Layout.fillWidth: true
@@ -864,14 +865,14 @@ Item {
                         rowSpacing: 5
                         Repeater { model: [{n:"CENTER GAIN",v:analysis.centerGain},{n:"25% GAIN",v:analysis.quarterGain},{n:"50% GAIN",v:analysis.halfGain},{n:"75% GAIN",v:analysis.threeQuarterGain},{n:"PEAK GAIN",v:analysis.peakGain}]
                             delegate: RowLayout { Layout.fillWidth: true
-                                Text { text: modelData.n; color: "#abc0c5"; font.pixelSize: 12; Layout.fillWidth: true }
-                                Text { text: Number(modelData.v || 0).toFixed(2) + "×"; color: "#e0edef"; font.family: "Consolas"; font.pixelSize: 14; font.bold: true }
+                                Text { text: modelData.n; color: "#abc0c5"; font.pixelSize: Math.round(12 * editor.textScale); Layout.fillWidth: true }
+                                Text { text: Number(modelData.v || 0).toFixed(2) + "×"; color: "#e0edef"; font.family: "Consolas"; font.pixelSize: Math.round(14 * editor.textScale); font.bold: true }
                             }
                         }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#4a626a" }
-                    Text { text: analysis.valid ? "✓ FULL AUTHORITY   ✓ NO OVERSHOOT" : "Curve validation needs attention."; color: analysis.valid ? "#9fd8c4" : "#dfb06f"; font.pixelSize: 12; font.bold: true }
-                    Text { visible: !editorState.neutralMapsToNeutral; text: "ONE-SIDED J: physical neutral maps to " + percent(editorState.neutralOffset); color: "#e3c178"; font.pixelSize: 12; font.bold: true }
+                    Text { text: analysis.valid ? "✓ FULL AUTHORITY   ✓ NO OVERSHOOT" : "Curve validation needs attention."; color: analysis.valid ? "#9fd8c4" : "#dfb06f"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
+                    Text { visible: !editorState.neutralMapsToNeutral; text: "ONE-SIDED J: physical neutral maps to " + percent(editorState.neutralOffset); color: "#e3c178"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
                 }
             }
             AviationPanel {
@@ -885,11 +886,11 @@ Item {
                     CardHeading { text: "SIGNAL PATH" }
                     Repeater { model: [{n:"INPUT",v:liveTelemetry.physicalInput},{n:"DEADZONE",v:liveTelemetry.afterDeadzone},{n:"HYSTERESIS",v:liveTelemetry.afterHysteresis},{n:"INVERT",v:liveTelemetry.afterInversion},{n:"CURVE",v:liveTelemetry.curveResponse},{n:"LIMITS",v:liveTelemetry.finalOutput},{n:"VJOY",v:liveTelemetry.finalOutput}]
                         delegate: RowLayout { Layout.fillWidth: true
-                            Text { text: modelData.n; color: "#abc0c5"; font.pixelSize: 12; Layout.fillWidth: true }
-                            Text { text: rawPercent(modelData.v); color: "#d9e9eb"; font.family: "Consolas"; font.pixelSize: 13; font.bold: true }
+                            Text { text: modelData.n; color: "#abc0c5"; font.pixelSize: Math.round(12 * editor.textScale); Layout.fillWidth: true }
+                            Text { text: rawPercent(modelData.v); color: "#d9e9eb"; font.family: "Consolas"; font.pixelSize: Math.round(13 * editor.textScale); font.bold: true }
                         }
                     }
-                    Text { text: "LIVE VALUES · " + editorState.runtimeLutSamples + "-SAMPLE LUT"; color: "#91adb4"; font.pixelSize: 12; font.bold: true }
+                    Text { text: "LIVE VALUES · " + editorState.runtimeLutSamples + "-SAMPLE LUT"; color: "#91adb4"; font.pixelSize: Math.round(12 * editor.textScale); font.bold: true }
                 }
             }
         }
@@ -929,7 +930,7 @@ Item {
         contentItem: Column { width: 330; spacing: 11
             FieldCaption { text: "NAME" }
             AviationTextField { id: personalName; width: parent.width; placeholderText: "My Precision Roll"; selectByMouse: true }
-            Text { text: "Stores a copy for compatible axes. Existing applied curves are never linked."; width: parent.width; wrapMode: Text.WordWrap; color: "#a5b9bd"; font.pixelSize: 12 }
+            Text { text: "Stores a copy for compatible axes. Existing applied curves are never linked."; width: parent.width; wrapMode: Text.WordWrap; color: "#a5b9bd"; font.pixelSize: Math.round(12 * editor.textScale) }
             Row { spacing: 8; AviationButton { text: "CANCEL"; onClicked: personalDialog.close() }
                 AviationButton { text: "SAVE"; role: "primary"; enabled: personalName.text.trim().length > 0; onClicked: { if (backendObject.saveCurrentCurveAsPersonalPreset(personalName.text)) personalDialog.close() } } }
         }
@@ -939,10 +940,10 @@ Item {
         id: personalManageDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 530; title: "Manage personal curve presets"; standardButtons: Dialog.NoButton
         background: AviationPanel { color: "#f018252b"; border.color: "#5a7f89" }
         contentItem: Column { width: 480; spacing: 8
-            Text { text: "Applying always copies a definition into the selected profile and axis."; color: "#a5b9bd"; font.pixelSize: 12 }
+            Text { text: "Applying always copies a definition into the selected profile and axis."; color: "#a5b9bd"; font.pixelSize: Math.round(12 * editor.textScale) }
             Repeater { model: backendObject ? backendObject.personalCurvePresets : []
                 delegate: RowLayout { width: parent.width; spacing: 8
-                    Text { text: modelData.summary; color: "#b1c7ca"; font.pixelSize: 11; Layout.preferredWidth: 130; elide: Text.ElideRight }
+                    Text { text: modelData.summary; color: "#b1c7ca"; font.pixelSize: Math.round(11 * editor.textScale); Layout.preferredWidth: 130; elide: Text.ElideRight }
                     AviationTextField { id: managedName; text: modelData.name; selectByMouse: true; Layout.fillWidth: true }
                     AviationButton { text: "RENAME"; onClicked: backendObject.renamePersonalCurvePreset(modelData.id, managedName.text) }
                     AviationButton { text: "DELETE"; role: "destructive"; onClicked: { personalDeleteDialog.presetId = modelData.id; personalDeleteDialog.presetName = modelData.name; personalDeleteDialog.open() } }
@@ -955,7 +956,7 @@ Item {
         id: personalDeleteDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 340; property string presetId: ""; property string presetName: ""; title: "Delete personal preset?"; standardButtons: Dialog.NoButton
         background: AviationPanel { color: "#f018252b"; border.color: "#805b56" }
         contentItem: Column { width: 290; spacing: 10
-            Text { text: "Delete \"" + personalDeleteDialog.presetName + "\"? Applied curves will remain unchanged."; wrapMode: Text.WordWrap; width: parent.width; color: "#d6e2e3"; font.pixelSize: 12 }
+            Text { text: "Delete \"" + personalDeleteDialog.presetName + "\"? Applied curves will remain unchanged."; wrapMode: Text.WordWrap; width: parent.width; color: "#d6e2e3"; font.pixelSize: Math.round(12 * editor.textScale) }
             Row { spacing: 8; AviationButton { text: "CANCEL"; onClicked: personalDeleteDialog.close() }
                 AviationButton { text: "DELETE"; role: "destructive"; onClicked: { backendObject.deletePersonalCurvePreset(personalDeleteDialog.presetId); personalDeleteDialog.close() } } }
         }

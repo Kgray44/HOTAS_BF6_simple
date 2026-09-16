@@ -248,7 +248,7 @@ Item {
             visible: root.showTitle
             text: "SETUP HEALTH & REPAIR"
             color: root.textColor
-            font.pixelSize: 18
+            font.pixelSize: themeTokens.scale(18)
             font.bold: true
         }
 
@@ -277,9 +277,9 @@ Item {
                             color: root.wizardStepState(modelData) === "COMPLETE" ? root.readyColor
                                  : root.wizardStepState(modelData) === "CURRENT" ? root.checkingColor : root.insetColor
                             border.color: root.wizardStepState(modelData) === "CURRENT" ? root.checkingColor : root.borderColor
-                            Text { anchors.centerIn: parent; text: root.wizardStepMarker(modelData); color: root.wizardStepState(modelData) === "CURRENT" || root.wizardStepState(modelData) === "COMPLETE" ? root.panelColor : root.mutedColor; font.pixelSize: 11; font.bold: true }
+                            Text { anchors.centerIn: parent; text: root.wizardStepMarker(modelData); color: root.wizardStepState(modelData) === "CURRENT" || root.wizardStepState(modelData) === "COMPLETE" ? root.panelColor : root.mutedColor; font.pixelSize: themeTokens.scale(11); font.bold: true }
                         }
-                        Text { text: modelData; color: root.wizardStepState(modelData) === "CURRENT" ? root.textColor : root.mutedColor; font.pixelSize: 10; font.bold: root.wizardStepState(modelData) === "CURRENT" }
+                        Text { text: modelData; color: root.wizardStepState(modelData) === "CURRENT" ? root.textColor : root.mutedColor; font.pixelSize: themeTokens.scale(10); font.bold: root.wizardStepState(modelData) === "CURRENT" }
                         Rectangle { visible: modelData !== "COMPLETE"; Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.wizardStepState(modelData) === "COMPLETE" ? root.readyColor : root.borderColor }
                     }
                 }
@@ -305,9 +305,9 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 5
-                        Text { text: root.checkRunning ? "CHECKING SETUP" : root.checkResults ? "CHECK COMPLETE" : "CHECK YOUR SETUP"; color: root.checkRunning ? root.checkingColor : root.checkResults && root.hasRepair ? root.warningColor : root.readyColor; font.pixelSize: 20; font.bold: true }
-                        Text { Layout.fillWidth: true; text: root.checkRunning ? "HOTAS BF6 is inspecting the selected Device Rig. Nothing is being changed." : root.checkResults ? (root.hasRepair ? "The check is frozen. Review the issues before deciding whether to repair them." : "Everything required by the selected Device Rig is ready.") : "HOTAS BF6 will inspect the complete selected Device Rig. Nothing will be changed during this check."; color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                        Text { visible: root.checkResults; text: root.checkedAge(root.checkSnapshot) + "  ·  " + String(root.checkSnapshot.timestamp || ""); color: root.mutedColor; font.pixelSize: 9 }
+                        Text { text: root.checkRunning ? "CHECKING SETUP" : root.checkResults ? "CHECK COMPLETE" : "CHECK YOUR SETUP"; color: root.checkRunning ? root.checkingColor : root.checkResults && root.hasRepair ? root.warningColor : root.readyColor; font.pixelSize: themeTokens.scale(20); font.bold: true }
+                        Text { Layout.fillWidth: true; text: root.checkRunning ? "HOTAS BF6 is inspecting the selected Device Rig. Nothing is being changed." : root.checkResults ? (root.hasRepair ? "The check is frozen. Review the issues before deciding whether to repair them." : "Everything required by the selected Device Rig is ready.") : "HOTAS BF6 will inspect the complete selected Device Rig. Nothing will be changed during this check."; color: root.textColor; font.pixelSize: themeTokens.scale(12); wrapMode: Text.WordWrap }
+                        Text { visible: root.checkResults; text: root.checkedAge(root.checkSnapshot) + "  ·  " + String(root.checkSnapshot.timestamp || ""); color: root.mutedColor; font.pixelSize: themeTokens.scale(9) }
                     }
                 }
 
@@ -325,14 +325,14 @@ Item {
                         spacing: 5
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "STEP " + Number(root.session.currentStepNumber || 1) + " OF " + Math.max(1, Number(root.session.totalStepCount || 1)); color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                            Text { text: "STEP " + Number(root.session.currentStepNumber || 1) + " OF " + Math.max(1, Number(root.session.totalStepCount || 1)); color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                             Item { Layout.fillWidth: true }
-                            Text { text: root.sessionProgressPercent() + "%"; color: root.checkingColor; font.pixelSize: 10; font.bold: true }
+                            Text { text: root.sessionProgressPercent() + "%"; color: root.checkingColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 8; radius: 4; color: root.insetColor; clip: true; Rectangle { width: parent.width * root.sessionProgressPercent() / 100; height: parent.height; radius: parent.radius; color: root.checkingColor; Behavior on width { NumberAnimation { duration: 160 } } } }
-                        Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.currentStep().title || "Reading complete setup"; color: root.textColor; font.pixelSize: 12; font.bold: true }
-                        Text { Layout.fillWidth: true; text: root.currentStep().detail || "Reading the selected Device Rig without changing configuration."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
+                        Text { text: root.currentStep().title || "Reading complete setup"; color: root.textColor; font.pixelSize: themeTokens.scale(12); font.bold: true }
+                        Text { Layout.fillWidth: true; text: root.currentStep().detail || "Reading the selected Device Rig without changing configuration."; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                     }
                 }
 
@@ -347,22 +347,22 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: root.checkRunning ? "INSPECTING" : root.checkResults ? "CHECK RESULTS" : "PLANNED INSPECTION"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                        Text { text: root.checkRunning ? "INSPECTING" : root.checkResults ? "CHECK RESULTS" : "PLANNED INSPECTION"; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                         Repeater {
                             model: root.checkCategories()
                             delegate: RowLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: 8
-                                Text { text: root.stageMarker(root.checkCategoryStatus(modelData), "•"); color: root.stateColor(root.checkCategoryStatus(modelData)); font.pixelSize: 14; font.bold: true }
+                                Text { text: root.stageMarker(root.checkCategoryStatus(modelData), "•"); color: root.stateColor(root.checkCategoryStatus(modelData)); font.pixelSize: themeTokens.scale(14); font.bold: true }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 1
-                                    Text { text: modelData.title; color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                    Text { visible: !root.checkResults; text: modelData.detail; color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                                    Text { visible: root.checkResults; text: String(root.groupFor(root.checkSnapshot, modelData.id).detail || modelData.detail); color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: modelData.title; color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                    Text { visible: !root.checkResults; text: modelData.detail; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { visible: root.checkResults; text: String(root.groupFor(root.checkSnapshot, modelData.id).detail || modelData.detail); color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
-                                Text { text: root.stageStatusLabel(root.checkCategoryStatus(modelData)); color: root.stateColor(root.checkCategoryStatus(modelData)); font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120; wrapMode: Text.WordWrap }
+                                Text { text: root.stageStatusLabel(root.checkCategoryStatus(modelData)); color: root.stateColor(root.checkCategoryStatus(modelData)); font.pixelSize: themeTokens.scale(8); font.bold: true; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120; wrapMode: Text.WordWrap }
                             }
                         }
                     }
@@ -380,7 +380,7 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: root.countReady(root.checkSnapshot) + " ready  ·  " + root.repairPlan.length + " issue" + (root.repairPlan.length === 1 ? "" : "s") + " can be repaired"; color: root.warningColor; font.pixelSize: 11; font.bold: true }
+                        Text { text: root.countReady(root.checkSnapshot) + " ready  ·  " + root.repairPlan.length + " issue" + (root.repairPlan.length === 1 ? "" : "s") + " can be repaired"; color: root.warningColor; font.pixelSize: themeTokens.scale(11); font.bold: true }
                         Repeater {
                             model: root.repairPlan
                             delegate: Rectangle {
@@ -395,8 +395,8 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 7
                                     spacing: 2
-                                    Text { text: String(modelData.title || "Setup issue").toUpperCase(); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                    Text { text: modelData.explanation || modelData.proposedRepair || "Action needed."; color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: String(modelData.title || "Setup issue").toUpperCase(); color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                    Text { text: modelData.explanation || modelData.proposedRepair || "Action needed."; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
                             }
                         }
@@ -433,8 +433,8 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 5
-                        Text { text: root.repairRunning ? "REPAIRING SETUP" : "REPAIR YOUR SETUP"; color: root.repairRunning ? root.checkingColor : root.warningColor; font.pixelSize: 20; font.bold: true }
-                        Text { Layout.fillWidth: true; text: root.repairRunning ? "HOTAS BF6 is performing only the approved operations. You can watch every step below." : root.repairPlan.length + " issue" + (root.repairPlan.length === 1 ? " can" : "s can") + " be repaired automatically from the frozen check."; color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                        Text { text: root.repairRunning ? "REPAIRING SETUP" : "REPAIR YOUR SETUP"; color: root.repairRunning ? root.checkingColor : root.warningColor; font.pixelSize: themeTokens.scale(20); font.bold: true }
+                        Text { Layout.fillWidth: true; text: root.repairRunning ? "HOTAS BF6 is performing only the approved operations. You can watch every step below." : root.repairPlan.length + " issue" + (root.repairPlan.length === 1 ? " can" : "s can") + " be repaired automatically from the frozen check."; color: root.textColor; font.pixelSize: themeTokens.scale(12); wrapMode: Text.WordWrap }
                     }
                 }
 
@@ -450,7 +450,7 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 7
-                        Text { text: "APPROVED REPAIR PLAN"; color: root.warningColor; font.pixelSize: 9; font.bold: true }
+                        Text { text: "APPROVED REPAIR PLAN"; color: root.warningColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                         Repeater {
                             model: root.repairPlan
                             delegate: Rectangle {
@@ -465,9 +465,9 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     spacing: 3
-                                    Text { text: String(modelData.title || "Setup repair").toUpperCase(); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                    Text { text: modelData.proposedRepair || modelData.explanation || "Approved scoped repair."; color: root.mutedColor; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                                    Text { text: (modelData.requiresElevation ? "ADMINISTRATOR APPROVAL MAY BE REQUIRED" : "AUTOMATIC, SCOPED REPAIR") + (modelData.requiresReconnect ? "  ·  CONTROLLER RECONNECT REQUIRED" : ""); color: root.warningColor; font.pixelSize: 8; font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: String(modelData.title || "Setup repair").toUpperCase(); color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                    Text { text: modelData.proposedRepair || modelData.explanation || "Approved scoped repair."; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: (modelData.requiresElevation ? "ADMINISTRATOR APPROVAL MAY BE REQUIRED" : "AUTOMATIC, SCOPED REPAIR") + (modelData.requiresReconnect ? "  ·  CONTROLLER RECONNECT REQUIRED" : ""); color: root.warningColor; font.pixelSize: themeTokens.scale(8); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
                             }
                         }
@@ -490,31 +490,31 @@ Item {
                         spacing: 7
                         RowLayout {
                             Layout.fillWidth: true
-                            Text { text: "REPAIR PROGRESS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
+                            Text { text: "REPAIR PROGRESS"; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                             Item { Layout.fillWidth: true }
-                            Text { text: Number(root.session.completedStepCount || 0) + " OF " + Number(root.session.totalStepCount || 0) + " COMPLETE"; color: root.textColor; font.pixelSize: 9; font.bold: true }
+                            Text { text: Number(root.session.completedStepCount || 0) + " OF " + Number(root.session.totalStepCount || 0) + " COMPLETE"; color: root.textColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                         }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 8; radius: 4; color: root.insetColor; clip: true; Rectangle { width: parent.width * root.sessionProgressPercent() / 100; height: parent.height; radius: parent.radius; color: root.checkingColor; Behavior on width { NumberAnimation { duration: 160 } } } }
-                        Text { text: root.session.progressLabel || (root.sessionProgressPercent() + "%"); color: root.checkingColor; font.pixelSize: 10; font.bold: true }
-                        Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                        Text { text: root.currentStep().title || "Preparing final setup inspection"; color: root.textColor; font.pixelSize: 12; font.bold: true }
-                        Text { Layout.fillWidth: true; text: root.currentStep().detail || "Each operation is verified before final setup truth is published."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                        Text { visible: !!root.currentStep().requiresReconnect; text: "RECONNECT CONTROLLER"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
-                        Text { visible: !!root.currentStep().requiresReconnect; Layout.fillWidth: true; text: root.backendObject && root.backendObject.controllerDisconnectObserved ? "Disconnect observed. Reconnect the exact controller, then move a control." : "Disconnect the exact controller, reconnect it, then move a control."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { text: root.session.progressLabel || (root.sessionProgressPercent() + "%"); color: root.checkingColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                        Text { text: "CURRENT STEP"; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
+                        Text { text: root.currentStep().title || "Preparing final setup inspection"; color: root.textColor; font.pixelSize: themeTokens.scale(12); font.bold: true }
+                        Text { Layout.fillWidth: true; text: root.currentStep().detail || "Each operation is verified before final setup truth is published."; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
+                        Text { visible: !!root.currentStep().requiresReconnect; text: "RECONNECT CONTROLLER"; color: root.warningColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                        Text { visible: !!root.currentStep().requiresReconnect; Layout.fillWidth: true; text: root.backendObject && root.backendObject.controllerDisconnectObserved ? "Disconnect observed. Reconnect the exact controller, then move a control." : "Disconnect the exact controller, reconnect it, then move a control."; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); wrapMode: Text.WordWrap }
                         Repeater {
                             model: root.session.steps || []
                             delegate: RowLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: 8
-                                Text { text: root.stageMarker(String(modelData.status || "PENDING"), modelData.order); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: 14; font.bold: true }
+                                Text { text: root.stageMarker(String(modelData.status || "PENDING"), modelData.order); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: themeTokens.scale(14); font.bold: true }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 1
-                                    Text { text: modelData.title || "Setup stage"; color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                    Text { text: modelData.detail || "Waiting to begin."; color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: modelData.title || "Setup stage"; color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                    Text { text: modelData.detail || "Waiting to begin."; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                 }
-                                Text { text: root.stageStatusLabel(String(modelData.status || "PENDING")); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: 8; font.bold: true; Layout.preferredWidth: 110; horizontalAlignment: Text.AlignRight; wrapMode: Text.WordWrap }
+                                Text { text: root.stageStatusLabel(String(modelData.status || "PENDING")); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: themeTokens.scale(8); font.bold: true; Layout.preferredWidth: 110; horizontalAlignment: Text.AlignRight; wrapMode: Text.WordWrap }
                             }
                         }
                     }
@@ -549,9 +549,9 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 5
-                        Text { text: root.completeHeadline(); color: String(root.finalSnapshot.overallStatus || "") === "READY" ? root.readyColor : root.warningColor; font.pixelSize: 20; font.bold: true }
-                        Text { Layout.fillWidth: true; text: root.completeDetail(); color: root.textColor; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                        Text { visible: !!root.finalSnapshot.timestamp; text: root.checkedAge(root.finalSnapshot) + "  ·  " + root.finalSnapshot.timestamp; color: root.mutedColor; font.pixelSize: 9 }
+                        Text { text: root.completeHeadline(); color: String(root.finalSnapshot.overallStatus || "") === "READY" ? root.readyColor : root.warningColor; font.pixelSize: themeTokens.scale(20); font.bold: true }
+                        Text { Layout.fillWidth: true; text: root.completeDetail(); color: root.textColor; font.pixelSize: themeTokens.scale(12); wrapMode: Text.WordWrap }
+                        Text { visible: !!root.finalSnapshot.timestamp; text: root.checkedAge(root.finalSnapshot) + "  ·  " + root.finalSnapshot.timestamp; color: root.mutedColor; font.pixelSize: themeTokens.scale(9) }
                     }
                 }
 
@@ -567,18 +567,18 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 7
-                        Text { text: "WHAT WAS REPAIRED"; color: root.readyColor; font.pixelSize: 10; font.bold: true }
+                        Text { text: "WHAT WAS REPAIRED"; color: root.readyColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         Repeater {
                             model: root.repairOperations("SUCCEEDED")
                             delegate: ColumnLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Text { text: "✓  " + String(modelData.subsystem || modelData.title || "Setup repair"); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                Text { text: modelData.detail || "Verified by final read-back."; color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: "✓  " + String(modelData.subsystem || modelData.title || "Setup repair"); color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                Text { text: modelData.detail || "Verified by final read-back."; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }
-                        Text { visible: root.repairedIssueCount === 0; text: "No repair completed successfully in this session."; color: root.mutedColor; font.pixelSize: 9 }
+                        Text { visible: root.repairedIssueCount === 0; text: "No repair completed successfully in this session."; color: root.mutedColor; font.pixelSize: themeTokens.scale(9) }
                     }
                 }
 
@@ -594,20 +594,20 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: "WHAT STILL NEEDS ATTENTION"; color: root.warningColor; font.pixelSize: 10; font.bold: true }
+                        Text { text: "WHAT STILL NEEDS ATTENTION"; color: root.warningColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         Repeater {
                             model: root.repairOperations("FAILED")
                             delegate: ColumnLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Text { text: "✕  " + String(modelData.subsystem || modelData.title || "Setup repair"); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                                Text { text: modelData.detail || "Review diagnostics for the required manual action."; color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: "✕  " + String(modelData.subsystem || modelData.title || "Setup repair"); color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                Text { text: modelData.detail || "Review diagnostics for the required manual action."; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }
                         Repeater {
                             model: root.finalSnapshot.issues || []
-                            delegate: Text { required property var modelData; visible: root.failedIssueCount === 0; text: "• " + String(modelData.title || "Setup issue") + " — " + String(modelData.explanation || "Review diagnostics."); color: root.mutedColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            delegate: Text { required property var modelData; visible: root.failedIssueCount === 0; text: "• " + String(modelData.title || "Setup issue") + " — " + String(modelData.explanation || "Review diagnostics."); color: root.mutedColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         }
                     }
                 }
@@ -623,7 +623,7 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: "CURRENT SYSTEM"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Text { text: "CURRENT SYSTEM"; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         Repeater {
                             model: root.finalSnapshot.groups || []
                             delegate: ColumnLayout {
@@ -635,9 +635,9 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 8
-                                    Text { text: root.stageMarker(String(modelData.status || "PENDING"), "•"); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: 13; font.bold: true }
-                                    Text { text: modelData.title || "Setup group"; color: root.textColor; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
-                                    Text { text: String(modelData.status || "CHECKING"); color: root.stateColor(String(modelData.status || "CHECKING")); font.pixelSize: 8; font.bold: true; Layout.preferredWidth: 145; horizontalAlignment: Text.AlignRight; wrapMode: Text.WordWrap }
+                                    Text { text: root.stageMarker(String(modelData.status || "PENDING"), "•"); color: root.stateColor(String(modelData.status || "PENDING")); font.pixelSize: themeTokens.scale(13); font.bold: true }
+                                    Text { text: modelData.title || "Setup group"; color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true; Layout.fillWidth: true }
+                                    Text { text: String(modelData.status || "CHECKING"); color: root.stateColor(String(modelData.status || "CHECKING")); font.pixelSize: themeTokens.scale(8); font.bold: true; Layout.preferredWidth: 145; horizontalAlignment: Text.AlignRight; wrapMode: Text.WordWrap }
                                 }
                                 Text {
                                     visible: String(modelData.status || "READY") !== "READY" && !!modelData.detail
@@ -645,7 +645,7 @@ Item {
                                     Layout.leftMargin: 21
                                     text: String(modelData.detail || "")
                                     color: root.mutedColor
-                                    font.pixelSize: 9
+                                    font.pixelSize: themeTokens.scale(9)
                                     wrapMode: Text.WordWrap
                                 }
                                 ThemedButton {
@@ -673,8 +673,8 @@ Item {
                                 anchors.fill: parent
                                 anchors.margins: 8
                                 spacing: 3
-                                Text { text: String(root.activationFeedback.title || "Device Rig was not activated"); color: root.dangerColor; font.pixelSize: 10; font.bold: true }
-                                Text { text: String(root.activationFeedback.message || root.activationFeedback.detail || "Review the activation details."); color: root.textColor; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text { text: String(root.activationFeedback.title || "Device Rig was not activated"); color: root.dangerColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
+                                Text { text: String(root.activationFeedback.message || root.activationFeedback.detail || "Review the activation details."); color: root.textColor; font.pixelSize: themeTokens.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                             }
                         }
                     }
@@ -692,14 +692,14 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 5
-                        Text { text: "BEFORE → AFTER"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                        Text { text: "BEFORE → AFTER"; color: root.mutedColor; font.pixelSize: themeTokens.scale(10); font.bold: true }
                         Repeater {
                             model: root.beforeAfterDifferences()
                             delegate: RowLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
-                                Text { text: modelData.title; color: root.textColor; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true }
-                                Text { text: modelData.before + " → " + modelData.after; color: root.readyColor; font.pixelSize: 9; font.bold: true }
+                                Text { text: modelData.title; color: root.textColor; font.pixelSize: themeTokens.scale(10); font.bold: true; Layout.fillWidth: true }
+                                Text { text: modelData.before + " → " + modelData.after; color: root.readyColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
                             }
                         }
                     }
@@ -717,9 +717,9 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: "BEFORE / AFTER DIAGNOSTICS"; color: root.mutedColor; font.pixelSize: 9; font.bold: true }
-                        Text { text: "BEFORE\n" + String((root.session.beforeSnapshot || root.checkSnapshot).diagnostics || "No before diagnostic was recorded."); color: root.mutedColor; font.family: "Consolas"; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
-                        Text { text: "AFTER\n" + String(root.finalSnapshot.diagnostics || "No after diagnostic was recorded."); color: root.mutedColor; font.family: "Consolas"; font.pixelSize: 8; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                        Text { text: "BEFORE / AFTER DIAGNOSTICS"; color: root.mutedColor; font.pixelSize: themeTokens.scale(9); font.bold: true }
+                        Text { text: "BEFORE\n" + String((root.session.beforeSnapshot || root.checkSnapshot).diagnostics || "No before diagnostic was recorded."); color: root.mutedColor; font.family: "Consolas"; font.pixelSize: themeTokens.scale(8); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                        Text { text: "AFTER\n" + String(root.finalSnapshot.diagnostics || "No after diagnostic was recorded."); color: root.mutedColor; font.family: "Consolas"; font.pixelSize: themeTokens.scale(8); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                     }
                 }
 
@@ -757,8 +757,8 @@ Item {
         contentItem: ColumnLayout {
             width: parent.width
             spacing: 10
-            Text { Layout.fillWidth: true; text: "HOTAS BF6 will apply only the frozen scoped repair plan, then perform a fresh complete read-back. Windows may ask for administrator approval."; color: root.textColor; wrapMode: Text.WordWrap; font.pixelSize: 11 }
-            Text { Layout.fillWidth: true; text: root.repairPlan.length + " approved repair" + (root.repairPlan.length === 1 ? " is" : "s are") + " ready. Unrelated HidHide rules and the current mapping choice are preserved."; color: root.mutedColor; wrapMode: Text.WordWrap; font.pixelSize: 10 }
+            Text { Layout.fillWidth: true; text: "HOTAS BF6 will apply only the frozen scoped repair plan, then perform a fresh complete read-back. Windows may ask for administrator approval."; color: root.textColor; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(11) }
+            Text { Layout.fillWidth: true; text: root.repairPlan.length + " approved repair" + (root.repairPlan.length === 1 ? " is" : "s are") + " ready. Unrelated HidHide rules and the current mapping choice are preserved."; color: root.mutedColor; wrapMode: Text.WordWrap; font.pixelSize: themeTokens.scale(10) }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
