@@ -17,6 +17,26 @@ enum class HidHideHealthSeverity { Info, Warning, Error };
 enum class HidHideRepairability { None, FixNow, GuidedRepair, UserActionRequired, DoctorRecommended, DoctorRequired };
 enum class HidHideHealthScanDepth { Essential, Full };
 
+// This is a control-plane projection of one managed Rig member.  The ID is
+// durable; names are presentation only and are never used to identify a HidHide
+// entry.
+struct HidHidePhysicalDeviceHealth final {
+    QString controllerRecordId;
+    QString friendlyName;
+    bool required = true;
+    bool connected = false;
+    QStringList exactCurrentHidInstances;
+    bool identityResolved = false;
+    bool hiddenStateKnown = false;
+    bool expectedHidden = true;
+    bool actualHidden = false;
+    HidHideHealthState state = HidHideHealthState::Unknown;
+    HidHideRepairability repairability = HidHideRepairability::None;
+    QString technicalDetails;
+
+    QVariantMap toVariantMap() const;
+};
+
 struct HidHideHealthContext final {
     quint64 sessionId = 0;
     QString contextKey;
@@ -28,6 +48,8 @@ struct HidHideHealthContext final {
     bool serviceReady = false;
     bool cloakKnown = false;
     bool cloaked = false;
+    bool inverseKnown = false;
+    bool inverse = false;
     bool mapperAllowlistKnown = false;
     bool mapperAllowlisted = false;
     bool hiddenDeviceListKnown = false;
@@ -38,6 +60,16 @@ struct HidHideHealthContext final {
     bool pendingReadinessRecovery = false;
     bool managedVirtualOutputInspectionKnown = false;
     bool managedVirtualOutputHidden = false;
+    // Full-check-only package evidence. Empty values deliberately mean
+    // uninspected/unavailable, never "matching".
+    bool packageEvidenceInspected = false;
+    QString clientVersion;
+    QString cliVersion;
+    QString loadedDriverVersion;
+    QString driverStorePackageVersion;
+    bool pendingPackageRestartKnown = false;
+    bool pendingPackageRestart = false;
+    QList<HidHidePhysicalDeviceHealth> physicalDevices;
     QStringList expectedPhysicalInstances;
     QStringList hiddenDeviceInstances;
     QStringList managedVirtualOutputInstances;
@@ -90,7 +122,11 @@ struct HidHideHealthSnapshot final {
     bool cancelled = false;
     int checksCompleted = 0;
     int checksTotal = 0;
+    int percentComplete = 0;
     QString currentStage;
+    QString currentCheckId;
+    QString currentCheckTitle;
+    QList<HidHidePhysicalDeviceHealth> physicalDevices;
     QList<HidHideHealthDimension> dimensions;
     QList<HidHideReadObservation> checks;
     QList<HidHideHealthFinding> findings;
@@ -109,15 +145,19 @@ QString hidHideHealthScanDepthLabel(HidHideHealthScanDepth depth);
 // independent GET failures without real HidHide hardware or drivers.
 class HidHideHealthService final {
 public:
-    using ReadOnlyProbe = std::function<QList<HidHideReadObservation>(std::atomic_bool *)>;
+    using ReadOnlyProbe = std::function<QList<HidHideReadObservation>(
+        std::atomic_bool *, HidHideReadOnlyProtocol::ObservationCallback)>;
+    using ProgressCallback = std::function<void(const HidHideHealthSnapshot &)>;
 
     explicit HidHideHealthService(ReadOnlyProbe probe = HidHideReadOnlyProtocol::inspect);
 
     HidHideHealthSnapshot inspect(const HidHideHealthContext &context, HidHideHealthScanDepth depth,
-                                  std::atomic_bool *cancelled = nullptr) const;
+                                  std::atomic_bool *cancelled = nullptr,
+                                  ProgressCallback progress = {}) const;
     static HidHideHealthSnapshot checkingSnapshot(const HidHideHealthContext &context,
                                                    HidHideHealthScanDepth depth);
     static QVariantList appIssues(const HidHideHealthSnapshot &snapshot);
+    static QVariantMap sanitizedEvidence(const HidHideHealthSnapshot &snapshot);
 
 private:
     ReadOnlyProbe m_probe;

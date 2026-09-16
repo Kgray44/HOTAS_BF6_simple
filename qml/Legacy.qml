@@ -1863,8 +1863,9 @@ Page {
                             Button { text: legacyHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
                                 enabled: !legacyHidHideHealthDiagnostics.health.inProgress
                                 onClicked: backend.runHidHideFullCheck() }
+                            Button { text: "CANCEL"; visible: legacyHidHideHealthDiagnostics.health.inProgress; onClicked: backend.cancelHidHideFullCheck() }
                             Button { text: "REVIEW REPAIR"; onClicked: backend.reviewHidHideHealthRepair() }
-                            Button { text: "COPY EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
+                            Button { text: "COPY SANITIZED EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
                         }
                         Text { width: parent.width; text: ((legacyHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
                                 return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")

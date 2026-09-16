@@ -224,7 +224,8 @@ QString hidHideReadStateLabel(HidHideReadState state)
     return QStringLiteral("UNKNOWN");
 }
 
-QList<HidHideReadObservation> HidHideReadOnlyProtocol::inspect(std::atomic_bool *cancelled)
+QList<HidHideReadObservation> HidHideReadOnlyProtocol::inspect(std::atomic_bool *cancelled,
+                                                                ObservationCallback observation)
 {
     QList<HidHideReadObservation> observations;
 #ifdef Q_OS_WIN
@@ -242,6 +243,7 @@ QList<HidHideReadObservation> HidHideReadOnlyProtocol::inspect(std::atomic_bool 
         open.hasNativeError = true;
         open.nativeError = win32Error(code, QStringLiteral("CreateFileW(\\\\.\\HidHide, GENERIC_READ)"));
         observations.append(open);
+        if (observation) observation(open);
         return observations;
     }
     HidHideReadObservation open;
@@ -251,16 +253,21 @@ QList<HidHideReadObservation> HidHideReadOnlyProtocol::inspect(std::atomic_bool 
     open.summary = QStringLiteral("Opened the HidHide control endpoint with read-only access.");
     open.value = QStringLiteral("\\\\.\\HidHide; GENERIC_READ; overlapped");
     observations.append(open);
+    if (observation) observation(open);
 
     const auto close = [&] { CloseHandle(device); };
-    if (!cancelled || !cancelled->load()) observations.append(boolQueryExact(device, kIoctlGetActive,
+    const auto append = [&observations, &observation](const HidHideReadObservation &entry) {
+        observations.append(entry);
+        if (observation) observation(entry);
+    };
+    if (!cancelled || !cancelled->load()) append(boolQueryExact(device, kIoctlGetActive,
         QStringLiteral("HD-CFG-001"), QStringLiteral("GET_ACTIVE")));
-    if (!cancelled || !cancelled->load()) observations.append(boolQueryExact(device, kIoctlGetInverse,
+    if (!cancelled || !cancelled->load()) append(boolQueryExact(device, kIoctlGetInverse,
         QStringLiteral("HD-CFG-002"), QStringLiteral("GET_INVERSE")));
-    if (!cancelled || !cancelled->load()) observations += multiStringQuery(device, kIoctlGetWhitelist,
-        QStringLiteral("HD-CFG-003"), QStringLiteral("GET_WHITELIST"));
-    if (!cancelled || !cancelled->load()) observations += multiStringQuery(device, kIoctlGetBlacklist,
-        QStringLiteral("HD-CFG-005"), QStringLiteral("GET_BLACKLIST"));
+    if (!cancelled || !cancelled->load()) for (const HidHideReadObservation &entry : multiStringQuery(device, kIoctlGetWhitelist,
+        QStringLiteral("HD-CFG-003"), QStringLiteral("GET_WHITELIST"))) append(entry);
+    if (!cancelled || !cancelled->load()) for (const HidHideReadObservation &entry : multiStringQuery(device, kIoctlGetBlacklist,
+        QStringLiteral("HD-CFG-005"), QStringLiteral("GET_BLACKLIST"))) append(entry);
     close();
 #else
     Q_UNUSED(cancelled);
@@ -270,6 +277,7 @@ QList<HidHideReadObservation> HidHideReadOnlyProtocol::inspect(std::atomic_bool 
     unavailable.state = HidHideReadState::Unavailable;
     unavailable.summary = QStringLiteral("Direct HidHide protocol inspection is available only on Windows.");
     observations.append(unavailable);
+    if (observation) observation(unavailable);
 #endif
     return observations;
 }

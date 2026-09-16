@@ -5,6 +5,7 @@
 #include <QStringList>
 
 #include <atomic>
+#include <functional>
 
 namespace hotas {
 
@@ -48,7 +49,9 @@ public:
     // operation is independent: one failed query never erases other results.
     // The optional cancellation flag is checked between operations; an active
     // DeviceIoControl is separately bounded and cancelled on timeout.
-    static QList<HidHideReadObservation> inspect(std::atomic_bool *cancelled = nullptr);
+    using ObservationCallback = std::function<void(const HidHideReadObservation &)>;
+    static QList<HidHideReadObservation> inspect(std::atomic_bool *cancelled = nullptr,
+                                                 ObservationCallback observation = {});
 };
 
 } // namespace hotas

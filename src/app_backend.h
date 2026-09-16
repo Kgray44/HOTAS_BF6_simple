@@ -808,6 +808,7 @@ public:
     Q_INVOKABLE bool repairHidHideAccess();
     Q_INVOKABLE bool openHidHideConfiguration();
     Q_INVOKABLE QVariantMap runHidHideFullCheck();
+    Q_INVOKABLE bool cancelHidHideFullCheck();
     Q_INVOKABLE QVariantMap reviewHidHideHealthRepair();
     Q_INVOKABLE QVariantMap openHidHideDoctor();
     Q_INVOKABLE bool copyHidHideHealthEvidence();

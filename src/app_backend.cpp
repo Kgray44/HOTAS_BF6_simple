@@ -7148,6 +7148,41 @@ HidHideHealthContext AppBackend::buildHidHideHealthContext(quint64 sessionId) co
     context.expectedPhysicalInstances = physical.hidHideDeviceInstanceIds;
     if (context.expectedPhysicalInstances.isEmpty()) context.expectedPhysicalInstances = hidhide.selectedControllerInstanceIds;
     context.hiddenDeviceInstances = hidhide.hiddenDeviceInstanceIds;
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, context.deviceRigId)) {
+        for (const DeviceRigMember &member : rig->members) {
+            if (!member.enabled) continue;
+            HidHidePhysicalDeviceHealth device;
+            device.controllerRecordId = member.controllerRecordId;
+            device.required = member.required;
+            const SavedControllerRecord *record = savedControllerRecord(member.controllerRecordId);
+            device.friendlyName = record ? record->displayName : u"Unknown device"_qs;
+            const DiscoveredController *discovered = nullptr;
+            for (const DiscoveredController &candidate : m_discoveredControllers) {
+                const ControllerMatch match = ControllerManager::match(candidate, m_configuration.savedControllers);
+                if (!match.ambiguous && match.recordId == member.controllerRecordId) { discovered = &candidate; break; }
+            }
+            device.connected = discovered && discovered->connected;
+            if (discovered && !discovered->hidInstanceId.trimmed().isEmpty())
+                device.exactCurrentHidInstances.append(discovered->hidInstanceId);
+            if (record) {
+                for (const QString &instance : record->ownedHidHideDeviceInstances) {
+                    if (!instance.trimmed().isEmpty() && !device.exactCurrentHidInstances.contains(instance, Qt::CaseInsensitive))
+                        device.exactCurrentHidInstances.append(instance);
+                }
+            }
+            device.identityResolved = !device.exactCurrentHidInstances.isEmpty();
+            context.physicalDevices.append(std::move(device));
+        }
+    }
+    if (context.physicalDevices.isEmpty() && !context.selectedControllerId.isEmpty()) {
+        HidHidePhysicalDeviceHealth device;
+        device.controllerRecordId = context.selectedControllerId;
+        device.friendlyName = physical.name;
+        device.connected = physical.connected;
+        device.exactCurrentHidInstances = context.expectedPhysicalInstances;
+        device.identityResolved = context.selectedControllerResolved;
+        context.physicalDevices.append(std::move(device));
+    }
     if (const VirtualOutputLayout *layout = activeOutputLayout(); layout && layout->hidhideManaged
         && !layout->hidHideDeviceInstanceId.trimmed().isEmpty()) {
         context.managedVirtualOutputInstances = {layout->hidHideDeviceInstanceId};
@@ -7200,7 +7235,17 @@ void AppBackend::startHidHideHealthCheck(HidHideHealthScanDepth depth)
     const auto cancellation = std::make_shared<std::atomic_bool>(false);
     m_hidhideHealthCancellation = cancellation;
     auto *thread = QThread::create([this, context, depth, cancellation] {
-        HidHideHealthSnapshot snapshot = m_hidhideHealthService.inspect(context, depth, cancellation.get());
+        HidHideHealthSnapshot snapshot = m_hidhideHealthService.inspect(context, depth, cancellation.get(),
+            [this](const HidHideHealthSnapshot &partial) {
+                QMetaObject::invokeMethod(this, [this, partial] {
+                    if (m_hidhideHealthThread && m_hidhideHealthSnapshot.sessionId == partial.sessionId
+                        && m_hidhideHealthSnapshot.contextKey == partial.contextKey) {
+                        m_hidhideHealthSnapshot = partial;
+                        m_hidhideHealthSnapshot.activity = m_hidhideHealthActivity;
+                        emit stateChanged();
+                    }
+                }, Qt::QueuedConnection);
+            });
         QMetaObject::invokeMethod(this, [this, snapshot = std::move(snapshot)]() mutable {
             completeHidHideHealthCheck(std::move(snapshot));
         }, Qt::QueuedConnection);
@@ -16627,6 +16672,18 @@ QVariantMap AppBackend::runHidHideFullCheck()
         u"hidhide"_qs, {}, u"wait"_qs, {}, {}, true);
 }
 
+bool AppBackend::cancelHidHideFullCheck()
+{
+    if (!m_hidhideHealthThread || !m_hidhideHealthCancellation
+        || m_hidhideHealthSnapshot.scanDepth != HidHideHealthScanDepth::Full) return false;
+    m_hidhideHealthCancellation->store(true);
+    m_hidhideHealthFullCheckPending = false;
+    appendHidHideHealthActivity(u"Full HidHide Health check cancellation requested"_qs,
+        u"The bounded read-only probe will stop remaining work and retain collected evidence."_qs);
+    emit stateChanged();
+    return true;
+}
+
 QVariantMap AppBackend::reviewHidHideHealthRepair()
 {
     const auto actionable = std::find_if(m_hidhideHealthSnapshot.dimensions.cbegin(),
@@ -16664,10 +16721,11 @@ QVariantMap AppBackend::reviewHidHideHealthRepair()
 
 bool AppBackend::copyHidHideHealthEvidence()
 {
-    const QJsonDocument document = QJsonDocument::fromVariant(m_hidhideHealthSnapshot.toVariantMap());
+    const QJsonDocument document = QJsonDocument::fromVariant(
+        HidHideHealthService::sanitizedEvidence(m_hidhideHealthSnapshot));
     if (QClipboard *clipboard = QGuiApplication::clipboard()) {
         clipboard->setText(QString::fromUtf8(document.toJson(QJsonDocument::Indented)));
-        appendEvent(u"Copied HidHide Health evidence to the clipboard"_qs);
+        appendEvent(u"Copied sanitized HidHide Health evidence to the clipboard"_qs);
         return true;
     }
     return false;
@@ -16721,15 +16779,19 @@ QVariantMap AppBackend::openHidHideDoctor()
             u"HOTAS BF6 has not launched Doctor. You can copy the local evidence instead."_qs,
             u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
     }
-    if (!QProcess::startDetached(*found, {u"--hotas-handoff"_qs, path})) {
+    // The presently bundled Phase 1 Doctor does not yet parse --hotas-handoff.
+    // Keep the versioned, sanitized schema for the future contract but do not
+    // pretend an unverified argument was consumed. Doctor remains independent
+    // and starts its own read-only diagnosis.
+    if (!QProcess::startDetached(*found)) {
         return actionResult(false, u"HidHide Doctor did not start"_qs,
             u"The Doctor handoff was prepared, but Windows could not start the independent process."_qs,
             u"hidhide"_qs, {}, u"copy-hidhide-evidence"_qs, u"COPY EVIDENCE"_qs);
     }
-    appendHidHideHealthActivity(u"Opened HidHide Doctor"_qs, u"A sanitized context handoff was prepared."_qs);
-    appendEvent(u"Opened HidHide Doctor with sanitized HidHide Health context"_qs);
+    appendHidHideHealthActivity(u"Opened HidHide Doctor"_qs, u"A sanitized handoff schema was written, but this Doctor build does not yet consume it."_qs);
+    appendEvent(u"Opened HidHide Doctor independently; HOTAS handoff consumption is not yet qualified"_qs);
     return actionResult(true, u"Opened HidHide Doctor"_qs,
-        u"Doctor was launched independently and will revalidate all context before any action."_qs,
+        u"Doctor was launched independently. A sanitized handoff schema was saved locally, but this Doctor build has not yet qualified --hotas-handoff parsing and will rerun diagnosis without it."_qs,
         u"hidhide"_qs, {}, u"none"_qs);
 }
 

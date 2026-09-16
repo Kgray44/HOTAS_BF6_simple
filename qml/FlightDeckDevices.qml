@@ -1228,15 +1228,19 @@ Flickable {
                             Item { Layout.fillWidth: true }
                             Text { text: String(root.hidhideHealth.overallState || "CHECKING"); color: deck.statusColor(root.hidhideHealthTone()); font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
                         }
-                        Text { Layout.fillWidth: true; text: root.hidhideHealth.inProgress ? (root.hidhideHealth.currentStage || "Checking HidHide") : "Independent health dimensions are kept separate from the existing setup transaction."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Text { Layout.fillWidth: true; text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking HidHide")) : "Independent health dimensions are kept separate from the existing setup transaction."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
                         Repeater {
-                            model: (root.hidhideHealth.dimensions || []).slice(0, 4)
+                            model: root.hidhideHealth.dimensions || []
                             delegate: Text {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 text: "• " + String(modelData.title || "HidHide") + " · " + String(modelData.state || "UNKNOWN") + " — " + String(modelData.shortSummary || "")
                                 color: deck.textMuted; font.pixelSize: 9; wrapMode: Text.WordWrap
                             }
+                        }
+                        Repeater {
+                            model: root.hidhideHealth.physicalDevices || []
+                            delegate: Text { required property var modelData; Layout.fillWidth: true; text: String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.state || "UNKNOWN") + (String(modelData.state || "") === "REPAIR AVAILABLE" ? " · Visible to games" : ""); color: deck.statusColor(String(modelData.state || "") === "READY" ? "healthy" : "attention"); font.pixelSize: 10; wrapMode: Text.WordWrap }
                         }
                     }
                 }
@@ -1250,6 +1254,15 @@ Flickable {
                         onClicked: root.showActionFeedback(backend.runHidHideFullCheck(), "HidHide check did not start", "Try again after the current check completes.")
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        visible: root.hidhideHealth.inProgress
+                        text: "CANCEL"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.cancelHidHideFullCheck()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: deck.border; border.width: 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                     Button {
                         visible: String(root.hidhideHealth.overallState || "") === "REPAIR AVAILABLE"

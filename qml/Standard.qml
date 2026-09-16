@@ -2203,8 +2203,9 @@ Page {
                             Button { text: standardHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
                                 enabled: !standardHidHideHealthDiagnostics.health.inProgress
                                 onClicked: backend.runHidHideFullCheck() }
+                            Button { text: "CANCEL"; visible: standardHidHideHealthDiagnostics.health.inProgress; onClicked: backend.cancelHidHideFullCheck() }
                             Button { text: "REVIEW REPAIR"; onClicked: backend.reviewHidHideHealthRepair() }
-                            Button { text: "COPY EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
+                            Button { text: "COPY SANITIZED EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
                         }
                         Text { width: parent.width; text: ((standardHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
                                 return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")

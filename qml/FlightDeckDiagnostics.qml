@@ -993,7 +993,7 @@ Flickable {
                         }
                     }
                     Text {
-                        text: root.hidhideHealth.currentStage || isolationHealth.detail || "HidHide status has not been checked yet."
+                                text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "% · " + String(root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking")) : (root.hidhideHealth.currentStage || isolationHealth.detail || "HidHide status has not been checked yet.")
                         color: deck.textSecondary
                         font.pixelSize: 10
                         Layout.fillWidth: true
@@ -1013,6 +1013,12 @@ Flickable {
                             text: "OPEN SETUP"
                             tone: isolationHealth.tone || "informational"
                             onClicked: root.navigateToDevices("isolation")
+                        }
+                        OutlineButton {
+                            text: "CANCEL"
+                            visible: root.hidhideHealth.inProgress
+                            tone: "informational"
+                            onClicked: backend.cancelHidHideFullCheck()
                         }
                         OutlineButton {
                             text: root.hidhideHealth.inProgress ? "CHECKING…" : "RUN FULL CHECK"
@@ -1057,7 +1063,7 @@ Flickable {
                             delegate: TechnicalRow {
                                 required property var modelData
                                 label: String(modelData.title || "HidHide")
-                                value: String(modelData.state || "UNKNOWN") + " · " + String(modelData.shortSummary || "")
+                                value: String(modelData.state || "UNKNOWN") + " · " + String(modelData.shortSummary || "") + (modelData.technicalDetails ? " · " + String(modelData.technicalDetails) : "")
                                 valueTone: String(modelData.state || "").indexOf("READY") >= 0 ? "healthy" : "attention"
                             }
                         }
@@ -1070,8 +1076,17 @@ Flickable {
                                 valueTone: String(modelData.state || "").indexOf("PASS") >= 0 ? "healthy" : "attention"
                             }
                         }
+                        Repeater {
+                            model: root.hidhideHealth.physicalDevices || []
+                            delegate: TechnicalRow {
+                                required property var modelData
+                                label: "RIG · " + String(modelData.friendlyName || "Physical controller")
+                                value: String(modelData.state || "UNKNOWN") + " · " + String(modelData.technicalDetails || "")
+                                valueTone: String(modelData.state || "").indexOf("READY") >= 0 ? "healthy" : "attention"
+                            }
+                        }
                         OutlineButton {
-                            text: "COPY EVIDENCE"
+                            text: "COPY SANITIZED EVIDENCE"
                             tone: "informational"
                             onClicked: backend.copyHidHideHealthEvidence()
                         }

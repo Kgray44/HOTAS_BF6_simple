@@ -206,7 +206,7 @@ set_target_properties(HOTASMapper PROPERTIES
 )
 
 if (WIN32)
-    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
+    target_link_libraries(HOTASMapper PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp version)
     target_compile_definitions(HOTASMapper PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
     # The approved repair transaction restarts this executable elevated.  A
@@ -450,6 +450,7 @@ if (BUILD_TESTING)
     target_compile_definitions(hidhide_health_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     add_test(NAME hidhide_health_tests COMMAND hidhide_health_tests)
     if (WIN32)
+        target_link_libraries(hidhide_health_tests PRIVATE version)
         set_tests_properties(hidhide_health_tests PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
@@ -556,7 +557,7 @@ if (BUILD_TESTING)
         FILES
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
-    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp)
+    target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp version)
     target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
     # Backend startup fixtures must not acquire the owner's DirectInput or
     # vJoy session. This flag keeps AppBackend on the fixture-only control
@@ -650,6 +651,7 @@ if (BUILD_TESTING)
         shell32
         cfgmgr32
         psapi
+        version
     )
     target_include_directories(app_qml_startup_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
