@@ -65,6 +65,8 @@ set(HOTAS_MAPPER_SOURCES
     src/signal_flow_model.cpp
     src/config_store.h
     src/config_store.cpp
+    src/responsiveness_probe.h
+    src/responsiveness_probe.cpp
     src/controller_manager.h
     src/controller_manager.cpp
     src/direct_input_axis.h
@@ -199,6 +201,7 @@ target_link_libraries(HOTASMapper PRIVATE
     Qt6::Widgets
 )
 target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(HOTASMapper PRIVATE HOTAS_ENABLE_RESPONSIVENESS_PROBE)
 set_target_properties(HOTASMapper PROPERTIES
     OUTPUT_NAME "HOTAS BF6"
     WIN32_EXECUTABLE TRUE
@@ -468,6 +471,20 @@ if (BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
+    qt_add_executable(responsiveness_probe_tests
+        tests/responsiveness_probe_tests.cpp
+        src/responsiveness_probe.h
+        src/responsiveness_probe.cpp
+    )
+    target_link_libraries(responsiveness_probe_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
+    target_include_directories(responsiveness_probe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME responsiveness_probe_disabled COMMAND responsiveness_probe_tests)
+    add_test(NAME responsiveness_probe_aggregation COMMAND responsiveness_probe_tests --enabled)
+    if (WIN32)
+        set_tests_properties(responsiveness_probe_disabled responsiveness_probe_aggregation PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
     qt_add_executable(widgets_startup_contract_tests tests/widgets_startup_contract_tests.cpp)
     target_link_libraries(widgets_startup_contract_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
     add_test(NAME widgets_startup_contract_tests COMMAND widgets_startup_contract_tests)
@@ -558,7 +575,7 @@ if (BUILD_TESTING)
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp version)
-    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
+    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING HOTAS_ENABLE_RESPONSIVENESS_PROBE)
     # Backend startup fixtures must not acquire the owner's DirectInput or
     # vJoy session. This flag keeps AppBackend on the fixture-only control
     # plane while retaining the real models and persistence boundaries.
@@ -673,7 +690,7 @@ if (BUILD_TESTING)
             qml/FlightDeckAutomation.qml
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
+    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING HOTAS_ENABLE_RESPONSIVENESS_PROBE)
     # The native QML lifecycle suite supplies its own deterministic controller,
     # output, and setup-assistant fixtures.  Do not let a release test inspect
     # or hold the owner's live DirectInput, vJoy, or HidHide state while those

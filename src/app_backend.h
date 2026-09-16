@@ -555,6 +555,14 @@ public:
     // Production returns an empty map and keeps the presentation path clean.
     Q_INVOKABLE QVariantMap uiPerformanceCounters() const;
     Q_INVOKABLE void resetUiPerformanceCounters();
+    // Phase 0 native responsiveness probe. QML emits only sparse navigation
+    // lifecycle markers; the probe itself remains absent unless explicitly
+    // enabled through HOTAS_RESPONSIVENESS_PROBE=1.
+    Q_INVOKABLE bool responsivenessProbeEnabled() const;
+    Q_INVOKABLE void responsivenessNavigationRequested(int page, const QString &pageName);
+    Q_INVOKABLE void responsivenessNavigationLoaderActivated(int page, const QString &pageName);
+    Q_INVOKABLE void responsivenessNavigationObjectReady(int page, const QString &pageName);
+    Q_INVOKABLE QString exportResponsivenessProbe(const QString &path = QString());
 
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);

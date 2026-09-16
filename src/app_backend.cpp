@@ -14,6 +14,7 @@
 #include "launcher_core.h"
 #include "profile_model.h"
 #include "profile_portability.h"
+#include "responsiveness_probe.h"
 #include "response_curve.h"
 #include "signal_flow_model.h"
 #include "setup_truth.h"
@@ -19186,6 +19187,9 @@ void AppBackend::attachMainWindow(QWindow *window)
     if (m_mainWindow == window) return;
     m_mainWindow = window;
     if (!m_mainWindow) return;
+    if (auto *probe = ResponsivenessProbe::active()) {
+        probe->attachWindow(qobject_cast<QQuickWindow *>(m_mainWindow.data()));
+    }
     connect(m_mainWindow, &QWindow::visibilityChanged, this,
             [this](QWindow::Visibility) { updatePresentationLifecycle(); });
     connect(m_mainWindow, &QWindow::windowStateChanged, this,
@@ -19891,6 +19895,32 @@ void AppBackend::resetUiPerformanceCounters()
     m_uiEventLoopDelayOver100Ms = 0;
     m_uiEventLoopDelayOver250Ms = 0;
     m_uiEventLoopHeartbeatClock.restart();
+}
+
+bool AppBackend::responsivenessProbeEnabled() const
+{
+    return ResponsivenessProbe::active() != nullptr;
+}
+
+void AppBackend::responsivenessNavigationRequested(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationRequested(page, pageName);
+}
+
+void AppBackend::responsivenessNavigationLoaderActivated(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationLoaderActivated(page, pageName);
+}
+
+void AppBackend::responsivenessNavigationObjectReady(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationObjectReady(page, pageName);
+}
+
+QString AppBackend::exportResponsivenessProbe(const QString &path)
+{
+    if (auto *probe = ResponsivenessProbe::active()) return probe->exportReport(path);
+    return {};
 }
 
 void AppBackend::appendEvent(const QString &event)

@@ -1,6 +1,7 @@
 #include "app_backend.h"
 #include "crash_diagnostics.h"
 #include "hotas_build_version.h"
+#include "responsiveness_probe.h"
 #include "setup_repair_helper.h"
 #include "theme_manager.h"
 
@@ -99,6 +100,11 @@ int main(int argc, char *argv[])
     });
     QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
         [] { hotas::CrashDiagnostics::markCleanShutdown(); });
+    // The Phase 0 probe is opt-in and all of its samples remain in memory
+    // until this one bounded shutdown export.
+    hotas::ResponsivenessProbe::installIfEnabled(&application);
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [] { hotas::ResponsivenessProbe::exportActive(); });
     // Development/test-only fatal-path exercise. It is not presented in QML
     // or Settings and never runs unless a caller supplies the explicit flag.
     if (hasArgument(argc, argv, "--crash-reporter-test")) {

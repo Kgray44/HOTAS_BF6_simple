@@ -1,6 +1,7 @@
 #include "app_backend.h"
 #include "axis_transform.h"
 #include "config_store.h"
+#include "responsiveness_probe.h"
 #include "response_curve.h"
 #include "theme_manager.h"
 
@@ -3228,6 +3229,63 @@ bool verifyFlightDeckPageNavigationPerformance(hotas::AppBackend &backend,
         "flight_deck_page_navigation_summary appearance=%s pages=%zu total_ms=%lld max_ms=%lld\n",
         appearance.toUtf8().constData(), pages.size(), static_cast<long long>(totalMilliseconds),
         static_cast<long long>(maximumMilliseconds));
+    return true;
+}
+
+bool verifyWholeAppResponsivenessNavigation(hotas::AppBackend &backend,
+                                            hotas::ThemeManager &themeManager,
+                                            const QString &appearance)
+{
+    struct PageSample {
+        int index;
+        const char *name;
+    };
+    // Deliberately independent from the historic 11-route Flight Deck probe:
+    // Phase 0 exercises exactly the ten campaign pages and never selects or
+    // interprets Signal Flow.
+    constexpr std::array<PageSample, 10> pages{{
+        {8, "Overview"}, {2, "Devices"}, {0, "Axes"}, {1, "Buttons"},
+        {6, "Curve Editor"}, {5, "Profiles"}, {9, "Adaptive Response"},
+        {7, "Automation"}, {3, "Diagnostics"}, {4, "Settings"},
+    }};
+
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return failPresentationLifecycleTest(
+        QStringLiteral("Phase 0 responsiveness navigation window did not load"));
+    backend.attachMainWindow(window);
+
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface) return failPresentationLifecycleTest(
+        QStringLiteral("Phase 0 responsiveness navigation surface did not load"));
+
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const PageSample &page : pages) {
+            QElapsedTimer elapsed;
+            elapsed.start();
+            if (!selectPage(surface, page.index)) return false;
+            const qint64 milliseconds = elapsed.elapsed();
+            std::fprintf(stderr,
+                "whole_app_responsiveness_navigation appearance=%s pass=%d page=%s page_id=%d settle_ms=%lld loaded_pages=%d\n",
+                appearance.toUtf8().constData(), pass + 1, page.name, page.index,
+                static_cast<long long>(milliseconds), surface->property("loadedPageCount").toInt());
+            if (milliseconds > 1500) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Phase 0 responsiveness page %1 exceeded the 1500 ms isolated navigation smoke limit (%2 ms)")
+                    .arg(QString::fromLatin1(page.name)).arg(milliseconds));
+            }
+        }
+    }
+    settlePresentation();
     return true;
 }
 
@@ -8065,6 +8123,7 @@ int main(int argc, char *argv[])
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+    hotas::ResponsivenessProbe::installIfEnabled(&application);
 
     // ConfigStore owns an explicit INI under AppConfigLocation rather than
     // QSettings' default location. The lifecycle test creates persisted
@@ -8096,6 +8155,11 @@ int main(int argc, char *argv[])
     // qualification. It does not substitute for a native interaction review.
     const bool flightDeckPerformanceOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_PERF_ONLY");
+    // The Phase 0 path has its own ten-page workload and never selects
+    // Signal Flow. It remains an isolated QML regression, not a claim about
+    // a native owner pointer pass under system contention.
+    const bool wholeAppResponsivenessNavigationOnly = qEnvironmentVariableIsSet(
+        "HOTAS_QML_WHOLE_APP_RESPONSIVENESS_ONLY");
     // The sidebar activation path is intentionally runnable on its own. It
     // provides a short native-QML regression for committed activation truth,
     // independent of the much broader visual-review matrix.
@@ -8154,6 +8218,21 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return performanceSafe ? 0 : 1;
+    }
+    if (wholeAppResponsivenessNavigationOnly) {
+        backend.setVirtualAxisAvailabilityForTest(true);
+        const bool safe = verifyWholeAppResponsivenessNavigation(
+            backend, themeManager, QStringLiteral("Dark"));
+        const QString reportPath = backend.exportResponsivenessProbe();
+        if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
+            return failPresentationLifecycleTest(
+                QStringLiteral("Phase 0 responsiveness probe could not export its bounded result"));
+        }
+        if (!reportPath.isEmpty()) {
+            std::fprintf(stderr, "whole_app_responsiveness_report=%s\n", reportPath.toUtf8().constData());
+        }
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return safe ? 0 : 1;
     }
     if (sidebarActivationOnly) {
         backend.setVirtualAxisAvailabilityForTest(true);
