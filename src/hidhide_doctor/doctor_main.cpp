@@ -18,6 +18,7 @@
 #include <QUuid>
 
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <thread>
@@ -96,6 +97,18 @@ public:
         m_cancelled.store(false);
         ++m_generation;
         const quint64 generation = m_generation.load();
+        // A scheduled deep continuation never replays installation here. It
+        // only makes the observe-first restart state visible while this fresh
+        // native scan is in progress.
+        hotas::doctor::RepairJournalStore startupJournal;
+        QString ignoredReason;
+        const QList<hotas::doctor::RepairTransaction> records = startupJournal.history(&ignoredReason);
+        const bool resuming = std::any_of(records.cbegin(), records.cend(), [](const hotas::doctor::RepairTransaction &record) {
+            return record.riskClass != hotas::doctor::RepairRiskClass::R1Configuration
+                && record.state == hotas::doctor::RepairTransactionState::AwaitingReboot;
+        });
+        m_model.setRecoveryNotice(resuming
+            ? QStringLiteral("RESUMING REPAIR — rerunning a fresh read-only Doctor scan before any continuation decision.") : QString());
         hotas::doctor::DoctorDiagnosticEngine engine;
         m_model.replaceSession(engine.createPreparedSession());
         m_worker = std::thread([this, generation] {
@@ -249,6 +262,7 @@ int main(int argc, char *argv[])
     const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
     const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
     const bool approvedUpgradeRequested = fixtureMode && hasArgument(argc, argv, "--approved-upgrade");
+    const QString resumeTransaction = argumentValue(argc, argv, "--resume-transaction");
     const QString buildIdentity = QStringLiteral("Development build %1 · %2 · %3")
         .arg(QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID), QSysInfo::buildCpuArchitecture());
     const QString reportPath = argumentValue(argc, argv, "--report");
@@ -325,6 +339,10 @@ int main(int argc, char *argv[])
         }
         return outcome.cancelled ? 2 : 0;
     }
+    // The RunOnce continuation is deliberately just a normal Doctor launch
+    // with a stable transaction reference. ScanController independently
+    // enumerates durable AwaitingReboot records and performs no replay.
+    Q_UNUSED(resumeTransaction);
     hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
     hotas::doctor::DoctorSession prepared = diagnosticEngine.createPreparedSession();
     hotas::doctor::DoctorSessionViewModel viewModel(prepared, buildIdentity);

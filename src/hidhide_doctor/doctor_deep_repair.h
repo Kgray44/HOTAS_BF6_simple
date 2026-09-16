@@ -29,6 +29,13 @@ struct ApprovedPackage final {
     int expectedMaximumReboots = 1;
     RepairQualificationLevel qualification = RepairQualificationLevel::LabQualified;
     QString provenance;
+    // Official release tags and PE file versions need not have the same
+    // spelling (the currently approved HidHide asset is v1.5.230.0 but its
+    // signed PE reports 1.5.230). Both values are immutable catalog facts.
+    QString artifactFileName;
+    QString artifactVersion;
+    quint64 expectedSize = 0;
+    QString rollbackPackageId;
 };
 
 struct PackageValidationResult final {

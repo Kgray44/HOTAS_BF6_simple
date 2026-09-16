@@ -1,4 +1,5 @@
 #include "doctor_deep_repair.h"
+#include "doctor_deep_execution.h"
 #include "doctor_fixtures.h"
 #include "doctor_repair_helper_protocol.h"
 
@@ -8,6 +9,7 @@
 #include <QtTest>
 
 #include <algorithm>
+#include <functional>
 
 using namespace hotas::doctor;
 
@@ -43,6 +45,9 @@ private slots:
     void approvedCatalogRejectsAllIdentityDrift();
     void deepPlansRemainClassSeparated();
     void packagePlanRequiresExactTypedOperations();
+    void deepHelperRejectsCatalogAndOperationDrift();
+    void deterministicFixtureR5ExecutionIsSeparatedFromProduction();
+    void fixtureArchitectureEvidenceIsExplicit();
     void rebootContinuationObservesBeforeCompletion();
     void reportContainsPhase4SchemaAndCatalog();
     void fixtureMatrixIsBroadAndUnique();
@@ -125,6 +130,86 @@ void HidHideDoctorDeepRepairTests::packagePlanRequiresExactTypedOperations()
     request.plan.integrityDigest = RepairHelperContract::seal(request.plan);
     request.requestDigest = RepairHelperProtocol::seal(request);
     QVERIFY(!RepairHelperProtocol::validate(request, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason));
+}
+
+void HidHideDoctorDeepRepairTests::deepHelperRejectsCatalogAndOperationDrift()
+{
+    DiagnosticRunOutcome outcome = runFixture(QStringLiteral("Deep Incomplete Driver Replacement"));
+    RepairPlan plan = RepairPlanner().propose(outcome.session, outcome.snapshot, true).plan;
+    plan.authorization = RepairAuthorization::OwnerLabAuthorized;
+    plan.integrityDigest = RepairHelperContract::seal(plan);
+    const auto rejected = [&](const std::function<void(RepairHelperRequest &)> &mutate) {
+        RepairHelperRequest request;
+        request.transactionId = RepairTransactionId(QStringLiteral("REPAIR-TX-DEEP-HELPER-DRIFT"));
+        request.plan = plan;
+        request.doctorBuildId = QStringLiteral("DEEP-TEST-BUILD");
+        request.helperBuildId = QStringLiteral("DEEP-TEST-BUILD");
+        request.nonce = QString(32, QLatin1Char('B'));
+        request.expiresAt = QDateTime::currentDateTimeUtc().addSecs(30);
+        mutate(request);
+        request.plan.integrityDigest = RepairHelperContract::seal(request.plan);
+        request.requestDigest = RepairHelperProtocol::seal(request);
+        QString reason;
+        return !RepairHelperProtocol::validate(request, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason);
+    };
+    const auto replacePackageValue = [&](const QString &key, const QJsonValue &value) {
+        return rejected([&](RepairHelperRequest &request) {
+            QJsonObject package = request.plan.deepRepair.value(QStringLiteral("package")).toObject();
+            package.insert(key, value);
+            request.plan.deepRepair.insert(QStringLiteral("package"), package);
+        });
+    };
+    QVERIFY(replacePackageValue(QStringLiteral("packageId"), QStringLiteral("HD-PKG-NOT-CATALOGUED")));
+    QVERIFY(replacePackageValue(QStringLiteral("expectedSha256"), QString(64, QLatin1Char('0'))));
+    QVERIFY(replacePackageValue(QStringLiteral("signerIdentity"), QStringLiteral("Unexpected signer")));
+    QVERIFY(replacePackageValue(QStringLiteral("architecture"), QStringLiteral("arm64")));
+    QVERIFY(replacePackageValue(QStringLiteral("source"), QStringLiteral("https://untrusted.example/HidHide.exe")));
+    QVERIFY(replacePackageValue(QStringLiteral("path"), QStringLiteral("C:/arbitrary.exe")));
+    QVERIFY(replacePackageValue(QStringLiteral("inf"), QStringLiteral("oem42.inf")));
+    QVERIFY(replacePackageValue(QStringLiteral("restart"), QStringLiteral("now")));
+    QVERIFY(rejected([](RepairHelperRequest &request) {
+        request.plan.operations[2].targetIdentity = QStringLiteral("C:/arbitrary.exe");
+    }));
+    QVERIFY(rejected([](RepairHelperRequest &request) {
+        request.plan.operations[0].kind = RepairOperationKind::RepairExactServiceConfiguration;
+        request.plan.operations[0].targetKind = RepairTargetKind::HidHideService;
+        request.plan.operations[0].targetIdentity = QStringLiteral("Spooler");
+    }));
+    QVERIFY(rejected([](RepairHelperRequest &request) {
+        request.expiresAt = QDateTime::currentDateTimeUtc().addSecs(-1);
+    }));
+}
+
+void HidHideDoctorDeepRepairTests::deterministicFixtureR5ExecutionIsSeparatedFromProduction()
+{
+    DiagnosticRunOutcome outcome = runFixture(QStringLiteral("Recovery"));
+    RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+    QCOMPARE(proposal.status, RepairProposalStatus::AvailableForOwnerLab);
+    proposal.plan.authorization = RepairAuthorization::OwnerLabAuthorized;
+    proposal.plan.integrityDigest = RepairHelperContract::seal(proposal.plan);
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    RepairJournalStore journal(temporary.path());
+    const RepairExecutionResult staged = RepairTransactionCoordinator().dryRun(proposal, outcome.snapshot.environment,
+        outcome.session.id(), journal, RepairTransactionId(QStringLiteral("REPAIR-TX-R5-FIXTURE-001")));
+    QCOMPARE(staged.transaction.state, RepairTransactionState::Planned);
+    const RepairExecutionResult executed = DeepRepairExecutor::execute(proposal.plan, outcome.snapshot.environment,
+        staged.transaction, journal);
+    QCOMPARE(executed.transaction.state, RepairTransactionState::AwaitingReboot);
+    QVERIFY(executed.transaction.continuationState.value(QStringLiteral("fixtureOnly")).toBool());
+    QVERIFY(std::any_of(executed.transaction.operations.cbegin(), executed.transaction.operations.cend(),
+        [](const RepairOperationJournalEntry &entry) { return entry.kind == RepairOperationKind::RemoveSpecificInactiveHidHidePackage
+            && entry.state == DoctorOperationState::Completed; }));
+}
+
+void HidHideDoctorDeepRepairTests::fixtureArchitectureEvidenceIsExplicit()
+{
+    const DoctorEnvironment fixture = fixtures::windows11X64Healthy();
+    QCOMPARE(fixture.platform.nativeArchitecture, CpuArchitecture::X64);
+    QCOMPARE(fixture.platform.processArchitecture, CpuArchitecture::X64);
+    QCOMPARE(fixture.platform.doctorBinaryArchitecture, CpuArchitecture::X64);
+    QCOMPARE(fixture.platform.helperBinaryArchitecture, CpuArchitecture::X64);
+    QVERIFY(fixture.capabilities.helperArchitectureCompatible);
 }
 
 void HidHideDoctorDeepRepairTests::rebootContinuationObservesBeforeCompletion()

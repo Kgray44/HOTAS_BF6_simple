@@ -413,7 +413,21 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
         {QStringLiteral("build"), static_cast<int>(outcome.snapshot.environment.platform.build)},
         {QStringLiteral("revision"), static_cast<int>(outcome.snapshot.environment.platform.revision)},
         {QStringLiteral("nativeArchitecture"), displayName(outcome.snapshot.environment.platform.nativeArchitecture)},
-        {QStringLiteral("processArchitecture"), displayName(outcome.snapshot.environment.platform.processArchitecture)}});
+        {QStringLiteral("processArchitecture"), displayName(outcome.snapshot.environment.platform.processArchitecture)},
+        {QStringLiteral("doctorBinaryArchitecture"), displayName(outcome.snapshot.environment.platform.doctorBinaryArchitecture)},
+        {QStringLiteral("helperBinaryArchitecture"), displayName(outcome.snapshot.environment.platform.helperBinaryArchitecture)},
+        {QStringLiteral("wow64OrEmulated"), outcome.snapshot.environment.platform.wow64OrEmulated}});
+    root.insert(QStringLiteral("executionCompatibility"), QJsonObject{
+        {QStringLiteral("directProtocolAvailable"), outcome.snapshot.environment.capabilities.directProtocolAvailable},
+        {QStringLiteral("helperArchitectureCompatible"), outcome.snapshot.environment.capabilities.helperArchitectureCompatible},
+        {QStringLiteral("highestQualifiedRepairTier"), displayName(outcome.snapshot.environment.capabilities.highestQualifiedRepairTier)}});
+    root.insert(QStringLiteral("hidhideComponent"), QJsonObject{
+        {QStringLiteral("present"), outcome.snapshot.environment.hidhide.present},
+        {QStringLiteral("provider"), outcome.snapshot.environment.hidhide.provider},
+        {QStringLiteral("clientVersion"), outcome.snapshot.environment.hidhide.clientVersion},
+        {QStringLiteral("driverVersion"), outcome.snapshot.environment.hidhide.driverVersion},
+        {QStringLiteral("packageVersion"), outcome.snapshot.environment.hidhide.packageVersion},
+        {QStringLiteral("packageArchitecture"), displayName(outcome.snapshot.environment.hidhide.packageArchitecture)}});
     QJsonArray results;
     for (const DoctorCheckResult &result : outcome.session.checkResults()) results.append(QJsonObject{
         {QStringLiteral("checkId"), result.checkId.value()}, {QStringLiteral("status"), displayName(result.status)},

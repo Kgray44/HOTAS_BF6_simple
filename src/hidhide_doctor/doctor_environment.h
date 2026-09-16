@@ -18,6 +18,11 @@ struct PlatformFingerprint final {
     quint32 revision = 0;
     CpuArchitecture nativeArchitecture = CpuArchitecture::Unknown;
     CpuArchitecture processArchitecture = CpuArchitecture::Unknown;
+    // These are measured from the executable images, rather than inferred
+    // from the build configuration.  Deep repair is unavailable unless all
+    // three participants (Windows, Doctor, and its paired helper) agree.
+    CpuArchitecture doctorBinaryArchitecture = CpuArchitecture::Unknown;
+    CpuArchitecture helperBinaryArchitecture = CpuArchitecture::Unknown;
     bool wow64OrEmulated = false;
     QString localeName;
 };

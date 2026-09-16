@@ -17,6 +17,23 @@ QString sha256(const QString &value)
     return QString::fromLatin1(QCryptographicHash::hash(value.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
+QString normalizedVersion(QString value)
+{
+    value = value.trimmed();
+    const int comma = value.lastIndexOf(QLatin1Char(','));
+    if (comma >= 0) value = value.mid(comma + 1).trimmed();
+    const QRegularExpressionMatch match = QRegularExpression(QStringLiteral("(\\d+(?:\\.\\d+){1,3})")).match(value);
+    if (match.hasMatch()) value = match.captured(1);
+    QStringList parts = value.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+    while (parts.size() > 3 && parts.last() == QStringLiteral("0")) parts.removeLast();
+    return parts.join(QLatin1Char('.'));
+}
+
+bool versionsEqual(const QString &left, const QString &right)
+{
+    return normalizedVersion(left) == normalizedVersion(right);
+}
+
 bool supportedBuild(const ApprovedPackage &package, quint32 build)
 {
     return build >= package.minimumWindowsBuild
@@ -40,8 +57,12 @@ const Diagnosis *diagnosisFor(const DoctorSession &session, const QStringList &i
 
 QString targetVersionFor(const ReadOnlyDiagnosticSnapshot &snapshot)
 {
-    if (!snapshot.environment.hidhide.packageVersion.isEmpty()) return snapshot.environment.hidhide.packageVersion;
+    // For an incomplete replacement, the installed signed client is the
+    // target generation; a stale Driver Store INF must not make us seek an
+    // invented historical package instead of the pinned release that matches
+    // the installed client. The catalog still requires an exact match.
     if (!snapshot.environment.hidhide.clientVersion.isEmpty()) return snapshot.environment.hidhide.clientVersion;
+    if (!snapshot.environment.hidhide.packageVersion.isEmpty()) return snapshot.environment.hidhide.packageVersion;
     for (const DriverPackageObservation &package : snapshot.driverPackages)
         if (package.activeCandidate && !package.version.isEmpty()) return package.version;
     return {};
@@ -63,7 +84,11 @@ QJsonObject packageJson(const ApprovedPackage &package)
         {QStringLiteral("maximumWindowsBuild"), static_cast<int>(package.maximumWindowsBuild)},
         {QStringLiteral("expectedMaximumReboots"), package.expectedMaximumReboots},
         {QStringLiteral("qualification"), static_cast<int>(package.qualification)},
-        {QStringLiteral("provenance"), package.provenance}};
+        {QStringLiteral("provenance"), package.provenance},
+        {QStringLiteral("artifactFileName"), package.artifactFileName},
+        {QStringLiteral("artifactVersion"), package.artifactVersion},
+        {QStringLiteral("expectedSize"), static_cast<double>(package.expectedSize)},
+        {QStringLiteral("rollbackPackageId"), package.rollbackPackageId}};
 }
 
 QString driverStoreDigest(const ReadOnlyDiagnosticSnapshot &snapshot)
@@ -127,11 +152,16 @@ std::optional<SelectedRecipe> selectRecipe(const DoctorSession &session,
 
 QList<ApprovedPackage> ApprovedPackageCatalog::packages()
 {
-    // The only executable catalog records in Phase 4 are deterministic
-    // fixture artifacts.  They exercise the same identity/provenance gates
-    // as a production source without falsely claiming a public MSI is
-    // qualified simply because its name resembles HidHide.
     return {
+        {QStringLiteral("HD-PKG-NEFARIUS-HIDHIDE-1.5.230.0-X64"),
+            QStringLiteral("Nefarius Software Solutions e.U."), QStringLiteral("1.5.230.0"), CpuArchitecture::X64,
+            QStringLiteral("stable"), QStringLiteral("https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe"),
+            ApprovedPackageSourceKind::OfficialSignedRelease,
+            QStringLiteral("f4bbbcB82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6"),
+            PackageSignaturePolicy::AuthenticodeRequired, QStringLiteral("Nefarius Software Solutions e.U."),
+            19041, 0, {}, {}, 1, RepairQualificationLevel::LabQualified,
+            QStringLiteral("Official Nefarius GitHub release v1.5.230.0; 8,078,016-byte x64 asset, independently SHA-256 and Authenticode verified on 2026-09-16."),
+            QStringLiteral("HidHide_1.5.230_x64.exe"), QStringLiteral("1.5.230"), 8078016, {}},
         {QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.230.0-X64"),
             QStringLiteral("fixture-official-nefarius"), QStringLiteral("1.5.230.0"), CpuArchitecture::X64,
             QStringLiteral("lab"), QStringLiteral("fixture://official-nefarius/HidHide_1.5.230.0_x64.msi"),
@@ -140,7 +170,9 @@ QList<ApprovedPackage> ApprovedPackageCatalog::packages()
             QStringLiteral("Nefarius Software Solutions e.U. [fixture attested]"), 22621, 26199,
             {QStringLiteral("1.5.212.0"), QStringLiteral("1.5.230.0")}, {}, 1,
             RepairQualificationLevel::LabQualified,
-            QStringLiteral("Deterministic Phase 4 test artifact with pinned test hash and signer attestation.")},
+            QStringLiteral("Deterministic Phase 4 test artifact with pinned test hash and signer attestation."),
+            QStringLiteral("HidHide_1.5.230.0_x64.msi"), QStringLiteral("1.5.230.0"), 0,
+            QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.230.0-X64")},
         {QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.240.0-X64"),
             QStringLiteral("fixture-official-nefarius"), QStringLiteral("1.5.240.0"), CpuArchitecture::X64,
             QStringLiteral("lab"), QStringLiteral("fixture://official-nefarius/HidHide_1.5.240.0_x64.msi"),
@@ -149,7 +181,9 @@ QList<ApprovedPackage> ApprovedPackageCatalog::packages()
             QStringLiteral("Nefarius Software Solutions e.U. [fixture attested]"), 22621, 26199,
             {QStringLiteral("1.5.230.0")}, {QStringLiteral("1.5.240.0")}, 1,
             RepairQualificationLevel::LabQualified,
-            QStringLiteral("Deterministic Phase 4 approved-upgrade test artifact with pinned provenance.")},
+            QStringLiteral("Deterministic Phase 4 approved-upgrade test artifact with pinned provenance."),
+            QStringLiteral("HidHide_1.5.240.0_x64.msi"), QStringLiteral("1.5.240.0"), 0,
+            QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.230.0-X64")},
     };
 }
 
@@ -178,7 +212,7 @@ std::optional<ApprovedPackage> ApprovedPackageCatalog::selectFor(const DoctorEnv
         return candidates.first();
     }
     for (const ApprovedPackage &candidate : candidates)
-        if (candidate.version == targetVersion) return candidate;
+        if (versionsEqual(candidate.version, targetVersion)) return candidate;
     return std::nullopt;
 }
 
@@ -195,7 +229,8 @@ PackageValidationResult ApprovedPackageCatalog::validate(const ApprovedPackage &
     result.checks.append(QStringLiteral("architecture exact"));
     if (!supportedBuild(package, environment.platform.build)) { result.reason = QStringLiteral("Package is not qualified for this Windows build."); return result; }
     result.checks.append(QStringLiteral("Windows build qualified"));
-    if (observedVersion != package.version) { result.reason = QStringLiteral("Package metadata version does not match the catalog entry."); return result; }
+    const QString expectedArtifactVersion = package.artifactVersion.isEmpty() ? package.version : package.artifactVersion;
+    if (!versionsEqual(observedVersion, expectedArtifactVersion)) { result.reason = QStringLiteral("Package metadata version does not match the catalog entry."); return result; }
     result.checks.append(QStringLiteral("version exact"));
     if (observedHash.compare(package.expectedSha256, Qt::CaseInsensitive) != 0) { result.reason = QStringLiteral("Package SHA-256 does not match the approved catalog entry."); return result; }
     result.checks.append(QStringLiteral("SHA-256 exact"));
@@ -253,6 +288,13 @@ RepairPlanProposal DeepRepairPlanner::propose(const DoctorSession &session,
             proposal.reason = QStringLiteral("The approved package does not allow an upgrade from the measured package version.");
             return proposal;
         }
+        if (selected->risk == RepairRiskClass::R5Recovery
+            && (!ApprovedPackageCatalog::find(package->rollbackPackageId)
+                || package->rollbackPackageId == package->packageId && package->sourceKind != ApprovedPackageSourceKind::FixtureDeterministicTest)) {
+            proposal.status = RepairProposalStatus::Blocked;
+            proposal.reason = QStringLiteral("R5 recovery is unavailable: no separately verified rollback package is catalogued for this exact target, architecture, and Windows build.");
+            return proposal;
+        }
     }
     const std::optional<RepairRecipe> recipe = RepairRecipeRegistry::recipe(selected->id);
     if (!recipe) {
@@ -291,7 +333,9 @@ RepairPlanProposal DeepRepairPlanner::propose(const DoctorSession &session,
         {QStringLiteral("reboot"), QJsonObject{{QStringLiteral("required"), plan.restartRequired},
              {QStringLiteral("maximumCount"), plan.maximumReboots}, {QStringLiteral("observeFirstAfterRestart"), true}}},
         {QStringLiteral("configurationReconciliation"), QStringLiteral("Compare fresh API read-back to backup; classify preserved, restoration required, migration, incompatible legacy entry, or conflict.")},
-        {QStringLiteral("rollback"), QStringLiteral("Verified rollback assets must remain locally available before destructive package mutation.")},
+        {QStringLiteral("rollback"), package && !package->rollbackPackageId.isEmpty()
+            ? QStringLiteral("Verified rollback asset must remain locally available before destructive package mutation.")
+            : QStringLiteral("No verified package rollback asset is catalogued. On failure, stop safely; do not attempt Driver Store cleanup or rollback without a separately authorized recovery plan.")},
         {QStringLiteral("recovery"), QStringLiteral("Recovery is separately planned and separately authorized; it never inherits forward-repair authorization.")}};
     if (package) {
         deep.insert(QStringLiteral("package"), packageJson(*package));

@@ -364,11 +364,13 @@ QVariantMap DoctorSessionViewModel::repairPlanSummary() const
     return {{QStringLiteral("planId"), plan.id.value()}, {QStringLiteral("title"), plan.title},
         {QStringLiteral("description"), plan.description}, {QStringLiteral("recipe"), plan.recipeId.value() + QStringLiteral(" v") + plan.recipeVersion},
         {QStringLiteral("risk"), risk}, {QStringLiteral("qualification"), qualification},
+        {QStringLiteral("deep"), plan.riskClass != RepairRiskClass::R1Configuration},
         {QStringLiteral("before"), plan.expectedPreState}, {QStringLiteral("after"), plan.expectedPostState},
         {QStringLiteral("elevation"), plan.elevationRequired ? QStringLiteral("Required for live helper execution") : QStringLiteral("Not required")},
         {QStringLiteral("restart"), plan.restartRequired ? QStringLiteral("Required · maximum %1 restart(s) · observation first after restart").arg(plan.maximumReboots) : QStringLiteral("No")},
         {QStringLiteral("backup"), plan.riskClass == RepairRiskClass::R1Configuration ? QStringLiteral("Captured before any mutation") : QStringLiteral("Deep recovery snapshot captured before package/component mutation")},
-        {QStringLiteral("rollback"), plan.riskClass == RepairRiskClass::R1Configuration ? QStringLiteral("Exact pre-state; blocked on external change") : QStringLiteral("Verified rollback package/assets first; conflict-safe configuration reconciliation")},
+        {QStringLiteral("rollback"), plan.riskClass == RepairRiskClass::R1Configuration ? QStringLiteral("Exact pre-state; blocked on external change")
+             : plan.deepRepair.value(QStringLiteral("rollback")).toString()},
         {QStringLiteral("package"), packageSummary},
         {QStringLiteral("continuation"), plan.deepRepair.value(QStringLiteral("reboot")).toObject().value(QStringLiteral("observeFirst")).toBool()
              ? QStringLiteral("AwaitingReboot is durable; restart-later blocks conflicting deep repair; resume reads actual state before any mutation.") : QStringLiteral("No reboot continuation required")},
@@ -541,7 +543,7 @@ void DoctorSessionViewModel::setLabRepairActions(bool enabled, std::function<voi
     m_labRepairAction = std::move(action);
     m_repairRuntimeState = enabled ? QStringLiteral("LAB REPAIR MODE") : QStringLiteral("READ ONLY");
     m_repairRuntimeDetail = enabled
-        ? QStringLiteral("Development fixture only. Review the exact R1 plan before a connectivity test or final authorization.")
+        ? QStringLiteral("Development fixture only. Review the exact sealed plan before a connectivity test or final authorization.")
         : QStringLiteral("Normal Doctor mode is read-only. Lab-qualified repair plans cannot execute here.");
     emit repairRuntimeChanged();
 }

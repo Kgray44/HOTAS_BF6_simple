@@ -82,6 +82,23 @@ QJsonObject configurationObject(const HidHideConfigurationSnapshot &snapshot)
     return object;
 }
 
+QString canonicalJson(const QJsonObject &object);
+
+bool userConfigurationMatchesBackup(const HidHideConfigurationSnapshot &current, const QString &serializedBefore)
+{
+    QJsonParseError error;
+    const QJsonDocument beforeDocument = QJsonDocument::fromJson(serializedBefore.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !beforeDocument.isObject()) return false;
+    QJsonObject before = beforeDocument.object();
+    QJsonObject after = configurationObject(current);
+    // A signed package replacement necessarily changes its provider version.
+    // This is migration evidence, not a user-configuration edit; ownership
+    // reconciliation deliberately compares only the HidHide settings.
+    before.remove(QStringLiteral("providerVersion"));
+    after.remove(QStringLiteral("providerVersion"));
+    return canonicalJson(before) == canonicalJson(after);
+}
+
 QString canonicalJson(const QJsonObject &object)
 {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
@@ -945,6 +962,8 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
     const bool targetDriverLoaded = !targetVersion.isEmpty()
         && snapshot.environment.hidhide.driverVersion == targetVersion;
     const std::optional<HidHideConfigurationSnapshot> configuration = RepairPlanner::configurationFrom(snapshot);
+    const bool configurationMatchesBackup = configuration && !transaction.backupManifest.serializedState.isEmpty()
+        && userConfigurationMatchesBackup(*configuration, transaction.backupManifest.serializedState);
     const bool controlApiHealthy = readable(protocol(snapshot, QStringLiteral("GET_ACTIVE")))
         && readable(protocol(snapshot, QStringLiteral("GET_INVERSE")))
         && readable(protocol(snapshot, QStringLiteral("GET_WHITELIST")))
@@ -953,6 +972,9 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
     result.transaction.continuationState.insert(QStringLiteral("targetDriverLoaded"), targetDriverLoaded);
     result.transaction.continuationState.insert(QStringLiteral("controlApiHealthy"), controlApiHealthy);
     result.transaction.continuationState.insert(QStringLiteral("configurationReadable"), configuration.has_value());
+    result.transaction.continuationState.insert(QStringLiteral("configurationDisposition"), !configuration
+        ? QStringLiteral("unreadable") : configurationMatchesBackup ? QStringLiteral("preserved")
+        : QStringLiteral("changed-requires-owner-reconciliation"));
 
     if (result.transaction.rebootCount > result.transaction.maximumReboots) {
         result.transaction.state = RepairTransactionState::RecoveryRequired;
@@ -973,6 +995,14 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const Re
     } else if (!configuration) {
         result.transaction.state = RepairTransactionState::RecoveryRequired;
         result.transaction.finalStatus = QStringLiteral("Post-reboot configuration cannot be read completely; restoration is withheld pending conflict-safe recovery review.");
+        result.requiresOwnerReview = true;
+    } else if (!configurationMatchesBackup) {
+        // Do not guess whether this is an installer migration, incompatible
+        // legacy record, or an external edit. Any automatic restore could
+        // overwrite user-owned HidHide configuration, so a distinct plan is
+        // required after the read-only classification is shown to the owner.
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Post-reboot configuration differs from the captured backup; it is classified as changed and no restoration or rollback was attempted.");
         result.requiresOwnerReview = true;
     } else {
         result.transaction.state = RepairTransactionState::Completed;

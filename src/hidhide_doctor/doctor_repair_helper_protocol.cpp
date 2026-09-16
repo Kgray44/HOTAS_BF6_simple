@@ -1,4 +1,5 @@
 #include "doctor_repair_helper_protocol.h"
+#include "doctor_deep_repair.h"
 
 #include "doctor_repair_engine.h"
 
@@ -160,13 +161,70 @@ bool planDeltaMatches(const RepairPlan &plan, QString *reason)
 {
     if (plan.riskClass != RepairRiskClass::R1Configuration) {
         const QJsonObject package = plan.deepRepair.value(QStringLiteral("package")).toObject();
-        if ((plan.riskClass == RepairRiskClass::R3Package || plan.riskClass == RepairRiskClass::R4ApprovedUpgrade
-                || plan.riskClass == RepairRiskClass::R5Recovery)
-            && (package.value(QStringLiteral("packageId")).toString().isEmpty()
-                || !QRegularExpression(QStringLiteral("^[a-fA-F0-9]{64}$")).match(package.value(QStringLiteral("expectedSha256")).toString()).hasMatch()
-                || package.contains(QStringLiteral("path")) || package.contains(QStringLiteral("arguments")))) {
-            if (reason) *reason = QStringLiteral("Deep helper plan lacks a sealed package identity or contains a forbidden path/argument field.");
-            return false;
+        const auto exactOperationSequence = [&](const QList<RepairOperationKind> &expected) {
+            if (plan.operations.size() != expected.size()) return false;
+            for (int index = 0; index < expected.size(); ++index)
+                if (plan.operations.at(index).kind != expected.at(index)) return false;
+            return true;
+        };
+        if (plan.riskClass == RepairRiskClass::R2Component) {
+            const bool service = plan.recipeId.value() == QStringLiteral("HD-R2-REPAIR-HIDHIDE-SERVICE")
+                && exactOperationSequence({RepairOperationKind::RepairExactServiceConfiguration})
+                && plan.operations.first().targetIdentity == QStringLiteral("HidHide");
+            const bool filter = plan.recipeId.value() == QStringLiteral("HD-R2-REPAIR-HIDHIDE-FILTER")
+                && exactOperationSequence({RepairOperationKind::RepairExactFilterRegistration})
+                && plan.operations.first().targetIdentity == QStringLiteral("HidHideFilterRegistration");
+            if (!service && !filter) {
+                if (reason) *reason = QStringLiteral("R2 helper plan is not one exact HidHide service or filter registration operation.");
+                return false;
+            }
+        } else {
+            const std::optional<ApprovedPackage> approved = ApprovedPackageCatalog::find(package.value(QStringLiteral("packageId")).toString());
+            const QSet<QString> allowedKeys{QStringLiteral("packageId"), QStringLiteral("provider"), QStringLiteral("version"),
+                QStringLiteral("architecture"), QStringLiteral("channel"), QStringLiteral("source"), QStringLiteral("sourceKind"),
+                QStringLiteral("expectedSha256"), QStringLiteral("signaturePolicy"), QStringLiteral("signerIdentity"),
+                QStringLiteral("minimumWindowsBuild"), QStringLiteral("maximumWindowsBuild"), QStringLiteral("expectedMaximumReboots"),
+                QStringLiteral("qualification"), QStringLiteral("provenance"), QStringLiteral("artifactFileName"),
+                QStringLiteral("artifactVersion"), QStringLiteral("expectedSize"), QStringLiteral("rollbackPackageId")};
+            for (auto it = package.constBegin(); it != package.constEnd(); ++it) {
+                if (!allowedKeys.contains(it.key())) {
+                    if (reason) *reason = QStringLiteral("Deep helper package payload contains a forbidden executable, path, INF, service, filter, or restart field.");
+                    return false;
+                }
+            }
+            if (!approved
+                || package.value(QStringLiteral("provider")).toString() != approved->provider
+                || package.value(QStringLiteral("version")).toString() != approved->version
+                || package.value(QStringLiteral("architecture")).toString() != displayName(approved->architecture)
+                || package.value(QStringLiteral("source")).toString() != approved->source
+                || package.value(QStringLiteral("expectedSha256")).toString().compare(approved->expectedSha256, Qt::CaseInsensitive) != 0
+                || package.value(QStringLiteral("signerIdentity")).toString() != approved->signerIdentity
+                || package.value(QStringLiteral("artifactFileName")).toString() != approved->artifactFileName
+                || package.value(QStringLiteral("artifactVersion")).toString() != approved->artifactVersion
+                || static_cast<quint64>(package.value(QStringLiteral("expectedSize")).toDouble()) != approved->expectedSize
+                || package.value(QStringLiteral("rollbackPackageId")).toString() != approved->rollbackPackageId) {
+                if (reason) *reason = QStringLiteral("Deep helper package payload is not an exact current approved catalog record.");
+                return false;
+            }
+            const QList<RepairOperationKind> packageOperations = plan.riskClass == RepairRiskClass::R5Recovery
+                ? QList<RepairOperationKind>{RepairOperationKind::ValidateApprovedPackage, RepairOperationKind::StageApprovedPackage,
+                    RepairOperationKind::RemoveSpecificInactiveHidHidePackage, RepairOperationKind::InstallApprovedHidHidePackage,
+                    RepairOperationKind::RequestSystemRestart, RepairOperationKind::ReconcileHidHideConfiguration}
+                : QList<RepairOperationKind>{RepairOperationKind::ValidateApprovedPackage, RepairOperationKind::StageApprovedPackage,
+                    RepairOperationKind::InstallApprovedHidHidePackage, RepairOperationKind::RequestSystemRestart,
+                    RepairOperationKind::ReconcileHidHideConfiguration};
+            if (!exactOperationSequence(packageOperations)) {
+                if (reason) *reason = QStringLiteral("Deep helper package plan has an unexpected typed-operation sequence.");
+                return false;
+            }
+            for (const RepairOperation &operation : plan.operations) {
+                if ((operation.kind == RepairOperationKind::ValidateApprovedPackage || operation.kind == RepairOperationKind::StageApprovedPackage
+                        || operation.kind == RepairOperationKind::InstallApprovedHidHidePackage || operation.kind == RepairOperationKind::RemoveSpecificInactiveHidHidePackage)
+                    && operation.targetIdentity != approved->packageId) {
+                    if (reason) *reason = QStringLiteral("Deep helper package operation target does not match its approved catalog record.");
+                    return false;
+                }
+            }
         }
         if (plan.maximumReboots < 0 || plan.maximumReboots > 2) {
             if (reason) *reason = QStringLiteral("Deep helper plan exceeds the bounded recipe reboot policy.");
