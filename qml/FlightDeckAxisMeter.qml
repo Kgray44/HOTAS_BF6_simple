@@ -28,7 +28,7 @@ FlightDeckCard {
                 text: root.axis.label || "Axis"
                 color: root.tokens.textPrimary
                 font.family: root.tokens.displayFont
-                font.pixelSize: 11
+                font.pixelSize: root.tokens.scale(11)
                 font.bold: true
                 elide: Text.ElideRight
                 Layout.fillWidth: true
@@ -37,7 +37,7 @@ FlightDeckCard {
                 text: root.axis.virtualValid ? (root.axis.outputAlias || root.axis.target || "Routed") : (root.axis.target || "Not routed")
                 color: root.tokens.textMuted
                 font.family: root.tokens.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: root.tokens.scale(8)
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
@@ -69,7 +69,7 @@ FlightDeckCard {
             text: root.percent
             color: root.tokens.textPrimary
             font.family: root.tokens.telemetryFont
-            font.pixelSize: 11
+            font.pixelSize: root.tokens.scale(11)
             font.bold: true
             Layout.preferredWidth: 46
             horizontalAlignment: Text.AlignRight

@@ -17,6 +17,7 @@ private slots:
     void themeStateDoesNotTouchMapperPayload();
     void flightDeckExperienceIsProductionSelectableAndDoesNotTouchMapperPayload();
     void presentationChoicesCentralizeAllFiveExperiences();
+    void textSizeDefaultsPersistsAndDoesNotTouchMapperPayload();
 };
 
 void ThemeManagerTests::missingPresentationDefaultsToFlightDeck()
@@ -150,6 +151,33 @@ void ThemeManagerTests::presentationChoicesCentralizeAllFiveExperiences()
     const QSettings settings(path, QSettings::IniFormat);
     QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
     QCOMPARE(settings.value(u"profiles/active"_qs).toByteArray(), QByteArrayLiteral("profile-payload"));
+}
+
+void ThemeManagerTests::textSizeDefaultsPersistsAndDoesNotTouchMapperPayload()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(u"settings.ini"_qs);
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(u"mapper/config"_qs, QByteArrayLiteral("mapping-payload"));
+        settings.sync();
+    }
+
+    hotas::ThemeManager manager(path);
+    QCOMPARE(manager.textSize(), u"Medium"_qs);
+    QCOMPARE(manager.textScale(), 1.15);
+    QCOMPARE(manager.textSizeChoices(), QStringList({u"Small"_qs, u"Medium"_qs,
+                                                      u"Large"_qs, u"Extra Large"_qs}));
+    manager.setTextSize(u"extra large"_qs);
+    QCOMPARE(manager.textSize(), u"Extra Large"_qs);
+    QCOMPARE(manager.textScale(), 1.5);
+
+    hotas::ThemeManager restored(path);
+    QCOMPARE(restored.textSize(), u"Extra Large"_qs);
+    const QSettings settings(path, QSettings::IniFormat);
+    QCOMPARE(settings.value(u"presentation/textSize"_qs).toString(), u"Extra Large"_qs);
+    QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
 }
 
 QTEST_APPLESS_MAIN(ThemeManagerTests)

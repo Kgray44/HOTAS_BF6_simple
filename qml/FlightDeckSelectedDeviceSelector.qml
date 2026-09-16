@@ -34,14 +34,14 @@ Button {
                 text: "SELECTED DEVICE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
-                font.pixelSize: 7
+                font.pixelSize: tokens.scale(7)
                 font.bold: true
             }
             Text {
                 text: backendObject.selectedDeviceLabel
                 color: tokens.textPrimary
                 font.family: tokens.bodyFont
-                font.pixelSize: 10
+                font.pixelSize: tokens.scale(10)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -50,7 +50,7 @@ Button {
         Text {
             text: popup.visible ? "⌃" : "⌄"
             color: tokens.textSecondary
-            font.pixelSize: 14
+            font.pixelSize: tokens.scale(14)
         }
     }
     background: Rectangle {
@@ -94,14 +94,14 @@ Button {
                 text: "SELECTED DEVICE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: tokens.scale(8)
                 font.bold: true
             }
             Text {
                 text: backendObject.selectedDeviceRigName
                 color: tokens.textPrimary
                 font.family: tokens.bodyFont
-                font.pixelSize: 13
+                font.pixelSize: tokens.scale(13)
                 font.bold: true
                 Layout.fillWidth: true
                 elide: Text.ElideRight
@@ -109,7 +109,7 @@ Button {
             Text {
                 text: "Choose the saved controller whose mappings, curves, and diagnostics you want to view or configure. Offline devices remain available."
                 color: tokens.textSecondary
-                font.pixelSize: 9
+                font.pixelSize: tokens.scale(9)
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -128,8 +128,8 @@ Button {
                         anchors.leftMargin: tokens.space12
                         anchors.rightMargin: tokens.space12
                         Text { text: parent.parent.checked ? "✓" : ""; color: tokens.accent; font.bold: true; Layout.preferredWidth: 12 }
-                        Text { text: String(parent.parent.modelData.name || "Saved device"); color: tokens.textPrimary; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: parent.parent.modelData.required ? "REQUIRED" : "OPTIONAL"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: 7; font.bold: true }
+                        Text { text: String(parent.parent.modelData.name || "Saved device"); color: tokens.textPrimary; font.pixelSize: tokens.scale(10); Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: parent.parent.modelData.required ? "REQUIRED" : "OPTIONAL"; color: tokens.textMuted; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(7); font.bold: true }
                     }
                     background: Rectangle {
                         radius: tokens.radiusControl
@@ -144,7 +144,7 @@ Button {
                 implicitHeight: 32
                 text: "DEVICES & SETUP"
                 focusPolicy: Qt.StrongFocus
-                contentItem: Text { text: parent.text; color: tokens.textSecondary; font.family: tokens.telemetryFont; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                contentItem: Text { text: parent.text; color: tokens.textSecondary; font.family: tokens.telemetryFont; font.pixelSize: tokens.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: tokens.radiusControl; color: parent.down ? tokens.accentMuted : parent.hovered ? tokens.selected : tokens.secondarySurface; border.color: tokens.border }
                 onClicked: { popup.close(); control.manageDevices() }
             }

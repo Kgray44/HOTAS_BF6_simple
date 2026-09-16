@@ -33,7 +33,7 @@ Rectangle {
             text: parent.parent.label + (parent.parent.value.length ? "  " + parent.parent.value : "")
             color: parent.parent.tokens.textPrimary
             font.family: parent.parent.tokens.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: tokens.scale(9)
             font.bold: true
             elide: Text.ElideRight
         }

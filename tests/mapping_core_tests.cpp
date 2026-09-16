@@ -864,6 +864,9 @@ private slots:
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void directInputAxesUseDeterministicNativeStateFields();
     void nativeAxisIdentityIsIndependentOfEnumerationOrder();
+    void directInputOffsetAccessIgnoresEnumerationOrder();
+    void nativeAxisNormalizationUsesObservedRange();
+    void nativeAxisAcquisitionEvidencePersists();
     void saitekRudderRzSamplesDistinctly();
     void v24MigrationPreservesVerifiedSavedActiveController();
     void v24MigrationPreservesUnverifiedSavedActiveController();
@@ -4410,6 +4413,89 @@ void MappingCoreTests::nativeAxisIdentityIsIndependentOfEnumerationOrder()
         QCOMPARE(physicalAxisIndexForDirectInputOffset(scrambled[static_cast<size_t>(index)]),
                  static_cast<int>(expected[static_cast<size_t>(index)]));
     }
+}
+
+void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()
+{
+    // An enumeration position is not a DIJOYSTATE2 field. Use a deliberately
+    // scrambled native order and assert each compiled offset reads the right
+    // physical source.
+    DIJOYSTATE2 state{};
+    state.lX = 101;
+    state.lY = 202;
+    state.lZ = 303;
+    state.lRx = 404;
+    state.lRy = 505;
+    state.lRz = 606;
+    state.rglSlider[0] = 707;
+    state.rglSlider[1] = 808;
+    const std::array<DWORD, 8> scrambled{
+        DIJOFS_SLIDER(1), DIJOFS_RZ, DIJOFS_X, DIJOFS_RY,
+        DIJOFS_Z, DIJOFS_SLIDER(0), DIJOFS_RX, DIJOFS_Y};
+    const std::array<LONG, 8> expected{808, 606, 101, 505, 303, 707, 404, 202};
+    for (int index = 0; index < static_cast<int>(scrambled.size()); ++index) {
+        QCOMPARE(directInputAxisValueAtOffset(state, scrambled[static_cast<size_t>(index)]),
+                 expected[static_cast<size_t>(index)]);
+    }
+}
+
+void MappingCoreTests::nativeAxisNormalizationUsesObservedRange()
+{
+    NativeAxisDescriptor unsignedAxis;
+    unsignedAxis.present = true;
+    unsignedAxis.nativeMinimum = 0;
+    unsignedAxis.nativeMaximum = 65535;
+    QCOMPARE(normalizeDirectInputAxisValue(0, unsignedAxis), -1.0F);
+    QVERIFY(std::abs(normalizeDirectInputAxisValue(32768, unsignedAxis)) < 0.0001F);
+    QCOMPARE(normalizeDirectInputAxisValue(65535, unsignedAxis), 1.0F);
+
+    NativeAxisDescriptor oneSided;
+    oneSided.present = true;
+    oneSided.nativeMinimum = 100;
+    oneSided.nativeMaximum = 1100;
+    QCOMPARE(normalizeDirectInputAxisValue(100, oneSided), -1.0F);
+    QCOMPARE(normalizeDirectInputAxisValue(1100, oneSided), 1.0F);
+
+    NativeAxisDescriptor failedRange;
+    failedRange.nativeMinimum = 10;
+    failedRange.nativeMaximum = 10;
+    QCOMPARE(normalizeDirectInputAxisValue(5000, failedRange), 0.5F);
+}
+
+void MappingCoreTests::nativeAxisAcquisitionEvidencePersists()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    DiscoveredController controller;
+    controller.name = QStringLiteral("Axis acquisition fixture");
+    controller.directInputId = QStringLiteral("{AXIS-PROBE}");
+    controller.connected = true;
+    controller.axes[static_cast<size_t>(PhysicalAxis::Rz)] = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].present = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].enumerationIndex = 2;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputOffset = DIJOFS_RZ;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputInstance = 5;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].nativeMinimum = 0;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].nativeMaximum = 65535;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].requestedMinimum = -10000;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].requestedMaximum = 10000;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].rangeSetResult = E_NOTIMPL;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].rangeReadResult = S_OK;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].acquisitionSourceResolved = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].acquisitionMethod = 1;
+    configuration.savedControllers.push_back(ControllerManager::verifiedRecord(
+        controller, {}, {}));
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const NativeAxisDescriptor &descriptor = restored.savedControllers.front().axisDescriptors[
+        static_cast<size_t>(PhysicalAxis::Rz)];
+    QCOMPARE(descriptor.enumerationIndex, 2);
+    QCOMPARE(descriptor.directInputOffset, quint32{DIJOFS_RZ});
+    QCOMPARE(descriptor.nativeMaximum, 65535);
+    QCOMPARE(descriptor.rangeSetResult, qint32{E_NOTIMPL});
+    QVERIFY(descriptor.acquisitionSourceResolved);
+    QCOMPARE(descriptor.acquisitionMethod, 1);
 }
 
 void MappingCoreTests::saitekRudderRzSamplesDistinctly()

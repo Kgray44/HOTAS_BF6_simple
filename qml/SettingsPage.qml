@@ -41,7 +41,7 @@ Flickable {
         property string label: "SECTION"
         Layout.fillWidth: true; spacing: 8
         Rectangle { width: theme.topGun ? 13 : 7; height: theme.topGun ? 3 : 7; radius: theme.topGun ? 0 : 4; color: root.accentColor }
-        Text { text: parent.label; color: root.mutedColor; font.pixelSize: 10; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+        Text { text: parent.label; color: root.mutedColor; font.pixelSize: theme.scale(10); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
     }
     component Card: Rectangle {
@@ -55,8 +55,8 @@ Flickable {
         // Keep Settings visually coupled to Axes, Buttons, Curves, and Diagnostics.
         LegacyAviationPanel { anchors.fill: parent; visible: root.legacy }
         ColumnLayout { id: body; anchors.fill: parent; anchors.margins: 15; spacing: 9
-            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-            Text { visible: parent.parent.detail.length > 0; text: parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { visible: parent.parent.title.length > 0; text: parent.parent.title; color: root.textColor; font.pixelSize: theme.scale(13); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+            Text { visible: parent.parent.detail.length > 0; text: parent.parent.detail; color: root.mutedColor; font.pixelSize: theme.scale(9); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }
     component ActionButton: Rectangle {
@@ -70,7 +70,7 @@ Flickable {
         color: !actionEnabled ? theme.controlDisabled : actionMouse.containsMouse ? (subdued ? theme.buttonSecondaryHover : theme.buttonHover) : (destructive ? theme.destructive : subdued ? theme.buttonSecondary : theme.buttonSurface)
         border.color: !actionEnabled ? root.borderColor : destructive ? root.dangerColor : subdued ? root.borderColor : root.accentColor
         opacity: actionEnabled ? 1.0 : 0.5
-        Text { id: actionLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: 9; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+        Text { id: actionLabel; anchors.centerIn: parent; text: parent.label; color: root.textColor; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
         MouseArea { id: actionMouse; anchors.fill: parent; enabled: parent.actionEnabled; hoverEnabled: true; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: parent.triggered() }
     }
     component Toggle: Rectangle {
@@ -91,8 +91,8 @@ Flickable {
         radius: theme.topGun ? 1 : theme.controlRadius; color: root.insetColor; border.color: root.borderColor
         GridLayout { id: row; anchors.fill: parent; anchors.margins: 10; columns: root.narrow ? 1 : 2; columnSpacing: 14; rowSpacing: 8
             ColumnLayout { Layout.fillWidth: true; Layout.minimumWidth: root.narrow ? 0 : 180; spacing: 2
-                Text { Layout.fillWidth: true; Layout.minimumWidth: 120; text: parent.parent.parent.title; color: root.textColor; font.pixelSize: 10; font.bold: true; wrapMode: Text.WordWrap; font.family: theme.topGun ? theme.telemetryFont : "" }
-                Text { Layout.fillWidth: true; visible: parent.parent.parent.detail.length > 0; text: parent.parent.parent.detail; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; Layout.minimumWidth: 120; text: parent.parent.parent.title; color: root.textColor; font.pixelSize: theme.scale(10); font.bold: true; wrapMode: Text.WordWrap; font.family: theme.topGun ? theme.telemetryFont : "" }
+                Text { Layout.fillWidth: true; visible: parent.parent.parent.detail.length > 0; text: parent.parent.parent.detail; color: root.mutedColor; font.pixelSize: theme.scale(9); wrapMode: Text.WordWrap }
             }
             RowLayout { id: controls; Layout.alignment: root.narrow ? Qt.AlignLeft : Qt.AlignRight; Layout.fillWidth: root.narrow; spacing: 7 }
         }
@@ -102,23 +102,23 @@ Flickable {
         property color tone: root.readyColor
         implicitWidth: statusText.implicitWidth + 16; implicitHeight: 22; radius: theme.topGun ? 1 : 11
         color: Qt.rgba(tone.r, tone.g, tone.b, 0.14); border.color: tone
-        Text { id: statusText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: 8; font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
+        Text { id: statusText; anchors.centerIn: parent; text: parent.label; color: parent.tone; font.pixelSize: theme.scale(8); font.bold: true; font.family: theme.topGun ? theme.telemetryFont : "" }
     }
 
     ColumnLayout {
         id: settings
         x: 1; width: root.width - 14; spacing: 13
         ColumnLayout { Layout.fillWidth: true; spacing: 3
-            Text { text: theme.topGun ? "SYSTEM CONFIGURATION" : "Settings"; color: root.textColor; font.pixelSize: theme.topGun ? 24 : 26; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-            Text { text: "Application preferences, mapping defaults, updates, and maintenance."; color: root.mutedColor; font.pixelSize: 11 }
+            Text { text: theme.topGun ? "SYSTEM CONFIGURATION" : "Settings"; color: root.textColor; font.pixelSize: theme.scale(theme.topGun ? 24 : 26); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+            Text { text: "Application preferences, mapping defaults, updates, and maintenance."; color: root.mutedColor; font.pixelSize: theme.scale(11) }
         }
 
         SectionLabel { label: "DEVICE SETUP" }
         Card { Layout.fillWidth: true; title: theme.topGun ? "ACTIVE DEVICE RIG" : "Device setup belongs in Devices"; detail: "Devices is the single workspace for saved physical hardware, Device Rigs, virtual outputs, game visibility, and guided setup."; accent: backend.appHealthSummary.ready ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                    Text { text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : "No Active Device Rig"; color: root.textColor; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                    Text { text: backend.appHealthSummary.ready ? "Ready for normal use." : backend.appHealthSummary.primaryIssue.title || "Review Device setup."; color: root.mutedColor; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: backend.activeDeviceRigId !== "" ? backend.activeDeviceRigName : "No Active Device Rig"; color: root.textColor; font.pixelSize: theme.scale(12); font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: backend.appHealthSummary.ready ? "Ready for normal use." : backend.appHealthSummary.primaryIssue.title || "Review Device setup."; color: root.mutedColor; font.pixelSize: theme.scale(9); elide: Text.ElideRight; Layout.fillWidth: true }
                 }
                 StatusPill { label: backend.appHealthSummary.ready ? "READY" : "SETUP NEEDED"; tone: backend.appHealthSummary.ready ? root.readyColor : root.warningColor }
                 ActionButton { label: "OPEN DEVICES"; onTriggered: root.manageDevicesRequested() }
@@ -132,10 +132,10 @@ Flickable {
             }
             SettingRow { Layout.fillWidth: true; title: "DISABLED AXIS VALUE"; detail: "Neutral output held by virtual axes without an active route."
                 Rectangle { implicitWidth: 82; implicitHeight: 30; radius: theme.topGun ? 1 : theme.controlRadius; color: root.panelColor; border.color: root.borderColor
-                    TextInput { anchors.fill: parent; anchors.margins: 7; text: Number(backend.disabledAxisValue).toFixed(1); color: root.textColor; font.pixelSize: 10; font.family: theme.telemetryFont; validator: DoubleValidator { bottom: -100; top: 100; decimals: 1 }
+                    TextInput { anchors.fill: parent; anchors.margins: 7; text: Number(backend.disabledAxisValue).toFixed(1); color: root.textColor; font.pixelSize: theme.scale(10); font.family: theme.telemetryFont; validator: DoubleValidator { bottom: -100; top: 100; decimals: 1 }
                         onEditingFinished: { backend.setDisabledAxisValue(Number(text)); text = Number(backend.disabledAxisValue).toFixed(1) } }
                 }
-                Text { text: "%"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                Text { text: "%"; color: root.mutedColor; font.pixelSize: theme.scale(10); font.bold: true }
             }
             SettingRow { Layout.fillWidth: true; title: "AUTOMATIC GAME CATEGORY"; detail: "Low-frequency foreground executable detection selects a matching category and restores its last-used profile."
                 Toggle { checked: backend.automaticGameDetection; onToggled: backend.setAutomaticGameDetection(checked) }
@@ -148,10 +148,10 @@ Flickable {
             }
             SettingRow { Layout.fillWidth: true; title: "TRANSITION TIME"; detail: "Bumpless-transfer time in milliseconds. Instant (0 ms) preserves legacy immediate mapping changes."
                 Rectangle { implicitWidth: 82; implicitHeight: 30; radius: theme.topGun ? 1 : theme.controlRadius; color: root.panelColor; border.color: root.borderColor; opacity: backend.curveTransitionSmoothingEnabled ? 1.0 : 0.5
-                    TextInput { anchors.fill: parent; anchors.margins: 7; text: Number(backend.curveTransitionDurationMs).toFixed(0); enabled: backend.curveTransitionSmoothingEnabled; color: root.textColor; font.pixelSize: 10; font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
+                    TextInput { anchors.fill: parent; anchors.margins: 7; text: Number(backend.curveTransitionDurationMs).toFixed(0); enabled: backend.curveTransitionSmoothingEnabled; color: root.textColor; font.pixelSize: theme.scale(10); font.family: theme.telemetryFont; validator: IntValidator { bottom: 0; top: 1000 }
                         onEditingFinished: { backend.setCurveTransitionDurationMs(Number(text)); text = Number(backend.curveTransitionDurationMs).toFixed(0) } }
                 }
-                Text { text: "ms"; color: root.mutedColor; font.pixelSize: 10; font.bold: true }
+                Text { text: "ms"; color: root.mutedColor; font.pixelSize: theme.scale(10); font.bold: true }
             }
         }
         // Device/output creation and assignment are deliberately hidden here:
@@ -160,13 +160,13 @@ Flickable {
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                     RowLayout { spacing: 7
-                        Text { text: "DEVICE " + backend.vjoyDeviceId; color: root.textColor; font.pixelSize: 13; font.bold: true; font.family: theme.telemetryFont }
+                        Text { text: "DEVICE " + backend.vjoyDeviceId; color: root.textColor; font.pixelSize: theme.scale(13); font.bold: true; font.family: theme.telemetryFont }
                         StatusPill { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "ACTION REQUIRED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
                     }
-                    Text { text: backend.virtualAxisStatus + "  ·  " + backend.vjoyButtonCount + " buttons  ·  " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
-                    Text { text: "Required: " + backend.vjoyRequiredButtonCount + " buttons  ·  Optional recommended headroom: " + backend.vjoyRecommendedButtonCount; color: root.faintColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: backend.virtualAxisStatus + "  ·  " + backend.vjoyButtonCount + " buttons  ·  " + (backend.vjoyContinuousPovCount + backend.vjoyDiscretePovCount) + " POV"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text { text: "Required: " + backend.vjoyRequiredButtonCount + " buttons  ·  Optional recommended headroom: " + backend.vjoyRecommendedButtonCount; color: root.faintColor; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                Text { text: "RIG-OWNED"; color: root.accentColor; font.pixelSize: 9; font.bold: true; font.family: theme.telemetryFont }
+                Text { text: "RIG-OWNED"; color: root.accentColor; font.pixelSize: theme.scale(9); font.bold: true; font.family: theme.telemetryFont }
                 ActionButton { label: "CONFIGURE VJOY"; subdued: true; onTriggered: backend.openVjoyConfiguration() }
             }
         }
@@ -176,25 +176,25 @@ Flickable {
                 delegate: Rectangle { Layout.fillWidth: true; implicitHeight: layoutRow.implicitHeight + 14; color: root.insetColor; border.color: modelData.active ? root.readyColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
                     RowLayout { id: layoutRow; anchors.fill: parent; anchors.margins: 9; spacing: 9
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { text: modelData.name.toUpperCase() + (modelData.active ? " · ACTIVE" : ""); color: root.textColor; font.pixelSize: 10; font.bold: true }
-                            Text { text: "vJoy " + modelData.deviceId + "  ·  " + modelData.axes + "  ·  PROVIDED TO " + modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + " THROUGH RIGS"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: modelData.name.toUpperCase() + (modelData.active ? " · ACTIVE" : ""); color: root.textColor; font.pixelSize: theme.scale(10); font.bold: true }
+                            Text { text: "vJoy " + modelData.deviceId + "  ·  " + modelData.axes + "  ·  PROVIDED TO " + modelData.profileCount + " PROFILE" + (modelData.profileCount === 1 ? "" : "S") + " THROUGH RIGS"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont; elide: Text.ElideRight; Layout.fillWidth: true }
                         }
                         StatusPill { label: modelData.managedVisibility ? "VISIBILITY MANAGED" : "SETUP"; tone: modelData.managedVisibility ? root.readyColor : root.mutedColor }
                     }
                 }
             }
             RowLayout { Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Choose each Device Rig's primary output in Devices."; color: root.faintColor; font.pixelSize: 9 }
+                Text { Layout.fillWidth: true; text: "Choose each Device Rig's primary output in Devices."; color: root.faintColor; font.pixelSize: theme.scale(9) }
                 ActionButton { label: "MANAGE VIRTUAL OUTPUTS"; subdued: true
                     onTriggered: root.manageDevicesRequested() }
             }
             RowLayout { Layout.fillWidth: true; spacing: 8
                 ComboBox { id: visibilityLayoutSelector; Layout.preferredWidth: 175; implicitHeight: 30; model: backend.virtualOutputLayouts; textRole: "name"; valueRole: "id"
-                    contentItem: Text { leftPadding: 8; rightPadding: 22; text: visibilityLayoutSelector.displayText; color: root.textColor; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                    contentItem: Text { leftPadding: 8; rightPadding: 22; text: visibilityLayoutSelector.displayText; color: root.textColor; font.pixelSize: theme.scale(9); verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: visibilityLayoutSelector.enabled ? (visibilityLayoutSelector.hovered ? theme.controlHover : root.panelColor) : theme.controlDisabled; border.color: visibilityLayoutSelector.activeFocus ? root.accentColor : visibilityLayoutSelector.hovered ? theme.borderStrong : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
-                    indicator: Text { x: visibilityLayoutSelector.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 11 }
+                    indicator: Text { x: visibilityLayoutSelector.width - width - 8; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: theme.scale(11) }
                     delegate: ItemDelegate { id: visibilityLayoutChoice; width: visibilityLayoutSelector.width; implicitHeight: 30; highlighted: visibilityLayoutSelector.highlightedIndex === index
-                        contentItem: Text { leftPadding: 9; rightPadding: 9; text: visibilityLayoutSelector.textAt(index); color: visibilityLayoutChoice.highlighted ? root.textColor : root.mutedColor; font.pixelSize: 9; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                        contentItem: Text { leftPadding: 9; rightPadding: 9; text: visibilityLayoutSelector.textAt(index); color: visibilityLayoutChoice.highlighted ? root.textColor : root.mutedColor; font.pixelSize: theme.scale(9); verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                         background: Rectangle { radius: theme.topGun ? 1 : theme.controlRadius; color: visibilityLayoutChoice.highlighted ? theme.selection : "transparent"; border.color: visibilityLayoutChoice.highlighted ? root.accentColor : "transparent" }
                     }
                     popup: Popup { y: visibilityLayoutSelector.height + 4; width: visibilityLayoutSelector.width; topPadding: 5; bottomPadding: 5; leftPadding: 5; rightPadding: 5; implicitHeight: Math.min(248, visibilityChoices.contentHeight + topPadding + bottomPadding)
@@ -202,20 +202,20 @@ Flickable {
                         background: Rectangle { color: theme.tooltip; border.color: theme.borderStrong; radius: theme.topGun ? 1 : theme.controlRadius }
                     }
                 }
-                TextField { id: virtualOutputIdentity; Layout.fillWidth: true; implicitHeight: 30; placeholderText: "Exact vJoy HID instance from HidHide"; selectByMouse: true; color: root.textColor; font.pixelSize: 9
+                TextField { id: virtualOutputIdentity; Layout.fillWidth: true; implicitHeight: 30; placeholderText: "Exact vJoy HID instance from HidHide"; selectByMouse: true; color: root.textColor; font.pixelSize: theme.scale(9)
                     background: Rectangle { color: root.panelColor; border.color: virtualOutputIdentity.activeFocus ? root.accentColor : root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
                 }
                 ActionButton { label: "PREPARE VISIBILITY"; subdued: true
                     actionEnabled: visibilityLayoutSelector.currentValue !== undefined && virtualOutputIdentity.text.trim().length > 0
                     onTriggered: if (backend.adoptVirtualOutputVisibility(visibilityLayoutSelector.currentValue, virtualOutputIdentity.text)) virtualOutputIdentity.text = "" }
             }
-            Text { Layout.fillWidth: true; text: "Optional advanced setup: adopt only an exact HID\\VID_1234&PID_BEAD vJoy identity already shown by HidHide. Layout switches then hide inactive adopted outputs without UAC. A running game can retain an already-open controller handle, so switch before launch or restart the game."; color: root.faintColor; font.pixelSize: 8; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Optional advanced setup: adopt only an exact HID\\VID_1234&PID_BEAD vJoy identity already shown by HidHide. Layout switches then hide inactive adopted outputs without UAC. A running game can retain an already-open controller handle, so switch before launch or restart the game."; color: root.faintColor; font.pixelSize: theme.scale(8); wrapMode: Text.WordWrap }
         }
 
         Card { Layout.fillWidth: true; title: "Virtual Output"; detail: "Create, assign, and verify virtual outputs from Devices. Settings retains only application-wide mapping defaults."; accent: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 StatusPill { label: backend.vjoyStatusSeverity === "ready" ? "READY" : "SETUP NEEDED"; tone: backend.vjoyStatusSeverity === "ready" ? root.readyColor : root.warningColor }
-                Text { Layout.fillWidth: true; text: backend.activeOutputLayoutName + " · vJoy Device " + backend.vjoyDeviceId; color: root.mutedColor; font.pixelSize: 9; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: backend.activeOutputLayoutName + " · vJoy Device " + backend.vjoyDeviceId; color: root.mutedColor; font.pixelSize: theme.scale(9); elide: Text.ElideRight }
                 ActionButton { label: "OPEN DEVICES"; subdued: true; onTriggered: root.manageDevicesRequested() }
             }
         }
@@ -236,11 +236,11 @@ Flickable {
                         const presentationId = currentValue
                         Qt.callLater(function() { themeManager.selectPresentation(presentationId) })
                     }
-                    contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                    contentItem: Text { leftPadding: 9; text: appearance.displayText; color: root.textColor; font.pixelSize: theme.scale(10); verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                     background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
-                    indicator: Text { x: appearance.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: 12; font.bold: true }
+                    indicator: Text { x: appearance.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: theme.scale(12); font.bold: true }
                     delegate: ItemDelegate { id: appearanceDelegate; objectName: appearance.objectName + "Choice_" + index; width: appearance.width; highlighted: appearance.highlightedIndex === index
-                        contentItem: Text { text: modelData.label; color: root.textColor; font.pixelSize: 10; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
+                        contentItem: Text { text: modelData.label; color: root.textColor; font.pixelSize: theme.scale(10); verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
                         background: Rectangle { color: appearanceDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
                     }
                     popup: Popup { objectName: appearance.objectName + "Popup"; y: appearance.height - 1; width: appearance.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
@@ -249,12 +249,29 @@ Flickable {
                     }
                 }
             }
+            SettingRow { Layout.fillWidth: true; title: "TEXT SIZE"; detail: "Changes application text and control spacing only. Controller mappings and profiles are unchanged."
+                ComboBox { id: textSize; objectName: "applicationTextSizeSelector"; implicitWidth: 168; model: themeManager.textSizeChoices
+                    currentIndex: Math.max(0, model.indexOf(themeManager.textSize))
+                    onActivated: themeManager.setTextSize(currentText)
+                    contentItem: Text { leftPadding: 9; text: textSize.displayText; color: root.textColor; font.pixelSize: theme.bodySmall; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                    background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    indicator: Text { x: textSize.width - width - 9; anchors.verticalCenter: parent.verticalCenter; text: "⌄"; color: root.mutedColor; font.pixelSize: theme.bodyStrong; font.bold: true }
+                    delegate: ItemDelegate { id: textSizeDelegate; objectName: textSize.objectName + "Choice_" + index; width: textSize.width; highlighted: textSize.highlightedIndex === index
+                        contentItem: Text { text: modelData; color: root.textColor; font.pixelSize: theme.bodySmall; verticalAlignment: Text.AlignVCenter; leftPadding: 9 }
+                        background: Rectangle { color: textSizeDelegate.highlighted ? theme.buttonSecondaryHover : root.panelColor; border.color: root.borderColor }
+                    }
+                    popup: Popup { y: textSize.height - 1; width: textSize.width; implicitHeight: contentItem.implicitHeight + 2; padding: 1
+                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: textSize.popup.visible ? textSize.delegateModel : null; currentIndex: textSize.highlightedIndex }
+                        background: Rectangle { color: root.panelColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius }
+                    }
+                }
+            }
         }
         Card { Layout.fillWidth: true; title: "HOTAS BF6"; detail: "Version  ·  v" + backend.applicationVersion; accent: backend.updateAvailable ? root.readyColor : root.borderColor
             RowLayout { Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                    Text { text: backend.updateChecking ? "CHECKING…" : backend.updateStatusText; color: backend.updateCheckFailed ? root.warningColor : backend.updateAvailable ? root.readyColor : root.mutedColor; font.pixelSize: 10 }
-                    Text { visible: backend.updateAvailable; text: "UPDATE AVAILABLE  ·  " + backend.updateAvailableVersion; color: root.readyColor; font.pixelSize: 9; font.bold: true }
+                    Text { text: backend.updateChecking ? "CHECKING…" : backend.updateStatusText; color: backend.updateCheckFailed ? root.warningColor : backend.updateAvailable ? root.readyColor : root.mutedColor; font.pixelSize: theme.scale(10) }
+                    Text { visible: backend.updateAvailable; text: "UPDATE AVAILABLE  ·  " + backend.updateAvailableVersion; color: root.readyColor; font.pixelSize: theme.scale(9); font.bold: true }
                 }
                 ActionButton { label: backend.updateChecking ? "CHECKING…" : "CHECK FOR UPDATES"; subdued: true; actionEnabled: !backend.updateChecking; onTriggered: backend.checkForUpdates() }
                 ActionButton { visible: backend.updateAvailable; label: "UPDATE"; onTriggered: backend.handoffToLauncher() }
@@ -265,7 +282,7 @@ Flickable {
         Card { Layout.fillWidth: true; title: "HidHide"; detail: "Hides only the selected physical controller when configured; implementation details remain in the full verification panel."; accent: backend.hidhideMapperAllowed ? root.readyColor : root.warningColor
             RowLayout { Layout.fillWidth: true
                 StatusPill { label: !backend.hidhideAvailable ? "OPTIONAL" : backend.hidhideMapperAllowed ? "ACCESS OK" : "NEEDS REVIEW"; tone: !backend.hidhideAvailable ? root.mutedColor : backend.hidhideMapperAllowed ? root.readyColor : root.warningColor }
-                Text { Layout.fillWidth: true; text: backend.hidhideCloakStateKnown ? backend.hidhideCloaked ? "CLOAKING ON" : "CLOAKING OFF" : "CLOAK STATUS UNAVAILABLE"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont }
+                Text { Layout.fillWidth: true; text: backend.hidhideCloakStateKnown ? backend.hidhideCloaked ? "CLOAKING ON" : "CLOAKING OFF" : "CLOAK STATUS UNAVAILABLE"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont }
                 ActionButton { label: "REFRESH"; subdued: true; onTriggered: backend.refreshHidHideStatus() }
                 ActionButton { label: "OPEN HIDHIDE"; subdued: true; onTriggered: backend.openHidHideConfiguration() }
             }
@@ -328,23 +345,23 @@ Flickable {
         onOpened: selectFirstTarget()
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: Math.min(524, root.width - 72); spacing: 10
-            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: 16; font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
-            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Use Together creates one unverified Device Rig so its inputs can be configured and verified as a coherent flight setup. Set Up Separately keeps the existing one-device flow." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? (theme.topGun ? "MULTIPLE FLIGHT CONTROLLERS DETECTED" : "Multiple Flight Controllers Detected") : (theme.topGun ? "NEW CONTROLLER DETECTED" : "New Controller Detected"); color: root.textColor; font.pixelSize: theme.scale(16); font.bold: true; font.family: theme.topGun ? theme.displayFont : "" }
+            Text { Layout.fillWidth: true; text: detectedControllerDialog.targetDirectInputIds.length > 1 ? "Use Together creates one unverified Device Rig so its inputs can be configured and verified as a coherent flight setup. Set Up Separately keeps the existing one-device flow." : "Set up this controller without changing the current active input until verification succeeds."; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
             Repeater { model: root.controllerModel
                 delegate: Rectangle { required property var modelData; visible: detectedControllerDialog.isSetupTarget(modelData); Layout.fillWidth: true; implicitHeight: visible ? 64 : 0; radius: theme.topGun ? 1 : theme.controlRadius
                     color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? theme.selectionCurrent : root.insetColor; border.color: detectedControllerDialog.selectedDirectInputId === modelData.directInputId ? root.accentColor : root.borderColor
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: detectedControllerDialog.selectedDirectInputId = modelData.directInputId }
                     RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
                         ColumnLayout { Layout.fillWidth: true; spacing: 2
-                            Text { Layout.fillWidth: true; text: modelData.name; color: root.textColor; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
-                            Text { Layout.fillWidth: true; text: modelData.connected ? "CONNECTED  ·  " + modelData.axisCount + " AXES  ·  " + modelData.buttonCount + " BUTTONS  ·  " + modelData.povCount + " POV" : "OFFLINE"; color: root.mutedColor; font.pixelSize: 9; font.family: theme.telemetryFont; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: modelData.name; color: root.textColor; font.pixelSize: theme.scale(11); font.bold: true; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: modelData.connected ? "CONNECTED  ·  " + modelData.axisCount + " AXES  ·  " + modelData.buttonCount + " BUTTONS  ·  " + modelData.povCount + " POV" : "OFFLINE"; color: root.mutedColor; font.pixelSize: theme.scale(9); font.family: theme.telemetryFont; elide: Text.ElideRight }
                         }
                         StatusPill { label: modelData.ambiguous ? "SELECT" : modelData.verified ? "NEEDS SETUP" : "NEW"; tone: modelData.ambiguous ? root.warningColor : modelData.verified ? root.warningColor : root.warningColor }
                     }
                 }
             }
             Rectangle { visible: backend.activeControllerRecordId.length > 0; Layout.fillWidth: true; implicitHeight: activeSummary.implicitHeight + 18; color: root.insetColor; border.color: root.borderColor; radius: theme.topGun ? 1 : theme.controlRadius
-                Text { id: activeSummary; anchors.fill: parent; anchors.margins: 9; text: "Current active controller remains selected while this controller is set up."; color: root.mutedColor; font.pixelSize: 9; wrapMode: Text.WordWrap }
+                Text { id: activeSummary; anchors.fill: parent; anchors.margins: 9; text: "Current active controller remains selected while this controller is set up."; color: root.mutedColor; font.pixelSize: theme.scale(9); wrapMode: Text.WordWrap }
             }
             RowLayout { Layout.fillWidth: true; spacing: 8
                 Item { Layout.fillWidth: true }
@@ -368,7 +385,7 @@ Flickable {
     Dialog { id: actionDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 436; property string action: ""; title: action === "uninstall" ? "Uninstall HOTAS BF6?" : action === "forget" ? "Forget saved controllers?" : "Reset active-controller calibration?"; standardButtons: Dialog.NoButton; padding: 18
         background: Rectangle { color: root.panelColor; border.color: actionDialog.action === "uninstall" ? root.dangerColor : root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: 400; spacing: 14
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11; text: actionDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, automation, and saved data remain by default." : actionDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles, curves, automation, and other settings stay intact." : "This removes calibration only for the active controller. Profiles, curves, and mappings stay intact." }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: theme.scale(11); text: actionDialog.action === "uninstall" ? "HOTAS BF6 will be removed. Shared vJoy, HidHide, profiles, curves, automation, and saved data remain by default." : actionDialog.action === "forget" ? "This removes only HOTAS BF6 controller memory. Profiles, curves, automation, and other settings stay intact." : "This removes calibration only for the active controller. Profiles, curves, and mappings stay intact." }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true }
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: actionDialog.close() }
                 ActionButton { label: actionDialog.action === "uninstall" ? "UNINSTALL" : "CONFIRM"; destructive: actionDialog.action === "uninstall"; onTriggered: { if (actionDialog.action === "uninstall") backend.launchUninstaller(); else if (actionDialog.action === "forget") backend.forgetAllSavedControllers(); else backend.resetDeviceCalibration(); actionDialog.close() } }
@@ -378,7 +395,7 @@ Flickable {
     Dialog { id: resetDialog; parent: Overlay.overlay; anchors.centerIn: parent; modal: true; width: 436; title: "Reset application configuration?"; standardButtons: Dialog.NoButton; padding: 18
         background: Rectangle { color: root.panelColor; border.color: root.warningColor; radius: theme.topGun ? 1 : theme.panelRadius }
         contentItem: ColumnLayout { width: 400; spacing: 14
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: 11; text: "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and automation are reset as part of the application configuration." }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.textColor; font.pixelSize: theme.scale(11); text: "This restores HOTAS BF6 application defaults and clears saved controller and calibration settings. Profiles, curves, and automation are reset as part of the application configuration." }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 ActionButton { label: "CANCEL"; subdued: true; onTriggered: resetDialog.close() }

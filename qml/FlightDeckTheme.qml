@@ -13,6 +13,22 @@ QtObject {
     readonly property string displayFont: "Segoe UI"
     readonly property string bodyFont: displayFont
     readonly property string telemetryFont: "Consolas"
+    readonly property real textScale: typeof themeManager !== "undefined" ? themeManager.textScale : 1.15
+
+    // One semantic scale keeps pages from inventing their own accessibility
+    // math.  Flight Deck content uses these names for new work; the compact
+    // visual primitives expose scale() for dense legacy labels while they are
+    // migrated without changing their information hierarchy.
+    readonly property int tinyTechnical: scale(8)
+    readonly property int caption: scale(9)
+    readonly property int bodySmall: scale(10)
+    readonly property int body: scale(11)
+    readonly property int bodyStrong: scale(12)
+    readonly property int controlText: scale(13)
+    readonly property int section: scale(16)
+    readonly property int cardTitle: scale(18)
+    readonly property int pageTitle: scale(22)
+    readonly property int heroTitle: scale(28)
 
     readonly property int space4: 4
     readonly property int space6: 6
@@ -43,9 +59,9 @@ QtObject {
     readonly property int radiusControl: 12
     readonly property int radiusPill: 999
 
-    readonly property int navigationRowHeight: 40
-    readonly property int compactControlHeight: 32
-    readonly property int controlHeight: 40
+    readonly property int navigationRowHeight: Math.round(40 * textScale)
+    readonly property int compactControlHeight: Math.round(32 * textScale)
+    readonly property int controlHeight: Math.round(40 * textScale)
     readonly property int hoverDuration: 120
     readonly property int contentTransitionDuration: 180
     readonly property int expandDuration: 200
@@ -135,5 +151,9 @@ QtObject {
         if (tone === "fault")
             return fault;
         return informational;
+    }
+
+    function scale(value) {
+        return Math.round(value * textScale)
     }
 }

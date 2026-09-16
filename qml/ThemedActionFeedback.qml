@@ -35,8 +35,8 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 2
-            Text { Layout.fillWidth: true; text: root.result.title || ""; color: root.textColor; font.pixelSize: 11; font.bold: true; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; visible: !!root.result.message; text: root.result.message || ""; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: root.result.title || ""; color: root.textColor; font.pixelSize: theme.scale(11); font.bold: true; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; visible: !!root.result.message; text: root.result.message || ""; color: root.mutedColor; font.pixelSize: theme.scale(10); wrapMode: Text.WordWrap }
         }
         BusyIndicator { visible: root.inProgress; running: visible; implicitWidth: 24; implicitHeight: 24 }
     }

@@ -257,7 +257,7 @@ Flickable {
             text: parent.label
             color: deck.statusColor(parent.tone)
             font.family: deck.telemetryFont
-            font.pixelSize: 8
+            font.pixelSize: deck.scale(8)
             font.bold: true
         }
     }
@@ -271,7 +271,7 @@ Flickable {
             text: control.text
             color: control.enabled ? (control.subdued ? deck.textSecondary : deck.primarySurface) : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -295,7 +295,7 @@ Flickable {
             text: control.displayText
             color: control.enabled ? deck.textPrimary : deck.disabled
             font.family: deck.telemetryFont
-            font.pixelSize: 10
+            font.pixelSize: deck.scale(10)
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -304,7 +304,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deck.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deck.scale(16)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -325,7 +325,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -388,7 +388,7 @@ Flickable {
     component SettingTitle: Text {
         color: deck.textSecondary
         font.family: deck.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: deck.scale(9)
         font.bold: true
     }
 
@@ -403,6 +403,7 @@ Flickable {
         readonly property var adaptiveState: root.adaptiveStateFor(axisIndex)
         readonly property bool adaptiveEnabled: Boolean(adaptiveState.effective && adaptiveState.effective.enabled)
         readonly property var curveState: backend.curveEditorState
+        property bool technicalDetailsOpen: false
 
         objectName: "flightDeckAxisCard_" + axisIndex
         Layout.fillWidth: true
@@ -427,7 +428,7 @@ Flickable {
                         text: axis.label || axis.hardwareLabel || "Axis"
                         color: deck.textPrimary
                         font.family: deck.displayFont
-                        font.pixelSize: 16
+                        font.pixelSize: deck.scale(16)
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -437,7 +438,7 @@ Flickable {
                         text: root.sourceLabel(axis)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -467,35 +468,35 @@ Flickable {
                     text: "PHYSICAL"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     font.bold: true
                 }
                 Text {
                     text: axis.hardwareLabel || axis.detail || "Axis"
                     color: deck.textSecondary
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     elide: Text.ElideRight
                     Layout.maximumWidth: 220
                 }
                 Text {
                     text: "→"
                     color: deck.accent
-                    font.pixelSize: 15
+                    font.pixelSize: deck.scale(15)
                     font.bold: true
                 }
                 Text {
                     text: "VIRTUAL"
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     font.bold: true
                 }
                 Text {
                     text: root.destinationLabel(axis)
                     color: axis.target === "Disabled" ? deck.textMuted : deck.textPrimary
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -550,6 +551,11 @@ Flickable {
                     label: "OUTPUT UNAVAILABLE"
                     tone: "fault"
                 }
+                SummaryChip {
+                    visible: Boolean(axis.axisDiscovered)
+                    label: Boolean(axis.liveMovementObserved) ? "LIVE VERIFIED" : "WAITING FOR MOVEMENT"
+                    tone: Boolean(axis.liveMovementObserved) ? "healthy" : "informational"
+                }
             }
 
             Item {
@@ -590,13 +596,13 @@ Flickable {
                                         text: "SOURCE DEVICE"
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
-                                        font.pixelSize: 8
+                                        font.pixelSize: deck.scale(8)
                                         font.bold: true
                                     }
                                     Text {
                                         text: String(axis.sourceDevice || root.inputDeviceName)
                                         color: deck.textPrimary
-                                        font.pixelSize: 11
+                                        font.pixelSize: deck.scale(11)
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
@@ -604,12 +610,12 @@ Flickable {
                                         text: "SOURCE AXIS"
                                         color: deck.textSecondary
                                         font.family: deck.telemetryFont
-                                        font.pixelSize: 9
+                                        font.pixelSize: deck.scale(9)
                                     }
                                     Text {
                                         text: String(axis.hardwareLabel || axis.detail || "Axis " + (card.axisIndex + 1))
                                         color: deck.textPrimary
-                                        font.pixelSize: 11
+                                        font.pixelSize: deck.scale(11)
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
                                     }
@@ -617,7 +623,7 @@ Flickable {
                                 Text {
                                     text: "→"
                                     color: deck.accent
-                                    font.pixelSize: 22
+                                    font.pixelSize: deck.scale(22)
                                     font.bold: true
                                 }
                                 ColumnLayout {
@@ -627,7 +633,7 @@ Flickable {
                                         text: "OUTPUT · vJoy " + backend.vjoyDeviceId
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
-                                        font.pixelSize: 8
+                                        font.pixelSize: deck.scale(8)
                                         font.bold: true
                                     }
                                     DeckCombo {
@@ -655,11 +661,11 @@ Flickable {
                                     anchors.fill: parent
                                     anchors.margins: deck.space8
                                     spacing: 3
-                                    Text { text: "MIXED OUTPUT"; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
-                                    Text { text: "With: " + String(card.sharedOutput.with || "another source"); color: deck.textPrimary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: "MIXED OUTPUT"; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                    Text { text: "With: " + String(card.sharedOutput.with || "another source"); color: deck.textPrimary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Text { text: "MIXER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                        Text { text: "MIXER"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
                                         DeckCombo {
                                             id: sharedMixerSelector
                                             Layout.fillWidth: true
@@ -676,7 +682,7 @@ Flickable {
                                 Text {
                                     text: axis.target === "Disabled" ? "Output disabled. Physical input remains visible but is not sent to vJoy." : "Mapping changes apply immediately through the existing profile command path."
                                     color: deck.textSecondary
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
                                 }
@@ -703,13 +709,13 @@ Flickable {
                                         text: "!"
                                         color: deck.fault
                                         font.bold: true
-                                        font.pixelSize: 15
+                                        font.pixelSize: deck.scale(15)
                                     }
                                     Text {
                                         id: warningText
                                         text: root.routeNoticeAxis === card.axisIndex ? root.routeNotice : "The configured vJoy output is not currently exposed."
                                         color: deck.textPrimary
-                                        font.pixelSize: 10
+                                        font.pixelSize: deck.scale(10)
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -750,7 +756,7 @@ Flickable {
                                         text: invertSwitch.text
                                         leftPadding: invertSwitch.indicator.width + 8
                                         color: deck.textPrimary
-                                        font.pixelSize: 11
+                                        font.pixelSize: deck.scale(11)
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     indicator: Rectangle {
@@ -773,7 +779,7 @@ Flickable {
                                     text: (Number(axis.deadzone) * 100).toFixed(1) + "% deadzone"
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                 }
                             }
                             DeckSlider {
@@ -787,7 +793,7 @@ Flickable {
                             Text {
                                 text: axis.unipolar ? "Lower-end deadzone is rescaled across the 0–100% input domain." : "Center deadzone is rescaled before inversion and curve response."
                                 color: deck.textMuted
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -835,14 +841,14 @@ Flickable {
                                     text: Math.round(Number(card.curveState.strength || 0) * 100) + "%"
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.preferredWidth: 34
                                 }
                             }
                             Text {
                                 text: "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
                                 color: deck.textMuted
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -880,7 +886,7 @@ Flickable {
                                     text: root.percent(axis.outputMinimum, axis.unipolar)
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.preferredWidth: 42
                                 }
                             }
@@ -901,14 +907,14 @@ Flickable {
                                     text: root.percent(axis.outputMaximum, axis.unipolar)
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.preferredWidth: 42
                                 }
                             }
                             Text {
                                 text: "Limits constrain final virtual authority; they do not change controller calibration."
                                 color: deck.textMuted
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -962,7 +968,7 @@ Flickable {
                                     text: (Number(axis.hysteresis) * 100).toFixed(2) + "%"
                                     color: deck.textSecondary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     Layout.preferredWidth: 42
                                 }
                             }
@@ -980,7 +986,7 @@ Flickable {
                                     selectByMouse: true
                                     Layout.fillWidth: true
                                     color: deck.textPrimary
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     onEditingFinished: backend.setVirtualAxisAlias(axis.target, text)
                                     background: Rectangle {
                                         radius: deck.radiusControl
@@ -1003,7 +1009,7 @@ Flickable {
                                     selectByMouse: true
                                     Layout.fillWidth: true
                                     color: deck.textPrimary
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     onEditingFinished: backend.setAxisCustomName(card.axisIndex, text)
                                     background: Rectangle {
                                         radius: deck.radiusControl
@@ -1017,7 +1023,7 @@ Flickable {
                                 text: "Technical identity: " + (axis.nativeIdentity || axis.key || axis.hardwareLabel || "Unknown") + " · " + (axis.rangeModeLabel || "Configured domain")
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
@@ -1045,13 +1051,13 @@ Flickable {
                                     Text {
                                         text: card.adaptiveEnabled ? "Adaptive Response is enabled for this axis." : "Adaptive Response is off for this axis."
                                         color: deck.textPrimary
-                                        font.pixelSize: 11
+                                        font.pixelSize: deck.scale(11)
                                         Layout.fillWidth: true
                                     }
                                     Text {
                                         text: "Current predictor: " + String((card.adaptiveState.effective || {}).model || "Configured") + ". Detailed controls remain on the Adaptive Response page."
                                         color: deck.textMuted
-                                        font.pixelSize: 9
+                                        font.pixelSize: deck.scale(9)
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
                                     }
@@ -1061,6 +1067,65 @@ Flickable {
                                     Layout.preferredWidth: 116
                                     onClicked: root.openAdaptiveForAxis(card.axisIndex)
                                 }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: technicalContent.implicitHeight + deck.space24
+                        radius: deck.radiusCard
+                        color: deck.secondarySurface
+                        border.color: deck.border
+                        ColumnLayout {
+                            id: technicalContent
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SettingTitle { text: "AXIS TECHNICAL DETAILS"; Layout.fillWidth: true }
+                                DeckButton {
+                                    text: card.technicalDetailsOpen ? "HIDE DETAILS" : "TECHNICAL DETAILS"
+                                    subdued: true
+                                    Layout.preferredWidth: 142
+                                    onClicked: card.technicalDetailsOpen = !card.technicalDetailsOpen
+                                }
+                            }
+                            GridLayout {
+                                visible: card.technicalDetailsOpen
+                                Layout.fillWidth: true
+                                columns: 2
+                                columnSpacing: deck.space16
+                                rowSpacing: deck.space6
+                                Repeater {
+                                    model: [
+                                        { label: "NATIVE INPUT", value: String(axis.nativeObjectName || axis.hardwareLabel || "Unknown") },
+                                        { label: "TYPE", value: String(axis.nativeType || "Unknown") },
+                                        { label: "DIRECTINPUT ID", value: String(axis.directInputGuid || "Not recorded") + " · offset " + String(axis.directInputOffset || 0) },
+                                        { label: "ACQUISITION SOURCE", value: String(axis.acquisitionSource || "Not resolved") },
+                                        { label: "RAW RANGE", value: String(axis.nativeRangeMinimum) + "–" + String(axis.nativeRangeMaximum) },
+                                        { label: "REQUESTED RANGE", value: String(axis.requestedRangeMinimum) + "–" + String(axis.requestedRangeMaximum) },
+                                        { label: "LIVE STATE", value: Boolean(axis.liveMovementObserved) ? "Receiving input" : "Detected · Waiting for movement" },
+                                        { label: "LAST MOVEMENT", value: Number(axis.lastMovementAgeMs) >= 0 ? String(Math.round(Number(axis.lastMovementAgeMs))) + " ms ago" : "No movement observed" }
+                                    ]
+                                    delegate: ColumnLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 180
+                                        Text { text: modelData.label; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                        Text { text: modelData.value; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                                    }
+                                }
+                            }
+                            Text {
+                                visible: card.technicalDetailsOpen
+                                text: "Range request HRESULTs: Set " + (Boolean(axis.rangeSetAttempted) ? String(axis.rangeSetResult) : "not requested by read-only probe") + " · Read " + String(axis.rangeReadResult) + ". Enumeration slot " + String(axis.enumerationIndex) + "."
+                                color: deck.textMuted
+                                font.family: deck.telemetryFont
+                                font.pixelSize: deck.scale(8)
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
@@ -1095,14 +1160,14 @@ Flickable {
                             text: "AXIS OVERVIEW"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             font.bold: true
                         }
                         Text {
                             text: "Physical control → configured transformation → virtual output"
                             color: deck.textPrimary
                             font.family: deck.displayFont
-                            font.pixelSize: 14
+                            font.pixelSize: deck.scale(14)
                             font.bold: true
                             Layout.fillWidth: true
                             elide: Text.ElideRight
@@ -1132,14 +1197,14 @@ Flickable {
                         text: "INPUT CONTEXT"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: inputDeviceName
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
@@ -1147,14 +1212,14 @@ Flickable {
                         text: "PROFILE"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                     Text {
                         text: backend.selectedProfileDisplayName || backend.selectedProfileName
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         Layout.maximumWidth: 240
                         elide: Text.ElideRight
                     }
@@ -1163,14 +1228,14 @@ Flickable {
                     visible: !backend.selectedDeviceIsSpecific && !usingPresentationOverride
                     text: "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices is an overview only and never chooses a controller for you."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
                 Text {
                     text: "Live meters consume the existing bounded presentation snapshot. Configuration remains available when no game is detected."
                     color: deck.textMuted
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
@@ -1193,7 +1258,7 @@ Flickable {
                     text: backend.selectedDeviceIsSpecific ? "NO PHYSICAL AXES AVAILABLE" : "SELECT A SPECIFIC CONTROLLER"
                     color: deck.textPrimary
                     font.family: deck.displayFont
-                    font.pixelSize: 15
+                    font.pixelSize: deck.scale(15)
                     font.bold: true
                 }
                 Text {
@@ -1203,7 +1268,7 @@ Flickable {
                             : root.inputDeviceName + " is disconnected. Its saved axis routes remain available for editing."
                         : "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices only shows overview state."
                     color: deck.textSecondary
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -1239,14 +1304,14 @@ Flickable {
                 text: "Existing source:\n    " + String(root.conflictOwner.ownerLabel || "Configured source")
                     + "\n\nNew source:\n    " + root.sourceLabel(root.axisForIndex(root.conflictAxis))
                 color: deck.textPrimary
-                font.pixelSize: 11
+                font.pixelSize: deck.scale(11)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
             Text {
                 text: "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
                 color: deck.textMuted
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -1254,7 +1319,7 @@ Flickable {
                 visible: root.conflictNotice.length > 0
                 text: root.conflictNotice
                 color: deck.fault
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
@@ -1293,7 +1358,7 @@ Flickable {
         contentItem: ColumnLayout {
             width: mixerModeDialog.availableWidth
             spacing: deck.space12
-            Text { Layout.fillWidth: true; text: "Mix " + String(root.conflictTarget) + " from the participating sources using the canonical Graphical Editor mixer."; color: deck.textPrimary; font.pixelSize: 11; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Mix " + String(root.conflictTarget) + " from the participating sources using the canonical Graphical Editor mixer."; color: deck.textPrimary; font.pixelSize: deck.scale(11); wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 DeckButton { text: "CANCEL"; subdued: true; onClicked: mixerModeDialog.close() }

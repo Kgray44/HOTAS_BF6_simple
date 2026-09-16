@@ -11,10 +11,9 @@ Flickable {
 
     required property var backendObject
     property string profileContext: ""
-    // Adaptive Response is owned by the selected Profile/device-channel/axis
-    // tuple. A profile layer remains available as an explicit shared policy,
-    // but the editor opens on the exact physical channel the user selected.
-    property string editScope: "device"
+    // Profile Default is always a valid writable owner. A per-device layer is
+    // available only after the user selects one exact controller.
+    property string editScope: "profile"
     property string targetId: ""
     property string scenario: "Human-Like Rapid Reversal"
     property int contextEpoch: 0
@@ -238,6 +237,41 @@ Flickable {
         });
     }
 
+    function editingScopeChoices() {
+        const choices = [
+            { label: "Profile Default", value: "profile" },
+            { label: "Application Defaults", value: "global" },
+            { label: "Category", value: "category" },
+            { label: "Response Preset", value: "preset" }
+        ];
+        if (backendObject.selectedDeviceIsSpecific)
+            choices.unshift({ label: "This Device", value: "device" });
+        return choices;
+    }
+
+    function editScopeIndex() {
+        const choices = editingScopeChoices();
+        for (let index = 0; index < choices.length; ++index) {
+            if (choices[index].value === editScope)
+                return index;
+        }
+        return 0;
+    }
+
+    function ensureValidEditContext() {
+        if (editScope === "device" && !backendObject.selectedDeviceIsSpecific) {
+            editScope = "profile";
+            targetId = "";
+        }
+    }
+
+    function settingsApplyTo() {
+        if (editScope === "device") return selectedTargetName();
+        if (editScope === "profile") return "Profile Default";
+        if (editScope === "global") return "Application Defaults";
+        return selectedTargetName();
+    }
+
     function selectedTargetId() {
         if (editScope === "device") {
             const choices = targetChoices();
@@ -256,6 +290,16 @@ Flickable {
             return choices.length > 0 ? choices[0].id : "";
         }
         return liveState.profileId || "";
+    }
+
+    function selectedTargetName() {
+        const choices = targetChoices();
+        const id = selectedTargetId();
+        for (let index = 0; index < choices.length; ++index) {
+            if (choices[index].id === id)
+                return choices[index].label;
+        }
+        return editScope === "global" ? "Application Defaults" : "Profile Default";
     }
 
     function targetIndex() {
@@ -966,7 +1010,7 @@ Flickable {
     onProfileContextChanged: {
         if (profileContext.length > 0) {
             backendObject.selectProfileForEditing(profileContext);
-            editScope = "device";
+            editScope = "profile";
             targetId = "";
             setPreview();
         }
@@ -992,10 +1036,11 @@ Flickable {
     Component.onCompleted: {
         if (profileContext.length > 0) {
             backendObject.selectProfileForEditing(profileContext);
-            editScope = "device";
+            editScope = "profile";
             targetId = "";
             setPreview();
         }
+        ensureValidEditContext();
         refreshViewportActivity();
     }
 
@@ -1013,6 +1058,9 @@ Flickable {
         }
         function onInputTelemetryChanged() {
             root.telemetryEpoch += 1;
+        }
+        function onDeviceRigsChanged() {
+            root.ensureValidEditContext();
         }
     }
 
@@ -1067,7 +1115,7 @@ Flickable {
         text: textValue
         color: deck.textMuted
         font.family: deck.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: deck.scale(9)
         font.bold: true
         font.letterSpacing: 1.2
         elide: Text.ElideRight
@@ -1084,7 +1132,7 @@ Flickable {
             text: control.text
             color: !control.enabled ? deck.disabled : control.subdued ? deck.textPrimary : deck.primarySurface
             font.family: deck.telemetryFont
-            font.pixelSize: 9
+            font.pixelSize: deck.scale(9)
             font.bold: true
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -1111,7 +1159,7 @@ Flickable {
                 text: control.displayText
                 color: control.enabled ? deck.textPrimary : deck.disabled
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -1135,7 +1183,7 @@ Flickable {
             anchors.verticalCenter: parent.verticalCenter
             text: "⌄"
             color: deck.textSecondary
-            font.pixelSize: 16
+            font.pixelSize: deck.scale(16)
         }
         background: Rectangle {
             radius: deck.radiusControl
@@ -1156,7 +1204,7 @@ Flickable {
                 text: control.textAt(index)
                 color: deck.textPrimary
                 font.family: deck.telemetryFont
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
             }
@@ -1238,7 +1286,7 @@ Flickable {
                     text: parent.parent.parent.caption
                     color: deck.textMuted
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     font.bold: true
                     elide: Text.ElideRight
                 }
@@ -1247,7 +1295,7 @@ Flickable {
                     text: parent.parent.parent.display
                     color: parent.parent.parent.tone
                     font.family: deck.telemetryFont
-                    font.pixelSize: 9
+                    font.pixelSize: deck.scale(9)
                     font.bold: true
                     horizontalAlignment: Text.AlignRight
                     elide: Text.ElideRight
@@ -1288,7 +1336,7 @@ Flickable {
                 text: parent.parent.caption
                 color: deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 font.bold: true
                 elide: Text.ElideRight
             }
@@ -1297,7 +1345,7 @@ Flickable {
                 text: parent.parent.value
                 color: parent.parent.tone
                 font.family: deck.telemetryFont
-                font.pixelSize: 17
+                font.pixelSize: deck.scale(17)
                 font.bold: true
                 elide: Text.ElideRight
             }
@@ -1306,7 +1354,7 @@ Flickable {
                 width: parent.width
                 text: parent.parent.detail
                 color: deck.textSecondary
-                font.pixelSize: 9
+                font.pixelSize: deck.scale(9)
                 elide: Text.ElideRight
             }
         }
@@ -1338,7 +1386,7 @@ Flickable {
                 text: (control.checked ? "✓  " : "") + control.text
                 color: control.checked ? deck.textPrimary : deck.textMuted
                 font.family: deck.telemetryFont
-                font.pixelSize: 8
+                font.pixelSize: deck.scale(8)
                 font.bold: true
             }
         }
@@ -1496,7 +1544,7 @@ Flickable {
                     Layout.fillWidth: true
                     text: control.descriptor.label || ""
                     color: deck.textPrimary
-                    font.pixelSize: 12
+                    font.pixelSize: deck.scale(12)
                     font.bold: true
                     elide: Text.ElideRight
                 }
@@ -1504,7 +1552,7 @@ Flickable {
                     text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere(control.key) ? "INHERITED" : "OVERRIDE"
                     color: root.editScope === "global" ? deck.textMuted : root.inheritedHere(control.key) ? deck.textMuted : deck.accent
                     font.family: deck.telemetryFont
-                    font.pixelSize: 8
+                    font.pixelSize: deck.scale(8)
                     font.bold: true
                 }
             }
@@ -1512,7 +1560,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: control.descriptor.detail || ""
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -1587,7 +1635,7 @@ Flickable {
                     text: root.valueWithUnit(control.currentValue, control.descriptor.unit)
                     color: deck.textPrimary
                     font.family: deck.telemetryFont
-                    font.pixelSize: 10
+                    font.pixelSize: deck.scale(10)
                     font.bold: true
                     horizontalAlignment: Text.AlignRight
                 }
@@ -1621,7 +1669,7 @@ Flickable {
                 width: parent.width
                 text: group.title
                 color: deck.textPrimary
-                font.pixelSize: 14
+                font.pixelSize: deck.scale(14)
                 font.bold: true
             }
             Text {
@@ -1629,7 +1677,7 @@ Flickable {
                 width: parent.width
                 text: group.detail
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             Repeater {
@@ -1673,14 +1721,14 @@ Flickable {
                 Text {
                     text: "ADAPTIVE RESPONSE · LIVE MONITOR"
                     color: deck.textPrimary
-                    font.pixelSize: 18
+                    font.pixelSize: deck.scale(18)
                     font.bold: true
                 }
                 Text {
                     width: parent.width
                     text: "Bounded snapshot view for " + (root.runtimeState.axisLabel || "selected axis") + ". This monitor observes the same UI-safe telemetry as Flight Deck."
                     color: deck.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: deck.scale(11)
                     wrapMode: Text.WordWrap
                 }
                 RowLayout {
@@ -1690,7 +1738,7 @@ Flickable {
                         text: "READ ONLY · UI-SAFE SNAPSHOT"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         font.bold: true
                     }
                     DeckButton {
@@ -1774,7 +1822,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: "Names must be unique and cannot reuse a built-in Response Preset name."
                 color: deck.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             TextField {
@@ -1797,7 +1845,7 @@ Flickable {
                 Layout.fillWidth: true
                 text: root.presetError
                 color: deck.attention
-                font.pixelSize: 10
+                font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -1842,7 +1890,7 @@ Flickable {
                         Text {
                             text: "Configured response"
                             color: deck.textPrimary
-                            font.pixelSize: 25
+                            font.pixelSize: deck.scale(25)
                             font.bold: true
                             font.family: deck.displayFont
                         }
@@ -1850,7 +1898,7 @@ Flickable {
                             Layout.fillWidth: true
                             text: "Select a device, profile, and axis, then review the configured limits and response preview."
                             color: deck.textSecondary
-                            font.pixelSize: 11
+                            font.pixelSize: deck.scale(11)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -1867,14 +1915,14 @@ Flickable {
                                 text: root.effective().enabled ? "ADAPTIVE ON" : "ADAPTIVE OFF"
                                 color: root.effective().enabled ? deck.healthy : deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                             }
                             Text {
                                 text: root.effective().enabled ? "READY FOR INPUT" : "PREDICTOR IDLE"
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                             }
                         }
                     }
@@ -1963,7 +2011,7 @@ Flickable {
                                 text: backendObject.selectedDeviceLabel
                                 color: deck.textPrimary
                                 font.family: deck.bodyFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                                 verticalAlignment: Text.AlignVCenter
                                 elide: Text.ElideRight
@@ -1975,7 +2023,7 @@ Flickable {
                         width: Math.max(180, Math.min(300, (parent.width - deck.space24) / 3))
                         spacing: 4
                         SectionLabel {
-                            textValue: root.editScope === "device" ? "DEVICE CHANNEL" : root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : root.editScope === "global" ? "PROFILE SOURCE" : "PROFILE"
+                            textValue: root.editScope === "device" ? "THIS DEVICE" : root.editScope === "category" ? "CATEGORY" : root.editScope === "preset" ? "RESPONSE PRESET" : "PROFILE"
                         }
                         DeckCombo {
                             objectName: "adaptiveTargetSelector"
@@ -2017,36 +2065,15 @@ Flickable {
                         width: Math.max(180, Math.min(240, (parent.width - deck.space24) / 3))
                         spacing: 4
                         SectionLabel {
-                            textValue: "CONFIGURATION LAYER"
+                            textValue: "SETTINGS APPLY TO"
                         }
                         DeckCombo {
                             objectName: "adaptiveEditScopeSelector"
                             width: parent.width
-                            model: [
-                                {
-                                    label: "Selected device channel",
-                                    value: "device"
-                                },
-                                {
-                                    label: "Application defaults",
-                                    value: "global"
-                                },
-                                {
-                                    label: "Category",
-                                    value: "category"
-                                },
-                                {
-                                    label: "Game profile",
-                                    value: "profile"
-                                },
-                                {
-                                    label: "Response preset",
-                                    value: "preset"
-                                }
-                            ]
+                            model: root.editingScopeChoices()
                             textRole: "label"
                             valueRole: "value"
-                            currentIndex: root.editScope === "device" ? 0 : root.editScope === "global" ? 1 : root.editScope === "category" ? 2 : root.editScope === "preset" ? 4 : 3
+                            currentIndex: root.editScopeIndex()
                             onChoiceActivated: function (index, value) {
                                 root.editScope = String(value);
                                 root.targetId = "";
@@ -2068,9 +2095,18 @@ Flickable {
                         anchors.margins: deck.space8
                         text: root.runtimeSourceSummary()
                         color: deck.textSecondary
-                        font.pixelSize: 10
+                        font.pixelSize: deck.scale(10)
                         wrapMode: Text.WordWrap
                     }
+                }
+                Button {
+                    visible: backendObject.selectedDeviceIsSpecific && root.editScope === "profile"
+                    text: "CUSTOMIZE THIS DEVICE"
+                    focusPolicy: Qt.StrongFocus
+                    implicitHeight: deck.compactControlHeight
+                    onClicked: { root.editScope = "device"; root.targetId = ""; root.setPreview(); }
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }
@@ -2099,14 +2135,14 @@ Flickable {
                         Text {
                             text: "What this preset is configured to do"
                             color: deck.textPrimary
-                            font.pixelSize: 18
+                            font.pixelSize: deck.scale(18)
                             font.bold: true
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: root.effective().enabled ? "These are fixed preset limits for the selected axis. Live behavior is shown below when input is available." : "Adaptive Response is off. Its saved preset limits remain available for review."
+                            text: (root.effective().enabled ? "These are fixed preset limits for the selected axis. Live behavior is shown below when input is available." : "Adaptive Response is off. Its saved preset limits remain available for review.") + " Settings apply to " + root.settingsApplyTo() + "."
                             color: deck.textSecondary
-                            font.pixelSize: 11
+                            font.pixelSize: deck.scale(11)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -2117,13 +2153,14 @@ Flickable {
                             text: root.effective().enabled ? "ON" : "OFF"
                             color: root.effective().enabled ? deck.healthy : deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 12
+                            font.pixelSize: deck.scale(12)
                             font.bold: true
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         DeckSwitch {
                             objectName: "flightDeckAdaptiveEnabled"
                             checked: !!root.effective().enabled
+                            enabled: root.editScope !== "preset"
                             onToggled: root.updateParameter("enabled", checked)
                         }
                     }
@@ -2181,7 +2218,7 @@ Flickable {
                                     color: presetButton.checked && presetButton.adaptiveResponseActive
                                         ? deck.primarySurface : deck.textPrimary
                                     font.family: deck.telemetryFont
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -2191,7 +2228,7 @@ Flickable {
                                     text: presetButton.modelData.id === "extreme" ? "EXPERIMENTAL" : presetButton.modelData.description
                                     color: presetButton.checked && presetButton.adaptiveResponseActive
                                         ? deck.primarySurface : deck.textSecondary
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                     wrapMode: Text.WordWrap
                                     maximumLineCount: 2
                                     elide: Text.ElideRight
@@ -2296,14 +2333,14 @@ Flickable {
                         Text {
                             text: "What this configuration generally does"
                             color: deck.textPrimary
-                            font.pixelSize: 18
+                            font.pixelSize: deck.scale(18)
                             font.bold: true
                         }
                         Text {
                             Layout.fillWidth: true
                             text: "Preview uses simulated movement. Connect a controller for live input."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -2352,7 +2389,7 @@ Flickable {
                                 text: "STATIC AXIS POSITION"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Text {
@@ -2360,7 +2397,7 @@ Flickable {
                                 text: "SCENARIO · " + root.scenario.toUpperCase()
                                 color: deck.textSecondary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                                 font.bold: true
                                 horizontalAlignment: Text.AlignRight
                                 elide: Text.ElideRight
@@ -2405,26 +2442,26 @@ Flickable {
                                 text: "— Physical input"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                             }
                             Text {
                                 text: "— Predicted mapped"
                                 color: deck.attention
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                             }
                             Text {
                                 text: "— Final adaptive output"
                                 color: deck.healthy
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                             }
                             Text {
                                 visible: root.showBaselineTrace
                                 text: "— Baseline output"
                                 color: deck.informational
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                             }
                         }
                     }
@@ -2446,20 +2483,20 @@ Flickable {
                                 Text {
                                     text: "MAPPED-OUTPUT LEAD"
                                     color: deck.textPrimary
-                                    font.pixelSize: 12
+                                    font.pixelSize: deck.scale(12)
                                     font.bold: true
                                 }
                                 Text {
                                     text: "Magnified against the configured lead limit so small predictive changes remain legible."
                                     color: deck.textSecondary
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                 }
                             }
                             Text {
                                 text: "±" + root.percent(root.numericOr(root.effective().maximumLead, 0.01))
                                 color: deck.attention
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                             }
                         }
@@ -2485,14 +2522,14 @@ Flickable {
                         Layout.fillWidth: true
                         text: "Preview recomputes when context, a preset, or a tuning value changes—not on controller reports."
                         color: deck.textMuted
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
                     }
                     Text {
                         text: root.previewSamples.length + " SAMPLES"
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                 }
@@ -2524,14 +2561,14 @@ Flickable {
                         Text {
                             text: "Compare before you commit"
                             color: deck.textPrimary
-                            font.pixelSize: 17
+                            font.pixelSize: deck.scale(17)
                             font.bold: true
                         }
                         Text {
                             Layout.fillWidth: true
                             text: "A is the editing context above. B is another existing Response Preset or profile state; comparison is read-only."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -2658,19 +2695,19 @@ Flickable {
                         text: "— Physical baseline"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                     }
                     Text {
                         text: "— A predicted"
                         color: deck.attention
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                     }
                     Text {
                         text: "– – B predicted"
                         color: deck.healthy
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                     }
                 }
             }
@@ -2706,7 +2743,7 @@ Flickable {
                         Text {
                             text: root.advancedExpanded ? "⌄" : "›"
                             color: deck.accent
-                            font.pixelSize: 22
+                            font.pixelSize: deck.scale(22)
                             font.bold: true
                         }
                         ColumnLayout {
@@ -2715,13 +2752,13 @@ Flickable {
                                 text: "ADVANCED TUNING"
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 11
+                                font.pixelSize: deck.scale(11)
                                 font.bold: true
                             }
                             Text {
                                 text: root.advancedExpanded ? "Every existing tuning control is grouped by engineering purpose." : "Reveal complete predictor, motion, reversal, and safety controls."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 elide: Text.ElideRight
                             }
                         }
@@ -2729,7 +2766,7 @@ Flickable {
                             text: root.advancedExpanded ? "COLLAPSE" : "EXPAND"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                         }
                     }
@@ -2769,13 +2806,13 @@ Flickable {
                                     Text {
                                         text: "CUSTOM RESPONSE PRESETS"
                                         color: deck.textPrimary
-                                        font.pixelSize: 14
+                                        font.pixelSize: deck.scale(14)
                                         font.bold: true
                                     }
                                     Text {
                                         text: "Capture the current effective configuration for all axes, then edit its native preset layer here."
                                         color: deck.textSecondary
-                                        font.pixelSize: 10
+                                        font.pixelSize: deck.scale(10)
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -2845,7 +2882,7 @@ Flickable {
                                     width: parent.width
                                     text: root.presetError
                                     color: deck.attention
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                     wrapMode: Text.WordWrap
                                 }
                                 Repeater {
@@ -2870,7 +2907,7 @@ Flickable {
                                                     Layout.fillWidth: true
                                                     text: modelData.name
                                                     color: deck.textPrimary
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: deck.scale(11)
                                                     font.bold: true
                                                     elide: Text.ElideRight
                                                 }
@@ -2920,7 +2957,7 @@ Flickable {
                                                 width: parent.width
                                                 text: modelData.description || "No description"
                                                 color: deck.textSecondary
-                                                font.pixelSize: 9
+                                                font.pixelSize: deck.scale(9)
                                                 elide: Text.ElideRight
                                             }
                                             Text {
@@ -2928,7 +2965,7 @@ Flickable {
                                                 width: parent.width
                                                 text: "IN USE · " + backendObject.adaptiveResponsePresetDependencies(modelData.id).join(" · ")
                                                 color: deck.attention
-                                                font.pixelSize: 8
+                                                font.pixelSize: deck.scale(8)
                                                 elide: Text.ElideRight
                                             }
                                         }
@@ -2941,7 +2978,7 @@ Flickable {
                                     width: parent.width
                                     text: "No custom Response Presets yet. Save the effective configuration above to create one."
                                     color: deck.textMuted
-                                    font.pixelSize: 10
+                                    font.pixelSize: deck.scale(10)
                                 }
                             }
                         }
@@ -2964,13 +3001,13 @@ Flickable {
                                     Text {
                                         text: "PREDICTOR MODEL"
                                         color: deck.textPrimary
-                                        font.pixelSize: 14
+                                        font.pixelSize: deck.scale(14)
                                         font.bold: true
                                     }
                                     Text {
                                         text: "Select only among the current authoritative models. This changes configuration, never Flight Deck logic."
                                         color: deck.textSecondary
-                                        font.pixelSize: 10
+                                        font.pixelSize: deck.scale(10)
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -3038,7 +3075,7 @@ Flickable {
                             Layout.fillWidth: true
                             text: "Restore affects this editing layer and selected axis only."
                             color: deck.textMuted
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -3071,7 +3108,7 @@ Flickable {
                         Text {
                             text: "Current behavior at a glance"
                             color: deck.textPrimary
-                            font.pixelSize: 18
+                            font.pixelSize: deck.scale(18)
                             font.bold: true
                         }
                         Text {
@@ -3081,7 +3118,7 @@ Flickable {
                                 : !root.liveInputAvailable() ? "Awaiting controller input. Configured limits above remain unchanged."
                                 : root.effective().enabled ? "Live values are observational and do not change the predictor." : "Adaptive Response is off. Physical input may remain available, but prediction is not active."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -3089,7 +3126,7 @@ Flickable {
                         text: root.effective().enabled ? String(root.telemetry.state || "Stable").toUpperCase() : "OFF"
                         color: root.effective().enabled ? deck.accent : deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 14
+                        font.pixelSize: deck.scale(14)
                         font.bold: true
                     }
                 }
@@ -3231,14 +3268,14 @@ Flickable {
                         Text {
                             text: "Response Lab"
                             color: deck.textPrimary
-                            font.pixelSize: 19
+                            font.pixelSize: deck.scale(19)
                             font.bold: true
                         }
                         Text {
                             Layout.fillWidth: true
                             text: "One analysis surface. Data source changes the feed, not the surrounding information architecture or saved configuration."
                             color: deck.textSecondary
-                            font.pixelSize: 10
+                            font.pixelSize: deck.scale(10)
                             wrapMode: Text.WordWrap
                         }
                     }
@@ -3277,7 +3314,7 @@ Flickable {
                                 text: root.responseLabSource === "live" ? (root.historyPaused ? "PAUSED INSPECTION" : "LIVE CONTROLLER") : (root.simulatorReplaying ? "SYNTHETIC REPLAY" : root.simulatorPaused ? "INTERACTIVE PAUSED" : "INTERACTIVE LIVE")
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
@@ -3286,7 +3323,7 @@ Flickable {
                                 Layout.fillWidth: true
                                 text: root.responseLabSource === "live" ? "Existing 83 Hz bounded history; Flight Deck renders at a bounded display cadence." : "Isolated simulator using the same existing preview engine; no physical or vJoy output is written."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 wrapMode: Text.WordWrap
                             }
                             DeckButton {
@@ -3451,7 +3488,7 @@ Flickable {
                                 text: "MANUAL INPUT"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Slider {
@@ -3497,7 +3534,7 @@ Flickable {
                                 text: root.percent(root.simulatorInput)
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 12
+                                font.pixelSize: deck.scale(12)
                                 font.bold: true
                             }
                         }
@@ -3508,7 +3545,7 @@ Flickable {
                                 Layout.fillWidth: true
                                 text: root.presentationValue("controllerAvailable", backendObject.physicalConnected) ? "Latest physical-input snapshots remain observable while mapping is off, suspended, or vJoy is unavailable." : "CONTROLLER UNAVAILABLE · settings are preserved, but live snapshots are not available."
                                 color: root.presentationValue("controllerAvailable", backendObject.physicalConnected) ? deck.textSecondary : deck.attention
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 wrapMode: Text.WordWrap
                             }
                             Repeater {
@@ -3532,7 +3569,7 @@ Flickable {
                                 text: "INSPECT"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             Slider {
@@ -3573,7 +3610,7 @@ Flickable {
                                 text: (Math.max(0, root.historyInspectIndex) + 1) + " / " + root.historySampleCount
                                 color: deck.attention
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 font.bold: true
                             }
                         }
@@ -3597,20 +3634,20 @@ Flickable {
                                 Text {
                                     text: "AXIS POSITION"
                                     color: deck.textPrimary
-                                    font.pixelSize: 14
+                                    font.pixelSize: deck.scale(14)
                                     font.bold: true
                                 }
                                 Text {
                                     text: "Physical input and mapped-output values share one normalized axis scale."
                                     color: deck.textSecondary
-                                    font.pixelSize: 9
+                                    font.pixelSize: deck.scale(9)
                                 }
                             }
                             Text {
                                 text: root.responseLabSource === "live" ? "CHRONOLOGICAL · NEWEST RIGHT" : "INTERACTIVE HISTORY"
                                 color: deck.textMuted
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 8
+                                font.pixelSize: deck.scale(8)
                                 font.bold: true
                             }
                         }
@@ -3712,20 +3749,20 @@ Flickable {
                         Text {
                             text: "MOTION"
                             color: deck.textPrimary
-                            font.pixelSize: 14
+                            font.pixelSize: deck.scale(14)
                             font.bold: true
                         }
                         Text {
                             text: "Velocity and acceleration stay on independent charts so their units remain legible."
                             color: deck.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: deck.scale(9)
                         }
                     }
                     Text {
                         text: root.responseLabSampleCount + " BOUNDED SAMPLES"
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 8
+                        font.pixelSize: deck.scale(8)
                         font.bold: true
                     }
                 }
@@ -3749,7 +3786,7 @@ Flickable {
                                 text: "VELOCITY · /s"
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3782,7 +3819,7 @@ Flickable {
                                 text: "ACCELERATION · /s²"
                                 color: deck.attention
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3805,7 +3842,7 @@ Flickable {
                 Text {
                     text: "ADAPTIVE STATE"
                     color: deck.textPrimary
-                    font.pixelSize: 14
+                    font.pixelSize: deck.scale(14)
                     font.bold: true
                 }
                 Flow {
@@ -3828,7 +3865,7 @@ Flickable {
                                 text: "HORIZON · ms"
                                 color: deck.attention
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3861,7 +3898,7 @@ Flickable {
                                 text: "AUTHORITY · %"
                                 color: deck.healthy
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3891,7 +3928,7 @@ Flickable {
                                 text: "MAPPED LEAD · %"
                                 color: deck.healthy
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3924,7 +3961,7 @@ Flickable {
                                 text: "CONFIDENCE · %"
                                 color: deck.accent
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 9
+                                font.pixelSize: deck.scale(9)
                                 font.bold: true
                             }
                             InstrumentGraph {
@@ -3977,7 +4014,7 @@ Flickable {
                         Text {
                             text: root.testLabExpanded ? "⌄" : "›"
                             color: deck.attention
-                            font.pixelSize: 22
+                            font.pixelSize: deck.scale(22)
                             font.bold: true
                         }
                         ColumnLayout {
@@ -3986,13 +4023,13 @@ Flickable {
                                 text: "TEST LAB"
                                 color: deck.textPrimary
                                 font.family: deck.telemetryFont
-                                font.pixelSize: 11
+                                font.pixelSize: deck.scale(11)
                                 font.bold: true
                             }
                             Text {
                                 text: root.testLabExpanded ? "Controlled synthetic motion, authoritative simulation, and compact results." : "Run existing synthetic scenarios without touching live controller output."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 elide: Text.ElideRight
                             }
                         }
@@ -4000,7 +4037,7 @@ Flickable {
                             text: root.testLabExpanded ? "CLOSE" : "OPEN"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
-                            font.pixelSize: 8
+                            font.pixelSize: deck.scale(8)
                             font.bold: true
                         }
                     }
@@ -4024,13 +4061,13 @@ Flickable {
                             Text {
                                 text: "SYNTHETIC TEST"
                                 color: deck.textPrimary
-                                font.pixelSize: 14
+                                font.pixelSize: deck.scale(14)
                                 font.bold: true
                             }
                             Text {
                                 text: "Scenario output is generated by the accepted preview/Test Lab model. It does not inject DirectInput, vJoy output, Automation, or profile activation."
                                 color: deck.textSecondary
-                                font.pixelSize: 10
+                                font.pixelSize: deck.scale(10)
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                             }
@@ -4074,7 +4111,7 @@ Flickable {
                         text: "Prediction error compares each prediction with physical position at its active horizon. Reversal timing is measured from the physical reversal; viewing or running this receipt never writes DirectInput, vJoy, Automation, or profile activation."
                         color: deck.textMuted
                         font.family: deck.telemetryFont
-                        font.pixelSize: 9
+                        font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
                     }
                 }

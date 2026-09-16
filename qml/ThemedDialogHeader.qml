@@ -41,7 +41,7 @@ Rectangle {
             width: parent.width
             text: header.heading.toUpperCase()
             color: header.legacy ? "#eef6f5" : header.theme.topGun ? header.theme.orangeBright : header.theme.textStrong
-            font.pixelSize: header.theme.topGun ? 16 : 14
+            font.pixelSize: theme.scale(header.theme.topGun ? 16 : 14)
             font.bold: true
             font.family: header.theme.topGun ? header.theme.displayFont : ""
             elide: Text.ElideRight
@@ -51,7 +51,7 @@ Rectangle {
             width: parent.width
             text: header.detail
             color: header.legacy ? "#94adb5" : header.theme.textMuted
-            font.pixelSize: 10
+            font.pixelSize: theme.scale(10)
             elide: Text.ElideRight
         }
     }
@@ -92,7 +92,7 @@ Rectangle {
             anchors.centerIn: parent
             text: "×"
             color: header.legacy ? "#dce7e8" : header.theme.textStrong
-            font.pixelSize: 20
+            font.pixelSize: theme.scale(20)
             font.bold: true
         }
         MouseArea {

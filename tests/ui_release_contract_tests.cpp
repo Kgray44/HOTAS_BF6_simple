@@ -426,6 +426,16 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     QVERIFY(virtualOutputCreator.contains(QStringLiteral("CUSTOM")));
     QVERIFY(virtualOutputCreator.contains(QStringLiteral("CONTINUOUS POVs")));
     QVERIFY(virtualOutputCreator.contains(QStringLiteral("DISCRETE POVs")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("Axis 1 / X")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("Axis 8 / Slider 1")));
+    QVERIFY(backendHeader.contains(QStringLiteral("previewVirtualOutputEdit")));
+    QVERIFY(backendHeader.contains(QStringLiteral("applyVirtualOutputEdit")));
+    QVERIFY(backendHeader.contains(QStringLiteral("previewVirtualOutputDelete")));
+    QVERIFY(backend.contains(QStringLiteral("m_virtualOutputRuntimeSyncPending")));
+    QVERIFY(backend.contains(QStringLiteral("hidHideIdentityWillBeInvalidated")));
+    QVERIFY(backend.contains(QStringLiteral("Setup Health must verify")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("EDIT IMPACT PREVIEW")));
+    QVERIFY(virtualOutputCreator.contains(QStringLiteral("Windows/games may treat the new vJoy Device")));
     QVERIFY(settings.contains(QStringLiteral("PREPARE VISIBILITY")));
     QVERIFY(settings.contains(QStringLiteral("already-open controller handle")));
     QVERIFY(readinessPanel.contains(QStringLiteral("RECONNECT CONTROLLER")));

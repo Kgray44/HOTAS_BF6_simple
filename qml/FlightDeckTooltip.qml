@@ -16,7 +16,7 @@ ToolTip {
         text: control.text
         color: control.tokens.textPrimary
         font.family: control.tokens.telemetryFont
-        font.pixelSize: 9
+        font.pixelSize: tokens.scale(9)
         wrapMode: Text.WordWrap
     }
     background: Rectangle {

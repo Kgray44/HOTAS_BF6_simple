@@ -29,9 +29,9 @@ Item {
                           : control.checked ? (control.legacy ? "#78aab9" : theme.orange)
                           : checkHit.containsMouse && control.legacy ? "#527482"
                                                                : (control.legacy ? "#435660" : theme.border)
-            Text { anchors.centerIn: parent; visible: control.checked; text: "✓"; color: control.legacy ? "#f0f4f5" : theme.textStrong; font.bold: true; font.pixelSize: 12 }
+            Text { anchors.centerIn: parent; visible: control.checked; text: "✓"; color: control.legacy ? "#f0f4f5" : theme.textStrong; font.bold: true; font.pixelSize: theme.scale(12) }
         }
-        Text { text: control.text; color: control.controlEnabled ? (control.legacy ? "#dce7e8" : theme.text) : (control.legacy ? "#879196" : theme.textFaint); font.pixelSize: 10; font.bold: true }
+        Text { text: control.text; color: control.controlEnabled ? (control.legacy ? "#dce7e8" : theme.text) : (control.legacy ? "#879196" : theme.textFaint); font.pixelSize: theme.scale(10); font.bold: true }
     }
     MouseArea {
         id: checkHit

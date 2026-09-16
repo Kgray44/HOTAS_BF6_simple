@@ -45,6 +45,7 @@ QString hidInstanceId(LPDIRECTINPUTDEVICE8W device)
 
 struct ObjectContext {
     DiscoveredController *controller = nullptr;
+    LPDIRECTINPUTDEVICE8W device = nullptr;
 };
 
 BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *context)
@@ -52,12 +53,19 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
     auto *objects = static_cast<ObjectContext *>(context);
     const DWORD type = DIDFT_GETTYPE(instance->dwType);
     if ((type & DIDFT_AXIS) != 0) {
+        const int enumerationIndex = objects->controller->axisCount;
         ++objects->controller->axisCount;
         const int index = physicalAxisIndexForDirectInputOffset(instance->dwOfs);
         if (index >= 0) {
             objects->controller->axes[static_cast<size_t>(index)] = true;
-            objects->controller->axisDescriptors[static_cast<size_t>(index)] =
-                describeDirectInputAxisObject(nullptr, *instance);
+            NativeAxisDescriptor &descriptor =
+                objects->controller->axisDescriptors[static_cast<size_t>(index)];
+            // Discovery is intentionally read-only: it captures the actual
+            // native range and object identity without requesting a data
+            // range or asking the user to move any control.
+            descriptor = describeDirectInputAxisObject(objects->device, *instance);
+            descriptor.enumerationIndex = enumerationIndex;
+            descriptor.acquisitionSourceResolved = descriptor.present;
         }
     } else if ((type & DIDFT_BUTTON) != 0) {
         ++objects->controller->buttonCount;
@@ -87,7 +95,7 @@ BOOL CALLBACK deviceCallback(const DIDEVICEINSTANCEW *instance, VOID *context)
     LPDIRECTINPUTDEVICE8W device = nullptr;
     if (SUCCEEDED(enumeration->directInput->CreateDevice(instance->guidInstance, &device, nullptr))) {
         device->SetDataFormat(&c_dfDIJoystick2);
-        ObjectContext objects{&controller};
+        ObjectContext objects{&controller, device};
         device->EnumObjects(objectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
         controller.buttonCount = std::min(controller.buttonCount, kMaximumPhysicalButtons);
         controller.povCount = std::min(controller.povCount, kMaximumPhysicalPovs);
