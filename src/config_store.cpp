@@ -25,7 +25,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 32;
+constexpr int kProfileSchemaVersion = 33;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -2147,6 +2147,191 @@ void retireDuplicatedImplicitDeviceButtonMappings(MapperConfiguration *configura
     }
 }
 
+bool isLegacyAdaptiveResponseOffPreset(const QString &presetId)
+{
+    return presetId.trimmed().compare(u"off"_qs, Qt::CaseInsensitive) == 0;
+}
+
+bool legacyAdaptiveResponseSelectionEnabled(const MapperConfiguration &configuration,
+                                            const QString &presetId, int axis, bool *enabled)
+{
+    if (!enabled) return false;
+    if (isLegacyAdaptiveResponseOffPreset(presetId)) {
+        *enabled = false;
+        return true;
+    }
+    const AdaptiveResponsePreset *preset = findAdaptiveResponsePreset(configuration, presetId);
+    if (!preset) return false;
+    // Every real V2.6.3 built-in preset carried its own enabled=true bit.
+    // Materialize that old implicit activation once at the owning layer.
+    if (preset->builtIn) {
+        *enabled = true;
+        return true;
+    }
+    const AdaptiveResponseAxisOverride &presetAxis = preset->axes[static_cast<size_t>(axis)];
+    if ((presetAxis.properties & AdaptiveResponseEnabled) == 0U) return false;
+    *enabled = presetAxis.settings.enabled;
+    return true;
+}
+
+bool materializeLegacyAdaptiveResponseLayerActivation(AdaptiveResponseLayer *layer,
+                                                       const MapperConfiguration &configuration)
+{
+    if (!layer) return false;
+    bool changed = false;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        AdaptiveResponseAxisOverride &entry = layer->axes[static_cast<size_t>(axis)];
+        if ((entry.properties & AdaptiveResponseEnabled) != 0U || entry.presetId.trimmed().isEmpty()) continue;
+        bool enabled = false;
+        if (!legacyAdaptiveResponseSelectionEnabled(configuration, entry.presetId, axis, &enabled)) continue;
+        entry.properties |= AdaptiveResponseEnabled;
+        entry.settings.enabled = enabled;
+        changed = true;
+    }
+    return changed;
+}
+
+bool materializeLegacyAdaptiveResponseActivation(MapperConfiguration *configuration)
+{
+    if (!configuration) return false;
+    bool changed = materializeLegacyAdaptiveResponseLayerActivation(
+        &configuration->adaptiveResponseGlobal, *configuration);
+    for (ProfileCategory &category : configuration->profileCategories) {
+        changed = materializeLegacyAdaptiveResponseLayerActivation(
+            &category.adaptiveResponse, *configuration) || changed;
+    }
+    for (ControllerProfile &profile : configuration->profiles) {
+        changed = materializeLegacyAdaptiveResponseLayerActivation(
+            &profile.adaptiveResponse, *configuration) || changed;
+        for (DeviceProfileMapping &mapping : profile.deviceMappings) {
+            changed = materializeLegacyAdaptiveResponseLayerActivation(
+                &mapping.adaptiveResponse, *configuration) || changed;
+        }
+    }
+    return changed;
+}
+
+bool normalizeAdaptiveResponseOverride(AdaptiveResponseAxisOverride *override)
+{
+    if (!override || !isLegacyAdaptiveResponseOffPreset(override->presetId)) return false;
+    // V2.6.3 used OFF as a pseudo-preset. Preserve the old disabled outcome
+    // while giving the configuration a real response to inspect or enable.
+    override->presetId = u"balanced"_qs;
+    override->settings.enabled = false;
+    override->properties |= AdaptiveResponseEnabled;
+    return true;
+}
+
+bool normalizeAdaptiveResponseLayer(AdaptiveResponseLayer *layer)
+{
+    if (!layer) return false;
+    bool changed = false;
+    for (AdaptiveResponseAxisOverride &axis : layer->axes) {
+        changed = normalizeAdaptiveResponseOverride(&axis) || changed;
+    }
+    return changed;
+}
+
+bool normalizeAdaptiveResponsePreset(AdaptiveResponsePreset *preset)
+{
+    if (!preset) return false;
+    bool changed = false;
+    for (AdaptiveResponseAxisOverride &axis : preset->axes) {
+        changed = normalizeAdaptiveResponseOverride(&axis) || changed;
+        // A reusable preset may define response behavior, but it must never
+        // carry an activation decision into the layer that selects it.
+        if ((axis.properties & AdaptiveResponseEnabled) != 0U) {
+            axis.properties &= ~AdaptiveResponseEnabled;
+            axis.settings.enabled = false;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool normalizeAdaptiveResponseAuthority(MapperConfiguration *configuration)
+{
+    if (!configuration) return false;
+    bool changed = false;
+    for (AdaptiveResponseAxisOverride &axis : configuration->adaptiveResponseGlobal.axes) {
+        if (axis.presetId.trimmed().isEmpty()) {
+            axis.presetId = u"balanced"_qs;
+            changed = true;
+        }
+    }
+    changed = normalizeAdaptiveResponseLayer(&configuration->adaptiveResponseGlobal) || changed;
+    for (ProfileCategory &category : configuration->profileCategories) {
+        changed = normalizeAdaptiveResponseLayer(&category.adaptiveResponse) || changed;
+    }
+    for (ControllerProfile &profile : configuration->profiles) {
+        changed = normalizeAdaptiveResponseLayer(&profile.adaptiveResponse) || changed;
+        for (DeviceProfileMapping &mapping : profile.deviceMappings) {
+            changed = normalizeAdaptiveResponseLayer(&mapping.adaptiveResponse) || changed;
+        }
+    }
+    for (AdaptiveResponsePreset &preset : configuration->adaptiveResponsePresets) {
+        changed = normalizeAdaptiveResponsePreset(&preset) || changed;
+    }
+    for (AutomationDefinition &automation : configuration->automations) {
+        for (AutomationActionDefinition &action : automation.actions) {
+            if (action.type != AutomationActionType::AdaptiveResponsePreset
+                || !isLegacyAdaptiveResponseOffPreset(action.adaptiveResponsePresetId)) continue;
+            // An old Automation OFF selection was an activation instruction,
+            // not a response behavior. Preserve that intent explicitly.
+            action.type = AutomationActionType::AdaptiveResponseDisable;
+            action.adaptiveResponsePresetId.clear();
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool jsonContainsLegacyAdaptiveResponseOffPreset(const QJsonValue &value)
+{
+    if (value.isArray()) {
+        for (const QJsonValue &entry : value.toArray()) {
+            if (jsonContainsLegacyAdaptiveResponseOffPreset(entry)) return true;
+        }
+        return false;
+    }
+    if (!value.isObject()) return false;
+    const QJsonObject object = value.toObject();
+    if (isLegacyAdaptiveResponseOffPreset(object.value(u"presetId"_qs).toString())
+        || isLegacyAdaptiveResponseOffPreset(object.value(u"adaptiveResponsePresetId"_qs).toString())) {
+        return true;
+    }
+    for (auto entry = object.constBegin(); entry != object.constEnd(); ++entry) {
+        if (jsonContainsLegacyAdaptiveResponseOffPreset(entry.value())) return true;
+    }
+    return false;
+}
+
+bool jsonHasAdaptiveResponsePresetActivation(const QJsonObject &json)
+{
+    const QJsonArray presets = json.value(u"adaptiveResponsePresets"_qs).toArray();
+    for (const QJsonValue &presetValue : presets) {
+        const QJsonArray axes = presetValue.toObject().value(u"axes"_qs).toArray();
+        for (const QJsonValue &axisValue : axes) {
+            const auto properties = static_cast<std::uint32_t>(axisValue.toObject()
+                .value(u"properties"_qs).toInt());
+            if ((properties & AdaptiveResponseEnabled) != 0U) return true;
+        }
+    }
+    return false;
+}
+
+bool jsonNeedsAdaptiveResponseAuthorityNormalization(const QJsonObject &json)
+{
+    if (jsonContainsLegacyAdaptiveResponseOffPreset(json)
+        || jsonHasAdaptiveResponsePresetActivation(json)) return true;
+    const QJsonArray axes = json.value(u"adaptiveResponseGlobal"_qs).toObject()
+        .value(u"axes"_qs).toArray();
+    return axes.size() == kPhysicalAxisCount
+        && std::any_of(axes.cbegin(), axes.cend(), [](const QJsonValue &axis) {
+            return axis.toObject().value(u"presetId"_qs).toString().trimmed().isEmpty();
+        });
+}
+
 } // namespace
 
 MapperConfiguration ConfigStore::load()
@@ -2162,9 +2347,12 @@ MapperConfiguration ConfigStore::load()
     }
 
     bool valid = false;
-    MapperConfiguration configuration = fromJson(document.object(), &valid);
+    const QJsonObject serialized = document.object();
+    const bool needsAdaptiveNormalization = jsonNeedsAdaptiveResponseAuthorityNormalization(serialized);
+    MapperConfiguration configuration = fromJson(serialized, &valid);
     if (!valid) return configuration;
-    if (document.object().value(u"version"_qs).toInt() < kProfileSchemaVersion) {
+    if (serialized.value(u"version"_qs).toInt() < kProfileSchemaVersion
+        || needsAdaptiveNormalization) {
         // Write the deterministic migration immediately, making every later
         // launch read the profile schema without duplicate default creation.
         save(configuration);
@@ -2183,10 +2371,11 @@ bool ConfigStore::save(const MapperConfiguration &configuration)
 QJsonObject ConfigStore::toJson(const MapperConfiguration &input)
 {
     // Exporting a fixture or a freshly created configuration must produce the
-    // same schema-29 canonical topology as an immediate-persistence edit.
+    // same schema-33 canonical topology as an immediate-persistence edit.
     // This remains control-plane work; MappingWorker receives an already
     // reconciled snapshot from AppBackend.
     MapperConfiguration configuration = input;
+    normalizeAdaptiveResponseAuthority(&configuration);
     migrateDeviceRigOutputOwnership(&configuration);
     reconcileSignalFlowState(&configuration);
     QJsonArray calibration;
@@ -2303,6 +2492,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         && version != 29
         && version != 30
         && version != 31
+        && version != 32
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -2857,6 +3047,12 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version < kProfileSchemaVersion) {
         seedBundledBattlefieldHelicopterProfile(&configuration);
     }
+    if (version < kProfileSchemaVersion) {
+        // V2.6.3 real presets carried enabled=true implicitly. V2.6.4 makes
+        // activation an owning-layer setting, so materialize that effective
+        // legacy behavior once before preset activation is removed.
+        materializeLegacyAdaptiveResponseActivation(&configuration);
+    }
     migrateDeviceRigOutputOwnership(&configuration);
     // Schema 27 made topology canonical. Restore the one-target focused
     // editor projection before reconciliation so a parser's legacy duplicate
@@ -2865,6 +3061,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
     if (version < 30) {
         retireDuplicatedImplicitDeviceButtonMappings(&configuration);
     }
+    normalizeAdaptiveResponseAuthority(&configuration);
     // The V2.6 migration backfills identity from the existing canonical
     // mappings without changing any route, processor setting, profile, or
     // runtime behavior. Reconciliation also safely retires IDs for removed
@@ -2881,7 +3078,12 @@ QJsonObject ConfigStore::portableProfileToJson(const ControllerProfile &profile)
 
 bool ConfigStore::portableProfileFromJson(const QJsonObject &json, ControllerProfile *profile)
 {
-    return profileFromJson(json, profile, false);
+    if (!profileFromJson(json, profile, false)) return false;
+    normalizeAdaptiveResponseLayer(&profile->adaptiveResponse);
+    for (DeviceProfileMapping &mapping : profile->deviceMappings) {
+        normalizeAdaptiveResponseLayer(&mapping.adaptiveResponse);
+    }
+    return true;
 }
 
 QJsonObject ConfigStore::portableSignalFlowTopologyToJson(const SignalFlowState &state,
@@ -2928,7 +3130,9 @@ QJsonObject ConfigStore::portableCategoryToJson(const ProfileCategory &category)
 
 bool ConfigStore::portableCategoryFromJson(const QJsonObject &json, ProfileCategory *category)
 {
-    return profileCategoryFromJson(json, category);
+    if (!profileCategoryFromJson(json, category)) return false;
+    normalizeAdaptiveResponseLayer(&category->adaptiveResponse);
+    return true;
 }
 
 QJsonObject ConfigStore::portableCurveToJson(const PersonalCurvePreset &preset)
@@ -2949,7 +3153,11 @@ QJsonObject ConfigStore::portableAdaptiveResponsePresetToJson(const AdaptiveResp
 bool ConfigStore::portableAdaptiveResponsePresetFromJson(const QJsonObject &json,
                                                           AdaptiveResponsePreset *preset)
 {
-    return adaptiveResponsePresetFromJson(json, preset);
+    if (!adaptiveResponsePresetFromJson(json, preset)) return false;
+    // Imported V2.6.3 content is normalized at this durable boundary too,
+    // before dependency validation can reject the retired OFF pseudo-preset.
+    normalizeAdaptiveResponsePreset(preset);
+    return true;
 }
 
 QJsonObject ConfigStore::portableAdaptiveResponseLayerToJson(const AdaptiveResponseLayer &layer)
@@ -2960,7 +3168,9 @@ QJsonObject ConfigStore::portableAdaptiveResponseLayerToJson(const AdaptiveRespo
 bool ConfigStore::portableAdaptiveResponseLayerFromJson(const QJsonValue &value,
                                                          AdaptiveResponseLayer *layer)
 {
-    return adaptiveResponseLayerFromJson(value, layer);
+    if (!adaptiveResponseLayerFromJson(value, layer)) return false;
+    normalizeAdaptiveResponseLayer(layer);
+    return true;
 }
 
 QJsonObject ConfigStore::portableAutomationToJson(const AutomationDefinition &automation)
@@ -2970,7 +3180,15 @@ QJsonObject ConfigStore::portableAutomationToJson(const AutomationDefinition &au
 
 bool ConfigStore::portableAutomationFromJson(const QJsonObject &json, AutomationDefinition *automation)
 {
-    return automationFromJson(json, automation);
+    if (!automationFromJson(json, automation)) return false;
+    for (AutomationActionDefinition &action : automation->actions) {
+        if (action.type == AutomationActionType::AdaptiveResponsePreset
+            && isLegacyAdaptiveResponseOffPreset(action.adaptiveResponsePresetId)) {
+            action.type = AutomationActionType::AdaptiveResponseDisable;
+            action.adaptiveResponsePresetId.clear();
+        }
+    }
+    return true;
 }
 
 QJsonObject ConfigStore::portableOutputLayoutToJson(const VirtualOutputLayout &layout)

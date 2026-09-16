@@ -36,7 +36,7 @@ Item {
     property int historyLastSequence: 0
     property int historyInspectIndex: -1
     property string comparisonScope: "preset"
-    property string comparisonTargetId: "off"
+    property string comparisonTargetId: "balanced"
     property var comparisonSamples: backendObject.adaptiveResponsePreviewAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     property var comparisonTestLabMetrics: backendObject.adaptiveResponseTestLabAtContext(scenario, comparisonScope, comparisonTargetId, backendObject.selectedAxisIndex)
     property bool showPhysicalTrace: true
@@ -1019,7 +1019,7 @@ Item {
                     }
                     Flow { width: parent.width; spacing: 8
                         Repeater { model: backendObject.adaptiveResponsePresets
-                            delegate: ActionButton { required property var modelData; objectName: "adaptivePresetButton_" + modelData.id; text: modelData.name.toUpperCase(); accent: effective().enabled ? (scopeInfo().presetId === modelData.id) : (modelData.id === "off"); ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: root.applySimplePreset(modelData.id) }
+                            delegate: ActionButton { required property var modelData; objectName: "adaptivePresetButton_" + modelData.id; text: modelData.name.toUpperCase(); accent: (scopeInfo().effectivePresetId || scopeInfo().presetId) === modelData.id; ToolTip.visible: hovered; ToolTip.text: modelData.description; enabled: root.editScope !== "preset"; onClicked: root.applySimplePreset(modelData.id) }
                         }
                     }
                     Row { spacing: 28
@@ -1183,7 +1183,7 @@ Item {
                     }
                     Column { visible: root.advancedExpanded; width: parent.width; spacing: 10
                         TuneGroup { title: "MODE AND OWNERSHIP"; detail: "Enablement and estimator model are independent overrides. Each row states whether this editing context owns the value or inherits it."
-                            RowLayout { width: parent.width
+                            RowLayout { visible: root.editScope !== "preset"; width: parent.width
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                                     Text { text: "Predictor enabled"; color: root.themeTokens.text; font.pixelSize: 12; font.bold: true }
                                     Caption { text: root.editScope === "global" ? "APPLICATION DEFAULT" : root.inheritedHere("enabled") ? "INHERITED FROM PARENT" : "OVERRIDE AT THIS LEVEL" }

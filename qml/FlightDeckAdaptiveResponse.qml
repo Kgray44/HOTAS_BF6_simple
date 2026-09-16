@@ -28,7 +28,7 @@ Flickable {
     property bool showBaselineTrace: false
     property bool showEstimatedTrace: false
     property string comparisonScope: "preset"
-    property string comparisonTargetId: "off"
+    property string comparisonTargetId: "balanced"
     property bool presetWorkshopExpanded: false
     property string presetNameDraft: ""
     property string presetDescriptionDraft: ""
@@ -2149,6 +2149,12 @@ Flickable {
                             id: presetButton
                             required property var modelData
                             objectName: "adaptivePresetButton_" + modelData.id
+                            // Selection identifies the configured response while the
+                            // separate enabled field is the sole activation authority.
+                            // Keep a selected-but-disabled response visible, but mute
+                            // its card so it cannot read as active prediction.
+                            readonly property bool adaptiveResponseActive: !!root.effective().enabled
+                            readonly property bool selectedWhileDisabled: checked && !adaptiveResponseActive
                             // Do not size the Button from its anchored contentItem: the
                             // resulting Button -> Column -> Button implicit-size cycle only
                             // surfaces on the native Windows scene graph as a polish loop.
@@ -2172,7 +2178,8 @@ Flickable {
                                     objectName: "adaptivePresetTitle_" + presetButton.modelData.id
                                     width: parent.width
                                     text: presetButton.modelData.name.toUpperCase()
-                                    color: presetButton.checked ? deck.primarySurface : deck.textPrimary
+                                    color: presetButton.checked && presetButton.adaptiveResponseActive
+                                        ? deck.primarySurface : deck.textPrimary
                                     font.family: deck.telemetryFont
                                     font.pixelSize: 10
                                     font.bold: true
@@ -2182,7 +2189,8 @@ Flickable {
                                     objectName: "adaptivePresetDescription_" + presetButton.modelData.id
                                     width: parent.width
                                     text: presetButton.modelData.id === "extreme" ? "EXPERIMENTAL" : presetButton.modelData.description
-                                    color: presetButton.checked ? deck.primarySurface : deck.textSecondary
+                                    color: presetButton.checked && presetButton.adaptiveResponseActive
+                                        ? deck.primarySurface : deck.textSecondary
                                     font.pixelSize: 9
                                     wrapMode: Text.WordWrap
                                     maximumLineCount: 2
@@ -2190,19 +2198,22 @@ Flickable {
                                 }
                             }
                             checkable: true
-                            // The effective enabled state is authoritative for
-                            // this chooser. A saved Custom/Extreme preset may
-                            // retain its tuning while disabled, but OFF must be
-                            // the only selected card until the user enables a
-                            // response again at the selected layer.
-                            checked: root.effective().enabled
-                                ? String(root.scopeInfo().presetId || "") === String(modelData.id)
-                                : String(modelData.id) === "off"
+                            // The configured preset remains selected and
+                            // editable whether or not its separate enabled
+                            // state currently activates prediction.
+                            checked: String(root.scopeInfo().effectivePresetId
+                                            || root.scopeInfo().presetId || "")
+                                === String(modelData.id)
                             background: Rectangle {
                                 radius: deck.radiusControl
-                                color: presetButton.checked ? deck.accent : presetButton.hovered ? deck.selected : deck.primarySurface
+                                color: presetButton.checked
+                                    ? (presetButton.selectedWhileDisabled ? deck.disabled : deck.accent)
+                                    : presetButton.hovered ? deck.selected : deck.primarySurface
                                 border.width: presetButton.activeFocus ? 2 : 1
-                                border.color: presetButton.activeFocus ? deck.focus : presetButton.checked ? deck.accent : deck.border
+                                border.color: presetButton.activeFocus ? deck.focus
+                                    : presetButton.checked
+                                        ? (presetButton.selectedWhileDisabled ? deck.disabled : deck.accent)
+                                        : deck.border
                             }
                             onClicked: root.applySimplePreset(modelData.id)
                             FlightDeckTooltip {

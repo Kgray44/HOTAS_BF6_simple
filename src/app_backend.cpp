@@ -1363,6 +1363,25 @@ QString adaptiveSourceLabel(const AdaptiveResponseAxisOverride &override, const 
     return override.presetId.isEmpty() ? fallback : override.presetId;
 }
 
+QString resolvedAdaptiveResponsePresetId(const MapperConfiguration &configuration,
+                                         const ControllerProfile &profile,
+                                         const DeviceProfileMapping *deviceMapping, int axis)
+{
+    QString result;
+    const auto apply = [&result, axis](const AdaptiveResponseLayer &layer) {
+        const QString candidate = layer.axes[static_cast<size_t>(axis)].presetId.trimmed();
+        if (!candidate.isEmpty()) result = candidate;
+    };
+
+    apply(configuration.adaptiveResponseGlobal);
+    if (const ProfileCategory *category = findProfileCategory(configuration, profile.categoryId)) {
+        apply(category->adaptiveResponse);
+    }
+    apply(profile.adaptiveResponse);
+    if (deviceMapping) apply(deviceMapping->adaptiveResponse);
+    return result;
+}
+
 QStringList adaptivePropertyLabels(std::uint32_t properties)
 {
     struct PropertyLabel {
@@ -1409,7 +1428,7 @@ QStringList adaptivePropertyLabels(std::uint32_t properties)
 RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext(
     const QString &scope, const QString &targetId, int physicalAxis,
     AdaptiveResponseAxisOverride *contextOverride, QString *source,
-    RuntimeAxisMapping *staticMapping) const
+    RuntimeAxisMapping *staticMapping, QString *effectivePresetId) const
 {
     const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
     const QString normalized = scope.trimmed().toCaseFolded();
@@ -1473,6 +1492,10 @@ RuntimeAdaptiveResponseConfig AppBackend::adaptiveResponseConfigurationAtContext
         ? resolveAdaptiveResponseConfiguration(contextConfiguration, contextProfile,
                                                *effectiveDeviceMapping, axis)
         : resolveAdaptiveResponseConfiguration(contextConfiguration, contextProfile, axis);
+    if (effectivePresetId) {
+        *effectivePresetId = resolvedAdaptiveResponsePresetId(
+            contextConfiguration, contextProfile, effectiveDeviceMapping, axis);
+    }
     if (staticMapping) {
         staticMapping->profile = effectiveDeviceMapping
             ? effectiveDeviceMapping->axes[static_cast<size_t>(axis)]
@@ -2895,8 +2918,9 @@ QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const
 {
     AdaptiveResponseAxisOverride contextOverride;
     QString source;
+    QString resolvedPresetId;
     const RuntimeAdaptiveResponseConfig effective = adaptiveResponseConfigurationAtContext(
-        scope, targetId, physicalAxis, &contextOverride, &source);
+        scope, targetId, physicalAxis, &contextOverride, &source, nullptr, &resolvedPresetId);
     if (!validAxis(physicalAxis)) return {};
     const int axis = std::clamp(physicalAxis, 0, kPhysicalAxisCount - 1);
     return {{u"axis"_qs, axis},
@@ -2907,6 +2931,10 @@ QVariantMap AppBackend::adaptiveResponseContextState(const QString &scope, const
             // the target that is being edited, not a worker publication.
             {u"runtimeEffective"_qs, adaptiveSettingsMap(effective)},
             {u"source"_qs, source},
+            // The raw preset id describes this edit layer's ownership.  The
+            // resolved id is display-only, so inherited selections remain
+            // visible without fabricating a local override.
+            {u"effectivePresetId"_qs, resolvedPresetId},
             {u"presetId"_qs, contextOverride.presetId},
             {u"properties"_qs, static_cast<qulonglong>(contextOverride.properties)}};
 }
@@ -2963,8 +2991,17 @@ bool AppBackend::setAdaptiveResponsePresetAtContext(const QString &scope, const 
     AdaptiveResponseLayer *layer = adaptiveResponseLayer(scope, targetId);
     if (!layer || !validAxis(physicalAxis) || !findAdaptiveResponsePreset(m_configuration, presetId)) return false;
     AdaptiveResponseAxisOverride &override = layer->axes[static_cast<size_t>(physicalAxis)];
+    const bool ownsEnabled = (override.properties & AdaptiveResponseEnabled) != 0U;
+    const bool enabled = override.settings.enabled;
     override = {};
     override.presetId = presetId;
+    // Selecting a response must retain this layer's existing activation
+    // decision (or its inherited decision). Presets are never activation
+    // commands.
+    if (ownsEnabled) {
+        override.properties |= AdaptiveResponseEnabled;
+        override.settings.enabled = enabled;
+    }
     propagateProfileAdaptiveResponseIfShared(scope, targetId, physicalAxis);
     persistAndApply();
     return true;
@@ -2982,6 +3019,10 @@ bool AppBackend::setAdaptiveResponsePropertyAtContext(const QString &scope, cons
 {
     const std::uint32_t bit = adaptivePropertyForKey(property);
     if (!validAxis(physicalAxis) || bit == 0) return false;
+    // Custom presets describe response behavior only. The selected layer is
+    // the sole durable owner of the enabled state.
+    if (scope.trimmed().compare(u"preset"_qs, Qt::CaseInsensitive) == 0
+        && bit == AdaptiveResponseEnabled) return false;
     AdaptiveResponseAxisOverride *entry = nullptr;
     if (scope.trimmed().compare(u"preset"_qs, Qt::CaseInsensitive) == 0) {
         const auto preset = std::find_if(m_configuration.adaptiveResponsePresets.begin(),
@@ -3076,9 +3117,11 @@ bool AppBackend::saveAdaptiveResponsePreset(const QString &name, const QString &
     preset.name = trimmed;
     preset.description = description.trimmed().left(160);
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-        preset.axes[static_cast<size_t>(axis)].properties = kAdaptiveResponseAllProperties;
+        preset.axes[static_cast<size_t>(axis)].properties =
+            kAdaptiveResponseAllProperties & ~AdaptiveResponseEnabled;
         preset.axes[static_cast<size_t>(axis)].settings = settingsFromRuntime(
             resolveAdaptiveResponseConfiguration(m_configuration, currentProfile(), axis));
+        preset.axes[static_cast<size_t>(axis)].settings.enabled = false;
     }
     m_configuration.adaptiveResponsePresets.push_back(std::move(preset));
     persistAndApply();
@@ -3099,6 +3142,10 @@ bool AppBackend::duplicateAdaptiveResponsePreset(const QString &presetId, const 
     copy.id = u"adaptive-"_qs + QUuid::createUuid().toString(QUuid::WithoutBraces);
     copy.name = trimmed;
     copy.builtIn = false;
+    for (AdaptiveResponseAxisOverride &axis : copy.axes) {
+        axis.properties &= ~AdaptiveResponseEnabled;
+        axis.settings.enabled = false;
+    }
     m_configuration.adaptiveResponsePresets.push_back(std::move(copy));
     persistAndApply();
     return true;

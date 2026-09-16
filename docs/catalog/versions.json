@@ -703,5 +703,16 @@
       "Flight Deck now provides canonical Virtual Output creation, global themed transient notifications, per-device editor context, safer source labels, and bounded live telemetry presentation across controller surfaces.",
       "The native-axis pipeline records deterministic X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 sampling identities independent of enumeration order; focused coverage protects Rz and all-axis sentinel routing."
     ]
+  },
+  {
+    "version": "2.6.4",
+    "title": "Adaptive Response activation hotfix (candidate)",
+    "summary": "Separates Adaptive Response selection from activation so an explicit enabled state is the only authority that starts or stops prediction.",
+    "highlights": [
+      "The selectable response set is Light, Balanced, Fast, Aggressive, and Extreme. A response remains visibly selected while prediction is disabled; there is no selectable OFF response.",
+      "Global, Category, Profile, and Device layers retain their enabled ownership while a response is chosen. Custom presets and Automation response selections remain parameter templates rather than activation commands.",
+      "Schema 33 materializes existing V2.6.3 preset activation at its owning layer, then legacy `off` identifiers migrate safely to a Balanced selection with explicit disabled activation across saved configuration, portable records, custom preset payloads, and old Automation actions.",
+      "Focused core, automation, QML contract, and isolated Flight Deck lifecycle coverage protects the separation and inherited-selection presentation. This candidate is not a protected-main merge, tag, package, public release, or physical controller-to-vJoy acceptance claim."
+    ]
   }
 ]

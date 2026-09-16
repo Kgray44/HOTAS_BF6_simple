@@ -170,7 +170,7 @@ void applyAdaptiveResponseOverride(AdaptiveResponseSettings &target,
                                    const AdaptiveResponseAxisOverride &override);
 const AdaptiveResponsePreset *findAdaptiveResponsePreset(
     const MapperConfiguration &configuration, const QString &id);
-const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets();
+const std::array<AdaptiveResponsePreset, 5> &builtInAdaptiveResponsePresets();
 RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     const MapperConfiguration &configuration, const ControllerProfile &profile, int axis);
 // V2.4 keeps the V2.3 response math unchanged while applying the existing

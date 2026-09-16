@@ -93,8 +93,12 @@ void applyProperties(AdaptiveResponseSettings &target, const AdaptiveResponseSet
 AdaptiveResponseAxisOverride completeOverride(const AdaptiveResponseSettings &settings)
 {
     AdaptiveResponseAxisOverride result;
-    result.properties = kAdaptiveResponseAllProperties;
+    // A response preset is configuration only. The enabled bit belongs to
+    // the owning Global/Category/Profile/device layer and must never be
+    // applied indirectly by selecting a preset.
+    result.properties = kAdaptiveResponseAllProperties & ~AdaptiveResponseEnabled;
     result.settings = settings;
+    result.settings.enabled = false;
     return result;
 }
 
@@ -211,13 +215,11 @@ void applyAdaptiveResponseOverride(AdaptiveResponseSettings &target,
     target = sanitizedAdaptiveResponseSettings(target);
 }
 
-const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
+const std::array<AdaptiveResponsePreset, 5> &builtInAdaptiveResponsePresets()
 {
-    static const std::array<AdaptiveResponsePreset, 6> presets = [] {
-        AdaptiveResponseSettings off;
-        off.enabled = false;
+    static const std::array<AdaptiveResponsePreset, 5> presets = [] {
         AdaptiveResponseSettings light;
-        light.enabled = true; light.maximumHorizonMs = 4.0F; light.maximumLead = 0.055F;
+        light.maximumHorizonMs = 4.0F; light.maximumLead = 0.055F;
         light.velocityResponse = 0.56F; light.accelerationResponse = 0.35F;
         light.onsetAssist = 0.10F; light.onsetCap = 0.06F;
         light.sustainedAssist = 0.12F; light.sustainedCap = 0.06F;
@@ -226,7 +228,7 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         light.normalMovementResponse = 0.24F; light.rapidMovementResponse = 0.58F;
         light.engagementSensitivity = 0.30F;
         AdaptiveResponseSettings balanced;
-        balanced.enabled = true; balanced.maximumHorizonMs = 8.0F; balanced.maximumLead = 0.12F;
+        balanced.maximumHorizonMs = 8.0F; balanced.maximumLead = 0.12F;
         balanced.onsetAssist = 0.18F; balanced.onsetCap = 0.10F;
         balanced.sustainedAssist = 0.22F; balanced.sustainedCap = 0.10F;
         balanced.horizonExtension = 0.22F; balanced.horizonExtensionCapMs = 8.0F;
@@ -260,8 +262,7 @@ const std::array<AdaptiveResponsePreset, 6> &builtInAdaptiveResponsePresets()
         extreme.turningPointProtection = 1.0F; extreme.turningPointMargin = 0.08F;
         extreme.normalMovementResponse = 1.0F; extreme.rapidMovementResponse = 1.0F;
         extreme.engagementSensitivity = 0.94F;
-        return std::array<AdaptiveResponsePreset, 6>{
-            makeBuiltInPreset(u"off"_qs, u"Off"_qs, u"Direct physical response with no prediction."_qs, off),
+        return std::array<AdaptiveResponsePreset, 5>{
             makeBuiltInPreset(u"light"_qs, u"Light"_qs, u"Subtle help during credible everyday movement."_qs, light),
             makeBuiltInPreset(u"balanced"_qs, u"Balanced"_qs, u"Useful everyday response with smooth maneuver headroom."_qs, balanced),
             makeBuiltInPreset(u"fast"_qs, u"Fast"_qs, u"Earlier normal engagement and strong maneuver response."_qs, fast),
@@ -297,7 +298,7 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     applyLayer(settings, profile.adaptiveResponse, configuration, axis);
     settings = sanitizedAdaptiveResponseSettings(settings);
     RuntimeAdaptiveResponseConfig runtime;
-    runtime.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
+    runtime.enabled = settings.enabled;
     runtime.model = settings.model;
     runtime.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
     runtime.maximumLead = settings.maximumLead;
@@ -340,7 +341,7 @@ RuntimeAdaptiveResponseConfig resolveAdaptiveResponseConfiguration(
     applyLayer(settings, deviceMapping.adaptiveResponse, configuration, axis);
     settings = sanitizedAdaptiveResponseSettings(settings);
     RuntimeAdaptiveResponseConfig runtime;
-    runtime.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
+    runtime.enabled = settings.enabled;
     runtime.model = settings.model;
     runtime.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
     runtime.maximumLead = settings.maximumLead;
@@ -401,7 +402,7 @@ RuntimeAdaptiveResponseConfig applyAdaptiveResponseRuntimeOverride(
     settings.engagementSensitivity = base.engagementSensitivity;
     applyProperties(settings, override.settings, override.properties);
     settings = sanitizedAdaptiveResponseSettings(settings);
-    base.enabled = settings.enabled && settings.maximumHorizonMs > 0.0F;
+    base.enabled = settings.enabled;
     base.model = settings.model;
     base.maximumHorizonSeconds = settings.maximumHorizonMs / 1000.0F;
     base.maximumLead = settings.maximumLead;

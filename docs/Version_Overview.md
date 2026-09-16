@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.3**
+**Current version: v2.6.4**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.4 — Adaptive Response activation hotfix (candidate)
+
+Separates Adaptive Response selection from activation so an explicit enabled state is the only authority that starts or stops prediction.
+
+- The selectable response set is Light, Balanced, Fast, Aggressive, and Extreme. A response remains visibly selected while prediction is disabled; there is no selectable OFF response.
+- Global, Category, Profile, and Device layers retain their enabled ownership while a response is chosen. Custom presets and Automation response selections remain parameter templates rather than activation commands.
+- Schema 33 materializes existing V2.6.3 preset activation at its owning layer, then legacy `off` identifiers migrate safely to a Balanced selection with explicit disabled activation across saved configuration, portable records, custom preset payloads, and old Automation actions.
+- Focused core, automation, QML contract, and isolated Flight Deck lifecycle coverage protects the separation and inherited-selection presentation. This candidate is not a protected-main merge, tag, package, public release, or physical controller-to-vJoy acceptance claim.
 
 ## v2.6.3 — Verified multi-controller Profiles & readiness
 

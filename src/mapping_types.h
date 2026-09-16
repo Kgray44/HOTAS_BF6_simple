@@ -1679,6 +1679,12 @@ inline bool profileTriggerBindingEnabled(const ProfileTriggerBinding &binding)
 inline MapperConfiguration defaultConfiguration()
 {
     MapperConfiguration configuration;
+    // Adaptive Response always retains a real configured response, even
+    // before it has been enabled. Activation remains the separate, explicit
+    // `enabled` setting on each inherited layer.
+    for (AdaptiveResponseAxisOverride &axis : configuration.adaptiveResponseGlobal.axes) {
+        axis.presetId = u"balanced"_qs;
+    }
     ProfileCategory general;
     general.id = generalProfileCategoryId();
     general.name = u"General"_qs;

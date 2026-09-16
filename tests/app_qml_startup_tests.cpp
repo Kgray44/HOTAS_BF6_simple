@@ -384,9 +384,18 @@ bool verifyAdaptiveResponseAxisSelection(hotas::AppBackend &backend, QObject *su
         return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Light preset action did not resolve the selected axis"));
     }
     settlePresentation();
-    if (!adaptive->property("state").toMap().value(QStringLiteral("effective")).toMap()
-            .value(QStringLiteral("enabled")).toBool()) {
-        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response Light preset did not apply to the selected axis"));
+    const bool lightEnabled = backend.setAdaptiveResponsePropertyAtContext(
+        QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex(),
+        QStringLiteral("enabled"), true);
+    QQmlExpression refreshLightPreview(qmlContext(adaptive), adaptive, QStringLiteral("setPreview(); true"));
+    refreshLightPreview.evaluate();
+    settlePresentation();
+    const QVariantMap lightState = backend.adaptiveResponseContextState(
+        QStringLiteral("profile"), backend.activeProfileId(), backend.selectedAxisIndex());
+    if (!lightEnabled || refreshLightPreview.hasError()
+        || lightState.value(QStringLiteral("presetId")).toString() != QStringLiteral("light")
+        || !lightState.value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Adaptive Response explicit enable did not retain the selected Light preset"));
     }
     auto *manualInput = adaptive->findChild<QQuickItem *>(QStringLiteral("adaptiveSimulatorManualInput"));
     if (!manualInput || manualInput->width() < 120) {
@@ -782,7 +791,7 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
     const QString profileId = backend.activeProfileId();
     const auto configurationForPreset = [](const QString &preset) {
         hotas::RuntimeAdaptiveResponseConfig configuration;
-        configuration.enabled = preset != QStringLiteral("off");
+        configuration.enabled = true;
         configuration.model = hotas::AdaptiveResponseModel::Auto;
         configuration.maximumLead = preset == QStringLiteral("extreme") ? 0.40F
             : preset == QStringLiteral("aggressive") ? 0.27F
@@ -897,7 +906,11 @@ bool verifyAdaptiveResponsePreviewTruth(hotas::AppBackend &backend)
         }
         return true;
     };
-    for (const QString &preset : {QStringLiteral("off"), QStringLiteral("fast"),
+    if (!backend.setAdaptiveResponsePropertyAtContext(QStringLiteral("profile"), profileId, axis,
+                                                      QStringLiteral("enabled"), true)) {
+        return failPresentationLifecycleTest(QStringLiteral("Preview parity could not enable its profile fixture"));
+    }
+    for (const QString &preset : {QStringLiteral("fast"),
          QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         if (!verifyProductionPredictor(preset)) return false;
     }
@@ -2873,8 +2886,8 @@ bool verifyFlightDeckAdaptivePresetChoiceSafeArea(QObject *adaptiveVisual, const
         return textRect.left() >= inset - 0.5 && textRect.right() <= choice->width() - inset + 0.5
             && textRect.top() >= inset - 0.5 && textRect.bottom() <= choice->height() - inset + 0.5;
     };
-    for (const QString &presetId : {QStringLiteral("off"), QStringLiteral("light"),
-                                    QStringLiteral("balanced"), QStringLiteral("fast"),
+    for (const QString &presetId : {QStringLiteral("light"), QStringLiteral("balanced"),
+                                    QStringLiteral("fast"),
                                     QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         auto *choice = findVisualItemByObjectName(adaptiveVisualItem,
             QStringLiteral("adaptivePresetButton_") + presetId);
@@ -5554,24 +5567,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive basic state did not render")
             .arg(appearance));
     }
+    const QString configuredPresetId = adaptiveVisual->property("state").toMap()
+        .value(QStringLiteral("effectivePresetId")).toString();
     QQmlExpression disableForEvidence(qmlContext(adaptiveVisual), adaptiveVisual,
         QStringLiteral("(function() { updateParameter('enabled', false); return !effective().enabled; })()"));
     const QVariant disabledForEvidence = disableForEvidence.evaluate();
     settlePresentation();
-    const auto *offPresetAfterDisable = findVisualItemByObjectName(adaptiveVisualItem,
-        QStringLiteral("adaptivePresetButton_off"));
-    const auto *extremePresetAfterDisable = findVisualItemByObjectName(adaptiveVisualItem,
-        QStringLiteral("adaptivePresetButton_extreme"));
+    const auto *configuredPresetAfterDisable = findVisualItemByObjectName(adaptiveVisualItem,
+        QStringLiteral("adaptivePresetButton_") + configuredPresetId);
     if (disableForEvidence.hasError() || !disabledForEvidence.toBool()
-        || !offPresetAfterDisable || !offPresetAfterDisable->property("checked").toBool()
-        || !extremePresetAfterDisable || extremePresetAfterDisable->property("checked").toBool()
+        || configuredPresetId.isEmpty() || configuredPresetId.compare(QStringLiteral("off"), Qt::CaseInsensitive) == 0
+        || findVisualItemByObjectName(adaptiveVisualItem, QStringLiteral("adaptivePresetButton_off"))
+        || !configuredPresetAfterDisable || !configuredPresetAfterDisable->property("checked").toBool()
+        || !configuredPresetAfterDisable->property("selectedWhileDisabled").toBool()
         || !captureShell(QStringLiteral("adaptive-off"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive off state did not select OFF exclusively")
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive off state did not retain a muted configured response")
             .arg(appearance));
     }
     QQmlExpression enableForEvidence(qmlContext(adaptiveVisual), adaptiveVisual,
         QStringLiteral("(function() { updateParameter('enabled', true); return effective().enabled; })()"));
-    if (enableForEvidence.hasError() || !enableForEvidence.evaluate().toBool()) {
+    if (enableForEvidence.hasError() || !enableForEvidence.evaluate().toBool()
+        || configuredPresetAfterDisable->property("selectedWhileDisabled").toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive off-state fixture could not restore")
             .arg(appearance));
     }
@@ -6089,7 +6105,9 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
     if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), profileId, 0,
                                                      QStringLiteral("light"))
         || !backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), profileId, 1,
-                                                        QStringLiteral("balanced"))) {
+                                                        QStringLiteral("balanced"))
+        || !backend.setAdaptiveResponsePropertyAtContext(QStringLiteral("profile"), profileId, 0,
+                                                         QStringLiteral("enabled"), false)) {
         return fail(QStringLiteral("could not establish isolated Adaptive Response fixture"));
     }
     settlePresentation();
@@ -6099,9 +6117,14 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
     if (!clickItem(fastPreset)) return fail(QStringLiteral("Fast preset card was not pointer reachable"));
     const QVariantMap rollAfterPreset = backend.adaptiveResponseContextState(
         QStringLiteral("profile"), profileId, 0);
-    if (!rollAfterPreset.value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()
+    if (rollAfterPreset.value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()
+        || rollAfterPreset.value(QStringLiteral("presetId")).toString() != QStringLiteral("fast")
+        || !fastPreset->property("enabled").toBool() || !fastPreset->property("checked").toBool()
         || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore) {
-        return fail(QStringLiteral("preset pointer action did not remain axis-isolated"));
+        return fail(QStringLiteral("disabled preset pointer action did not preserve activation and selected response"));
+    }
+    if (findItem(QStringLiteral("adaptivePresetButton_off"))) {
+        return fail(QStringLiteral("OFF remained a selectable Adaptive Response preset"));
     }
     for (const QVariant &entry : backend.adaptiveResponsePresets()) {
         const QString id = entry.toMap().value(QStringLiteral("id")).toString();
@@ -6110,14 +6133,25 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
         }
     }
     auto *enabled = findItem(QStringLiteral("flightDeckAdaptiveEnabled"));
-    const bool enabledBefore = rollAfterPreset.value(QStringLiteral("effective")).toMap()
-        .value(QStringLiteral("enabled")).toBool();
     if (!clickItem(enabled)
+        || !backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()
         || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
-                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool() == enabledBefore
+                .value(QStringLiteral("presetId")).toString() != QStringLiteral("fast")
         || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 1) != pitchBefore
-        || !clickItem(enabled)) {
-        return fail(QStringLiteral("enable pointer action was not scoped to the selected axis"));
+        || !clickItem(enabled)
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()
+        || backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("presetId")).toString() != QStringLiteral("fast")) {
+        return fail(QStringLiteral("enable toggle did not remain the sole scoped activation authority"));
+    }
+    // The activation-preservation exercise ends disabled.  Re-enable before
+    // asserting that advanced tuning changes the active prediction preview.
+    if (!clickItem(enabled)
+        || !backend.adaptiveResponseContextState(QStringLiteral("profile"), profileId, 0)
+                .value(QStringLiteral("effective")).toMap().value(QStringLiteral("enabled")).toBool()) {
+        return fail(QStringLiteral("enable toggle could not restore the active preview fixture"));
     }
     auto *advancedToggle = findItem(QStringLiteral("flightDeckAdaptiveAdvancedToggle"));
     if (!clickItem(advancedToggle) || !adaptive->property("advancedExpanded").toBool()) {
