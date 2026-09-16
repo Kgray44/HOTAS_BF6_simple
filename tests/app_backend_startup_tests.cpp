@@ -1120,6 +1120,53 @@ bool verifyMultiControllerMemberIsolation()
     return true;
 }
 
+bool verifyHidHideContextRejectsReconnectedMemberIdentity()
+{
+    constexpr auto kOptionalRecordId = "multi-controller-xbox";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureMultiControllerRigFixtureForTest()) {
+        std::fprintf(stderr, "HidHide context fixture could not be configured\n");
+        return false;
+    }
+    const QString oldContext = backend->hidHideHealthContextKeyForTest();
+    if (oldContext.isEmpty()
+        || !backend->reconnectFixtureControllerWithHidIdentityForTest(
+            QLatin1String(kOptionalRecordId), QStringLiteral("HID\\MULTI_CONTROLLER_XBOX\\RECONNECTED"))) {
+        std::fprintf(stderr, "fixture optional controller could not reconnect with a new HID identity\n");
+        return false;
+    }
+    const QString currentContext = backend->hidHideHealthContextKeyForTest();
+    const bool contextChanged = currentContext != oldContext;
+    const bool staleAccepted = backend->hidHideHealthResultAcceptedForTest(oldContext);
+    const bool currentAccepted = backend->hidHideHealthResultAcceptedForTest(currentContext);
+    if (!contextChanged || staleAccepted || !currentAccepted) {
+        std::fprintf(stderr, "HidHide stale result state changed=%d staleAccepted=%d currentAccepted=%d\n",
+                     contextChanged, staleAccepted, currentAccepted);
+        return false;
+    }
+    return true;
+}
+
+bool verifyHidHideHealthActionFeedbackContracts()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    backend->setHidHideHealthRepairFixtureForTest(true);
+    const QVariantMap available = backend->reviewHidHideHealthRepair();
+    backend->setHidHideHealthRepairFixtureForTest(false);
+    const QVariantMap unavailable = backend->reviewHidHideHealthRepair();
+    const bool copied = backend->copyHidHideHealthEvidence();
+    const QVariantMap doctor = backend->openHidHideDoctor();
+    if (!available.value(QStringLiteral("success")).toBool()
+        || available.value(QStringLiteral("nextAction")).toString() != QStringLiteral("repair-hidhide-access")
+        || unavailable.value(QStringLiteral("success")).toBool()
+        || unavailable.value(QStringLiteral("nextAction")).toString() != QStringLiteral("open-hidhide-doctor")
+        || !copied || doctor.value(QStringLiteral("success")).toBool()) {
+        std::fprintf(stderr, "HidHide review/copy/Doctor action result contract failed\n");
+        return false;
+    }
+    return true;
+}
+
 bool verifySidebarActivationLifecycle()
 {
     auto backend = std::make_unique<hotas::AppBackend>();
@@ -1254,9 +1301,9 @@ bool verifySelectedProfileEditorContext()
 
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 20> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 22> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 20> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 22> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1275,6 +1322,8 @@ const std::array<std::pair<QString, StartupFixture>, 20> &startupFixtures()
         {QStringLiteral("acquired-output"), verifyAcquiredOutputWaitsForReportWithoutBecomingUnavailable},
         {QStringLiteral("stale-waiting"), verifyWaitingForUserDoesNotLatch},
         {QStringLiteral("multi-controller"), verifyMultiControllerMemberIsolation},
+        {QStringLiteral("hidhide-context-fingerprint"), verifyHidHideContextRejectsReconnectedMemberIdentity},
+        {QStringLiteral("hidhide-health-actions"), verifyHidHideHealthActionFeedbackContracts},
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
     }};

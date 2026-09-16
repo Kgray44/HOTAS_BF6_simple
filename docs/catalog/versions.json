@@ -692,18 +692,6 @@
     ]
   },
   {
-    "version": "2.6.5",
-    "title": "HidHide Health, diagnostics, and safe in-app repair (candidate)",
-    "summary": "Adds a contextual, low-frequency HidHide Health control-plane model that explains readiness, preserves independent diagnostic evidence, and routes only already-qualified repair authority without altering the mapping hot path.",
-    "highlights": [
-      "HidHide Health evaluates installation evidence, package and driver availability, control API access, mapper exemption, physical-device isolation, managed virtual-output visibility, exact identity resolution, and recovery state as typed dimensions with explicit Ready, Repair Available, User Action Required, Doctor Recommended, Restart Required, or Unknown states.",
-      "Full Check uses only bounded read-only HidHide control access and documented GET_ACTIVE, GET_INVERSE, GET_WHITELIST, and GET_BLACKLIST IOCTLs. Individual failures retain native error evidence and never justify an inferred repair or a new direct driver mutation.",
-      "The Overview, Devices, Diagnostics, and Flight Deck surfaces share the same status vocabulary, detailed per-check evidence, Full Check, repair-plan preview, existing scoped repair entry points, copyable evidence, and an optional sanitized HidHide Doctor handoff.",
-      "App Health receives stable HIDHIDE_ findings with affected context, concrete consequences, and a repairability classification. Missing or incomplete evidence remains visibly unknown rather than becoming a health claim.",
-      "This candidate deliberately excludes Signal Flow and graphical-editor work, which belongs to V2.6.6. It preserves Controller Readiness, Setup Truth, existing repair transactions, persistent configuration schema 32, and the allocation-free DirectInput-to-vJoy mapping path."
-    ]
-  },
-  {
     "version": "2.6.4",
     "title": "Adaptive Response activation hotfix",
     "summary": "Separates Adaptive Response selection from activation so an explicit enabled state is the only authority that starts or stops prediction.",
@@ -725,6 +713,19 @@
       "Setup Health distinguishes required blocking failures from optional-controller advisories and preserves last-known-good HidHide evidence through transient inspection delays. HidHide read-back and controller identity evidence remain separate facts.",
       "Flight Deck now provides canonical Virtual Output creation, global themed transient notifications, per-device editor context, safer source labels, and bounded live telemetry presentation across controller surfaces.",
       "The native-axis pipeline records deterministic X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 sampling identities independent of enumeration order; focused coverage protects Rz and all-axis sentinel routing."
+    ]
+  },
+  {
+    "version": "2.6.5",
+    "title": "HidHide Health, diagnostics, and safe in-app repair",
+    "summary": "Adds a contextual, low-frequency HidHide Health control-plane model that explains readiness, preserves independent diagnostic evidence, and routes only already-qualified repair authority without altering the mapping hot path.",
+    "highlights": [
+      "HidHide Health evaluates installation evidence, package and driver availability, control API access, mapper exemption, physical-device isolation, managed virtual-output visibility, exact identity resolution, and recovery state as typed dimensions with explicit Ready, Repair Available, User Action Required, Doctor Recommended, Restart Required, or Unknown states.",
+      "Full Check uses only bounded read-only HidHide control access and documented GET_ACTIVE, GET_INVERSE, GET_WHITELIST, and GET_BLACKLIST IOCTLs. Individual failures retain native error evidence and never justify an inferred repair or a new direct driver mutation.",
+      "The Overview, Devices, Diagnostics, and Flight Deck surfaces share the same status vocabulary, detailed per-check evidence, Full Check, repair-plan preview, existing scoped repair entry points, copyable evidence, and an optional sanitized HidHide Doctor handoff.",
+      "App Health receives stable HIDHIDE_ findings with affected context, concrete consequences, and a repairability classification. Missing or incomplete evidence remains visibly unknown rather than becoming a health claim.",
+      "Slow HidHide control reads stay on a bounded, cancellable background worker with a visible elapsed and delayed-response state, one scoped retry for a timed-out control-endpoint open, context-bound stale-result rejection, and distinct last-known-good evidence. Exact controller identity can become verified while its HidHide isolation read-back remains pending.",
+      "V2.6.5 deliberately excludes Signal Flow and graphical-editor work, which belongs to V2.6.6. It preserves Controller Readiness, Setup Truth, existing repair transactions, persistent configuration schema 32, and the allocation-free DirectInput-to-vJoy mapping path."
     ]
   }
 ]

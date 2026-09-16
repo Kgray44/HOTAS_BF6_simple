@@ -1849,6 +1849,11 @@ Page {
                     width: parent.width
                     height: 138
                     property var health: backend.hidhideHealth
+                    // Presentation-only elapsed time; this never polls the
+                    // HidHide provider or the mapping / DirectInput workers.
+                    property int hidhideElapsedTick: 0
+                    Timer { interval: 100; repeat: true; running: Boolean(legacyHidHideHealthDiagnostics.health.inProgress)
+                        onTriggered: legacyHidHideHealthDiagnostics.hidhideElapsedTick++ }
                     Column {
                         anchors.fill: parent
                         anchors.margins: 13
@@ -1856,16 +1861,39 @@ Page {
                         Text { text: "HIDHIDE HEALTH · " + String(legacyHidHideHealthDiagnostics.health.overallState || "CHECKING")
                             color: String(legacyHidHideHealthDiagnostics.health.overallState || "").indexOf("READY") >= 0 ? "#a8cfba" : "#e1c887"
                             font.pixelSize: 11; font.bold: true }
-                        Text { width: parent.width; text: legacyHidHideHealthDiagnostics.health.currentStage || "Read-only control-plane inspection; mapping remains independent."
+                        Text { width: parent.width; text: {
+                                const tick = legacyHidHideHealthDiagnostics.hidhideElapsedTick
+                                const health = legacyHidHideHealthDiagnostics.health
+                                if (health.inProgress) {
+                                    const elapsed = Math.max(0, Math.floor(Number(health.elapsedMs || 0) / 1000))
+                                    const lastGood = health.lastKnownGoodContextMatches
+                                        ? " · LAST VERIFIED " + String(health.lastKnownGoodState || "UNKNOWN") : ""
+                                    return String(health.currentStage || "Checking HidHide in the background")
+                                        + " · " + String(health.currentInspectionState || "CHECKING IN BACKGROUND")
+                                        + " · " + elapsed + "s elapsed" + lastGood
+                                }
+                                return health.currentStage || "Read-only control-plane inspection; mapping remains independent."
+                            }
                             color: "#a5afb3"; font.pixelSize: 10; elide: Text.ElideRight }
                         Row {
                             spacing: 8
-                            Button { text: legacyHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
+                            Button { objectName: "legacyHidHideFullCheck"; text: legacyHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
                                 enabled: !legacyHidHideHealthDiagnostics.health.inProgress
                                 onClicked: backend.runHidHideFullCheck() }
-                            Button { text: "CANCEL"; visible: legacyHidHideHealthDiagnostics.health.inProgress; onClicked: backend.cancelHidHideFullCheck() }
-                            Button { text: "REVIEW REPAIR"; onClicked: backend.reviewHidHideHealthRepair() }
-                            Button { text: "COPY SANITIZED EVIDENCE"; onClicked: backend.copyHidHideHealthEvidence() }
+                            Button { objectName: "legacyHidHideCancel"; text: "CANCEL"; visible: legacyHidHideHealthDiagnostics.health.inProgress; onClicked: backend.cancelHidHideFullCheck() }
+                            Button { text: "REVIEW REPAIR"; onClicked: {
+                                    const result = backend.reviewHidHideHealthRepair()
+                                    if (root.notificationCenter) root.notificationCenter.enqueue(result,
+                                        "No HidHide repair is available", "Run a Full Check or open Doctor for deeper diagnosis.", 5000)
+                                } }
+                            Button { text: "COPY SANITIZED EVIDENCE"; onClicked: {
+                                    const copied = backend.copyHidHideHealthEvidence()
+                                    const result = copied
+                                        ? ({ success: true, title: "Sanitized HidHide evidence copied", message: "The shareable diagnostic report is on the clipboard." })
+                                        : ({ success: false, title: "Could not copy HidHide evidence", message: "The clipboard is unavailable in this session." })
+                                    if (root.notificationCenter) root.notificationCenter.enqueue(result,
+                                        "Could not copy HidHide evidence", "The clipboard is unavailable in this session.", 5000)
+                                } }
                         }
                         Text { width: parent.width; text: ((legacyHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
                                 return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")

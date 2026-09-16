@@ -2402,6 +2402,61 @@ bool verifyUnifiedVerifierPresentation(QObject *surface, const QString &theme)
     return true;
 }
 
+bool verifyHidHideFullCheckQmlLifecycle(hotas::AppBackend &backend, QObject *surface, const QString &theme)
+{
+    const bool legacy = theme == QStringLiteral("Legacy");
+    const bool standard = theme == QStringLiteral("Standard");
+    if (!legacy && !standard) return true;
+    if (!selectPage(surface, 3)) return false;
+    QObject *diagnostics = pageItem(surface, 3);
+    const QString fullName = legacy ? QStringLiteral("legacyHidHideFullCheck") : QStringLiteral("standardHidHideFullCheck");
+    const QString cancelName = legacy ? QStringLiteral("legacyHidHideCancel") : QStringLiteral("standardHidHideCancel");
+    QObject *full = diagnostics ? diagnostics->findChild<QObject *>(fullName) : nullptr;
+    QObject *cancel = diagnostics ? diagnostics->findChild<QObject *>(cancelName) : nullptr;
+    if (!full || !cancel) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 HidHide diagnostics controls were not loaded")
+            .arg(theme));
+    }
+    QElapsedTimer settleTimer;
+    settleTimer.start();
+    while (backend.hidhideHealthCheckActive() && settleTimer.elapsed() < 8'000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QTest::qWait(10);
+    }
+    if (backend.hidhideHealthCheckActive()) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 HidHide diagnostics did not settle before the Full Check")
+            .arg(theme));
+    }
+    // The actual provider can fail immediately on a development host, which
+    // cannot prove the in-progress control state. This startup-only fixture
+    // models a cancellable 500 ms read-only response without reaching the
+    // owner's HidHide installation.
+    backend.configureDelayedHidHideHealthForTest(500);
+    const QVariantMap started = backend.runHidHideFullCheck();
+    settlePresentation();
+    const bool checkingPresentation = started.value(QStringLiteral("success")).toBool()
+        && backend.hidhideHealthCheckActive() && !full->property("enabled").toBool()
+        && cancel->property("visible").toBool() && backend.cancelHidHideFullCheck();
+    if (!checkingPresentation) {
+        backend.cancelHidHideFullCheck();
+        return failPresentationLifecycleTest(QStringLiteral("%1 Full Check did not keep Run unavailable and Cancel visible while in progress")
+            .arg(theme));
+    }
+    QElapsedTimer terminalTimer;
+    terminalTimer.start();
+    while (backend.hidhideHealthCheckActive() && terminalTimer.elapsed() < 8'000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QTest::qWait(10);
+    }
+    settlePresentation();
+    if (backend.hidhideHealthCheckActive() || !full->property("enabled").toBool()
+        || cancel->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("%1 Full Check controls did not return to terminal availability")
+            .arg(theme));
+    }
+    return true;
+}
+
 bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QString &theme)
 {
     QObject *presentation = shell->findChild<QObject *>(QStringLiteral("presentationLoader"));
@@ -2511,6 +2566,7 @@ bool verifyPageLifecycle(hotas::AppBackend &backend, QWindow *shell, const QStri
     if (!verifyDevicesResponsiveLayout(surface, shell, theme)) return false;
     if (!verifyOverviewReadinessLayout(surface, shell, theme)) return false;
     if (!verifyAdaptiveResponseAxisSelection(backend, surface, qobject_cast<QQuickWindow *>(shell))) return false;
+    if (!verifyHidHideFullCheckQmlLifecycle(backend, surface, theme)) return false;
     return selectPage(surface, 8);
 }
 

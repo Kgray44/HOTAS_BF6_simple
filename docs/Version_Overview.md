@@ -8,7 +8,7 @@ This document summarizes what each versioned project release or candidate added.
 
 Versions are shown newest first.
 
-## v2.6.5 — HidHide Health, diagnostics, and safe in-app repair (candidate)
+## v2.6.5 — HidHide Health, diagnostics, and safe in-app repair
 
 Adds a contextual, low-frequency HidHide Health control-plane model that explains readiness, preserves independent diagnostic evidence, and routes only already-qualified repair authority without altering the mapping hot path.
 
@@ -16,7 +16,8 @@ Adds a contextual, low-frequency HidHide Health control-plane model that explain
 - Full Check uses only bounded read-only HidHide control access and documented GET_ACTIVE, GET_INVERSE, GET_WHITELIST, and GET_BLACKLIST IOCTLs. Individual failures retain native error evidence and never justify an inferred repair or a new direct driver mutation.
 - The Overview, Devices, Diagnostics, and Flight Deck surfaces share the same status vocabulary, detailed per-check evidence, Full Check, repair-plan preview, existing scoped repair entry points, copyable evidence, and an optional sanitized HidHide Doctor handoff.
 - App Health receives stable HIDHIDE_ findings with affected context, concrete consequences, and a repairability classification. Missing or incomplete evidence remains visibly unknown rather than becoming a health claim.
-- This candidate deliberately excludes Signal Flow and graphical-editor work, which belongs to V2.6.6. It preserves Controller Readiness, Setup Truth, existing repair transactions, persistent configuration schema 32, and the allocation-free DirectInput-to-vJoy mapping path.
+- Slow HidHide control reads stay on a bounded, cancellable background worker with a visible elapsed and delayed-response state, one scoped retry for a timed-out control-endpoint open, context-bound stale-result rejection, and distinct last-known-good evidence. Exact controller identity can become verified while its HidHide isolation read-back remains pending.
+- V2.6.5 deliberately excludes Signal Flow and graphical-editor work, which belongs to V2.6.6. It preserves Controller Readiness, Setup Truth, existing repair transactions, persistent configuration schema 32, and the allocation-free DirectInput-to-vJoy mapping path.
 
 ## v2.6.3 — Verified multi-controller Profiles & readiness
 
@@ -28,6 +29,15 @@ Strengthens the V2.6.2 setup foundation with a truthful verified-device lifecycl
 - Setup Health distinguishes required blocking failures from optional-controller advisories and preserves last-known-good HidHide evidence through transient inspection delays. HidHide read-back and controller identity evidence remain separate facts.
 - Flight Deck now provides canonical Virtual Output creation, global themed transient notifications, per-device editor context, safer source labels, and bounded live telemetry presentation across controller surfaces.
 - The native-axis pipeline records deterministic X, Y, Z, Rx, Ry, Rz, Slider 0, and Slider 1 sampling identities independent of enumeration order; focused coverage protects Rz and all-axis sentinel routing.
+
+## v2.6.4 — Adaptive Response activation hotfix
+
+Separates Adaptive Response selection from activation so an explicit enabled state is the only authority that starts or stops prediction.
+
+- The selectable response set is Light, Balanced, Fast, Aggressive, and Extreme. A response remains visibly selected while prediction is disabled; there is no selectable OFF response.
+- Global, Category, Profile, and Device layers retain their enabled ownership while a response is chosen. Custom presets and Automation response selections remain parameter templates rather than activation commands.
+- Schema 33 materializes existing V2.6.3 preset activation at its owning layer, then legacy `off` identifiers migrate safely to a Balanced selection with explicit disabled activation across saved configuration, portable records, custom preset payloads, and old Automation actions.
+- Focused core, automation, QML contract, and isolated Flight Deck lifecycle coverage protect the separation and inherited-selection presentation.
 
 ## v2.6.2 — Setup Truth & Repair Convergence
 

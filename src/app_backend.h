@@ -368,6 +368,13 @@ public:
     bool configureMultiControllerRigFixtureForTest();
     bool commitExactControllerVerificationForTest(const QString &recordId);
     bool disconnectFixtureControllerForTest(const QString &recordId);
+    QString hidHideHealthContextKeyForTest() const;
+    bool reconnectFixtureControllerWithHidIdentityForTest(const QString &recordId, const QString &hidInstanceId);
+    bool hidHideHealthResultAcceptedForTest(const QString &contextKey);
+    void setHidHideHealthRepairFixtureForTest(bool qualifiedRepairAvailable);
+    // Installs a cancellable, read-only delayed provider for native QML
+    // lifecycle coverage. This seam exists only in startup-test binaries.
+    void configureDelayedHidHideHealthForTest(int delayMs);
     QVariantMap beginSetupCheckSessionForTest();
     bool completeFreshSetupCheckWithFixturePlansForTest();
     bool configureStaleWaitingForUserFixtureForTest();
@@ -1540,6 +1547,7 @@ private:
     QPointer<QThread> m_verificationThread;
     HidHideHealthService m_hidhideHealthService;
     HidHideHealthSnapshot m_hidhideHealthSnapshot;
+    HidHideHealthSnapshot m_hidhideHealthLastKnownGoodSnapshot;
     QList<HidHideHealthActivity> m_hidhideHealthActivity;
     QPointer<QThread> m_hidhideHealthThread;
     std::shared_ptr<std::atomic_bool> m_hidhideHealthCancellation;

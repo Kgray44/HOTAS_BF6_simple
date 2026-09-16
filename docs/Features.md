@@ -210,7 +210,7 @@ The app provides five persistent visual systems without allowing presentation st
 - Flight Deck is a native, persisted fifth experience with its own navigation, workspace hierarchy, Light/Dark semantics, and Signal Flow surface rather than a recolored Standard page.
 - Instant theme switching with theme state stored separately from mapper configuration.
 - Overview landing page plus dedicated Axes, Buttons, Curves, Diagnostics, Settings, Profiles, and Automation pages.
-- Adaptive Response page and Flight Deck Response Lab with per-axis preset strip, Global/Category/Profile scope selection, three primary everyday-flight controls, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
+- Adaptive Response page and Flight Deck Response Lab with a per-axis response strip, explicit independent enabled state, Global/Category/Profile scope selection, three primary everyday-flight controls, advanced controls, live telemetry, static preview, and repeatable Test Lab scenarios.
 - Shared themed selectors, numeric inputs, dialogs, cards, and status controls.
 - Curve Transition Smoothing, Device Rigs, top-bar device context, and unified verification use the same shared themed surfaces in Legacy, Standard, Top Gun, and Day Ops.
 - Overview names the active Device Rig and effective profile; Settings is limited to application preferences and global maintenance, while physical devices and Virtual Outputs are owned by Devices.
@@ -287,6 +287,7 @@ Persistent configuration evolves through explicit schema migrations while transi
 - Schema 22 adds the editable Battlefield 6 / Helicopter starter once through the existing portable-profile schema; user-created name collisions, later edits, and deletion are preserved.
 - Schema 23 preserves safely resolvable existing single-controller setups as one-member Device Rigs even when that known saved controller is offline or still needs verification; genuinely ambiguous identity remains non-destructive and action-required.
 - Schema 24 and Adaptive Response schema 2 persist Normal Movement Response, Rapid Movement Response, and Engagement Sensitivity across global, category, profile, device, custom-preset, and portable-profile resolution while missing fields inherit conservative Balanced values.
+- Schema 33 materializes each v2.6.3 preset's former activation behavior at its owning layer, then removes activation from presets. Legacy `off` preset identifiers normalize to the selected Balanced response with explicit disabled activation across saved configuration, portable profiles, custom presets, and Automation actions; selecting a response never changes enabled state.
 - Schema 25 persists Profile automatic-selection policy only; Manual Override is runtime/session scoped and is never serialized. Schema-24-and-earlier categories migrate their saved default (or first profile) to Preferred and the remaining profiles to deterministic Fallback order.
 - Schema 28 persists canonical Signal Flow routes, processors, mixers, stable identities, and presentation metadata while preserving implicit focused-editor defaults during migration and portable-profile round trips.
 - Per-device profile mappings keep physical source identity explicit while gameplay profiles retain portable behavior and saved controller calibration remains local.

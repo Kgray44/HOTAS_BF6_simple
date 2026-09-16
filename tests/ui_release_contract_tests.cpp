@@ -46,6 +46,8 @@ private slots:
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
     void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
     void setupAssistantAndOutputCreationExposeObservableContracts();
+    void hidHideDiagnosticsKeepFullCheckAndActionFeedbackObservable();
+    void hidHideControlPlaneRemainsWorkerBoundAndResponsive();
 };
 
 void UiReleaseContractTests::headerIsTheOnlyPrimaryMappingControl()
@@ -1329,6 +1331,44 @@ void UiReleaseContractTests::curveTransitionSmoothingUsesThemedSettingsAndProfil
     QVERIFY(profiles.contains(QStringLiteral("backendObject.setProfileCurveTransitionDurationMs")));
     QVERIFY(profiles.contains(QStringLiteral("Card {")));
     QVERIFY(backendHeader.contains(QStringLiteral("Q_PROPERTY(bool curveTransitionSmoothingEnabled")));
+}
+
+void UiReleaseContractTests::hidHideDiagnosticsKeepFullCheckAndActionFeedbackObservable()
+{
+    for (const QString &page : {sourceFile(QStringLiteral("qml/Standard.qml")),
+                                sourceFile(QStringLiteral("qml/Legacy.qml"))}) {
+        QVERIFY(page.contains(QStringLiteral("RUN FULL CHECK")));
+        QVERIFY(page.contains(QStringLiteral("enabled: !")));
+        QVERIFY(page.contains(QStringLiteral("health.inProgress")));
+        QVERIFY(page.contains(QStringLiteral("text: \"CANCEL\"; visible:")));
+        QVERIFY(page.contains(QStringLiteral("backend.reviewHidHideHealthRepair()")));
+        QVERIFY(page.contains(QStringLiteral("backend.copyHidHideHealthEvidence()")));
+        QVERIFY(page.contains(QStringLiteral("notificationCenter.enqueue(result")));
+        QVERIFY(page.contains(QStringLiteral("Sanitized HidHide evidence copied")));
+        QVERIFY(page.contains(QStringLiteral("CHECKING IN BACKGROUND")));
+        QVERIFY(page.contains(QStringLiteral("LAST VERIFIED")));
+        QVERIFY(page.contains(QStringLiteral("hidhideElapsedTick")));
+    }
+}
+
+void UiReleaseContractTests::hidHideControlPlaneRemainsWorkerBoundAndResponsive()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString health = sourceFile(QStringLiteral("src/hidhide_health_service.cpp"));
+    const QString protocol = sourceFile(QStringLiteral("src/hidhide_core/hidhide_read_only_protocol.cpp"));
+    const qsizetype healthStart = backend.indexOf(QStringLiteral("void AppBackend::startHidHideHealthCheck("));
+    const qsizetype healthEnd = backend.indexOf(QStringLiteral("void AppBackend::completeHidHideHealthCheck("), healthStart);
+    QVERIFY(healthStart >= 0 && healthEnd > healthStart);
+    const QString workerLaunch = backend.mid(healthStart, healthEnd - healthStart);
+    QVERIFY(workerLaunch.contains(QStringLiteral("QThread::create([this, context, depth, cancellation]")));
+    QVERIFY(workerLaunch.contains(QStringLiteral("thread->start(QThread::LowPriority)")));
+    QVERIFY(workerLaunch.contains(QStringLiteral("m_hidhideHealthService.inspect(context, depth, cancellation.get()")));
+    QVERIFY(health.contains(QStringLiteral("kDirectControlOpenRetryLimit = 1")));
+    QVERIFY(health.contains(QStringLiteral("HidHide response delayed; retrying bounded read-only control access in the background")));
+    QVERIFY(protocol.contains(QStringLiteral("FILE_FLAG_OVERLAPPED")));
+    QVERIFY(protocol.contains(QStringLiteral("CancelIoEx(device, &overlapped)")));
+    QVERIFY(protocol.contains(QStringLiteral("kProtocolTimeoutMs")));
+    QVERIFY(!protocol.contains(QStringLiteral("INFINITE")));
 }
 
 QTEST_MAIN(UiReleaseContractTests)

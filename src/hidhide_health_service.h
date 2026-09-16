@@ -33,8 +33,16 @@ struct HidHidePhysicalDeviceHealth final {
     HidHideHealthState state = HidHideHealthState::Unknown;
     HidHideRepairability repairability = HidHideRepairability::None;
     QString technicalDetails;
+    // Persisted ownership is history, not live identity proof.  It is kept
+    // separate so callers cannot accidentally use it as a hide-list target.
+    int historicalOwnedHidInstanceCount = 0;
 
     QVariantMap toVariantMap() const;
+};
+
+struct HidHideDriverPackageEvidence final {
+    QString packageId;
+    QString version;
 };
 
 struct HidHideHealthContext final {
@@ -65,8 +73,17 @@ struct HidHideHealthContext final {
     bool packageEvidenceInspected = false;
     QString clientVersion;
     QString cliVersion;
-    QString loadedDriverVersion;
-    QString driverStorePackageVersion;
+    // An on-disk binary is explicitly not runtime-loaded-driver evidence.
+    QString onDiskDriverVersion;
+    bool runtimeLoadedDriverVersionKnown = false;
+    QString runtimeLoadedDriverVersion;
+    // Driver Store may contain several packages.  An active package is only
+    // meaningful when a concrete binding source supplied it; never select a
+    // candidate merely because it sorts first.
+    QList<HidHideDriverPackageEvidence> driverStorePackageCandidates;
+    bool activeDriverPackageKnown = false;
+    QString activeDriverPackageId;
+    QString activeDriverPackageVersion;
     bool pendingPackageRestartKnown = false;
     bool pendingPackageRestart = false;
     QList<HidHidePhysicalDeviceHealth> physicalDevices;
@@ -117,9 +134,16 @@ struct HidHideHealthSnapshot final {
     QString contextKey;
     HidHideHealthScanDepth scanDepth = HidHideHealthScanDepth::Essential;
     HidHideHealthState overallState = HidHideHealthState::Unknown;
+    // Current control-plane timing is intentionally distinct from
+    // lastChecked. A slow GET is not fresh health evidence, but it must be
+    // visible as a live background operation.
+    QDateTime inspectionStartedAt;
     QDateTime lastChecked;
     bool inProgress = false;
     bool cancelled = false;
+    bool responseDelayed = false;
+    int retryCount = 0;
+    int retryLimit = 1;
     int checksCompleted = 0;
     int checksTotal = 0;
     int percentComplete = 0;

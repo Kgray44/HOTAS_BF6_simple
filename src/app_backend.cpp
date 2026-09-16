@@ -2791,6 +2791,12 @@ bool AppBackend::configureMultiControllerRigFixtureForTest()
     m_discoveredControllers.push_back(std::move(discovered));
     m_controllerInventoryInitialized = true;
 
+    // This fixture exercises the live Device Rig context fingerprint.  The
+    // initial ready-to-activate fixture deliberately leaves its Rig merely
+    // selected, so make this multi-member topology active before building the
+    // health context.
+    m_configuration.activeDeviceRigId = rig->id;
+    synchronizeActiveOutputLayout();
     if (!compileDeviceRigRuntime(m_configuration, rig->id, normalProfileId()).valid
         || !ConfigStore::save(m_configuration)) return false;
     ++m_configurationGeneration;
@@ -2859,6 +2865,93 @@ bool AppBackend::disconnectFixtureControllerForTest(const QString &recordId)
     emit deviceRigsChanged();
     emit stateChanged();
     return true;
+}
+
+QString AppBackend::hidHideHealthContextKeyForTest() const
+{
+    return buildHidHideHealthContext(0).contextKey;
+}
+
+bool AppBackend::reconnectFixtureControllerWithHidIdentityForTest(const QString &recordId, const QString &hidInstanceId)
+{
+    const QString targetId = recordId.trimmed();
+    const QString nextIdentity = hidInstanceId.trimmed();
+    if (targetId.isEmpty() || nextIdentity.isEmpty()) return false;
+    const auto discovered = std::find_if(m_discoveredControllers.begin(), m_discoveredControllers.end(),
+        [this, &targetId](const DiscoveredController &candidate) {
+            const ControllerMatch match = ControllerManager::match(candidate, m_configuration.savedControllers);
+            return candidate.connected && !candidate.virtualDevice && !match.ambiguous && match.recordId == targetId;
+        });
+    if (discovered == m_discoveredControllers.end()) return false;
+    discovered->hidInstanceId = nextIdentity;
+    reconcileDeviceRigInventory();
+    rebuildControllerUiModel();
+    m_setupTruthSnapshot = buildSetupTruthSnapshot();
+    m_setupTruthCheckSnapshot = m_setupTruthSnapshot;
+    emit deviceRigsChanged();
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::hidHideHealthResultAcceptedForTest(const QString &contextKey)
+{
+    const HidHideHealthContext current = buildHidHideHealthContext(m_hidhideHealthNextSessionId++);
+    m_hidhideHealthSnapshot = HidHideHealthService::checkingSnapshot(current, HidHideHealthScanDepth::Full);
+    HidHideHealthSnapshot simulated = m_hidhideHealthSnapshot;
+    simulated.contextKey = contextKey;
+    simulated.inProgress = false;
+    simulated.overallState = HidHideHealthState::Ready;
+    completeHidHideHealthCheck(std::move(simulated));
+    return !m_hidhideHealthSnapshot.inProgress && m_hidhideHealthSnapshot.contextKey == contextKey;
+}
+
+void AppBackend::setHidHideHealthRepairFixtureForTest(bool qualifiedRepairAvailable)
+{
+    m_hidhideHealthSnapshot = {};
+    m_hidhideHealthSnapshot.overallState = qualifiedRepairAvailable
+        ? HidHideHealthState::RepairAvailable : HidHideHealthState::DoctorRecommended;
+    HidHideHealthDimension dimension;
+    dimension.id = u"application-access"_qs;
+    dimension.title = u"HOTAS BF6 application access"_qs;
+    dimension.shortSummary = qualifiedRepairAvailable ? u"Fixture mapper exemption is absent."_qs
+                                                      : u"Fixture evidence is incomplete."_qs;
+    dimension.explanation = u"Fixture-only health action projection."_qs;
+    dimension.repairability = qualifiedRepairAvailable ? HidHideRepairability::FixNow
+                                                         : HidHideRepairability::DoctorRecommended;
+    m_hidhideHealthSnapshot.dimensions = {dimension};
+}
+
+void AppBackend::configureDelayedHidHideHealthForTest(int delayMs)
+{
+    const int boundedDelayMs = std::clamp(delayMs, 1, 2'500);
+    m_hidhideHealthService = HidHideHealthService([boundedDelayMs](std::atomic_bool *cancelled,
+                                                                   HidHideReadOnlyProtocol::ObservationCallback callback) {
+        // The delay is deliberately cancellable in small worker-only slices:
+        // QML can remain interactive and a Full Check cancellation never has
+        // to wait for a fixture sleep to end.
+        for (int elapsed = 0; elapsed < boundedDelayMs; elapsed += 10) {
+            if (cancelled && cancelled->load()) return QList<HidHideReadObservation>{};
+            QThread::msleep(static_cast<unsigned long>(std::min(10, boundedDelayMs - elapsed)));
+        }
+        if (cancelled && cancelled->load()) return QList<HidHideReadObservation>{};
+        QList<HidHideReadObservation> observations;
+        const auto append = [&observations, &callback](const QString &operation, const QString &value = {}) {
+            HidHideReadObservation observation;
+            observation.id = u"fixture-"_qs + operation;
+            observation.operation = operation;
+            observation.state = HidHideReadState::Pass;
+            observation.value = value;
+            observation.summary = u"Delayed read-only fixture response."_qs;
+            observations.append(observation);
+            if (callback) callback(observation);
+        };
+        append(u"OPEN_CONTROL"_qs);
+        append(u"GET_ACTIVE"_qs, u"true"_qs);
+        append(u"GET_INVERSE"_qs, u"false"_qs);
+        append(u"GET_WHITELIST"_qs);
+        append(u"GET_BLACKLIST"_qs);
+        return observations;
+    });
 }
 
 QVariantMap AppBackend::beginSetupCheckSessionForTest()
@@ -4813,8 +4906,8 @@ void AppBackend::scheduleVerifiedControllerDefaultIsolation()
 
     m_defaultIsolationTaskActive = true;
     for (const PendingIsolation &target : pending) {
-        setControllerVerificationProgress(target.recordId, u"CONFIGURING ISOLATION"_qs,
-            QString(u"%1 identity is verified. Reconciling its exact default HidHide isolation and reading it back."_qs)
+        setControllerVerificationProgress(target.recordId, u"VERIFIED"_qs,
+            QString(u"%1 identity is verified. HidHide isolation is checking in the background and will update separately."_qs)
                 .arg(target.displayName));
     }
     QThread *thread = QThread::create([this, pending] {
@@ -4904,8 +4997,8 @@ void AppBackend::configureVerifiedControllerDefaultIsolation(
 
     m_defaultIsolationAttemptedRecords.insert(targetId);
     m_defaultIsolationTaskActive = true;
-    setControllerVerificationProgress(targetId, u"CONFIGURING ISOLATION"_qs,
-        QString(u"%1 identity is verified. Configuring its default HidHide isolation and reading it back."_qs)
+    setControllerVerificationProgress(targetId, u"VERIFIED"_qs,
+        QString(u"%1 identity is verified. HidHide isolation is checking in the background and will update separately."_qs)
             .arg(record->displayName));
 
     QThread *thread = QThread::create([this, targetId, instances] {
@@ -7113,7 +7206,26 @@ bool AppBackend::hidhideMapperAllowed() const
 
 QVariantMap AppBackend::hidhideHealth() const
 {
-    return m_hidhideHealthSnapshot.toVariantMap();
+    QVariantMap result = m_hidhideHealthSnapshot.toVariantMap();
+    const bool currentContextMatchesLastKnownGood = !m_hidhideHealthLastKnownGoodSnapshot.contextKey.isEmpty()
+        && m_hidhideHealthLastKnownGoodSnapshot.contextKey == m_hidhideHealthSnapshot.contextKey;
+    const qint64 elapsedMs = m_hidhideHealthSnapshot.inProgress
+        && m_hidhideHealthSnapshot.inspectionStartedAt.isValid()
+        ? m_hidhideHealthSnapshot.inspectionStartedAt.msecsTo(QDateTime::currentDateTimeUtc()) : 0;
+    // This is a presentation-only clock; no timer, polling, or worker is
+    // created by the getter. The QML card owns its repaint tick while an
+    // already-running bounded worker is active.
+    result.insert(u"elapsedMs"_qs, elapsedMs);
+    result.insert(u"currentInspectionState"_qs, m_hidhideHealthSnapshot.inProgress
+        ? (m_hidhideHealthSnapshot.responseDelayed || elapsedMs >= 500
+            ? u"RESPONSE DELAYED"_qs : u"CHECKING IN BACKGROUND"_qs)
+        : u"IDLE"_qs);
+    result.insert(u"lastKnownGoodContextMatches"_qs, currentContextMatchesLastKnownGood);
+    result.insert(u"lastKnownGoodState"_qs, currentContextMatchesLastKnownGood
+        ? hidHideHealthStateLabel(m_hidhideHealthLastKnownGoodSnapshot.overallState) : QString{});
+    result.insert(u"lastKnownGoodAt"_qs, currentContextMatchesLastKnownGood
+        ? m_hidhideHealthLastKnownGoodSnapshot.lastChecked.toString(Qt::ISODateWithMs) : QString{});
+    return result;
 }
 
 bool AppBackend::hidhideHealthCheckActive() const
@@ -7145,8 +7257,6 @@ HidHideHealthContext AppBackend::buildHidHideHealthContext(quint64 sessionId) co
     context.inspectionComplete = hidhide.inspectionComplete;
     context.inspectionTimedOut = hidhide.inspectionTimedOut;
     context.pendingReadinessRecovery = m_readiness.hasPendingRecovery();
-    context.expectedPhysicalInstances = physical.hidHideDeviceInstanceIds;
-    if (context.expectedPhysicalInstances.isEmpty()) context.expectedPhysicalInstances = hidhide.selectedControllerInstanceIds;
     context.hiddenDeviceInstances = hidhide.hiddenDeviceInstanceIds;
     if (const DeviceRig *rig = findDeviceRig(m_configuration, context.deviceRigId)) {
         for (const DeviceRigMember &member : rig->members) {
@@ -7164,23 +7274,23 @@ HidHideHealthContext AppBackend::buildHidHideHealthContext(quint64 sessionId) co
             device.connected = discovered && discovered->connected;
             if (discovered && !discovered->hidInstanceId.trimmed().isEmpty())
                 device.exactCurrentHidInstances.append(discovered->hidInstanceId);
-            if (record) {
-                for (const QString &instance : record->ownedHidHideDeviceInstances) {
-                    if (!instance.trimmed().isEmpty() && !device.exactCurrentHidInstances.contains(instance, Qt::CaseInsensitive))
-                        device.exactCurrentHidInstances.append(instance);
-                }
-            }
-            device.identityResolved = !device.exactCurrentHidInstances.isEmpty();
+            // A persisted owned-HID entry is historical ownership evidence,
+            // not a present hardware observation.  Never promote it to an
+            // exact current HidHide target or use it to judge visibility.
+            device.historicalOwnedHidInstanceCount = record ? record->ownedHidHideDeviceInstances.size() : 0;
+            device.identityResolved = device.connected && !device.exactCurrentHidInstances.isEmpty();
+            if (device.identityResolved) context.expectedPhysicalInstances.append(device.exactCurrentHidInstances);
             context.physicalDevices.append(std::move(device));
         }
     }
-    if (context.physicalDevices.isEmpty() && !context.selectedControllerId.isEmpty()) {
+    if (context.physicalDevices.isEmpty() && physical.connected && !physical.hidInstanceId.trimmed().isEmpty()) {
         HidHidePhysicalDeviceHealth device;
         device.controllerRecordId = context.selectedControllerId;
         device.friendlyName = physical.name;
         device.connected = physical.connected;
-        device.exactCurrentHidInstances = context.expectedPhysicalInstances;
-        device.identityResolved = context.selectedControllerResolved;
+        device.exactCurrentHidInstances = {physical.hidInstanceId};
+        device.identityResolved = true;
+        context.expectedPhysicalInstances = device.exactCurrentHidInstances;
         context.physicalDevices.append(std::move(device));
     }
     if (const VirtualOutputLayout *layout = activeOutputLayout(); layout && layout->hidhideManaged
@@ -7194,9 +7304,28 @@ HidHideHealthContext AppBackend::buildHidHideHealthContext(quint64 sessionId) co
                     && ControllerReadinessService::normalizeDeviceInstanceId(candidate) == expected;
             });
     }
-    const QString outputId = activeOutputLayout() ? activeOutputLayout()->id : QString{};
-    context.contextKey = QStringList{context.deviceRigId, context.selectedControllerId,
-        physical.hidInstanceId, outputId, context.mapperExecutable}.join(QLatin1Char('|'));
+    std::sort(context.expectedPhysicalInstances.begin(), context.expectedPhysicalInstances.end(),
+        [](const QString &left, const QString &right) { return left.compare(right, Qt::CaseInsensitive) < 0; });
+    context.expectedPhysicalInstances.removeDuplicates();
+    const VirtualOutputLayout *layout = activeOutputLayout();
+    const QString outputId = layout ? layout->id : QString{};
+    QStringList contextParts{QStringLiteral("rig=%1").arg(context.deviceRigId),
+        QStringLiteral("mapper=%1").arg(context.mapperExecutable),
+        QStringLiteral("output=%1").arg(outputId),
+        QStringLiteral("outputHid=%1").arg(layout ? layout->hidHideDeviceInstanceId : QString{})};
+    QList<HidHidePhysicalDeviceHealth> fingerprintDevices = context.physicalDevices;
+    std::sort(fingerprintDevices.begin(), fingerprintDevices.end(), [](const HidHidePhysicalDeviceHealth &left,
+                                                                        const HidHidePhysicalDeviceHealth &right) {
+        return left.controllerRecordId.compare(right.controllerRecordId, Qt::CaseInsensitive) < 0;
+    });
+    for (HidHidePhysicalDeviceHealth device : fingerprintDevices) {
+        std::sort(device.exactCurrentHidInstances.begin(), device.exactCurrentHidInstances.end(),
+            [](const QString &left, const QString &right) { return left.compare(right, Qt::CaseInsensitive) < 0; });
+        contextParts.append(QStringLiteral("member=%1|required=%2|connected=%3|hid=%4")
+            .arg(device.controllerRecordId).arg(device.required).arg(device.connected)
+            .arg(device.exactCurrentHidInstances.join(QLatin1Char(','))));
+    }
+    context.contextKey = contextParts.join(QLatin1Char('|'));
     return context;
 }
 
@@ -7293,6 +7422,10 @@ void AppBackend::completeHidHideHealthCheck(HidHideHealthSnapshot snapshot)
         ? u"Full HidHide Health check completed"_qs : u"Essential HidHide Health check completed"_qs,
         hidHideHealthStateLabel(snapshot.overallState));
     snapshot.activity = m_hidhideHealthActivity;
+    if (!snapshot.cancelled && (snapshot.overallState == HidHideHealthState::Ready
+                                || snapshot.overallState == HidHideHealthState::Degraded)) {
+        m_hidhideHealthLastKnownGoodSnapshot = snapshot;
+    }
     m_hidhideHealthSnapshot = std::move(snapshot);
     emit stateChanged();
 }

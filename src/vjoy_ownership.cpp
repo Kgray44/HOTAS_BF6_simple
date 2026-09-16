@@ -180,14 +180,15 @@ VJoyOwnershipEvidence classifyVJoyOwnership(int deviceId, int rawStatus, bool ow
 VJoyOwnershipEvidence queryVJoyOwnership(int deviceId, quint64 hotasProcessId)
 {
 #ifdef HOTAS_CONTROLLER_READINESS_TESTING
-    // ControllerReadinessTests owns a fake vJoyConfig boundary. Allow its
-    // narrow Device-2 fixture to declare matching ownership evidence instead
-    // of accidentally reading the developer machine's actual vJoy driver.
-    // This code is not compiled into the mapper or any production test.
-    if (qEnvironmentVariableIntValue("HOTAS_TEST_FREE_VJOY_DEVICE") == deviceId) {
-        return classifyVJoyOwnership(deviceId, kVJoyStatusFree, false, 0,
-                                     hotasProcessId == 0 ? GetCurrentProcessId() : hotasProcessId);
-    }
+    // ControllerReadinessTests own a fake vJoyConfig boundary. Consulting
+    // the developer machine's real driver here made a synthetic repair plan
+    // depend on whichever application currently owned vJoy Device 1. The
+    // test-only executable therefore supplies deterministic free ownership
+    // evidence for every fake descriptor; production still reads the driver
+    // API below. Tests that exercise Busy/Stale classification construct
+    // explicit evidence rather than reaching physical hardware.
+    return classifyVJoyOwnership(deviceId, kVJoyStatusFree, false, 0,
+                                 hotasProcessId == 0 ? GetCurrentProcessId() : hotasProcessId);
 #endif
     VJoyOwnershipApi &api = ownershipApi();
     if (hotasProcessId == 0) hotasProcessId = GetCurrentProcessId();

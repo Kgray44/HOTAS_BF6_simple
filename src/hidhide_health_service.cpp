@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSet>
+#include <QThread>
 
 #include <algorithm>
 
@@ -18,6 +19,13 @@
 
 namespace hotas {
 namespace {
+
+// A timeout opening the read-only control endpoint can be a transient service
+// transition. Retrying only that bounded observation once is useful; retrying
+// every later GET would turn one delayed response into a long serial wait and
+// hide the independent evidence already collected.
+constexpr int kDirectControlOpenRetryLimit = 1;
+constexpr unsigned long kDirectControlOpenRetryDelayMs = 125;
 
 QString fileVersion(const QString &path)
 {
@@ -57,7 +65,9 @@ void collectBoundedPackageEvidence(HidHideHealthContext *context)
     }
     const QString windowsRoot = qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows"));
     const QString driver = QDir(windowsRoot).filePath(QStringLiteral("System32/drivers/HidHide.sys"));
-    if (context->loadedDriverVersion.isEmpty() && QFileInfo(driver).isFile()) context->loadedDriverVersion = fileVersion(driver);
+    if (context->onDiskDriverVersion.isEmpty() && QFileInfo(driver).isFile()) {
+        context->onDiskDriverVersion = fileVersion(driver);
+    }
     const QDir store(QDir(windowsRoot).filePath(QStringLiteral("System32/DriverStore/FileRepository")));
     const QFileInfoList candidates = store.entryInfoList({QStringLiteral("*hidhide*"), QStringLiteral("*HidHide*")},
         QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
@@ -69,10 +79,16 @@ void collectBoundedPackageEvidence(HidHideHealthContext *context)
             const QString text = QString::fromUtf8(inf.read(64 * 1024));
             const auto match = QRegularExpression(QStringLiteral("^\\s*DriverVer\\s*=\\s*(.+?)\\s*$"),
                 QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption).match(text);
-            if (match.hasMatch()) context->driverStorePackageVersion = match.captured(1).trimmed();
-            break;
+            if (!match.hasMatch()) continue;
+            const HidHideDriverPackageEvidence evidence{
+                candidate.fileName() + QLatin1Char('/') + infName,
+                match.captured(1).trimmed()};
+            const bool duplicate = std::any_of(context->driverStorePackageCandidates.cbegin(),
+                context->driverStorePackageCandidates.cend(), [&evidence](const HidHideDriverPackageEvidence &existing) {
+                    return existing.packageId.compare(evidence.packageId, Qt::CaseInsensitive) == 0;
+                });
+            if (!duplicate) context->driverStorePackageCandidates.append(evidence);
         }
-        if (!context->driverStorePackageVersion.isEmpty()) break;
     }
 #ifdef Q_OS_WIN
     QSettings sessionManager(QStringLiteral("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager"),
@@ -174,6 +190,41 @@ HidHideHealthFinding findingFrom(const HidHideHealthDimension &value, const QStr
     return finding;
 }
 
+QString sanitizeEvidenceText(QString text)
+{
+    // The health report is shareable.  Scrub identity-bearing HidHide device
+    // strings and filesystem/UNC paths wherever they appear, including an
+    // unexpected native-error payload or a future nested diagnostic field.
+    static const QRegularExpression hidPattern(
+        QStringLiteral("(?:\\\\\\\\\\?\\\\)?HID[\\\\/][^\\s,;\\\"{}\\[\\]]+"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression pathPattern(
+        QStringLiteral("(?:[A-Z]:[\\\\/]|\\\\\\\\)[^\\s,;\\\"{}\\[\\]]+"),
+        QRegularExpression::CaseInsensitiveOption);
+    text.replace(hidPattern, QStringLiteral("[redacted HID identity]"));
+    text.replace(pathPattern, QStringLiteral("[redacted path]"));
+    return text;
+}
+
+QVariant sanitizeEvidenceVariant(const QVariant &value)
+{
+    if (value.metaType().id() == QMetaType::QString) return sanitizeEvidenceText(value.toString());
+    if (value.canConvert<QVariantList>()) {
+        QVariantList sanitized;
+        for (const QVariant &entry : value.toList()) sanitized.append(sanitizeEvidenceVariant(entry));
+        return sanitized;
+    }
+    if (value.canConvert<QVariantMap>()) {
+        QVariantMap sanitized;
+        const QVariantMap source = value.toMap();
+        for (auto it = source.cbegin(); it != source.cend(); ++it) {
+            sanitized.insert(it.key(), sanitizeEvidenceVariant(it.value()));
+        }
+        return sanitized;
+    }
+    return value;
+}
+
 } // namespace
 
 QString hidHideHealthStateLabel(HidHideHealthState state)
@@ -235,6 +286,7 @@ QVariantMap HidHidePhysicalDeviceHealth::toVariantMap() const
             {QStringLiteral("friendlyName"), friendlyName}, {QStringLiteral("required"), required},
             {QStringLiteral("connected"), connected}, {QStringLiteral("exactCurrentHidInstances"), exactCurrentHidInstances},
             {QStringLiteral("identityResolved"), identityResolved}, {QStringLiteral("hiddenStateKnown"), hiddenStateKnown},
+            {QStringLiteral("historicalOwnedHidInstanceCount"), historicalOwnedHidInstanceCount},
             {QStringLiteral("expectedHidden"), expectedHidden}, {QStringLiteral("actualHidden"), actualHidden},
             {QStringLiteral("state"), hidHideHealthStateLabel(state)},
             {QStringLiteral("repairability"), hidHideRepairabilityLabel(repairability)},
@@ -282,8 +334,11 @@ QVariantMap HidHideHealthSnapshot::toVariantMap() const
     return {{QStringLiteral("sessionId"), QVariant::fromValue(sessionId)}, {QStringLiteral("contextKey"), contextKey},
             {QStringLiteral("scanDepth"), hidHideHealthScanDepthLabel(scanDepth)},
             {QStringLiteral("overallState"), hidHideHealthStateLabel(overallState)},
+            {QStringLiteral("inspectionStartedAt"), inspectionStartedAt.toString(Qt::ISODateWithMs)},
             {QStringLiteral("lastChecked"), lastChecked.toString(Qt::ISODateWithMs)}, {QStringLiteral("inProgress"), inProgress},
-            {QStringLiteral("cancelled"), cancelled}, {QStringLiteral("checksCompleted"), checksCompleted},
+            {QStringLiteral("cancelled"), cancelled}, {QStringLiteral("responseDelayed"), responseDelayed},
+            {QStringLiteral("retryCount"), retryCount}, {QStringLiteral("retryLimit"), retryLimit},
+            {QStringLiteral("checksCompleted"), checksCompleted},
             {QStringLiteral("checksTotal"), checksTotal}, {QStringLiteral("percentComplete"), percentComplete},
             {QStringLiteral("currentStage"), currentStage}, {QStringLiteral("currentCheckId"), currentCheckId},
             {QStringLiteral("currentCheckTitle"), currentCheckTitle}, {QStringLiteral("physicalDevices"), physicalDevicesModel},
@@ -304,7 +359,9 @@ HidHideHealthSnapshot HidHideHealthService::checkingSnapshot(const HidHideHealth
     snapshot.contextKey = context.contextKey;
     snapshot.scanDepth = depth;
     snapshot.overallState = HidHideHealthState::Checking;
+    snapshot.inspectionStartedAt = QDateTime::currentDateTimeUtc();
     snapshot.inProgress = true;
+    snapshot.retryLimit = kDirectControlOpenRetryLimit;
     // A Full Check has seven deterministic work units. MULTI_SZ size reads
     // are implementation detail, never user-visible work units.
     snapshot.checksTotal = depth == HidHideHealthScanDepth::Full ? 7 : 9;
@@ -338,17 +395,33 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
         publishProgress(1, QStringLiteral("package-evidence"), QStringLiteral("Reading installed HidHide evidence"),
                         QStringLiteral("Reading client, CLI, driver, Driver Store, and restart evidence"));
     }
-    snapshot.inProgress = false;
-    snapshot.lastChecked = QDateTime::currentDateTime();
+    snapshot.lastChecked = QDateTime::currentDateTimeUtc();
     if (depth == HidHideHealthScanDepth::Full && m_probe && (!cancelled || !cancelled->load())) {
-        snapshot.checks = m_probe(cancelled, [&publishProgress, &snapshot](const HidHideReadObservation &check) {
-            const int unit = check.operation == QStringLiteral("OPEN_CONTROL") ? 2
-                : check.operation == QStringLiteral("GET_ACTIVE") ? 3
-                : check.operation == QStringLiteral("GET_INVERSE") ? 4
-                : check.operation.startsWith(QStringLiteral("GET_WHITELIST")) ? 5
-                : check.operation.startsWith(QStringLiteral("GET_BLACKLIST")) ? 6 : snapshot.checksCompleted;
-            publishProgress(unit, check.operation, check.operation, check.summary);
-        });
+        for (int attempt = 0; attempt <= kDirectControlOpenRetryLimit; ++attempt) {
+            snapshot.checks = m_probe(cancelled, [&publishProgress, &snapshot](const HidHideReadObservation &check) {
+                const int unit = check.operation == QStringLiteral("OPEN_CONTROL") ? 2
+                    : check.operation == QStringLiteral("GET_ACTIVE") ? 3
+                    : check.operation == QStringLiteral("GET_INVERSE") ? 4
+                    : check.operation.startsWith(QStringLiteral("GET_WHITELIST")) ? 5
+                    : check.operation.startsWith(QStringLiteral("GET_BLACKLIST")) ? 6 : snapshot.checksCompleted;
+                publishProgress(unit, check.operation, check.operation, check.summary);
+            });
+            const HidHideReadObservation *open = findCheck(snapshot.checks, QStringLiteral("OPEN_CONTROL"));
+            const bool retryOpen = open && open->state == HidHideReadState::TimedOut
+                && attempt < kDirectControlOpenRetryLimit && (!cancelled || !cancelled->load());
+            if (!retryOpen) break;
+
+            snapshot.responseDelayed = true;
+            snapshot.retryCount = attempt + 1;
+            snapshot.currentCheckId = QStringLiteral("OPEN_CONTROL");
+            snapshot.currentCheckTitle = QStringLiteral("Waiting for HidHide control endpoint");
+            snapshot.currentStage = QStringLiteral("HidHide response delayed; retrying bounded read-only control access in the background");
+            if (progress) progress(snapshot);
+            // This is bounded and runs only on the dedicated HidHide worker;
+            // it never blocks QML, controller discovery, or the mapping path.
+            QThread::msleep(kDirectControlOpenRetryDelayMs);
+            if (cancelled && cancelled->load()) break;
+        }
     }
     snapshot.cancelled = cancelled && cancelled->load();
     snapshot.checksCompleted = snapshot.cancelled ? std::min(snapshot.checksCompleted, snapshot.checksTotal)
@@ -375,52 +448,106 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                     {QStringLiteral("HD-INST-001"), QStringLiteral("HD-DRV-003")},
                     HidHideRepairability::DoctorRequired));
 
+    const auto versionsAgree = [](const QString &left, const QString &right) {
+        return left.compare(right, Qt::CaseInsensitive) == 0 || left.contains(right, Qt::CaseInsensitive)
+            || right.contains(left, Qt::CaseInsensitive);
+    };
     const bool versionsMismatch = !inspectedContext.clientVersion.isEmpty() && !inspectedContext.cliVersion.isEmpty()
-        && inspectedContext.clientVersion != inspectedContext.cliVersion;
-    const bool driverPackageMismatch = !inspectedContext.loadedDriverVersion.isEmpty()
-        && !inspectedContext.driverStorePackageVersion.isEmpty()
-        && !inspectedContext.driverStorePackageVersion.contains(inspectedContext.loadedDriverVersion)
-        && !inspectedContext.loadedDriverVersion.contains(inspectedContext.driverStorePackageVersion);
+        && !versionsAgree(inspectedContext.clientVersion, inspectedContext.cliVersion);
+    const bool runtimePackageMismatch = inspectedContext.runtimeLoadedDriverVersionKnown
+        && !inspectedContext.runtimeLoadedDriverVersion.isEmpty()
+        && inspectedContext.activeDriverPackageKnown && !inspectedContext.activeDriverPackageVersion.isEmpty()
+        && !versionsAgree(inspectedContext.runtimeLoadedDriverVersion, inspectedContext.activeDriverPackageVersion);
+    const bool activePackageInStore = inspectedContext.activeDriverPackageKnown
+        && !inspectedContext.activeDriverPackageId.isEmpty()
+        && std::any_of(inspectedContext.driverStorePackageCandidates.cbegin(),
+            inspectedContext.driverStorePackageCandidates.cend(), [&inspectedContext, &versionsAgree](const HidHideDriverPackageEvidence &candidate) {
+                return candidate.packageId.compare(inspectedContext.activeDriverPackageId, Qt::CaseInsensitive) == 0
+                    && versionsAgree(candidate.version, inspectedContext.activeDriverPackageVersion);
+            });
     const bool fullPackageEvidence = depth == HidHideHealthScanDepth::Full && inspectedContext.packageEvidenceInspected
         && !inspectedContext.clientVersion.isEmpty() && !inspectedContext.cliVersion.isEmpty()
-        && !inspectedContext.loadedDriverVersion.isEmpty() && !inspectedContext.driverStorePackageVersion.isEmpty()
-        && !versionsMismatch && !driverPackageMismatch;
+        && !inspectedContext.onDiskDriverVersion.isEmpty()
+        && inspectedContext.runtimeLoadedDriverVersionKnown && !inspectedContext.runtimeLoadedDriverVersion.isEmpty()
+        && inspectedContext.activeDriverPackageKnown && !inspectedContext.activeDriverPackageId.isEmpty()
+        && !inspectedContext.activeDriverPackageVersion.isEmpty()
+        && !inspectedContext.driverStorePackageCandidates.isEmpty() && activePackageInStore
+        && !versionsMismatch && !runtimePackageMismatch && !inspectedContext.pendingPackageRestart;
     const bool packageInspectionRequested = depth == HidHideHealthScanDepth::Full;
-    const QString packageTechnicalDetails = QStringLiteral("Client: %1; CLI: %2; loaded driver: %3; Driver Store package: %4.")
+    const QStringList candidateIds = [&inspectedContext] {
+        QStringList values;
+        for (const HidHideDriverPackageEvidence &candidate : inspectedContext.driverStorePackageCandidates) {
+            values.append(candidate.packageId + QStringLiteral(" (") + candidate.version + QLatin1Char(')'));
+        }
+        return values;
+    }();
+    const QString packageTechnicalDetails = QStringLiteral("Client: %1; CLI: %2; on-disk System32 candidate: %3; runtime-loaded driver: %4; Driver Store candidates: %5; active bound package: %6 (%7).")
         .arg(inspectedContext.clientVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.clientVersion,
              inspectedContext.cliVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.cliVersion,
-             inspectedContext.loadedDriverVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.loadedDriverVersion,
-             inspectedContext.driverStorePackageVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.driverStorePackageVersion);
+             inspectedContext.onDiskDriverVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.onDiskDriverVersion,
+             inspectedContext.runtimeLoadedDriverVersionKnown
+                ? (inspectedContext.runtimeLoadedDriverVersion.isEmpty() ? QStringLiteral("unavailable") : inspectedContext.runtimeLoadedDriverVersion)
+                : QStringLiteral("not proven"),
+             candidateIds.isEmpty() ? QStringLiteral("none observed") : candidateIds.join(QStringLiteral(", ")),
+             inspectedContext.activeDriverPackageKnown
+                ? (inspectedContext.activeDriverPackageId.isEmpty() ? QStringLiteral("unavailable") : inspectedContext.activeDriverPackageId)
+                : QStringLiteral("not proven"),
+             inspectedContext.activeDriverPackageVersion.isEmpty() ? QStringLiteral("not observed") : inspectedContext.activeDriverPackageVersion);
+    const bool packageContradiction = versionsMismatch || runtimePackageMismatch
+        || (inspectedContext.activeDriverPackageKnown && !activePackageInStore);
+    const bool runtimeBindingUnknown = inspectedContext.runtimeLoadedDriverVersionKnown
+        && !inspectedContext.activeDriverPackageKnown;
+    const HidHideHealthState packageState = fullPackageEvidence ? HidHideHealthState::Ready
+        : inspectedContext.pendingPackageRestart ? HidHideHealthState::RestartRequired
+        : packageContradiction ? HidHideHealthState::DoctorRecommended : HidHideHealthState::Unknown;
     snapshot.dimensions.append(dimension(QStringLiteral("package-version"), QStringLiteral("Package and version consistency"),
-        fullPackageEvidence ? HidHideHealthState::Ready : HidHideHealthState::Unknown,
-        packageInspectionRequested && !fullPackageEvidence ? HidHideHealthSeverity::Warning : HidHideHealthSeverity::Info,
-        fullPackageEvidence ? QStringLiteral("Client, CLI, loaded driver, and Driver Store package versions are consistent.")
-                            : versionsMismatch || driverPackageMismatch ? QStringLiteral("Installed HidHide component versions contradict each other.")
+        packageState,
+        packageState == HidHideHealthState::Ready || !packageInspectionRequested
+            ? HidHideHealthSeverity::Info : HidHideHealthSeverity::Warning,
+        fullPackageEvidence ? QStringLiteral("Client, CLI, on-disk candidate, runtime driver, and active Driver Store package are consistent.")
+                            : inspectedContext.pendingPackageRestart ? QStringLiteral("A pending HidHide replacement requires a Windows restart before version health can be judged.")
+                            : packageContradiction ? QStringLiteral("Observed HidHide package evidence contradicts the active binding.")
                             : packageInspectionRequested ? QStringLiteral("Package evidence is incomplete; no version relationship is inferred.")
                                                          : QStringLiteral("Run a Full Check for bounded package evidence."),
         QStringLiteral("Version/package repair is intentionally deferred to HidHide Doctor."),
         {QStringLiteral("HD-PKG-005")},
-        packageInspectionRequested && !fullPackageEvidence
-            ? HidHideRepairability::DoctorRecommended : HidHideRepairability::None,
+        packageState == HidHideHealthState::RestartRequired ? HidHideRepairability::UserActionRequired
+            : packageState == HidHideHealthState::DoctorRecommended ? HidHideRepairability::DoctorRecommended
+            : packageInspectionRequested && !fullPackageEvidence ? HidHideRepairability::DoctorRecommended
+            : HidHideRepairability::None,
         packageTechnicalDetails));
 
-    snapshot.dimensions.append(!inspectedContext.loadedDriverVersion.isEmpty()
+    snapshot.dimensions.append(inspectedContext.runtimeLoadedDriverVersionKnown
         ? dimension(QStringLiteral("kernel-driver"), QStringLiteral("Kernel driver"),
-                    driverPackageMismatch ? HidHideHealthState::DoctorRecommended : HidHideHealthState::Ready,
-                    driverPackageMismatch ? HidHideHealthSeverity::Warning : HidHideHealthSeverity::Info,
-                    QStringLiteral("Loaded HidHide driver version: %1.").arg(inspectedContext.loadedDriverVersion),
-                    QStringLiteral("Driver health is based on direct loaded-file evidence, not service registration alone."),
+                    inspectedContext.pendingPackageRestart ? HidHideHealthState::RestartRequired
+                        : runtimePackageMismatch ? HidHideHealthState::DoctorRecommended
+                        : runtimeBindingUnknown ? HidHideHealthState::Unknown : HidHideHealthState::Ready,
+                    inspectedContext.pendingPackageRestart || runtimePackageMismatch || runtimeBindingUnknown
+                        ? HidHideHealthSeverity::Warning : HidHideHealthSeverity::Info,
+                    inspectedContext.pendingPackageRestart
+                        ? QStringLiteral("Runtime-loaded HidHide driver may still be the pre-update version; restart is required.")
+                        : runtimeBindingUnknown
+                            ? QStringLiteral("Runtime-loaded driver was observed, but the active Driver Store package binding is unproven.")
+                        : QStringLiteral("Runtime-loaded HidHide driver version: %1.").arg(inspectedContext.runtimeLoadedDriverVersion),
+                    QStringLiteral("Runtime state is reported separately from the on-disk System32 candidate and Driver Store candidates."),
                     {QStringLiteral("HD-DRV-003"), QStringLiteral("HD-PKG-004")},
-                    driverPackageMismatch ? HidHideRepairability::DoctorRecommended : HidHideRepairability::None)
+                    inspectedContext.pendingPackageRestart ? HidHideRepairability::UserActionRequired
+                        : runtimePackageMismatch || runtimeBindingUnknown ? HidHideRepairability::DoctorRecommended : HidHideRepairability::None,
+                    packageTechnicalDetails)
         : context.serviceReady && depth == HidHideHealthScanDepth::Essential
             ? dimension(QStringLiteral("kernel-driver"), QStringLiteral("Kernel driver"), HidHideHealthState::Unknown,
                         HidHideHealthSeverity::Info, QStringLiteral("Service registration is available; driver version was not directly checked."),
-                        QStringLiteral("Run a Full Check for bounded loaded-driver and Driver Store evidence."),
+                        QStringLiteral("Run a Full Check for bounded on-disk and Driver Store evidence; runtime loading remains unproven unless directly observed."),
                         {QStringLiteral("HD-DRV-003")})
-        : dimension(QStringLiteral("kernel-driver"), QStringLiteral("Kernel driver"), HidHideHealthState::DoctorRecommended,
-                    HidHideHealthSeverity::Warning, QStringLiteral("The HidHide service is unavailable."),
-                    QStringLiteral("HOTAS BF6 will not recreate services or alter driver registration."),
-                    {QStringLiteral("HD-DRV-003")}, HidHideRepairability::DoctorRequired));
+        : dimension(QStringLiteral("kernel-driver"), QStringLiteral("Kernel driver"),
+                    HidHideHealthState::Unknown,
+                    HidHideHealthSeverity::Warning,
+                    inspectedContext.onDiskDriverVersion.isEmpty() ? QStringLiteral("No direct runtime-driver evidence is available.")
+                                                                 : QStringLiteral("An on-disk HidHide binary was observed, but runtime loading is unproven."),
+                    QStringLiteral("HOTAS BF6 will not infer runtime loading from System32, service registration, or a Driver Store candidate."),
+                    {QStringLiteral("HD-DRV-003")},
+                    depth == HidHideHealthScanDepth::Full ? HidHideRepairability::DoctorRecommended : HidHideRepairability::None,
+                    packageTechnicalDetails));
 
     if (depth == HidHideHealthScanDepth::Full && control) {
         const bool healthy = control->state == HidHideReadState::Pass;
@@ -459,6 +586,9 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
     const bool directInverseKnown = directBool(inverse, &directInverse);
     const bool activeContradiction = directActiveKnown && context.cloakKnown && directActive != context.cloaked;
     const bool inverseContradiction = directInverseKnown && context.inverseKnown && directInverse != context.inverse;
+    const bool rigExpectsPhysicalIsolation = !context.expectedPhysicalInstances.isEmpty()
+        || std::any_of(context.physicalDevices.cbegin(), context.physicalDevices.cend(),
+            [](const HidHidePhysicalDeviceHealth &device) { return device.expectedHidden && device.connected; });
     snapshot.dimensions.append(!directActiveObserved && depth == HidHideHealthScanDepth::Essential
         ? dimension(QStringLiteral("cloak-state"), QStringLiteral("Cloak state"), HidHideHealthState::Unknown,
                     HidHideHealthSeverity::Info, QStringLiteral("Not directly checked in Essential mode."),
@@ -471,8 +601,18 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                     HidHideHealthSeverity::Warning, QStringLiteral("GET_ACTIVE contradicts existing setup evidence."),
                     QStringLiteral("No automatic mutation is offered from contradictory evidence."), {QStringLiteral("HD-CFG-001")},
                     HidHideRepairability::DoctorRecommended)
+        : !directActive && rigExpectsPhysicalIsolation
+            ? dimension(QStringLiteral("cloak-state"), QStringLiteral("Cloak state"), HidHideHealthState::RepairAvailable,
+                        HidHideHealthSeverity::Warning, QStringLiteral("Cloaking is disabled while this Device Rig expects physical inputs to be hidden."),
+                        QStringLiteral("Review the existing qualified Device Rig isolation repair before it changes any exact current controller identity."),
+                        {QStringLiteral("HD-CFG-001"), QStringLiteral("HD-ISO-006")}, HidHideRepairability::GuidedRepair)
+            : !directActive
+                ? dimension(QStringLiteral("cloak-state"), QStringLiteral("Cloak state"), HidHideHealthState::Ready,
+                            HidHideHealthSeverity::Info, QStringLiteral("Cloaking is inactive, which matches this Rig's current isolation intent."),
+                            QStringLiteral("No physical input is currently expected to be hidden, so no cloak repair is proposed."),
+                            {QStringLiteral("HD-CFG-001")})
         : dimension(QStringLiteral("cloak-state"), QStringLiteral("Cloak state"), HidHideHealthState::Ready,
-                    HidHideHealthSeverity::Info, QStringLiteral("GET_ACTIVE returned %1.").arg(directActive ? QStringLiteral("true") : QStringLiteral("false")),
+                    HidHideHealthSeverity::Info, QStringLiteral("GET_ACTIVE returned true."),
                     QStringLiteral("Fresh direct GET evidence is authoritative for this Full Check."), {QStringLiteral("HD-CFG-001")}));
     snapshot.dimensions.append(!directInverseObserved && depth == HidHideHealthScanDepth::Essential
         ? dimension(QStringLiteral("inverse-mode"), QStringLiteral("Inverse mode"), HidHideHealthState::Unknown,
@@ -491,15 +631,32 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                     QStringLiteral("Fresh direct GET evidence is authoritative for this Full Check."), {QStringLiteral("HD-CFG-002")}));
     const bool directWhitelistFailed = directWhitelistObserved && whitelist->state != HidHideReadState::Pass;
     const bool directWhitelistKnown = whitelist && whitelist->state == HidHideReadState::Pass;
-    // Once a Full Check has actually returned a whitelist result, it is the
-    // authoritative evidence for this snapshot.  A failed GET must remain an
-    // Unknown result, never be disguised by an older readiness observation.
-    const bool mapperAllowed = directWhitelistKnown
-        ? (!context.mapperExecutable.isEmpty() && containsExact(whitelist->values, context.mapperExecutable))
-        : (!directWhitelistObserved && context.mapperAllowlisted);
-    const bool accessKnown = directWhitelistObserved ? directWhitelistKnown : context.mapperAllowlistKnown;
-    const bool whitelistContradiction = directWhitelistKnown && context.mapperAllowlistKnown
-        && mapperAllowed != context.mapperAllowlisted;
+    // Full-check access is effective policy, not raw whitelist membership:
+    // an inactive cloak leaves the mapper accessible; inverse mode reverses
+    // list membership.  Missing direct evidence remains Unknown and never
+    // authorizes the existing mapper-only allowlist transaction.
+    const bool mapperEntryPresent = directWhitelistKnown && !context.mapperExecutable.isEmpty()
+        && containsExact(whitelist->values, context.mapperExecutable);
+    bool mapperAllowed = false;
+    bool accessKnown = false;
+    bool allowlistFixApplies = false;
+    if (depth == HidHideHealthScanDepth::Full && directActiveObserved) {
+        if (directActiveKnown && !directActive) {
+            mapperAllowed = true;
+            accessKnown = true;
+        } else if (directActiveKnown && directActive && directInverseKnown && directWhitelistKnown
+                   && !context.mapperExecutable.isEmpty()) {
+            mapperAllowed = directInverse ? !mapperEntryPresent : mapperEntryPresent;
+            accessKnown = true;
+            allowlistFixApplies = !mapperAllowed && !directInverse;
+        }
+    } else if (depth == HidHideHealthScanDepth::Essential) {
+        mapperAllowed = context.mapperAllowlisted;
+        accessKnown = context.mapperAllowlistKnown;
+        allowlistFixApplies = accessKnown && !mapperAllowed;
+    }
+    const bool whitelistContradiction = depth == HidHideHealthScanDepth::Full && accessKnown
+        && context.mapperAllowlistKnown && mapperAllowed != context.mapperAllowlisted;
     snapshot.dimensions.append(!accessKnown
         ? dimension(QStringLiteral("application-access"), QStringLiteral("HOTAS BF6 application access"), HidHideHealthState::Unknown,
                     HidHideHealthSeverity::Warning, QStringLiteral("HOTAS BF6 could not confirm its HidHide exemption."),
@@ -514,12 +671,19 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
         : mapperAllowed
             ? dimension(QStringLiteral("application-access"), QStringLiteral("HOTAS BF6 application access"), HidHideHealthState::Ready,
                         HidHideHealthSeverity::Info, QStringLiteral("HOTAS BF6 is permitted by HidHide."),
-                        QStringLiteral("The mapper can retain access to its selected physical controller."),
+                        directActiveKnown && !directActive
+                            ? QStringLiteral("Cloaking is inactive, so the mapper retains access regardless of list membership.")
+                            : QStringLiteral("The mapper can retain access to its selected physical controller."),
                         {QStringLiteral("HD-ISO-003"), QStringLiteral("HD-CFG-003")})
-            : dimension(QStringLiteral("application-access"), QStringLiteral("HOTAS BF6 application access"), HidHideHealthState::RepairAvailable,
-                        HidHideHealthSeverity::Warning, QStringLiteral("HOTAS BF6 is not in HidHide's allowed application list."),
-                        QStringLiteral("The existing tested mapper-only allowlist transaction can add exactly the running HOTAS BF6 executable."),
-                        {QStringLiteral("HD-ISO-003"), QStringLiteral("HD-CFG-003")}, HidHideRepairability::FixNow));
+            : allowlistFixApplies
+                ? dimension(QStringLiteral("application-access"), QStringLiteral("HOTAS BF6 application access"), HidHideHealthState::RepairAvailable,
+                            HidHideHealthSeverity::Warning, QStringLiteral("HOTAS BF6 is not effectively permitted by HidHide."),
+                            QStringLiteral("The existing tested mapper-only allowlist transaction can add exactly the running HOTAS BF6 executable."),
+                            {QStringLiteral("HD-ISO-003"), QStringLiteral("HD-CFG-003")}, HidHideRepairability::FixNow)
+                : dimension(QStringLiteral("application-access"), QStringLiteral("HOTAS BF6 application access"), HidHideHealthState::DoctorRecommended,
+                            HidHideHealthSeverity::Warning, QStringLiteral("HOTAS BF6 is not effectively permitted by HidHide."),
+                            QStringLiteral("Inverse-mode or incomplete direct evidence means the existing add-to-whitelist repair is not safe to offer."),
+                            {QStringLiteral("HD-ISO-003"), QStringLiteral("HD-CFG-003")}, HidHideRepairability::DoctorRecommended));
 
     QList<HidHidePhysicalDeviceHealth> devices = context.physicalDevices;
     const bool usingSelectedFallback = devices.isEmpty();
@@ -535,6 +699,7 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
     const bool directBlacklistObserved = depth == HidHideHealthScanDepth::Full && blacklist;
     const bool directBlacklistKnown = blacklist && blacklist->state == HidHideReadState::Pass;
     const QStringList blacklistEntries = directBlacklistKnown ? blacklist->values : context.hiddenDeviceInstances;
+    const bool cloakBlocksExpectedIsolation = directActiveKnown && !directActive && rigExpectsPhysicalIsolation;
     int connectedManaged = 0;
     int isolatedManaged = 0;
     QStringList visibleRecords;
@@ -556,6 +721,11 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
             device.repairability = HidHideRepairability::DoctorRecommended;
             device.technicalDetails = directBlacklistObserved ? QStringLiteral("GET_BLACKLIST did not provide usable direct evidence.")
                                                               : QStringLiteral("Existing hidden-device evidence is incomplete.");
+        } else if (device.expectedHidden && cloakBlocksExpectedIsolation) {
+            device.state = HidHideHealthState::Degraded;
+            device.repairability = HidHideRepairability::GuidedRepair;
+            device.technicalDetails = QStringLiteral("Cloaking is disabled; blacklist membership cannot isolate this exact current identity.");
+            visibleRecords.append(device.controllerRecordId);
         } else if (device.expectedHidden && !device.actualHidden) {
             device.state = HidHideHealthState::RepairAvailable;
             device.repairability = HidHideRepairability::GuidedRepair;
@@ -581,6 +751,13 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
         return !device.connected || device.hiddenStateKnown;
     });
     const bool anyVisible = !visibleRecords.isEmpty();
+    QStringList affectedPhysicalRecords = visibleRecords;
+    for (const HidHidePhysicalDeviceHealth &device : devices) {
+        if (device.connected && device.expectedHidden && !device.controllerRecordId.isEmpty()
+            && !affectedPhysicalRecords.contains(device.controllerRecordId)) {
+            affectedPhysicalRecords.append(device.controllerRecordId);
+        }
+    }
     snapshot.dimensions.append(devices.isEmpty()
         ? dimension(QStringLiteral("physical-isolation"), QStringLiteral("Physical-device isolation"), HidHideHealthState::Unknown,
                     HidHideHealthSeverity::Info, QStringLiteral("No exact selected physical HID identity is available."),
@@ -596,6 +773,11 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
                             HidHideHealthSeverity::Warning, QStringLiteral("GET_BLACKLIST contradicts existing visibility evidence."),
                             QStringLiteral("No physical-device mutation is offered from a contradictory Full Check snapshot."),
                             {QStringLiteral("HD-CFG-005"), QStringLiteral("HD-ISO-006")}, HidHideRepairability::DoctorRecommended)
+            : cloakBlocksExpectedIsolation
+                ? dimension(QStringLiteral("physical-isolation"), QStringLiteral("Physical-device isolation"), HidHideHealthState::RepairAvailable,
+                            HidHideHealthSeverity::Warning, QStringLiteral("Cloaking is disabled, so physical input isolation is not effective."),
+                            QStringLiteral("Review the existing qualified Device Rig isolation repair; no direct HID mutation is inferred from this health check."),
+                            {QStringLiteral("HD-CFG-001"), QStringLiteral("HD-ISO-006")}, HidHideRepairability::GuidedRepair)
             : !anyVisible
                 ? dimension(QStringLiteral("physical-isolation"), QStringLiteral("Physical-device isolation"), HidHideHealthState::Ready,
                             HidHideHealthSeverity::Info, QStringLiteral("Physical inputs %1 / %2 isolated.").arg(isolatedManaged).arg(connectedManaged),
@@ -675,7 +857,7 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
             && !(value.state == HidHideHealthState::Unknown
                  && value.severity == HidHideHealthSeverity::Info)) {
             snapshot.findings.append(findingFrom(value, value.id == QStringLiteral("physical-isolation")
-                ? context.expectedPhysicalInstances : QStringList{}));
+                ? affectedPhysicalRecords : QStringList{}));
         }
     }
     const auto appendContradiction = [&snapshot](const QString &id, const QString &title, const QString &detail) {
@@ -729,6 +911,9 @@ HidHideHealthSnapshot HidHideHealthService::inspect(const HidHideHealthContext &
         snapshot.checksCompleted = snapshot.checksTotal;
         snapshot.percentComplete = 100;
     }
+    // Every emitted pre-terminal snapshot remains a real in-flight state so
+    // QML cannot re-enable a Full Check while the worker still owns the probe.
+    snapshot.inProgress = false;
     if (progress) progress(snapshot);
     return snapshot;
 }
@@ -786,7 +971,7 @@ QVariantMap HidHideHealthService::sanitizedEvidence(const HidHideHealthSnapshot 
         entry = device;
     }
     sanitized.insert(QStringLiteral("physicalDevices"), devices);
-    return sanitized;
+    return sanitizeEvidenceVariant(sanitized).toMap();
 }
 
 } // namespace hotas
