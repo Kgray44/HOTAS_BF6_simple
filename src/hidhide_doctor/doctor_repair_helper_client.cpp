@@ -79,9 +79,9 @@ RepairHelperClientResult RepairHelperClient::invoke(const RepairPlan &authorized
     request.requestDigest = RepairHelperProtocol::seal(request);
     const QByteArray payload = QJsonDocument(RepairHelperProtocol::serialize(request)).toJson(QJsonDocument::Compact);
 
-    const QString helper = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHide Doctor Repair.exe"));
+    const QString helper = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHideDoctorRepair.exe"));
     if (!QFileInfo::exists(helper))
-        return rejected(RepairHelperOutcome::LaunchDenied, QStringLiteral("The paired HidHide Doctor Repair helper is unavailable."), connectivityOnly);
+        return rejected(RepairHelperOutcome::LaunchDenied, QStringLiteral("The paired HidHideDoctorRepair helper is unavailable."), connectivityOnly);
     const QString parameters = QStringLiteral("--pipe %1 --nonce %2 --doctor-build %3")
         .arg(quoted(pipeName), quoted(nonce), quoted(doctorBuildId));
     SHELLEXECUTEINFOW launch{};

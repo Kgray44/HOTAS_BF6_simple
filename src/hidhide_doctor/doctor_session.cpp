@@ -186,7 +186,31 @@ void DoctorSession::appendActivity(DoctorActivityEvent event)
     if (m_activity.size() >= maxActivityEvents) m_activity.remove(0, m_activity.size() - maxActivityEvents + 1);
     m_activity.append(std::move(event));
 }
-void DoctorSession::setUserAction(UserAction action) { m_userAction = std::move(action); }
+void DoctorSession::setUserAction(UserAction action)
+{
+    const bool changed = m_userAction.title != action.title || m_userAction.explanation != action.explanation
+        || m_userAction.state != action.state;
+    if (changed && !m_userActionHistory.isEmpty()) {
+        UserActionLedgerEntry &previous = m_userActionHistory.last();
+        if (previous.state == UserActionLedgerState::Required || previous.state == UserActionLedgerState::Waiting
+            || previous.state == UserActionLedgerState::StillPending)
+            previous.state = UserActionLedgerState::Superseded;
+    }
+    m_userAction = std::move(action);
+    if (!changed) return;
+    const auto ledgerState = [this] {
+        switch (m_userAction.state) {
+        case UserActionState::Required: return UserActionLedgerState::StillPending;
+        case UserActionState::Optional: return UserActionLedgerState::Waiting;
+        case UserActionState::Blocked: return UserActionLedgerState::StillPending;
+        case UserActionState::NothingRequired: return UserActionLedgerState::NotRequired;
+        }
+        return UserActionLedgerState::NotRequired;
+    }();
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    m_userActionHistory.append({QStringLiteral("ACTION-%1").arg(m_userActionHistory.size() + 1), m_userAction.title,
+        m_userAction.explanation, now, {}, {}, ledgerState, m_userAction.why, {}, {}, {}});
+}
 void DoctorSession::setCurrentOperation(DoctorOperation operation) { m_currentOperation = std::move(operation); }
 void DoctorSession::setEnvironment(DoctorEnvironment environment) { m_environment = std::move(environment); }
 void DoctorSession::setSessionLabel(QString label) { m_sessionLabel = std::move(label); }
@@ -197,6 +221,7 @@ const QList<Finding> &DoctorSession::findings() const { return m_findings; }
 const QList<Diagnosis> &DoctorSession::diagnoses() const { return m_diagnoses; }
 const QList<DoctorActivityEvent> &DoctorSession::activity() const { return m_activity; }
 const UserAction &DoctorSession::userAction() const { return m_userAction; }
+const QList<UserActionLedgerEntry> &DoctorSession::userActionHistory() const { return m_userActionHistory; }
 const std::optional<DoctorOperation> &DoctorSession::currentOperation() const { return m_currentOperation; }
 const std::optional<DoctorEnvironment> &DoctorSession::environment() const { return m_environment; }
 const QString &DoctorSession::sessionLabel() const { return m_sessionLabel; }

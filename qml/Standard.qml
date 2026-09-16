@@ -343,6 +343,7 @@ Page {
         objectName: "standardAppHealthPopup"
         health: backend.appHealthSummary
         issues: backend.appIssues
+        openDoctor: function() { backend.openHidHideDoctor("app-health") }
         theme: root.themeTokens
         legacy: false
         onNavigationRequested: function(target) { root.navigateToIssue(target) }

@@ -394,7 +394,7 @@ DoctorEnvironment observeEnvironment(QList<PendingRestartObservation> *pendingRe
     environment.platform.nativeArchitecture = nativeArchitecture();
     environment.platform.processArchitecture = sizeof(void *) == 8 ? CpuArchitecture::X64 : CpuArchitecture::X86;
     environment.platform.doctorBinaryArchitecture = binaryArchitecture(QCoreApplication::applicationFilePath());
-    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHide Doctor Repair.exe"));
+    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHideDoctorRepair.exe"));
     environment.platform.helperBinaryArchitecture = binaryArchitecture(helperPath);
     BOOL wow64 = FALSE;
     if (IsWow64Process(GetCurrentProcess(), &wow64)) environment.platform.wow64OrEmulated = wow64 != FALSE;

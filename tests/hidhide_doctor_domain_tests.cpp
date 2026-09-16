@@ -1,7 +1,9 @@
 #include "doctor_catalog.h"
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_integration.h"
 #include "doctor_knowledge.h"
+#include "doctor_report_composer.h"
 #include "doctor_repair_contract.h"
 #include "doctor_repair_engine.h"
 #include "doctor_repair_helper_protocol.h"
@@ -11,6 +13,7 @@
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -150,6 +153,8 @@ private slots:
     void phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider();
     void phaseThreeRollbackAndRestartReconciliationAreStrictlyGuarded();
     void phaseThreeJournalDetectsCorruption();
+    void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
+    void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -557,7 +562,10 @@ void HidHideDoctorDomainTests::phaseTwoDiagnosisFixtureMatrixIsDeterministicAndR
             }
         }
         QVERIFY2(matched, qPrintable(fixture.name));
-        QCOMPARE(outcome.session.userAction().state, UserActionState::NothingRequired);
+        const UserActionState expectedAction = outcome.session.repairPlan().has_value() ? UserActionState::Required
+            : fixture.expectedDiagnosis.isEmpty() ? UserActionState::NothingRequired : UserActionState::Optional;
+        QCOMPARE(outcome.session.userAction().state, expectedAction);
+        QVERIFY(!outcome.session.userActionHistory().isEmpty());
         QVERIFY(!outcome.knowledgeEngineVersion.isEmpty());
     }
 }
@@ -757,6 +765,94 @@ void HidHideDoctorDomainTests::phaseThreeJournalDetectsCorruption()
     QString reason;
     QVERIFY(!journal.load(dryRun.transaction.id, &reason).has_value());
     QVERIFY(reason.contains(QStringLiteral("malformed")));
+}
+
+void HidHideDoctorDomainTests::phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    DoctorLaunchContext context;
+    context.sessionId = QStringLiteral("0123456789abcdef0123456789abcdef");
+    context.invokingVersion = QStringLiteral("2.6.5");
+    context.invokingBuildId = QStringLiteral("integration-test");
+    context.reason = QStringLiteral("devices-isolation");
+    context.expectedHotasExecutable = QStringLiteral("C:\\Program Files\\HOTAS BF6\\HOTAS BF6.exe");
+    context.profileId = QStringLiteral("profile-1");
+    context.deviceRigId = QStringLiteral("rig-1");
+    context.expectedVirtualOutput = QStringLiteral("vJoy Device 1");
+    context.isolationIntent = QStringLiteral("physical-controller isolation expected enabled");
+    context.expectedPhysicalControllerIds = {QStringLiteral("DI:stick-1"), QStringLiteral("DI:throttle-1")};
+
+    QString reason;
+    QVERIFY(writeDoctorLaunchContext(context, &reason));
+    const DoctorIntegrationReadResult accepted = consumeDoctorLaunchContext(context.sessionId);
+    QVERIFY2(accepted.accepted, qPrintable(accepted.rejection));
+    QCOMPARE(accepted.context.expectedVirtualOutput, QStringLiteral("vJoy Device 1"));
+    QCOMPARE(accepted.context.expectedPhysicalControllerIds.size(), 2);
+    QVERIFY(!consumeDoctorLaunchContext(context.sessionId).accepted); // one-time context only
+    QVERIFY(!isValidDoctorIntegrationSessionId(QStringLiteral("../../not-a-token")));
+
+    QVERIFY(writeDoctorIntegrationResult(context, QStringLiteral("Diagnosis complete"),
+                                         QStringLiteral("Read-only scan completed."), &reason));
+    QString state;
+    QString detail;
+    QVERIFY(consumeDoctorIntegrationResult(context.sessionId, &state, &detail, &reason));
+    QCOMPARE(state, QStringLiteral("Diagnosis complete"));
+    QCOMPARE(detail, QStringLiteral("Read-only scan completed."));
+
+    DoctorLaunchContext oversized = context;
+    oversized.sessionId = QStringLiteral("fedcba9876543210fedcba9876543210");
+    oversized.reason = QString(257, QLatin1Char('x'));
+    QVERIFY(!writeDoctorLaunchContext(oversized, &reason));
+}
+
+void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBundleCapable()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    DoctorReportRequest request;
+    request.detail = DoctorReportDetail::Forensic;
+    request.privacy = DoctorReportPrivacy::SafeToShare;
+    const DoctorReportDocument report = DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), request);
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(report.json, &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+    QVERIFY(document.object().contains(QStringLiteral("diagnosticPlan")));
+    QVERIFY(document.object().contains(QStringLiteral("checkResults")));
+    QVERIFY(document.object().contains(QStringLiteral("userActionLedger")));
+    QVERIFY(document.object().contains(QStringLiteral("evidenceRecords")));
+    QVERIFY(document.object().contains(QStringLiteral("timingPerformance")));
+    QVERIFY(!document.object().value(QStringLiteral("redactionManifest")).toObject()
+                 .value(QStringLiteral("excluded")).toArray().isEmpty());
+    QVERIFY(report.markdown.contains("HIDHIDE DOCTOR REPORT"));
+    QVERIFY(!report.redacted.isEmpty());
+
+    DoctorReportRequest currentSteps;
+    currentSteps.scope = QStringLiteral("Current / Historical Steps");
+    currentSteps.detail = DoctorReportDetail::Detailed;
+    const QJsonObject currentStepsJson = QJsonDocument::fromJson(
+        DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), currentSteps).json).object();
+    QVERIFY(currentStepsJson.contains(QStringLiteral("checkResults")));
+    QVERIFY(currentStepsJson.contains(QStringLiteral("activityTimeline")));
+
+    DoctorReportRequest selectedEvidence;
+    selectedEvidence.scope = QStringLiteral("Selected Evidence");
+    selectedEvidence.selectedEvidenceId = outcome.session.evidence().first().id.value();
+    selectedEvidence.detail = DoctorReportDetail::Forensic;
+    const QJsonArray selectedEvidenceRecords = QJsonDocument::fromJson(
+        DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), selectedEvidence).json)
+        .object().value(QStringLiteral("evidenceRecords")).toArray();
+    QCOMPARE(selectedEvidenceRecords.size(), 1);
+    QCOMPARE(selectedEvidenceRecords.first().toObject().value(QStringLiteral("id")).toString(), selectedEvidence.selectedEvidenceId);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QString error;
+    QVERIFY2(DoctorReportComposer::write(report, directory.filePath(QStringLiteral("bundle")), DoctorReportFormat::DiagnosticBundle, &error), qPrintable(error));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/report.md"))));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/report.json"))));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/manifest.json"))));
 }
 
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()

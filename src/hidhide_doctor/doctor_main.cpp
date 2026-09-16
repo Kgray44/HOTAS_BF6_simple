@@ -1,5 +1,6 @@
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_integration.h"
 #include "doctor_repair_helper_client.h"
 #include "doctor_repair_engine.h"
 #include "doctor_session.h"
@@ -7,6 +8,7 @@
 #include "hotas_build_version.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QFile>
 #include <QMetaObject>
@@ -111,6 +113,7 @@ public:
             ? QStringLiteral("RESUMING REPAIR — rerunning a fresh read-only Doctor scan before any continuation decision.") : QString());
         hotas::doctor::DoctorDiagnosticEngine engine;
         m_model.replaceSession(engine.createPreparedSession());
+        m_model.setRedactedDiagnosticReport({});
         m_worker = std::thread([this, generation] {
             hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
             hotas::doctor::DoctorDiagnosticEngine engine;
@@ -123,17 +126,19 @@ public:
                 });
             const QString recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
             stampBuildProvenance(outcome);
+            const QByteArray redactedReport = hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true);
             if (!m_reportPath.isEmpty()) {
                 QFile report(m_reportPath);
                 if (report.open(QIODevice::WriteOnly | QIODevice::Truncate))
-                    report.write(hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true));
+                    report.write(redactedReport);
             }
             const hotas::doctor::DoctorSession finished = outcome.session;
             m_running.store(false);
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished, recoveryNotice] {
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished, recoveryNotice, redactedReport] {
                 if (generation == m_generation.load()) {
                     m_model.replaceSession(finished);
                     m_model.setRecoveryNotice(recoveryNotice);
+                    m_model.setRedactedDiagnosticReport(redactedReport);
                 }
             }, Qt::QueuedConnection);
         });
@@ -258,7 +263,18 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
-    const bool labRepairMode = fixtureMode && hasArgument(argc, argv, "--lab-repair-mode");
+    const QString integrationToken = argumentValue(argc, argv, "--integration-context");
+    const hotas::doctor::DoctorIntegrationReadResult integration = integrationToken.isEmpty()
+        ? hotas::doctor::DoctorIntegrationReadResult{} : hotas::doctor::consumeDoctorLaunchContext(integrationToken);
+    const bool componentMismatch = integration.accepted
+        && integration.context.invokingVersion != QString::fromLatin1(HOTAS_BF6_VERSION);
+    const QString integrationNotice = integrationToken.isEmpty() ? QString{}
+        : !integration.accepted ? QStringLiteral("HOTAS integration context rejected: %1").arg(integration.rejection)
+        : componentMismatch ? QStringLiteral("COMPONENT VERSION MISMATCH — HOTAS BF6 %1 requested Doctor %2. Repair is blocked; independent diagnosis continues.")
+              .arg(integration.context.invokingVersion, QString::fromLatin1(HOTAS_BF6_VERSION))
+        : QStringLiteral("Opened by HOTAS BF6 for %1. This is an intent hint only; Doctor independently verifies all system evidence.")
+              .arg(integration.context.reason);
+    const bool labRepairMode = fixtureMode && !componentMismatch && hasArgument(argc, argv, "--lab-repair-mode");
     const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
     const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
     const bool approvedUpgradeRequested = fixtureMode && hasArgument(argc, argv, "--approved-upgrade");
@@ -297,6 +313,10 @@ int main(int argc, char *argv[])
         }
         if (hasArgument(argc, argv, "--headless")) return 0;
         hotas::doctor::DoctorSessionViewModel viewModel(outcome.session, buildIdentity);
+        viewModel.setCopyAction([](QString text) { QGuiApplication::clipboard()->setText(text); });
+        viewModel.setIntegrationNotice(integrationNotice, componentMismatch);
+        if (integration.accepted) hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Doctor opened"),
+            componentMismatch ? QStringLiteral("Component version mismatch; repair is blocked.") : QStringLiteral("Independent diagnosis is starting."));
         std::optional<LabRepairController> labController;
         if (labRepairMode) {
             const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true, approvedUpgradeRequested);
@@ -346,6 +366,8 @@ int main(int argc, char *argv[])
     hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
     hotas::doctor::DoctorSession prepared = diagnosticEngine.createPreparedSession();
     hotas::doctor::DoctorSessionViewModel viewModel(prepared, buildIdentity);
+    viewModel.setCopyAction([](QString text) { QGuiApplication::clipboard()->setText(text); });
+    viewModel.setIntegrationNotice(integrationNotice, componentMismatch);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("doctorSession"), &viewModel);
@@ -355,6 +377,18 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return -1;
     ScanController controller(viewModel, reportPath);
     viewModel.setScanActions([&controller] { controller.cancel(); }, [&controller] { controller.start(); });
+    if (integration.accepted) {
+        hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Doctor opened"),
+            componentMismatch ? QStringLiteral("Component version mismatch; repair is blocked.") : QStringLiteral("Independent diagnosis is starting."));
+        bool diagnosisResultReported = false;
+        QObject::connect(&viewModel, &hotas::doctor::DoctorSessionViewModel::sessionChanged, &application,
+            [&viewModel, &integration, &diagnosisResultReported] {
+                if (diagnosisResultReported || viewModel.scanRunning()) return;
+                diagnosisResultReported = true;
+                hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Diagnosis complete"),
+                    QStringLiteral("A fresh read-only scan completed; HOTAS BF6 may refresh its low-frequency readiness view."));
+            });
+    }
     controller.start();
     if (hasArgument(argc, argv, "--startup-smoke")) QTimer::singleShot(0, &application, &QCoreApplication::quit);
     const int result = application.exec();

@@ -4,6 +4,7 @@
 #include "doctor_session_view_model.h"
 
 #include <QDir>
+#include <QFont>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -101,6 +102,7 @@ private slots:
     void narrowCommandCenterUsesFocusFallbackWithoutDeadTimelineSpace();
     void keyboardActivationUsesTheCustomPresentationAndPaneControls();
     void persistedSplitModeAndResetLayoutSurviveTheTortureSequence();
+    void commandCenterDragOwnsLayoutAndBottomDocksCoexist();
 };
 
 void HidHideDoctorLayoutTests::init()
@@ -337,6 +339,84 @@ void HidHideDoctorLayoutTests::persistedSplitModeAndResetLayoutSurviveTheTorture
     QTest::qWait(120);
     QVERIFY(item(window, "focusWorkspace"));
     QVERIFY(!item(window, "commandActivityTimeline"));
+}
+
+void HidHideDoctorLayoutTests::commandCenterDragOwnsLayoutAndBottomDocksCoexist()
+{
+    DoctorSession session = completedFixtureSession(true);
+    DoctorSessionViewModel model(session, QStringLiteral("layout-fixture"));
+    model.setCommandCenter(true);
+    QQmlApplicationEngine engine;
+    loadFixture(engine, model);
+    QVERIFY(!engine.rootObjects().isEmpty());
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().front());
+    QVERIFY(window);
+    sizeAndShow(window, 2200, 1100);
+
+    QQuickItem *workspace = item(window, "commandPaneSplit");
+    QQuickItem *handle = item(window, "commandPaneSplitHandle");
+    QQuickItem *plan = item(window, "commandPlanPane");
+    QQuickItem *current = item(window, "commandCurrentPane");
+    QQuickItem *findings = item(window, "commandFindingsPane");
+    QQuickItem *action = item(window, "commandActionPane");
+    QVERIFY(workspace && handle && plan && current && findings && action);
+    const QPoint dragStart = handle->mapToScene(handle->boundingRect().center()).toPoint();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, dragStart);
+    QTest::mouseMove(window, dragStart + QPoint(90, 0), 80);
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, dragStart + QPoint(90, 0));
+    QTest::qWait(250);
+
+    const QList<qreal> afterRelease{plan->width(), current->width(), findings->width(), action->width()};
+    QVERIFY2(afterRelease[0] > 0 && afterRelease[1] > 0 && afterRelease[2] > 0 && afterRelease[3] > 0,
+        "A released divider must retain four usable panes.");
+    QTest::qWait(10000);
+    const QList<qreal> afterIdle{plan->width(), current->width(), findings->width(), action->width()};
+    for (int index = 0; index < afterRelease.size(); ++index)
+        QVERIFY2(qAbs(afterIdle[index] - afterRelease[index]) <= 1.0,
+            "No pane may drift or fight back after its divider is released.");
+
+    model.setLiveEvidenceVisible(true);
+    QObject *inspectorState = window->findChild<QObject *>(QStringLiteral("evidenceInspectorState"));
+    QVERIFY(inspectorState);
+    inspectorState->setProperty("visible", true);
+    QTest::qWait(220);
+    QQuickItem *activity = item(window, "commandActivityTimelineDual");
+    QQuickItem *inspector = item(window, "commandEvidenceInspectorDual");
+    QQuickItem *dockHandle = item(window, "commandBottomDockHandle");
+    QVERIFY(activity && inspector && dockHandle && activity->isVisible() && inspector->isVisible());
+    QVERIFY2(activity->x() + activity->width() <= inspector->x() + 1.0,
+        "Activity and Inspector must share the bottom dock without overlap.");
+    const qreal activityWidthBeforeDockDrag = activity->width();
+    const QPoint dockDragStart = dockHandle->mapToScene(dockHandle->boundingRect().center()).toPoint();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, dockDragStart);
+    QTest::mouseMove(window, dockDragStart + QPoint(70, 0), 80);
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, dockDragStart + QPoint(70, 0));
+    QTest::qWait(120);
+    QVERIFY2(qAbs(activity->width() - activityWidthBeforeDockDrag) > 1.0,
+        "The shared bottom dock divider must be user-adjustable.");
+    const QVariantList persistedDockFractions = model.bottomDockFractions();
+    QCOMPARE(persistedDockFractions.size(), 2);
+    QVERIFY2(qAbs(persistedDockFractions[0].toDouble() + persistedDockFractions[1].toDouble() - 1.0) <= 0.015,
+        "A released bottom dock divider must persist normalized user intent.");
+    const QList<qreal> afterDock{plan->width(), current->width(), findings->width(), action->width()};
+    for (int index = 0; index < afterRelease.size(); ++index)
+        QVERIFY2(qAbs(afterDock[index] - afterRelease[index]) <= 1.0,
+            "Opening a bottom dock must not rebalance horizontal panes.");
+
+    model.setDensity(QStringLiteral("Comfortable"));
+    QTest::qWait(120);
+    QQuickItem *planHeader = item(window, "doctorPaneHeaderTitle_DIAGNOSTIC PLAN");
+    QVERIFY(planHeader);
+    const int comfortableFont = planHeader->property("font").value<QFont>().pixelSize();
+    model.setDensity(QStringLiteral("Dense"));
+    QTest::qWait(120);
+    const int denseFont = planHeader->property("font").value<QFont>().pixelSize();
+    QVERIFY2(comfortableFont > denseFont, "Density modes must change actual Doctor typography, not only geometry.");
+    const QList<qreal> afterDensity{plan->width(), current->width(), findings->width(), action->width()};
+    for (int index = 0; index < afterRelease.size(); ++index)
+        QVERIFY2(qAbs(afterDensity[index] - afterRelease[index]) <= 1.0,
+            "Density is presentation-only and must not cause horizontal pane drift.");
+    QVERIFY2(captureSnapshot(window, QStringLiteral("command-center-stable-dock")), "Stable dock review capture could not be written.");
 }
 
 int main(int argc, char *argv[])

@@ -10,6 +10,7 @@
 #include "controller_diagnostics.h"
 #include "controller_manager.h"
 #include "hotas_build_version.h"
+#include "doctor_integration.h"
 #include "input_learning.h"
 #include "launcher_core.h"
 #include "profile_model.h"
@@ -23,6 +24,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QLocale>
@@ -13265,6 +13267,75 @@ bool AppBackend::openHidHideConfiguration()
     }
     appendEvent(u"HidHide Configuration Client was not found"_qs);
     return false;
+}
+
+bool AppBackend::openHidHideDoctor(const QString &reason)
+{
+    using namespace doctor;
+    const QString doctorPath = QDir(QCoreApplication::applicationDirPath()).filePath(u"HidHide Doctor.exe"_qs);
+    if (!QFileInfo(doctorPath).isFile() || !QFileInfo(doctorPath).isExecutable()) {
+        appendEvent(u"HidHide Doctor is not paired with this HOTAS BF6 installation"_qs);
+        return false;
+    }
+
+    DoctorLaunchContext context;
+    context.sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces).remove(u'-');
+    context.invokingVersion = QString::fromLatin1(HOTAS_BF6_VERSION);
+    context.invokingBuildId = QStringLiteral(HOTAS_BF6_BUILD_ID);
+    context.reason = reason.trimmed().isEmpty() ? u"manual-diagnostics"_qs : reason.trimmed();
+    context.expectedHotasExecutable = QCoreApplication::applicationFilePath();
+    const ControllerProfile &profile = activeProfile(m_configuration);
+    context.profileId = profile.id;
+    context.profileName = profile.name;
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        context.deviceRigId = rig->id;
+        context.deviceRigName = rig->name;
+        if (const VirtualOutputLayout *output = findOutputLayout(m_configuration, deviceRigPrimaryOutputLayoutId(*rig))) {
+            context.expectedVirtualOutput = output->name;
+        }
+    }
+    context.isolationIntent = hidhideCloakStateKnown()
+        ? (hidhideCloaked() ? u"physical-controller isolation expected enabled"_qs : u"physical-controller isolation expected disabled"_qs)
+        : u"physical-controller isolation state unknown to HOTAS BF6"_qs;
+    for (const QVariant &entry : m_controllerUiModel) {
+        const QVariantMap controller = entry.toMap();
+        const QString identifier = controller.value(u"directInputId"_qs).toString();
+        if (!identifier.isEmpty() && context.expectedPhysicalControllerIds.size() < 16) context.expectedPhysicalControllerIds.append(identifier);
+    }
+
+    QString error;
+    if (!writeDoctorLaunchContext(context, &error)) {
+        appendEvent(u"HidHide Doctor was not started: "_qs + error);
+        return false;
+    }
+    auto *resultWatcher = new QFileSystemWatcher(this);
+    const QString resultDirectory = doctorIntegrationDirectory();
+    resultWatcher->addPath(resultDirectory);
+    const auto receiveResult = [this, resultWatcher, sessionId = context.sessionId] {
+        QString state;
+        QString detail;
+        if (!doctor::consumeDoctorIntegrationResult(sessionId, &state, &detail)) return;
+        appendEvent(u"HidHide Doctor: "_qs + state + (detail.isEmpty() ? QString{} : u" — "_qs + detail));
+        refreshHidHideStatus();
+        if (state != u"Doctor opened"_qs) resultWatcher->deleteLater();
+    };
+    QObject::connect(resultWatcher, &QFileSystemWatcher::directoryChanged, this,
+                     [receiveResult](const QString &) { receiveResult(); });
+    // A bounded lifetime handles a failed/cancelled launch without retaining a
+    // watcher. This is control-plane event handling only, never hot-path work.
+    QTimer::singleShot(5 * 60 * 1000, resultWatcher, &QObject::deleteLater);
+    if (!QProcess::startDetached(doctorPath, {u"--integration-context"_qs, context.sessionId},
+                                 QFileInfo(doctorPath).absolutePath())) {
+        resultWatcher->deleteLater();
+        QFile::remove(QDir(doctorIntegrationDirectory()).filePath(u"context-"_qs + context.sessionId + u".json"_qs));
+        appendEvent(u"HidHide Doctor could not be launched from this installation"_qs);
+        return false;
+    }
+    appendEvent(u"Opened HidHide Doctor for "_qs + context.reason);
+    // Cover a very fast Doctor result written before the watcher subscription
+    // becomes observable. This single queued read is not polling.
+    QTimer::singleShot(0, this, receiveResult);
+    return true;
 }
 
 void AppBackend::inspectControllerReadiness()

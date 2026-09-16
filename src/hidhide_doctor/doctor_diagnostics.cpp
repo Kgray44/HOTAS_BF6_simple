@@ -368,7 +368,9 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         userActionTitle = QStringLiteral("Nothing required");
         userActionDetail = QStringLiteral("No material HidHide issue was diagnosed. The scan remained read only.");
     }
-    outcome.session.setUserAction({UserActionState::NothingRequired,
+    outcome.session.setUserAction({hasPlan ? UserActionState::Required
+                                      : hasDiagnoses ? UserActionState::Optional
+                                                     : UserActionState::NothingRequired,
         hasDiagnoses ? FindingSeverity::Warning : FindingSeverity::Informational,
         userActionTitle, userActionDetail, {}, {}, {}});
     outcome.completedAt = QDateTime::currentDateTimeUtc();

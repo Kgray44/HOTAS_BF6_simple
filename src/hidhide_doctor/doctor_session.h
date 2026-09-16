@@ -69,6 +69,7 @@ public:
     const QList<Diagnosis> &diagnoses() const;
     const QList<DoctorActivityEvent> &activity() const;
     const UserAction &userAction() const;
+    const QList<UserActionLedgerEntry> &userActionHistory() const;
     const std::optional<DoctorOperation> &currentOperation() const;
     const std::optional<DoctorEnvironment> &environment() const;
     const QString &sessionLabel() const;
@@ -86,6 +87,7 @@ private:
     QList<Diagnosis> m_diagnoses;
     QList<DoctorActivityEvent> m_activity;
     UserAction m_userAction;
+    QList<UserActionLedgerEntry> m_userActionHistory;
     std::optional<DoctorOperation> m_currentOperation;
     std::optional<DoctorEnvironment> m_environment;
     QString m_sessionLabel;

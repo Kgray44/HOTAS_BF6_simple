@@ -152,6 +152,10 @@ enum class NativeErrorDomain { None, Win32, NtStatus, HResult, Protocol, Process
 enum class FindingSeverity { Informational, Warning, Error, Critical };
 enum class DiagnosisConfidence { Uncertain, Moderate, High, VeryHigh, Confirmed };
 enum class UserActionState { NothingRequired, Required, Optional, Blocked };
+// A session can change the current action as evidence arrives.  The ledger
+// preserves those transitions for support reports without treating a current
+// UI label as historical truth.
+enum class UserActionLedgerState { NotRequired, Required, Waiting, Completed, Cancelled, Superseded, StillPending };
 // Phase 2 deliberately describes what could be repaired without gaining any
 // ability to perform that repair.  Keep this vocabulary distinct from the
 // diagnosis itself and from the future RepairPlan risk/qualification model.
@@ -281,6 +285,20 @@ struct UserAction final {
     QString why;
     QStringList instructions;
     QStringList availableActions;
+};
+
+struct UserActionLedgerEntry final {
+    QString actionId;
+    QString title;
+    QString explanation;
+    QDateTime firstRequiredAt;
+    QDateTime completedAt;
+    QDateTime cancelledAt;
+    UserActionLedgerState state = UserActionLedgerState::NotRequired;
+    QString reason;
+    QString associatedCheckId;
+    QString associatedDiagnosisId;
+    QString userResponse;
 };
 
 struct DoctorOperation final {

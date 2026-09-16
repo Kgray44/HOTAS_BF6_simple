@@ -33,6 +33,10 @@ configure_file(cmake/hotas_version.rc.in
     "${CMAKE_CURRENT_BINARY_DIR}/generated/hotas_version.rc" @ONLY)
 configure_file(cmake/launcher_version.rc.in
     "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_version.rc" @ONLY)
+configure_file(cmake/hidhide_doctor_version.rc.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/hidhide_doctor_version.rc" @ONLY)
+configure_file(cmake/hidhide_doctor_helper_version.rc.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/hidhide_doctor_helper_version.rc" @ONLY)
 
 set(HOTAS_MAPPER_SOURCES
     src/main.cpp
@@ -283,6 +287,10 @@ target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/laun
 add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_types.h
     src/hidhide_doctor/doctor_types.cpp
+    src/hidhide_doctor/doctor_report_composer.h
+    src/hidhide_doctor/doctor_report_composer.cpp
+    src/hidhide_doctor/doctor_integration.h
+    src/hidhide_doctor/doctor_integration.cpp
     src/hidhide_doctor/doctor_environment.h
     src/hidhide_doctor/doctor_environment.cpp
     src/hidhide_doctor/doctor_catalog.h
@@ -316,6 +324,9 @@ add_library(hidhide_doctor_core STATIC
 target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core Qt6::Network)
 target_include_directories(hidhide_doctor_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor")
+# HOTAS Mapper uses only the bounded launch/result protocol from this library.
+# It never calls Doctor diagnostics, repair planning, or mutation APIs.
+target_link_libraries(HOTASMapper PRIVATE hidhide_doctor_core)
 if (WIN32)
     # Every Phase 1 provider uses a documented read/query API only. Link the
     # dedicated Windows libraries here rather than routing diagnostics through
@@ -337,14 +348,16 @@ qt_add_executable(HidHideDoctorRepair WIN32
     src/hidhide_doctor/doctor_repair_helper_main.cpp
     src/hidhide_doctor/doctor_hidhide_configuration_mutator.h
     src/hidhide_doctor/doctor_hidhide_configuration_mutator.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/hidhide_doctor_helper_version.rc"
 )
 target_link_libraries(HidHideDoctorRepair PRIVATE hidhide_doctor_core Qt6::Core advapi32)
 target_include_directories(HidHideDoctorRepair PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(HidHideDoctorRepair PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-set_target_properties(HidHideDoctorRepair PROPERTIES OUTPUT_NAME "HidHide Doctor Repair" WIN32_EXECUTABLE TRUE VERSION "${HOTAS_BF6_VERSION}")
+set_target_properties(HidHideDoctorRepair PROPERTIES OUTPUT_NAME "HidHideDoctorRepair" WIN32_EXECUTABLE TRUE VERSION "${HOTAS_BF6_VERSION}")
 
 qt_add_executable(HidHideDoctor WIN32
     src/hidhide_doctor/doctor_main.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/hidhide_doctor_version.rc"
 )
 qt_add_qml_module(HidHideDoctor
     URI HidHideDoctor
@@ -687,6 +700,7 @@ if (BUILD_TESTING)
     )
     target_link_libraries(app_backend_startup_tests PRIVATE
         hotas_update_core
+        hidhide_doctor_core
         Qt6::Core
         Qt6::Gui
         Qt6::Network
@@ -697,6 +711,7 @@ if (BUILD_TESTING)
     )
     target_include_directories(app_backend_startup_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
     )
@@ -778,6 +793,7 @@ if (BUILD_TESTING)
     )
     target_link_libraries(app_qml_startup_tests PRIVATE
         hotas_update_core
+        hidhide_doctor_core
         Qt6::Core
         Qt6::Gui
         Qt6::Network
@@ -796,6 +812,7 @@ if (BUILD_TESTING)
     )
     target_include_directories(app_qml_startup_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
         "${CMAKE_CURRENT_SOURCE_DIR}/launcher"
     )
