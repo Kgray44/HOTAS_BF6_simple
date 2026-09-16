@@ -65,6 +65,8 @@ set(HOTAS_MAPPER_SOURCES
     src/signal_flow_model.cpp
     src/config_store.h
     src/config_store.cpp
+    src/config_persistence_coordinator.h
+    src/config_persistence_coordinator.cpp
     src/responsiveness_probe.h
     src/responsiveness_probe.cpp
     src/controller_manager.h
@@ -319,6 +321,8 @@ if (BUILD_TESTING)
         src/signal_flow_model.cpp
         src/config_store.h
         src/config_store.cpp
+        src/config_persistence_coordinator.h
+        src/config_persistence_coordinator.cpp
         src/controller_manager.h
         src/controller_manager.cpp
         src/direct_input_axis.h
@@ -339,6 +343,21 @@ if (BUILD_TESTING)
 
     if (WIN32)
         set_tests_properties(mapping_core_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
+    qt_add_executable(config_persistence_coordinator_tests
+        tests/config_persistence_coordinator_tests.cpp
+        src/config_persistence_coordinator.h
+        src/config_persistence_coordinator.cpp
+        src/config_store.h
+        src/mapping_types.h
+    )
+    target_link_libraries(config_persistence_coordinator_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(config_persistence_coordinator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME config_persistence_coordinator_tests COMMAND config_persistence_coordinator_tests)
+    if (WIN32)
+        set_tests_properties(config_persistence_coordinator_tests PROPERTIES
             ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 

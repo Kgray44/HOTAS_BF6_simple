@@ -334,6 +334,54 @@ void ResponsivenessProbe::recordConfigSave(qint64 startedNs, qint64 finishedNs, 
     }
 }
 
+void ResponsivenessProbe::recordPersistenceEnqueue(qint64 captureStartedNs, qint64 captureFinishedNs,
+                                                    qint64 enqueuedNs, quint64 generation,
+                                                    bool supersededPending)
+{
+    QMutexLocker locker(&m_mutex);
+    m_persistenceGuiSnapshot.add(millisecondsBetween(captureStartedNs, captureFinishedNs));
+    m_persistenceGuiEnqueue.add(millisecondsBetween(captureFinishedNs, enqueuedNs));
+    m_persistenceLatestRequestedGeneration = std::max(m_persistenceLatestRequestedGeneration, generation);
+    if (supersededPending) ++m_persistenceSuperseded;
+}
+
+void ResponsivenessProbe::recordPersistenceWorker(quint64 generation, qint64 enqueuedNs,
+                                                   qint64 workerStartedNs, qint64 workerFinishedNs,
+                                                   qint64 serializationNs, qint64 setValueNs,
+                                                   qint64 syncNs, bool success)
+{
+    const double totalMs = millisecondsBetween(workerStartedNs, workerFinishedNs);
+    QMutexLocker locker(&m_mutex);
+    m_persistenceWorkerQueueWait.add(millisecondsBetween(enqueuedNs, workerStartedNs));
+    m_persistenceWorkerTotal.add(totalMs);
+    m_persistenceWorkerSerialization.add(static_cast<double>(serializationNs) / 1'000'000.0);
+    m_persistenceWorkerSetValue.add(static_cast<double>(setValueNs) / 1'000'000.0);
+    m_persistenceWorkerSync.add(static_cast<double>(syncNs) / 1'000'000.0);
+    if (!success) ++m_persistenceFailures;
+    if (totalMs >= kMajorStallMs) {
+        addMajorEventLocked(u"persistence-worker-write"_qs, m_currentPage,
+                            QString(u"generation %1 completed on serial persistence thread"_qs)
+                                .arg(generation), workerStartedNs, totalMs);
+    }
+}
+
+void ResponsivenessProbe::recordPersistenceState(quint64 requests, quint64 writes, quint64 superseded,
+                                                  quint64 latestRequestedGeneration,
+                                                  quint64 durableGeneration, quint64 failures,
+                                                  quint64 lastFailedGeneration)
+{
+    QMutexLocker locker(&m_mutex);
+    m_persistenceRequests = std::max(m_persistenceRequests, requests);
+    m_persistenceWrites = std::max(m_persistenceWrites, writes);
+    m_persistenceSuperseded = std::max(m_persistenceSuperseded, superseded);
+    m_persistenceLatestRequestedGeneration = std::max(m_persistenceLatestRequestedGeneration,
+                                                       latestRequestedGeneration);
+    m_persistenceDurableGeneration = std::max(m_persistenceDurableGeneration, durableGeneration);
+    m_persistenceFailures = std::max(m_persistenceFailures, failures);
+    m_persistenceLastFailedGeneration = std::max(m_persistenceLastFailedGeneration,
+                                                  lastFailedGeneration);
+}
+
 void ResponsivenessProbe::addMajorEventLocked(const QString &kind, const QString &page,
                                                const QString &detail, qint64 timestampNs,
                                                double durationMs)
@@ -421,6 +469,21 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
                                        {u"guiThread"_qs, save.guiThread}});
     }
     persistence.insert(u"recentSaves"_qs, recentSaves);
+    persistence.insert(u"asyncCoordinator"_qs, QJsonObject{
+        {u"guiSnapshotCapture"_qs, summarizeSamples(m_persistenceGuiSnapshot)},
+        {u"guiEnqueue"_qs, summarizeSamples(m_persistenceGuiEnqueue)},
+        {u"workerQueueWait"_qs, summarizeSamples(m_persistenceWorkerQueueWait)},
+        {u"workerTotal"_qs, summarizeSamples(m_persistenceWorkerTotal)},
+        {u"workerSerialization"_qs, summarizeSamples(m_persistenceWorkerSerialization)},
+        {u"workerSetValue"_qs, summarizeSamples(m_persistenceWorkerSetValue)},
+        {u"workerSync"_qs, summarizeSamples(m_persistenceWorkerSync)},
+        {u"requests"_qs, static_cast<qint64>(m_persistenceRequests)},
+        {u"writes"_qs, static_cast<qint64>(m_persistenceWrites)},
+        {u"superseded"_qs, static_cast<qint64>(m_persistenceSuperseded)},
+        {u"latestRequestedGeneration"_qs, static_cast<qint64>(m_persistenceLatestRequestedGeneration)},
+        {u"durableGeneration"_qs, static_cast<qint64>(m_persistenceDurableGeneration)},
+        {u"failures"_qs, static_cast<qint64>(m_persistenceFailures)},
+        {u"lastFailedGeneration"_qs, static_cast<qint64>(m_persistenceLastFailedGeneration)}});
     report.insert(u"configPersistence"_qs, persistence);
 
     QJsonArray majorEvents;

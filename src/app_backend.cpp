@@ -9,6 +9,7 @@
 #include "controller_discovery.h"
 #include "controller_diagnostics.h"
 #include "controller_manager.h"
+#include "config_persistence_coordinator.h"
 #include "hotas_build_version.h"
 #include "input_learning.h"
 #include "launcher_core.h"
@@ -90,6 +91,8 @@ constexpr int kTrayHiddenGameDetectionIntervalMs = 7500;
 constexpr int kForegroundGameProbeIntervalMs = 250;
 constexpr int kForegroundGameStableMs = 450;
 constexpr int kRequiredDeviceDisconnectGraceMs = 3500;
+constexpr int kPersistenceTransactionTimeoutMs = 2500;
+constexpr int kPersistenceShutdownTimeoutMs = 2000;
 
 bool startupSmokeRequested()
 {
@@ -493,7 +496,12 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 } // namespace
 
 AppBackend::AppBackend(QObject *parent)
-    : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
+    : QObject(parent)
+    , m_configuration(ConfigStore::load())
+    , m_persistence(std::make_unique<ConfigPersistenceCoordinator>(
+          [](const MapperConfiguration &configuration) { return ConfigStore::saveDetailed(configuration); },
+          [](const MapperConfiguration &configuration) { return ConfigStore::save(configuration); }))
+    , m_worker(m_configuration)
 {
     // Package/installer startup acceptance needs the real QML shell, backend
     // models, and tray construction, but it must not acquire DirectInput,
@@ -502,6 +510,7 @@ AppBackend::AppBackend(QObject *parent)
     // launches retain the unchanged hardware startup path below.
     const bool startupSmoke = startupSmokeRequested();
     const bool isolatedPresentation = isolatedPresentationRequested();
+    m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
     // Selection starts at the authoritative active Profile, then remains a
     // session-local editor choice until the user changes it. It is never a
     // hidden activation request.
@@ -708,6 +717,7 @@ AppBackend::AppBackend(QObject *parent)
 
 AppBackend::~AppBackend()
 {
+    flushPersistenceForShutdown();
     if (m_trayIcon) {
         m_trayIcon->hide();
         // QSystemTrayIcon does not own the QMenu, so detach it before the
@@ -758,6 +768,17 @@ AppBackend::~AppBackend()
     // can abort application shutdown. Stop is observed at the next bounded
     // poll boundary, so join before member destruction.
     m_worker.wait();
+}
+
+void AppBackend::flushPersistenceForShutdown()
+{
+    if (!m_persistence) return;
+    // Shutdown has a real durability boundary. Wait only for the newest
+    // already-requested generation; starting a clean application must not
+    // manufacture a configuration write merely because it exits.
+    m_persistence->flushLatest(kPersistenceShutdownTimeoutMs);
+    m_persistence->stop(kPersistenceShutdownTimeoutMs);
+    recordPersistenceProbeTelemetry();
 }
 
 QVariantList AppBackend::axisConfiguration() const
@@ -12871,7 +12892,10 @@ QVariantMap AppBackend::signalFlowRedo(qulonglong expectedRevision)
 
 bool AppBackend::saveSignalFlowPresentation()
 {
-    if (!ConfigStore::save(m_configuration)) {
+    // The presentation contract remains an immediate durable save. Route the
+    // existing barrier through the generic serial coordinator so a previously
+    // queued non-Signal-Flow snapshot cannot write after this one.
+    if (!persistConfigurationTransaction(m_configuration, kPersistenceTransactionTimeoutMs)) {
         m_signalFlowActionFeedback = u"Signal Flow workspace could not be saved."_qs;
         emit signalFlowChanged();
         return false;
@@ -13505,7 +13529,7 @@ void AppBackend::setSelectedAxis(int physicalAxis)
 {
     if (!validAxis(physicalAxis) || m_configuration.selectedAxisIndex == physicalAxis) return;
     m_configuration.selectedAxisIndex = physicalAxis;
-    ConfigStore::save(m_configuration);
+    requestConfigurationPersistence();
     rebuildSelectedAxisCurve();
     emit stateChanged();
 }
@@ -15048,7 +15072,7 @@ bool AppBackend::commitActivationConfiguration(const MapperConfiguration &candid
 {
     if (consumeActivationFaultForTest(u"persist"_qs)) return false;
     MapperConfiguration persisted = candidate;
-    if (!ConfigStore::save(persisted)) return false;
+    if (!persistConfigurationTransaction(persisted, kPersistenceTransactionTimeoutMs)) return false;
     m_configuration = std::move(persisted);
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
@@ -16705,7 +16729,12 @@ bool AppBackend::handoffToLauncher()
     // Ensure the existing QSettings record is durable before a separate
     // launcher process takes over. A launcher start is confirmed first; only
     // then do we begin stopping controller I/O and exit this application.
-    ConfigStore::save(m_configuration);
+    if (!persistConfigurationTransaction(m_configuration, kPersistenceTransactionTimeoutMs)) {
+        m_updateStatusText = u"Update available, but HOTAS BF6 could not durably save the latest configuration."_qs;
+        appendEvent(u"Update handoff blocked: latest configuration did not reach durable storage."_qs);
+        emit stateChanged();
+        return false;
+    }
     const QString applicationDirectory = QCoreApplication::applicationDirPath();
     const QString launcherPath = QDir(applicationDirectory).filePath(u"HOTAS BF6 Launcher.exe"_qs);
     if (!QFileInfo(launcherPath).isExecutable()) {
@@ -18385,8 +18414,8 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
         candidate.activeControllerRecordId = candidate.savedControllers.back().id;
     }
     candidate.preferredDeviceId = controller->directInputId;
-    if (!ConfigStore::save(candidate)) return false;
     m_configuration = std::move(candidate);
+    if (!requestConfigurationPersistence()) return false;
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
     // Verification changes the durable identity fact used by DeviceRigStatus.
@@ -18443,7 +18472,7 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     found->lastSeen = timestamp;
     found->lastVerified = timestamp;
 
-    if (!ConfigStore::save(candidate)) {
+    if (!persistConfigurationTransaction(candidate, kPersistenceTransactionTimeoutMs)) {
         return reject(u"HOTAS BF6 proved the selected controller but could not save its verification record. No controller, HidHide, or vJoy setting was changed."_qs);
     }
 
@@ -18561,7 +18590,7 @@ bool AppBackend::setActiveController(const QString &recordId)
             m_verificationInProgress = false;
             if (prepared && outputValid && selected && restored) {
                 m_configuration = targetConfiguration;
-                ConfigStore::save(m_configuration);
+                requestConfigurationPersistence();
                 rebuildSelectedAxisCurve();
                 rebuildControllerUiModel();
                 emit selectedAxisCurveChanged();
@@ -18916,7 +18945,7 @@ bool AppBackend::forgetController(const QString &recordId)
         }
         visibilityChanged = visibilityResult.changed;
     }
-    if (!ConfigStore::save(candidate)) {
+    if (!persistConfigurationTransaction(candidate, kPersistenceTransactionTimeoutMs)) {
         if (visibilityChanged) {
             const ManagedVisibilityTransactionResult rollback =
                 visibility.applyManagedPhysicalInputVisibility(managedHidInstances, true);
@@ -20085,6 +20114,58 @@ const AxisMapping *AppBackend::selectedAxisMapping() const
     return &currentProfile().axes[m_configuration.selectedAxisIndex];
 }
 
+bool AppBackend::requestConfigurationPersistence()
+{
+    if (!m_persistence) return false;
+    const ConfigPersistenceCoordinator::RequestReceipt request = m_persistence->request(m_configuration);
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (ResponsivenessProbe *probe = ResponsivenessProbe::active(); request.generation != 0 && probe) {
+        probe->recordPersistenceEnqueue(request.captureStartedNs, request.captureFinishedNs,
+                                        request.enqueuedNs, request.generation,
+                                        request.supersededPending);
+    }
+#endif
+    recordPersistenceProbeTelemetry();
+    return request.generation != 0;
+}
+
+bool AppBackend::persistConfigurationTransaction(const MapperConfiguration &configuration, int timeoutMs)
+{
+    if (!m_persistence) return false;
+    const ConfigPersistenceCoordinator::RequestReceipt request = m_persistence->request(configuration);
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (ResponsivenessProbe *probe = ResponsivenessProbe::active(); request.generation != 0 && probe) {
+        probe->recordPersistenceEnqueue(request.captureStartedNs, request.captureFinishedNs,
+                                        request.enqueuedNs, request.generation,
+                                        request.supersededPending);
+    }
+#endif
+    const ConfigPersistenceCoordinator::FlushResult result = request.generation == 0
+        ? ConfigPersistenceCoordinator::FlushResult{ConfigPersistenceCoordinator::FlushStatus::Stopped, 0, 0}
+        : m_persistence->flushThrough(request.generation, timeoutMs);
+    recordPersistenceProbeTelemetry();
+    return result.durable();
+}
+
+void AppBackend::recordPersistenceProbeTelemetry()
+{
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (!m_persistence) return;
+    ResponsivenessProbe *probe = ResponsivenessProbe::active();
+    if (!probe) return;
+    for (const ConfigPersistenceCoordinator::Completion &completion : m_persistence->takeCompletions()) {
+        probe->recordPersistenceWorker(completion.generation, completion.enqueuedNs,
+                                       completion.workerStartedNs, completion.workerFinishedNs,
+                                       completion.write.serializationNs, completion.write.setValueNs,
+                                       completion.write.syncNs, completion.write.success);
+    }
+    const ConfigPersistenceCoordinator::Statistics statistics = m_persistence->statistics();
+    probe->recordPersistenceState(statistics.requests, statistics.writes, statistics.superseded,
+                                  statistics.latestRequestedGeneration, statistics.durableGeneration,
+                                  statistics.failures, statistics.lastFailedGeneration);
+#endif
+}
+
 void AppBackend::persistAndApply()
 {
     // These fields existed only in unreleased candidate configurations.  A
@@ -20101,7 +20182,7 @@ void AppBackend::persistAndApply()
         record->axisActivity = m_configuration.axisActivity;
         record->vjoyRequirements = currentVjoyRequirements();
     }
-    ConfigStore::save(m_configuration);
+    requestConfigurationPersistence();
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
     rebuildSelectedAxisCurve();

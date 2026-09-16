@@ -39,6 +39,7 @@ class QSystemTrayIcon;
 namespace hotas {
 
 struct PortableConfigurationBundle;
+class ConfigPersistenceCoordinator;
 
 class AppBackend final : public QObject {
     Q_OBJECT
@@ -281,6 +282,10 @@ class AppBackend final : public QObject {
 public:
     explicit AppBackend(QObject *parent = nullptr);
     ~AppBackend() override;
+
+    // Called before responsiveness evidence is exported. This is the one
+    // bounded shutdown durability barrier; normal UI edits never wait here.
+    void flushPersistenceForShutdown();
 
     QVariantList axisConfiguration() const;
     QVariantList axisTelemetry() const;
@@ -1165,6 +1170,9 @@ private:
     };
 
     void persistAndApply();
+    bool requestConfigurationPersistence();
+    bool persistConfigurationTransaction(const MapperConfiguration &configuration, int timeoutMs = 2500);
+    void recordPersistenceProbeTelemetry();
     // A focused edit to the owner of a shared Signal Flow conditioner remains
     // one configuration edit for every linked channel. A member edit is left
     // independent so reconciliation can surface it as an explicit split.
@@ -1426,6 +1434,7 @@ private:
     };
 
     MapperConfiguration m_configuration;
+    std::unique_ptr<ConfigPersistenceCoordinator> m_persistence;
     // Session-only editor context. It is intentionally outside
     // MapperConfiguration so persisting an edit never converts selection into
     // a runtime activation request.

@@ -13,6 +13,7 @@
 #include "signal_flow_model.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSettings>
@@ -2376,29 +2377,34 @@ bool ConfigStore::save(const MapperConfiguration &configuration)
     auto *probe = ResponsivenessProbe::active();
     if (probe) {
         const qint64 startedNs = ResponsivenessProbe::monotonicNowNs();
-        QSettings stored(settingsFilePath(), QSettings::IniFormat);
-        const qint64 serializationStartedNs = ResponsivenessProbe::monotonicNowNs();
-        const QByteArray serialized = QJsonDocument(toJson(configuration)).toJson(QJsonDocument::Compact);
-        const qint64 serializationFinishedNs = ResponsivenessProbe::monotonicNowNs();
-        const qint64 setValueStartedNs = serializationFinishedNs;
-        stored.setValue(QLatin1String(kConfigKey), serialized);
-        const qint64 setValueFinishedNs = ResponsivenessProbe::monotonicNowNs();
-        const qint64 syncStartedNs = setValueFinishedNs;
-        stored.sync();
+        const SaveResult result = saveDetailed(configuration);
         const qint64 finishedNs = ResponsivenessProbe::monotonicNowNs();
-        const bool success = stored.status() == QSettings::NoError;
         const auto *application = QCoreApplication::instance();
         const bool guiThread = application && QThread::currentThread() == application->thread();
-        probe->recordConfigSave(startedNs, finishedNs, serializationFinishedNs - serializationStartedNs,
-                                setValueFinishedNs - setValueStartedNs, finishedNs - syncStartedNs,
-                                success, guiThread);
-        return success;
+        probe->recordConfigSave(startedNs, finishedNs, result.serializationNs, result.setValueNs,
+                                result.syncNs, result.success, guiThread);
+        return result.success;
     }
 #endif
     QSettings stored(settingsFilePath(), QSettings::IniFormat);
     stored.setValue(QLatin1String(kConfigKey), QJsonDocument(toJson(configuration)).toJson(QJsonDocument::Compact));
     stored.sync();
     return stored.status() == QSettings::NoError;
+}
+
+ConfigStore::SaveResult ConfigStore::saveDetailed(const MapperConfiguration &configuration)
+{
+    QSettings stored(settingsFilePath(), QSettings::IniFormat);
+    QElapsedTimer timer;
+    timer.start();
+    const QByteArray serialized = QJsonDocument(toJson(configuration)).toJson(QJsonDocument::Compact);
+    const qint64 serializationNs = timer.nsecsElapsed();
+    stored.setValue(QLatin1String(kConfigKey), serialized);
+    const qint64 setValueNs = timer.nsecsElapsed();
+    stored.sync();
+    const qint64 syncNs = timer.nsecsElapsed();
+    return {stored.status() == QSettings::NoError, serializationNs,
+            setValueNs - serializationNs, syncNs - setValueNs};
 }
 
 QJsonObject ConfigStore::toJson(const MapperConfiguration &input)
