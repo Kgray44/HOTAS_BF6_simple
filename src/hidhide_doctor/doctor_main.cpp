@@ -11,6 +11,8 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QFile>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QMetaObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -18,6 +20,7 @@
 #include <QSysInfo>
 #include <QTimer>
 #include <QUuid>
+#include <QWindow>
 
 #include <atomic>
 #include <algorithm>
@@ -40,6 +43,50 @@ QString argumentValue(int argc, char *argv[], const char *argument)
         if (std::strcmp(argv[index], argument) == 0) return QString::fromLocal8Bit(argv[index + 1]);
     }
     return {};
+}
+
+constexpr auto kDoctorSingleInstanceEndpoint = "hotas-bf6-hidhide-doctor-v1";
+
+bool forwardToExistingDoctor(const QString &integrationToken)
+{
+    QLocalSocket existing;
+    existing.connectToServer(QString::fromLatin1(kDoctorSingleInstanceEndpoint));
+    if (!existing.waitForConnected(150)) return false;
+    if (!integrationToken.isEmpty()) {
+        const QByteArray payload = integrationToken.toLatin1();
+        if (payload.size() != 32 || existing.write(payload) != payload.size() || !existing.waitForBytesWritten(150)) {
+            existing.disconnectFromServer();
+            return false;
+        }
+    }
+    existing.disconnectFromServer();
+    return true;
+}
+
+bool listenForDoctorInstance(QLocalServer &server)
+{
+    server.setSocketOptions(QLocalServer::UserAccessOption);
+    if (server.listen(QString::fromLatin1(kDoctorSingleInstanceEndpoint))) return true;
+    // A failed client connection above can leave an abandoned named-pipe
+    // endpoint after a crash. Remove only that stale endpoint, then retry.
+    if (server.serverError() != QAbstractSocket::AddressInUseError
+        || !QLocalServer::removeServer(QString::fromLatin1(kDoctorSingleInstanceEndpoint))) {
+        return false;
+    }
+    server.setSocketOptions(QLocalServer::UserAccessOption);
+    return server.listen(QString::fromLatin1(kDoctorSingleInstanceEndpoint));
+}
+
+void focusDoctorWindow(QQmlApplicationEngine &engine)
+{
+    for (QObject *root : engine.rootObjects()) {
+        auto *window = qobject_cast<QWindow *>(root);
+        if (!window) continue;
+        window->showNormal();
+        window->raise();
+        window->requestActivate();
+        return;
+    }
 }
 
 void stampBuildProvenance(hotas::doctor::DiagnosticRunOutcome &outcome)
@@ -264,6 +311,18 @@ int main(int argc, char *argv[])
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
     const QString integrationToken = argumentValue(argc, argv, "--integration-context");
+    // Only the interactive production workstation is single-instance. The
+    // explicit headless, fixture, and startup-smoke paths remain independent
+    // verification processes and must never bind to an owner's open Doctor.
+    const bool interactiveProductionWindow = !fixtureMode
+        && !hasArgument(argc, argv, "--headless")
+        && !hasArgument(argc, argv, "--startup-smoke");
+    if (interactiveProductionWindow && forwardToExistingDoctor(integrationToken)) return 0;
+    std::optional<QLocalServer> instanceServer;
+    if (interactiveProductionWindow) {
+        instanceServer.emplace();
+        if (!listenForDoctorInstance(*instanceServer)) instanceServer.reset();
+    }
     const hotas::doctor::DoctorIntegrationReadResult integration = integrationToken.isEmpty()
         ? hotas::doctor::DoctorIntegrationReadResult{} : hotas::doctor::consumeDoctorLaunchContext(integrationToken);
     const bool componentMismatch = integration.accepted
@@ -375,6 +434,30 @@ int main(int argc, char *argv[])
         [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule(u"HidHideDoctor"_qs, u"HidHideDoctorMain"_qs);
     if (engine.rootObjects().isEmpty()) return -1;
+    if (instanceServer) {
+        QObject::connect(&*instanceServer, &QLocalServer::newConnection, &application,
+            [&engine, &application, server = &*instanceServer] {
+                while (QLocalSocket *socket = server->nextPendingConnection()) {
+                    QObject::connect(socket, &QLocalSocket::readyRead, &application,
+                        [&engine, socket] {
+                            const QByteArray payload = socket->readAll();
+                            const QString forwardedToken = QString::fromLatin1(payload).trimmed();
+                            if (payload.size() == 32 && hotas::doctor::isValidDoctorIntegrationSessionId(forwardedToken)) {
+                                const hotas::doctor::DoctorIntegrationReadResult forwarded =
+                                    hotas::doctor::consumeDoctorLaunchContext(forwardedToken);
+                                if (forwarded.accepted) {
+                                    hotas::doctor::writeDoctorIntegrationResult(forwarded.context, QStringLiteral("Doctor opened"),
+                                        QStringLiteral("An existing HidHide Doctor window was focused; no second process was started."));
+                                }
+                            }
+                            focusDoctorWindow(engine);
+                            socket->disconnectFromServer();
+                            socket->deleteLater();
+                        });
+                    QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+                }
+            });
+    }
     ScanController controller(viewModel, reportPath);
     viewModel.setScanActions([&controller] { controller.cancel(); }, [&controller] { controller.start(); });
     if (integration.accepted) {

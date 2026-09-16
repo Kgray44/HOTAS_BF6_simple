@@ -17,6 +17,12 @@ uses `QProcess::startDetached`, does not elevate, and fails safely when that
 paired file is absent. The mapping worker has no new dependency: all launch and
 result work is on the UI/control plane.
 
+The normal interactive Doctor window owns a same-user local endpoint. A second
+normal launch forwards only its 32-character integration token to that existing
+window, focuses it, and exits without creating another workstation. Headless,
+fixture, and startup-smoke invocations deliberately remain independent for
+testability; the endpoint cannot carry a repair command or unbounded payload.
+
 The v1 integration protocol passes a 32-character session token only. The
 payload is a one-time, at-most-16 KiB JSON document under the current user's
 local application data. It has a schema/version, bounded fields, an absolute
@@ -81,6 +87,10 @@ Helper protocol is v2 and integration protocol is v1.
   final redundant Findings horizontal-scrollbar deletion; the rebuilt final
   candidate then passed the focused domain, deep-repair, standalone-startup,
   and layout set 4/4.
+- The complete configured suite was rerun after the live-review work and
+  passed 17/17. After the single-instance change, the rebuilt Doctor-focused
+  set passed 4/4; both build-directory and staged repeat-launch probes exited
+  0 without increasing the one-process count.
 - Staged Doctor startup smoke exited 0.
 - A staged owner-machine read-only scan exited 0 with 238 checks, 3 findings,
   and 2 diagnoses. It retained the known 1.5.230.0 client / 1.4.181.0 driver
@@ -98,3 +108,31 @@ The staged package is a local integration candidate, not a releasable RC.
 Do not publish, tag, merge, or authorize R3 from this record. Complete the
 unqualified matrix and obtain explicit owner authorization before any live
 repair or release decision.
+
+## Required Phase 5 evidence audit
+
+This table makes the requested Phase 5 record categories explicit. **Fixture**
+means deterministic coverage only; **Not qualified** is intentionally not a
+negative product claim, nor a substituted real-machine result.
+
+| Required category | Current evidence / status |
+|---|---|
+| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR, whose head is the current candidate. |
+| 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
+| 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Updater atomicity remains Not qualified. |
+| 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
+| 13–15. Clean, healthy, partial HidHide | Deterministic diagnostic fixtures only; clean/healthy/partial real or VM environments are Not qualified. |
+| 16. Owner machine | Read-only staged scan executed: Windows build 26200 x64, 238 checks, 3 findings, 2 diagnoses; version mismatch, restart evidence, and HID enumeration finding remained separate. |
+| 17. External tester campaign | A safe-to-share diagnostic bundle and tester guide are provided; an external tester has not yet run the candidate. |
+| 18–22. R1–R5 qualification | R1–R3 remain LabQualified; R4 is unavailable without an approved newer package; R5 is unavailable without an independently verified rollback package. No FieldQualified promotion occurred. |
+| 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. A complete hostile-input audit remains Not qualified. |
+| 24. Fuzz results | Targeted malformed context/report/fixture coverage exists; sustained fuzzing is Not qualified. |
+| 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. Native owner privacy review remains open. |
+| 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
+| 27–28. Performance and CPU contention | No measured release budgets or contention campaign was run; Not qualified. |
+| 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
+| 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
+| 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
+| 33–34. RC artifact and manifest | Local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-addendum1-final2-stage`; 1,387 manifest entries and matching SHA-256 checksum. This is not a public release artifact. |
+| 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review, accessibility/DPI, contention, installer/update/uninstall, full manual regression, and external testing remain release blockers. Components are `NotSigned`. |
+| 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
