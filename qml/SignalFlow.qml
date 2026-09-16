@@ -741,8 +741,8 @@ Item {
     }
     function selectProfileContext(profile) {
         if (!profile || !profile.id) return false
-        if (!backendObject.activateProfile(String(profile.id))) {
-            feedback = "The selected profile could not become the active editing context."
+        if (!backendObject.selectProfileForEditing(String(profile.id))) {
+            feedback = "The selected profile could not become the editing context."
             feedbackError = true
             return false
         }

@@ -547,7 +547,12 @@ Page {
                                 // The action still resolves the whole profile/rig/output route atomically.
                                 visible: selectedRig && !selectedRig.configured; text: "ACTIVATE ROUTE"
                                 commandEnabled: selectedRig && selectedRig.health !== "conflict" && selectedRig.enabled
-                                onTriggered: { const rig = selectedRig; root.reportBooleanAction(rig && backendObject.activateDeviceRig(rig.id), "Compatible route activated", "Profile, Device Rig, and Virtual Output were selected together.", "Device Rig could not be activated", "Choose a compatible Profile and check its required controllers and output.") }
+                                onTriggered: {
+                                    const rig = selectedRig
+                                    root.showActionFeedback(rig ? backendObject.activateDeviceRigResult(rig.id) : ({}),
+                                        "Device Rig was not activated",
+                                        "Choose a compatible Profile and check its required controllers and output.")
+                                }
                             }
                             ThemedButton {
                                 objectName: "checkRigSetupButton"
@@ -1083,6 +1088,8 @@ Page {
         anchors.centerIn: parent
         width: Math.min(620, root.width - 42)
         property var detail: backendObject ? backendObject.physicalDeviceDetail(root.selectedDeviceId) : ({})
+        property var inputTest: backendObject ? (backendObject.readOnlyPhysicalInputTest || ({})) : ({})
+        onClosed: { if (backendObject) backendObject.stopReadOnlyPhysicalInputTest() }
         background: DevicePanel { theme: themeTokens; legacy: root.legacy }
         contentItem: ColumnLayout {
             width: parent.width; spacing: 12
@@ -1101,6 +1108,15 @@ Page {
                 Text { text: physicalDeviceDialog.detail.calibrationStatus || "Using default controller range"; color: themeTokens.text }
                 SmallLabel { text: "ACTIVITY" }
                 Text { text: physicalDeviceDialog.detail.activityStatus || "Listening for controller input…"; color: physicalDeviceDialog.detail.inputDetected ? themeTokens.ready : themeTokens.textMuted }
+                SmallLabel { visible: physicalDeviceDialog.inputTest.active; text: "INPUT TEST" }
+                Text {
+                    visible: physicalDeviceDialog.inputTest.active
+                    Layout.fillWidth: true
+                    text: String(physicalDeviceDialog.inputTest.state || "LISTENING").toUpperCase()
+                        + " · " + String(physicalDeviceDialog.inputTest.message || "")
+                    color: physicalDeviceDialog.inputTest.inputDetected ? themeTokens.ready : themeTokens.textMuted
+                    wrapMode: Text.WordWrap
+                }
                 SmallLabel { text: "LAST SEEN" }
                 Text { text: physicalDeviceDialog.detail.lastSeen || "No recorded use yet"; color: themeTokens.text }
                 SmallLabel { text: "VERIFICATION" }
@@ -1124,6 +1140,10 @@ Page {
             Text { text: "TECHNICAL DETAILS"; color: themeTokens.textMuted; font.pixelSize: 10; font.bold: true }
             Text { Layout.fillWidth: true; text: physicalDeviceDialog.detail.hidInstanceId || physicalDeviceDialog.detail.directInputId || "No current raw identity"; color: themeTokens.textMuted; font.pixelSize: 10; elide: Text.ElideMiddle }
             RowLayout { Layout.fillWidth: true
+                ThemedButton { theme: themeTokens; text: "TEST INPUT"; tone: "secondary"
+                    commandEnabled: !!backendObject
+                    onTriggered: root.showActionFeedback(backendObject.startReadOnlyPhysicalInputTest(root.selectedDeviceId),
+                        "Physical input test is unavailable", "Refresh Devices and choose this controller again.") }
                 ThemedButton { theme: themeTokens; text: "CHECK DEVICE SETUP"; tone: "secondary"
                     commandEnabled: !!backendObject
                     onTriggered: { root.requestVerification(root.selectedRigId, root.selectedDeviceId); physicalDeviceDialog.close() } }

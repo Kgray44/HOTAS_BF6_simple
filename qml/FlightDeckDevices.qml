@@ -402,6 +402,22 @@ Flickable {
                                   "No activation decision was returned.");
     }
 
+    function openReadOnlyPhysicalInputTest(controllerId) {
+        const target = String(controllerId || "");
+        if (!target) {
+            return showActionFeedback({ success: false, title: "Physical input test is unavailable",
+                message: "Scan for a connected controller, then choose Test Input." },
+                "Physical input test is unavailable", "Scan for a connected controller, then choose Test Input.");
+        }
+        const result = backend.startReadOnlyPhysicalInputTest(target);
+        if (!result.success) {
+            return showActionFeedback(result, "Physical input test is unavailable",
+                                      "Refresh Devices and choose the controller again.");
+        }
+        readOnlyPhysicalInputTestDialog.open();
+        return result;
+    }
+
     function openUnmappedRigProfileWorkflow(rig, mode) {
         if (!rig || !rig.id) return false;
         requestProfileWorkflow(String(rig.id), String(mode || "choose"));
@@ -573,6 +589,20 @@ Flickable {
         else if (requestedContext === "isolation") target = isolationSection;
         else if (requestedContext === "verification") target = verificationSection;
         else if (requestedContext === "controllers") target = controllersSection;
+        else if (requestedContext === "input-test") {
+            target = controllersSection;
+            Qt.callLater(function() {
+                let controllerId = String(backend.activeControllerRecordId || "");
+                if (!controllerId && root.controllerItems.length)
+                    controllerId = root.controllerCandidateId(root.controllerItems[0]);
+                if (controllerId) root.openReadOnlyPhysicalInputTest(controllerId);
+                else root.showActionFeedback({ success: false,
+                    title: "Physical input test is unavailable",
+                    message: "Scan for a connected controller, then choose Test Input." },
+                    "Physical input test is unavailable",
+                    "Scan for a connected controller, then choose Test Input.");
+            });
+        }
         if (target)
             contentY = Math.max(0, Math.min(contentHeight - height, target.y - deck.space8));
     }
@@ -668,7 +698,7 @@ Flickable {
                         }
                         Text {
                             text: checking ? "Checking the complete Device Rig…" : (root.setupTruth.rigName
-                                ? "Current typed setup truth for " + root.setupTruth.rigName + "."
+                                ? "Current setup status for " + root.setupTruth.rigName + "."
                                 : (readiness.detail || "Checking current controller setup."))
                             color: deck.textSecondary
                             font.pixelSize: 11
@@ -870,6 +900,17 @@ Flickable {
                         RowLayout {
                             Layout.fillWidth: true
                             Item { Layout.fillWidth: true }
+                            Button {
+                                objectName: "flightDeckControllerTestInput_" + controllerCard.index
+                                text: "TEST INPUT"
+                                enabled: Boolean(root.controllerCandidateId(controllerCard.controller))
+                                focusPolicy: Qt.StrongFocus
+                                implicitHeight: deck.compactControlHeight
+                                onClicked: root.openReadOnlyPhysicalInputTest(
+                                    root.controllerCandidateId(controllerCard.controller))
+                                background: Rectangle { radius: deck.radiusControl; color: parent.enabled && parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                                contentItem: Text { text: parent.text; color: parent.enabled ? deck.textSecondary : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            }
                             Button {
                                 objectName: "flightDeckControllerAction_" + controllerCard.controller.directInputId
                                 text: controllerCard.controllerActionLabel
@@ -1552,6 +1593,80 @@ Flickable {
                     Item { Layout.fillWidth: true }
                     RigButton { text: "CANCEL"; subdued: true; onClicked: createRigDialog.close() }
                     RigButton { objectName: "flightDeckCreateRigConfirm"; text: "CREATE RIG"; enabled: rigCreateName.text.trim().length > 0 && createRigDialog.draftMembers.length > 0 && createRigDialog.outputLayoutId.length > 0; onClicked: createRigDialog.createRig() }
+                }
+            }
+        }
+    }
+
+    FlightDeckDialog {
+        id: readOnlyPhysicalInputTestDialog
+        objectName: "flightDeckReadOnlyPhysicalInputTestDialog"
+        tokens: deck
+        heading: "Test physical input"
+        tone: String(test.state || "").indexOf("unavailable") >= 0 || String(test.state || "") === "offline"
+            ? "attention" : "informational"
+        preferredWidth: 560
+        readonly property var test: backend.readOnlyPhysicalInputTest || ({})
+        onClosed: backend.stopReadOnlyPhysicalInputTest()
+        contentItem: ColumnLayout {
+            width: readOnlyPhysicalInputTestDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: String(readOnlyPhysicalInputTestDialog.test.title || "Physical controller")
+                color: deck.textPrimary
+                font.family: deck.displayFont
+                font.pixelSize: 18
+                font.bold: true
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                FlightDeckStatusChip {
+                    tokens: deck
+                    label: "INPUT"
+                    value: String(readOnlyPhysicalInputTestDialog.test.state || "CHECKING").toUpperCase()
+                    tone: readOnlyPhysicalInputTestDialog.test.inputDetected ? "healthy"
+                        : readOnlyPhysicalInputTestDialog.test.available ? "informational" : "attention"
+                }
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: String(readOnlyPhysicalInputTestDialog.test.axisCount || 0) + " axes  ·  "
+                        + String(readOnlyPhysicalInputTestDialog.test.buttonCount || 0) + " buttons  ·  "
+                        + String(readOnlyPhysicalInputTestDialog.test.povCount || 0) + " hats"
+                    color: deck.textSecondary
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 9
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignRight
+                }
+            }
+            Text {
+                text: String(readOnlyPhysicalInputTestDialog.test.message || "")
+                color: readOnlyPhysicalInputTestDialog.test.inputDetected ? deck.healthy : deck.textSecondary
+                font.pixelSize: 11
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+            Text {
+                text: "READ-ONLY · This checks only already available physical input. It does not verify, select, activate, change a driver, or send mapped output."
+                color: deck.textMuted
+                font.family: deck.telemetryFont
+                font.pixelSize: 9
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "CLOSE"
+                    focusPolicy: Qt.StrongFocus
+                    implicitHeight: deck.compactControlHeight
+                    onClicked: readOnlyPhysicalInputTestDialog.close()
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }

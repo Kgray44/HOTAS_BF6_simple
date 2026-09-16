@@ -291,15 +291,24 @@ Flickable {
                     columnSpacing: tokens.space12
                     rowSpacing: tokens.space10
                     ContextField {
-                        label: "PROFILE"
+                        label: "EDITING PROFILE"
                         DeckCombo {
                             id: profileSelector
                             Layout.fillWidth: true
                             model: backendObject ? backendObject.profiles : []
                             textRole: "name"
                             valueRole: "id"
-                            currentIndex: backendObject ? backendObject.activeProfileIndex : 0
-                            onActivated: backendObject.activateProfile(currentValue)
+                            currentIndex: {
+                                const profiles = backendObject ? backendObject.profiles : []
+                                const selectedId = backendObject ? String(backendObject.selectedProfileId || "") : ""
+                                for (let index = 0; index < profiles.length; ++index) {
+                                    if (String(profiles[index].id || "") === selectedId) return index
+                                }
+                                return 0
+                            }
+                            // Choosing a curve-editing target must remain a view/edit
+                            // operation. Runtime activation stays an explicit Profile action.
+                            onActivated: backendObject.selectProfileForEditing(currentValue)
                         }
                     }
                     ContextField {

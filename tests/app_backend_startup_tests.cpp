@@ -1299,11 +1299,51 @@ bool verifySelectedProfileEditorContext()
     return true;
 }
 
+bool verifyReadOnlyPhysicalInputTest()
+{
+    constexpr auto kRecordId = "activation-transaction-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureSetupTruthReadyToActivateFixtureForTest()) {
+        std::fprintf(stderr, "read-only input fixture could not be configured\n");
+        return false;
+    }
+    const QString activeProfileBefore = backend->activeProfileId();
+    const QString selectedProfileBefore = backend->selectedProfileId();
+    const QString activeRigBefore = backend->activeDeviceRigId();
+    const QString editingRigBefore = backend->editingDeviceRigId();
+    const int outputBefore = backend->vjoyDeviceId();
+    const bool mappingRequestedBefore = backend->mappingRequested();
+
+    const QVariantMap result = backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId));
+    const QVariantMap test = backend->readOnlyPhysicalInputTest();
+    if (!result.value(QStringLiteral("success")).toBool()
+        || !test.value(QStringLiteral("active")).toBool()
+        || test.value(QStringLiteral("recordId")).toString() != QLatin1String(kRecordId)
+        || test.value(QStringLiteral("axisCount")).toInt() <= 0
+        || test.value(QStringLiteral("state")).toString().isEmpty()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->selectedProfileId() != selectedProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->editingDeviceRigId() != editingRigBefore
+        || backend->vjoyDeviceId() != outputBefore
+        || backend->mappingRequested() != mappingRequestedBefore) {
+        std::fprintf(stderr, "read-only input test changed configuration or did not expose passive controller evidence\n");
+        return false;
+    }
+
+    backend->stopReadOnlyPhysicalInputTest();
+    if (backend->readOnlyPhysicalInputTest().value(QStringLiteral("active")).toBool()) {
+        std::fprintf(stderr, "read-only input test did not clear its transient observation state\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 22> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 22> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 23> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1326,6 +1366,7 @@ const std::array<std::pair<QString, StartupFixture>, 22> &startupFixtures()
         {QStringLiteral("hidhide-health-actions"), verifyHidHideHealthActionFeedbackContracts},
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
+        {QStringLiteral("read-only-input"), verifyReadOnlyPhysicalInputTest},
     }};
     return fixtures;
 }

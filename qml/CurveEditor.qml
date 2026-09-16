@@ -388,8 +388,23 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 4
-                        FieldCaption { text: "PROFILE" }
-                        AviationCombo { id: profileSelector; Layout.fillWidth: true; model: backendObject ? backendObject.profiles : []; textRole: "name"; valueRole: "id"; currentIndex: backendObject ? backendObject.activeProfileIndex : 0; onActivated: backendObject.activateProfile(currentValue) }
+                        FieldCaption { text: "EDITING PROFILE" }
+                        AviationCombo {
+                            id: profileSelector
+                            Layout.fillWidth: true
+                            model: backendObject ? backendObject.profiles : []
+                            textRole: "name"
+                            valueRole: "id"
+                            currentIndex: {
+                                const profiles = backendObject ? backendObject.profiles : []
+                                const selectedId = backendObject ? String(backendObject.selectedProfileId || "") : ""
+                                for (let index = 0; index < profiles.length; ++index) {
+                                    if (String(profiles[index].id || "") === selectedId) return index
+                                }
+                                return 0
+                            }
+                            onActivated: backendObject.selectProfileForEditing(currentValue)
+                        }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true

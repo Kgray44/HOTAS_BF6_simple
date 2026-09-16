@@ -359,6 +359,13 @@ Item {
                     }
                 }
 
+                FlightDeckContextStrip {
+                    objectName: "flightDeckContextStrip"
+                    backendObject: backend
+                    tokens: deck
+                    Layout.fillWidth: true
+                }
+
                 FlightDeckCard {
                     tokens: deck
                     Layout.fillWidth: true

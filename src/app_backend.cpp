@@ -9954,6 +9954,63 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
         {u"complete"_qs, allObserved}, {u"steps"_qs, activity}};
 }
 
+QVariantMap AppBackend::readOnlyPhysicalInputTest() const
+{
+    const SavedControllerRecord *record = savedControllerRecord(m_readOnlyPhysicalInputTestRecordId);
+    if (m_readOnlyPhysicalInputTestDirectInputId.isEmpty()) {
+        return {{u"active"_qs, false}, {u"available"_qs, false},
+                {u"state"_qs, u"no-device"_qs},
+                {u"title"_qs, u"Physical input test"_qs},
+                {u"message"_qs, u"Choose a saved physical controller to inspect its input."_qs}};
+    }
+
+    const DiscoveredController *discovered = nullptr;
+    for (const DiscoveredController &candidate : m_discoveredControllers) {
+        if (candidate.directInputId == m_readOnlyPhysicalInputTestDirectInputId) {
+            discovered = &candidate;
+            break;
+        }
+    }
+    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
+    const bool connected = discovered && discovered->connected;
+    // DirectInput may have discovered a controller that the mapper is not
+    // currently acquiring. Do not borrow that other controller's telemetry:
+    // the read-only test is only truthful for this exact current identity.
+    const bool available = connected && physical.connected
+        && m_readOnlyPhysicalInputTestDirectInputId == physical.directInputId;
+    const quint64 sequence = m_worker.runtime().meaningfulInputSequence.load(std::memory_order_relaxed);
+    const bool detected = m_readOnlyPhysicalInputTestActive && available
+        && sequence > m_readOnlyPhysicalInputTestBaseline;
+    QString state;
+    QString message;
+    if (!connected) {
+        state = u"offline"_qs;
+        message = QString(u"Connect %1 to inspect its input. No settings, driver, or virtual output were changed."_qs)
+            .arg(m_readOnlyPhysicalInputTestName);
+    } else if (!available) {
+        state = u"unavailable"_qs;
+        message = QString(u"%1 is connected, but HOTAS BF6 is not currently receiving this controller. "
+                            u"This test will not select, activate, or acquire it. Use a compatible Device Rig "
+                            u"when you want live input evidence."_qs)
+            .arg(m_readOnlyPhysicalInputTestName);
+    } else if (detected) {
+        state = u"input-detected"_qs;
+        message = u"Input detected after this read-only test started. No mapped output was tested."_qs;
+    } else {
+        state = u"listening"_qs;
+        message = u"Listening to the existing controller input. Move a control or press a button; no mapping or output is changed."_qs;
+    }
+    return {{u"active"_qs, m_readOnlyPhysicalInputTestActive},
+            {u"available"_qs, available}, {u"connected"_qs, connected},
+            {u"inputDetected"_qs, detected}, {u"state"_qs, state},
+            {u"title"_qs, m_readOnlyPhysicalInputTestName}, {u"message"_qs, message},
+            {u"axisCount"_qs, m_readOnlyPhysicalInputTestAxisCount},
+            {u"buttonCount"_qs, m_readOnlyPhysicalInputTestButtonCount},
+            {u"povCount"_qs, m_readOnlyPhysicalInputTestPovCount},
+            {u"recordId"_qs, record ? record->id : QString{}},
+            {u"directInputId"_qs, m_readOnlyPhysicalInputTestDirectInputId}};
+}
+
 QVariantList AppBackend::controllerReadinessProposedChanges() const
 {
     QVariantList changes;
@@ -17273,6 +17330,57 @@ QVariantMap AppBackend::startSetupAssistantLiveTest()
                         u"Move an axis about 2% or press and release a mapped button on the highlighted physical controller."_qs,
                         m_setupAssistantScopeType, m_setupAssistantScopeId,
                         u"live-test"_qs);
+}
+
+QVariantMap AppBackend::startReadOnlyPhysicalInputTest(const QString &recordId)
+{
+    const QString requestedId = recordId.trimmed();
+    const SavedControllerRecord *record = savedControllerRecord(requestedId);
+    const DiscoveredController *discovered = nullptr;
+    for (const DiscoveredController &candidate : m_discoveredControllers) {
+        if (candidate.directInputId == requestedId
+            || (record && candidate.directInputId == record->lastDirectInputId)) {
+            discovered = &candidate;
+            break;
+        }
+    }
+    if (!record && !discovered) {
+        return actionResult(false, u"Physical input test is unavailable"_qs,
+                            u"The controller is no longer available. Refresh Devices and choose it again."_qs,
+                            u"physicalDevice"_qs, requestedId);
+    }
+    // The test is a GUI-side baseline around one already-published atomic.
+    // It deliberately does not call verification, discovery, activation, or
+    // any vJoy/HidHide operation, so it cannot take a competing device handle.
+    m_readOnlyPhysicalInputTestRecordId = record ? record->id : QString{};
+    m_readOnlyPhysicalInputTestDirectInputId = record ? record->lastDirectInputId : discovered->directInputId;
+    m_readOnlyPhysicalInputTestName = record ? record->displayName : discovered->name;
+    m_readOnlyPhysicalInputTestAxisCount = record ? record->axisCount : discovered->axisCount;
+    m_readOnlyPhysicalInputTestButtonCount = record ? record->buttonCount : discovered->buttonCount;
+    m_readOnlyPhysicalInputTestPovCount = record ? record->povCount : discovered->povCount;
+    m_readOnlyPhysicalInputTestBaseline = m_worker.runtime().meaningfulInputSequence.load(
+        std::memory_order_relaxed);
+    m_readOnlyPhysicalInputTestActive = true;
+    emit inputTelemetryChanged();
+
+    const QVariantMap test = readOnlyPhysicalInputTest();
+    return actionResult(true, u"Read-only input test ready"_qs,
+                        test.value(u"message"_qs).toString(),
+                        u"physicalDevice"_qs, record ? record->id : discovered->directInputId, u"live-test"_qs);
+}
+
+void AppBackend::stopReadOnlyPhysicalInputTest()
+{
+    if (!m_readOnlyPhysicalInputTestActive && m_readOnlyPhysicalInputTestRecordId.isEmpty()) return;
+    m_readOnlyPhysicalInputTestActive = false;
+    m_readOnlyPhysicalInputTestRecordId.clear();
+    m_readOnlyPhysicalInputTestDirectInputId.clear();
+    m_readOnlyPhysicalInputTestName.clear();
+    m_readOnlyPhysicalInputTestAxisCount = 0;
+    m_readOnlyPhysicalInputTestButtonCount = 0;
+    m_readOnlyPhysicalInputTestPovCount = 0;
+    m_readOnlyPhysicalInputTestBaseline = 0;
+    emit inputTelemetryChanged();
 }
 
 QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)

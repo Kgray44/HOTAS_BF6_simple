@@ -84,7 +84,7 @@ Flickable {
 
     function overviewMessage() {
         return setupTruth.overallStatus
-            ? "Shared setup truth for " + String(setupTruth.rigName || "the selected Device Rig") + "."
+            ? "Review what is ready and the next action for " + String(setupTruth.rigName || "the selected Device Rig") + "."
             : "Checking current setup status.";
     }
 
@@ -396,7 +396,7 @@ Flickable {
                             font.bold: true
                         }
                         Text {
-                            text: "Live values use the existing bounded UI snapshot."
+                            text: "Live values reflect the controller input currently available to HOTAS BF6."
                             color: deck.textSecondary
                             font.pixelSize: 10
                         }
@@ -418,6 +418,31 @@ Flickable {
                         contentItem: Text {
                             text: parent.text
                             color: deck.accent
+                            font.family: deck.telemetryFont
+                            font.pixelSize: 9
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Button {
+                        objectName: "flightDeckOverviewTestInput"
+                        text: "TEST PHYSICAL INPUT"
+                        implicitHeight: deck.compactControlHeight
+                        leftPadding: deck.space12
+                        rightPadding: deck.space12
+                        focusPolicy: Qt.StrongFocus
+                        Accessible.name: text
+                        onClicked: root.navigateToDevices("input-test")
+                        background: Rectangle {
+                            radius: deck.radiusControl
+                            color: parent.down ? deck.secondarySurface : parent.hovered ? deck.secondarySurface : "transparent"
+                            border.width: parent.activeFocus ? 2 : 1
+                            border.color: parent.activeFocus ? deck.focus : deck.border
+                        }
+                        contentItem: Text {
+                            text: parent.text
+                            color: deck.textSecondary
                             font.family: deck.telemetryFont
                             font.pixelSize: 9
                             font.bold: true

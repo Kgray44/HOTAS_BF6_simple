@@ -1244,13 +1244,18 @@ Page {
             FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
             Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
-                Text { text: "PROFILE"
+                Text { text: "EDITING"
                     color: theme.textMuted; font.pixelSize: 9; font.bold: true }
-                Text { text: backend.effectiveProfileDisplayName.toUpperCase()
+                Text { text: backend.selectedProfileDisplayName.toUpperCase()
                     color: theme.text; font.pixelSize: 10; font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
+                Text { visible: root.width >= 1250 && backend.selectedProfileId !== backend.activeProfileId
+                    text: "· USING " + (backend.activeProfileDisplayName || "NONE").toUpperCase()
+                    color: theme.ready; font.pixelSize: 9; font.bold: true
+                    elide: Text.ElideRight; width: Math.min(150, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
-                    text: "· " + backend.profileSourceLabel.toUpperCase()
+                    text: "· EFFECTIVE " + backend.effectiveProfileDisplayName.toUpperCase()
+                        + " · " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: 9; font.bold: true }
             }
             FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }

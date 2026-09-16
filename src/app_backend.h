@@ -181,6 +181,7 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString setupRepairSessionReport READ setupRepairSessionReport NOTIFY stateChanged)
     Q_PROPERTY(bool setupRepairSessionActive READ setupRepairSessionActive NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QVariantMap readOnlyPhysicalInputTest READ readOnlyPhysicalInputTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
     Q_PROPERTY(QString setupAssistantScopeId READ setupAssistantScopeId NOTIFY stateChanged)
     // App Health reuses the Setup Assistant issue contract for every normal
@@ -469,6 +470,7 @@ public:
     QString setupRepairSessionReport() const;
     bool setupRepairSessionActive() const;
     QVariantMap setupAssistantLiveTest() const;
+    QVariantMap readOnlyPhysicalInputTest() const;
     QString setupAssistantScopeType() const;
     QString setupAssistantScopeId() const;
     QVariantList appIssues() const;
@@ -845,6 +847,11 @@ public:
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
+    // This is deliberately separate from the guided setup test: it only
+    // observes the mapper's current physical-input evidence for one saved
+    // controller and never changes configuration, acquisition, or output.
+    Q_INVOKABLE QVariantMap startReadOnlyPhysicalInputTest(const QString &recordId);
+    Q_INVOKABLE void stopReadOnlyPhysicalInputTest();
     Q_INVOKABLE QVariantMap skipCalibrationForSetup(const QString &recordId = {});
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
@@ -1446,6 +1453,17 @@ private:
     quint64 m_setupAssistantOutputBaseline = 0;
     std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
     std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
+    // Devices can offer a passive input check before a controller belongs to
+    // a Rig or Profile. These transient fields are GUI-side snapshots of the
+    // existing worker counter; MappingWorker performs no test bookkeeping.
+    bool m_readOnlyPhysicalInputTestActive = false;
+    QString m_readOnlyPhysicalInputTestRecordId;
+    QString m_readOnlyPhysicalInputTestDirectInputId;
+    QString m_readOnlyPhysicalInputTestName;
+    int m_readOnlyPhysicalInputTestAxisCount = 0;
+    int m_readOnlyPhysicalInputTestButtonCount = 0;
+    int m_readOnlyPhysicalInputTestPovCount = 0;
+    quint64 m_readOnlyPhysicalInputTestBaseline = 0;
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;

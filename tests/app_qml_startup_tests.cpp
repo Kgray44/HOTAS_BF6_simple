@@ -3418,10 +3418,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("flightDeckSelectedDeviceSelector"));
     auto *selectedProfileSelector = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckSelectedProfileSelector"));
+    auto *contextStrip = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextStrip"));
     auto *navigationContent = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckNavigationContent"));
     if (!controllerPill || !appearancePill || !sharedTitle || !selectedDeviceSelector
-        || !selectedProfileSelector || !navigationContent
+        || !selectedProfileSelector || !contextStrip || !navigationContent
         || !selectedDeviceSelector->property("visible").toBool()
         || !selectedProfileSelector->property("visible").toBool()
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
@@ -3509,7 +3511,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
 
     QObject *inputHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthInput"));
     QObject *gameHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame"));
-    if (!inputHealth || !gameHealth
+    QObject *inputTest = overview->findChild<QObject *>(QStringLiteral("flightDeckOverviewTestInput"));
+    if (!inputHealth || !gameHealth || !inputTest
         || !QMetaObject::invokeMethod(inputHealth, "actionRequested")
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input action did not route to the existing setup page"));
@@ -3559,7 +3562,13 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (flightDeckRigId.isEmpty() || flightDeckRig.value(QStringLiteral("members")).toList().size() != 2
         || !rigCard || !openRig || !createRig
         || !clickFlightDeckSettingsItem(window, devicesItem, openRig)) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Device Rig section or its pointer entry was unavailable"));
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Device Rig section or its pointer entry was unavailable "
+            "(rig=%1 members=%2 card=%3 open=%4 create=%5 devices=%6)")
+            .arg(flightDeckRigId)
+            .arg(flightDeckRig.value(QStringLiteral("members")).toList().size())
+            .arg(rigCard != nullptr).arg(openRig != nullptr).arg(createRig != nullptr)
+            .arg(devicesItem != nullptr));
     }
     QObject *rigDetails = devices->findChild<QObject *>(QStringLiteral("flightDeckRigDetailsDialog"));
     if (!rigDetails || !rigDetails->property("visible").toBool()
@@ -7212,6 +7221,39 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             || scopeGraph.value(QStringLiteral("effectiveProfileName")).toString().trimmed().isEmpty()) {
             return failPresentationLifecycleTest(QStringLiteral(
                 "Signal Flow %1 did not expose its explicit editing and effective-profile context").arg(theme));
+        }
+
+        // Profile context is an editing-only selection. Exercise the page's
+        // actual QML command because selecting an inactive profile must never
+        // start a mapper activation transaction merely to inspect its graph.
+        const QString activeProfileBeforeSelection = backend.activeProfileId();
+        QString inactiveProfileId;
+        for (const QVariant &entry : backend.profiles()) {
+            const QVariantMap profile = entry.toMap();
+            const QString profileId = profile.value(QStringLiteral("id")).toString();
+            if (!profileId.isEmpty() && profileId != activeProfileBeforeSelection) {
+                inactiveProfileId = profileId;
+                break;
+            }
+        }
+        const QVariantMap inactiveProfileFixture{{QStringLiteral("id"), inactiveProfileId}};
+        const bool inactiveProfileSelected = !inactiveProfileId.isEmpty()
+            && QMetaObject::invokeMethod(page, "selectProfileContext", Qt::DirectConnection,
+                Q_ARG(QVariant, inactiveProfileFixture));
+        settlePresentation();
+        const bool editorSelectionSafe = inactiveProfileSelected
+            && backend.selectedProfileId() == inactiveProfileId
+            && backend.activeProfileId() == activeProfileBeforeSelection;
+        if (!editorSelectionSafe) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 profile context selection activated or failed to select an inactive Profile "
+                "(selected=%2 active=%3 expectedActive=%4)")
+                .arg(theme)
+                .arg(backend.selectedProfileId(), backend.activeProfileId(), activeProfileBeforeSelection));
+        }
+        if (!backend.selectProfileForEditing(activeProfileBeforeSelection)) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 could not restore the original editor Profile after selection coverage").arg(theme));
         }
         const QVariantList scopeNodes = scopeGraph.value(QStringLiteral("nodes")).toList();
         const auto inputNode = std::find_if(scopeNodes.cbegin(), scopeNodes.cend(), [](const QVariant &entry) {
