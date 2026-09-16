@@ -1,5 +1,6 @@
 #include "doctor_session_view_model.h"
 
+#include <QJsonObject>
 #include <QSettings>
 
 #include <algorithm>
@@ -343,16 +344,37 @@ QVariantMap DoctorSessionViewModel::repairPlanSummary() const
     const QString qualification = plan.qualification == RepairQualificationLevel::LabQualified
         ? QStringLiteral("LAB QUALIFIED — OWNER TEST ONLY")
         : (plan.qualification == RepairQualificationLevel::FieldQualified ? QStringLiteral("FIELD QUALIFIED") : QStringLiteral("EXPERIMENTAL"));
+    const auto risk = [&] {
+        switch (plan.riskClass) {
+        case RepairRiskClass::R1Configuration: return QStringLiteral("R1 · CONFIGURATION REPAIR");
+        case RepairRiskClass::R2Component: return QStringLiteral("R2 · COMPONENT REPAIR");
+        case RepairRiskClass::R3Package: return QStringLiteral("R3 · PACKAGE REPAIR");
+        case RepairRiskClass::R4ApprovedUpgrade: return QStringLiteral("R4 · APPROVED UPGRADE");
+        case RepairRiskClass::R5Recovery: return QStringLiteral("R5 · RECOVERY");
+        case RepairRiskClass::R0Observe: return QStringLiteral("R0 · OBSERVE");
+        }
+        return QStringLiteral("REPAIR");
+    }();
+    const QJsonObject package = plan.deepRepair.value(QStringLiteral("package")).toObject();
+    const QString packageSummary = package.isEmpty() ? QStringLiteral("Not applicable")
+        : QStringLiteral("%1 · %2 · %3\n%4\nSHA-256 %5\nSigner %6")
+            .arg(package.value(QStringLiteral("packageId")).toString(), package.value(QStringLiteral("version")).toString(),
+                package.value(QStringLiteral("architecture")).toString(), package.value(QStringLiteral("source")).toString(),
+                package.value(QStringLiteral("expectedSha256")).toString(), package.value(QStringLiteral("signerIdentity")).toString());
     return {{QStringLiteral("planId"), plan.id.value()}, {QStringLiteral("title"), plan.title},
         {QStringLiteral("description"), plan.description}, {QStringLiteral("recipe"), plan.recipeId.value() + QStringLiteral(" v") + plan.recipeVersion},
-        {QStringLiteral("risk"), QStringLiteral("R1 · CONFIGURATION REPAIR")}, {QStringLiteral("qualification"), qualification},
+        {QStringLiteral("risk"), risk}, {QStringLiteral("qualification"), qualification},
         {QStringLiteral("before"), plan.expectedPreState}, {QStringLiteral("after"), plan.expectedPostState},
         {QStringLiteral("elevation"), plan.elevationRequired ? QStringLiteral("Required for live helper execution") : QStringLiteral("Not required")},
-        {QStringLiteral("restart"), plan.restartRequired ? QStringLiteral("Required") : QStringLiteral("No")},
-        {QStringLiteral("backup"), QStringLiteral("Captured before any mutation")}, {QStringLiteral("rollback"), QStringLiteral("Exact pre-state; blocked on external change")},
+        {QStringLiteral("restart"), plan.restartRequired ? QStringLiteral("Required · maximum %1 restart(s) · observation first after restart").arg(plan.maximumReboots) : QStringLiteral("No")},
+        {QStringLiteral("backup"), plan.riskClass == RepairRiskClass::R1Configuration ? QStringLiteral("Captured before any mutation") : QStringLiteral("Deep recovery snapshot captured before package/component mutation")},
+        {QStringLiteral("rollback"), plan.riskClass == RepairRiskClass::R1Configuration ? QStringLiteral("Exact pre-state; blocked on external change") : QStringLiteral("Verified rollback package/assets first; conflict-safe configuration reconciliation")},
+        {QStringLiteral("package"), packageSummary},
+        {QStringLiteral("continuation"), plan.deepRepair.value(QStringLiteral("reboot")).toObject().value(QStringLiteral("observeFirst")).toBool()
+             ? QStringLiteral("AwaitingReboot is durable; restart-later blocks conflicting deep repair; resume reads actual state before any mutation.") : QStringLiteral("No reboot continuation required")},
         {QStringLiteral("expectedTime"), QStringLiteral("~%1 seconds").arg(plan.estimatedSeconds)},
         {QStringLiteral("userAction"), m_labRepairMode
-            ? QStringLiteral("Lab fixture only: deliberate authorization is required; the helper revalidates before any SET.")
+            ? QStringLiteral("Lab fixture only: deliberate authorization is required; the helper revalidates every sealed package/component target before any operation.")
             : QStringLiteral("Review only. Normal mode cannot execute LabQualified repairs.")}};
 }
 
@@ -366,7 +388,16 @@ QStringList DoctorSessionViewModel::repairPlanOperations() const
             : operation.kind == RepairOperationKind::AddBlacklistEntry ? QStringLiteral("ADD HIDDEN DEVICE")
             : operation.kind == RepairOperationKind::RemoveBlacklistEntry ? QStringLiteral("REMOVE HIDDEN DEVICE")
             : operation.kind == RepairOperationKind::SetHidHideActive ? QStringLiteral("SET HIDHIDE CLOAK")
-            : QStringLiteral("SET HIDHIDE INVERSE");
+            : operation.kind == RepairOperationKind::SetHidHideInverse ? QStringLiteral("SET HIDHIDE INVERSE")
+            : operation.kind == RepairOperationKind::RepairExactServiceConfiguration ? QStringLiteral("REPAIR EXACT HIDHIDE SERVICE")
+            : operation.kind == RepairOperationKind::RepairExactFilterRegistration ? QStringLiteral("REPAIR EXACT HIDHIDE FILTER")
+            : operation.kind == RepairOperationKind::ValidateApprovedPackage ? QStringLiteral("VERIFY APPROVED PACKAGE")
+            : operation.kind == RepairOperationKind::StageApprovedPackage ? QStringLiteral("STAGE VERIFIED PACKAGE")
+            : operation.kind == RepairOperationKind::InstallApprovedHidHidePackage ? QStringLiteral("INSTALL APPROVED PACKAGE")
+            : operation.kind == RepairOperationKind::RemoveSpecificInactiveHidHidePackage ? QStringLiteral("REMOVE EXACT INACTIVE PACKAGE")
+            : operation.kind == RepairOperationKind::RequestSystemRestart ? QStringLiteral("PERSIST RESTART BOUNDARY")
+            : operation.kind == RepairOperationKind::ReconcileHidHideConfiguration ? QStringLiteral("OBSERVE AND RECONCILE CONFIGURATION")
+            : QStringLiteral("RESTORE SNAPSHOT");
         rows.append(verb + QStringLiteral("  ·  ") + operation.targetIdentity);
     }
     return rows;

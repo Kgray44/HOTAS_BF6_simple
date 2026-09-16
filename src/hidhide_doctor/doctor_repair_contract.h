@@ -2,6 +2,8 @@
 
 #include "doctor_environment.h"
 
+#include <QJsonObject>
+
 namespace hotas::doctor {
 
 class RepairPlanId final {
@@ -44,11 +46,28 @@ enum class RepairOperationKind {
     RemoveBlacklistEntry,
     RepairExactServiceConfiguration,
     RepairExactFilterRegistration,
+    ValidateApprovedPackage,
     StageApprovedPackage,
+    InstallApprovedHidHidePackage,
+    RemoveSpecificInactiveHidHidePackage,
+    ReconcileHidHideConfiguration,
+    RequestSystemRestart,
     RestoreSnapshot,
 };
 
-enum class RepairTargetKind { None, HidHideActiveState, HidHideInverseState, WhitelistEntry, BlacklistEntry, ApprovedPackage, TransactionSnapshot };
+enum class RepairTargetKind {
+    None,
+    HidHideActiveState,
+    HidHideInverseState,
+    WhitelistEntry,
+    BlacklistEntry,
+    HidHideService,
+    HidHideFilterRegistration,
+    ApprovedPackage,
+    InactiveHidHidePackage,
+    RebootBoundary,
+    TransactionSnapshot,
+};
 enum class RepairAuthorization { NotAuthorized, UserAuthorized, OwnerLabAuthorized, HelperRevalidated };
 enum class RepairTransactionState {
     Planned,
@@ -57,12 +76,21 @@ enum class RepairTransactionState {
     CapturingBackup,
     Revalidating,
     AwaitingElevation,
+    PreparingPackage,
+    PackageValidated,
+    StagingPackage,
+    Installing,
+    AwaitingReboot,
+    ContinuingAfterReboot,
+    ReconcilingConfiguration,
     Executing,
     Verifying,
     RollingBack,
     Completed,
     FailedSafely,
     RecoveryRequired,
+    RecoveryPlanning,
+    Recovering,
     Cancelled,
     StalePlan,
 };
@@ -114,8 +142,13 @@ struct RepairPlan final {
     QStringList unchangedCollateral;
     bool elevationRequired = false;
     bool restartRequired = false;
+    int maximumReboots = 0;
     int estimatedSeconds = 0;
     QDateTime createdAt;
+    // Phase 4 keeps package identity, provenance, verification, reboot, and
+    // recovery metadata in a sealed structured payload. It is data, never an
+    // executable command line or an untrusted installer argument string.
+    QJsonObject deepRepair;
     QString integrityDigest;
 };
 
@@ -137,7 +170,7 @@ struct RepairOperationJournalEntry final {
 };
 
 struct BackupManifest final {
-    int schemaVersion = 2;
+    int schemaVersion = 3;
     QDateTime capturedAt;
     QString scope;
     QString targetScope;
@@ -150,6 +183,7 @@ struct BackupManifest final {
     QString architecture;
     QString privacyClassification;
     bool restoreEligible = false;
+    QJsonObject deepRecoverySnapshot;
 };
 
 // This is the durable transaction representation.  It is intentionally
@@ -157,7 +191,7 @@ struct BackupManifest final {
 // engine's atomic journal store; a partial JSON file is never accepted as a
 // valid repair record.
 struct RepairTransaction final {
-    int schemaVersion = 2;
+    int schemaVersion = 3;
     RepairTransactionId id;
     DoctorSessionId sessionId;
     RepairPlanId planId;
@@ -179,6 +213,11 @@ struct RepairTransaction final {
     QString verificationPlan;
     QString rollbackPlan;
     QString rebootBoundary;
+    int rebootCount = 0;
+    int maximumReboots = 0;
+    QJsonObject continuationState;
+    QJsonObject deepRepair;
+    bool separateRecoveryAuthorizationRequired = false;
     QString finalStatus;
     QString checksum;
 };

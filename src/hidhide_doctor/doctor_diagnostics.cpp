@@ -1,4 +1,6 @@
 #include "doctor_diagnostics.h"
+
+#include "doctor_deep_repair.h"
 #include "doctor_knowledge.h"
 #include "doctor_repair_engine.h"
 
@@ -233,7 +235,7 @@ DoctorCheckResult DoctorDiagnosticEngine::evaluate(const DoctorCheckDefinition &
 }
 
 DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &provider,
-    std::atomic_bool *cancelled, ProgressCallback onProgress) const
+    std::atomic_bool *cancelled, ProgressCallback onProgress, bool explicitApprovedUpgradeRequest) const
 {
     DiagnosticRunOutcome outcome;
     QElapsedTimer timer;
@@ -299,6 +301,7 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         if (onProgress) onProgress(outcome.session);
     }
     outcome.cancelled = cancelled && cancelled->load();
+    QString planningReason;
     outcome.session.transitionTo(outcome.cancelled ? DoctorSessionState::Cancelled : DoctorSessionState::Analyzing);
     if (!outcome.cancelled) {
         const DoctorKnowledgeEngine knowledge;
@@ -336,11 +339,14 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         // Planning is a read-only continuation of diagnosis.  Normal mode
         // intentionally produces a reviewable Lab-qualified plan only; it
         // cannot authorize or invoke a repair helper.
-        const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, false);
+        const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, false, explicitApprovedUpgradeRequest);
+        planningReason = proposal.reason;
+        outcome.repairPlanningStatus = displayName(proposal.status);
+        outcome.repairPlanningReason = proposal.reason;
         if (!proposal.plan.operations.isEmpty()) {
             outcome.session.setRepairPlan(proposal.plan);
             outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), DoctorCheckId(QStringLiteral("HD-KB-005")), DoctorCheckStatus::Informational,
-                QStringLiteral("R1 repair plan generated read-only"), proposal.reason, {}});
+                QStringLiteral("Read-only repair plan generated"), proposal.reason, {}});
         }
     }
     const bool hasDiagnoses = !outcome.session.diagnoses().isEmpty();
@@ -352,10 +358,12 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         userActionDetail = QStringLiteral("Collected read-only evidence is retained; no Windows or HidHide state changed.");
     } else if (hasPlan) {
         userActionTitle = QStringLiteral("Repair plan ready for review");
-        userActionDetail = QStringLiteral("A precise R1 plan is available for review. It is LabQualified, so normal production mode will not execute it.");
+        userActionDetail = QStringLiteral("A precise plan is available for review. It is LabQualified, so normal production mode will not execute it.");
     } else if (hasDiagnoses) {
-        userActionTitle = QStringLiteral("Diagnosis complete — deep repair required");
-        userActionDetail = QStringLiteral("This diagnosis has no Phase 3 R1 repair. Component, package, and recovery repair remain intentionally deferred.");
+        userActionTitle = QStringLiteral("Diagnosis complete — no qualified deep repair");
+        userActionDetail = planningReason.isEmpty()
+            ? QStringLiteral("No qualified component, package, upgrade, or recovery plan is available. Nothing changed.")
+            : planningReason + QStringLiteral(" Nothing changed.");
     } else {
         userActionTitle = QStringLiteral("Nothing required");
         userActionDetail = QStringLiteral("No material HidHide issue was diagnosed. The scan remained read only.");
@@ -383,7 +391,7 @@ DoctorSession DoctorDiagnosticEngine::createPreparedSession() const
 QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &outcome, bool redactSensitive)
 {
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 4);
+    root.insert(QStringLiteral("schemaVersion"), 5);
     root.insert(QStringLiteral("sessionId"), outcome.session.id().value());
     root.insert(QStringLiteral("sessionLabel"), outcome.session.sessionLabel());
     root.insert(QStringLiteral("startedAt"), outcome.startedAt.toString(Qt::ISODateWithMs));
@@ -527,6 +535,14 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
             {QStringLiteral("provenance"), diagnosis.provenance}});
     }
     root.insert(QStringLiteral("diagnoses"), diagnoses);
+    const UserAction &userAction = outcome.session.userAction();
+    root.insert(QStringLiteral("userAction"), QJsonObject{{QStringLiteral("state"), static_cast<int>(userAction.state)},
+        {QStringLiteral("severity"), static_cast<int>(userAction.severity)}, {QStringLiteral("title"), userAction.title},
+        {QStringLiteral("detail"), userAction.explanation},
+        {QStringLiteral("instructions"), QJsonArray::fromStringList(userAction.instructions)},
+        {QStringLiteral("availableActions"), QJsonArray::fromStringList(userAction.availableActions)}});
+    root.insert(QStringLiteral("repairProposal"), QJsonObject{{QStringLiteral("status"), outcome.repairPlanningStatus},
+        {QStringLiteral("reason"), outcome.repairPlanningReason}});
     if (outcome.session.repairPlan()) {
         const RepairPlan &plan = *outcome.session.repairPlan();
         QJsonArray operations;
@@ -545,10 +561,24 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
             {QStringLiteral("expectedPostFingerprint"), plan.expectedPostFingerprint},
             {QStringLiteral("elevationRequired"), plan.elevationRequired}, {QStringLiteral("restartRequired"), plan.restartRequired},
             {QStringLiteral("estimatedSeconds"), plan.estimatedSeconds}, {QStringLiteral("authorization"), static_cast<int>(plan.authorization)},
+            {QStringLiteral("maximumReboots"), plan.maximumReboots}, {QStringLiteral("deepRepair"), plan.deepRepair},
             {QStringLiteral("operations"), operations}, {QStringLiteral("collateralPreserved"), QJsonArray::fromStringList(plan.unchangedCollateral)}});
     } else {
         root.insert(QStringLiteral("repairPlan"), QJsonValue::Null);
     }
+    QJsonArray packageCatalog;
+    for (const ApprovedPackage &package : ApprovedPackageCatalog::packages()) {
+        packageCatalog.append(QJsonObject{{QStringLiteral("packageId"), package.packageId},
+            {QStringLiteral("provider"), package.provider}, {QStringLiteral("version"), package.version},
+            {QStringLiteral("architecture"), displayName(package.architecture)}, {QStringLiteral("channel"), package.channel},
+            {QStringLiteral("source"), package.source}, {QStringLiteral("sourceKind"), displayName(package.sourceKind)}, {QStringLiteral("expectedSha256"), package.expectedSha256},
+            {QStringLiteral("signaturePolicy"), displayName(package.signaturePolicy)}, {QStringLiteral("signerIdentity"), package.signerIdentity},
+            {QStringLiteral("minimumWindowsBuild"), static_cast<int>(package.minimumWindowsBuild)},
+            {QStringLiteral("maximumWindowsBuild"), static_cast<int>(package.maximumWindowsBuild)},
+            {QStringLiteral("maximumReboots"), package.expectedMaximumReboots},
+            {QStringLiteral("qualification"), static_cast<int>(package.qualification)}, {QStringLiteral("provenance"), package.provenance}});
+    }
+    root.insert(QStringLiteral("approvedPackageCatalog"), packageCatalog);
     QJsonArray activity;
     for (const DoctorActivityEvent &event : outcome.session.activity()) activity.append(QJsonObject{
         {QStringLiteral("timestamp"), event.timestamp.toString(Qt::ISODateWithMs)}, {QStringLiteral("checkId"), event.checkId.value()},

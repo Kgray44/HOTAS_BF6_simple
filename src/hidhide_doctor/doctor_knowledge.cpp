@@ -11,7 +11,7 @@
 namespace hotas::doctor {
 namespace {
 
-constexpr auto kKnowledgeVersion = "HD-KB-2.0";
+constexpr auto kKnowledgeVersion = "HD-KB-4.0";
 
 struct Facts final {
     bool hidhideAbsent = false;
@@ -35,6 +35,9 @@ struct Facts final {
     bool futureWindows = false;
     bool permissionLimited = false;
     bool insufficientEvidence = false;
+    bool serviceRegistrationBroken = false;
+    bool filterRegistrationBroken = false;
+    bool recoveryRequired = false;
     QStringList contradictions;
 };
 
@@ -192,6 +195,12 @@ Facts collectFacts(const DoctorSession &session, const ReadOnlyDiagnosticSnapsho
         && snapshot.environment.hidhide.packageArchitecture != CpuArchitecture::Unknown
         && snapshot.environment.hidhide.packageArchitecture != snapshot.environment.platform.nativeArchitecture;
     facts.futureWindows = snapshot.environment.platform.build >= 30000;
+    for (const CatalogObservation &observation : snapshot.catalogObservations) {
+        if (observation.status != DoctorCheckStatus::Failed && observation.status != DoctorCheckStatus::Warning) continue;
+        if (observation.checkId == QStringLiteral("HD-PHASE4-SERVICE-REGISTRATION")) facts.serviceRegistrationBroken = true;
+        if (observation.checkId == QStringLiteral("HD-PHASE4-FILTER-REGISTRATION")) facts.filterRegistrationBroken = true;
+        if (observation.checkId == QStringLiteral("HD-PHASE4-RECOVERY-REQUIRED")) facts.recoveryRequired = true;
+    }
     facts.permissionLimited = facts.permissionLimited || facts.accessDenied;
     facts.contradictions = snapshot.contradictions;
     facts.insufficientEvidence = !facts.hidhideAbsent && snapshot.protocol.isEmpty() && snapshot.artifacts.isEmpty()
@@ -350,7 +359,7 @@ QList<Finding> DoctorFindingEngine::evaluate(const DoctorSession &session,
 }
 
 QString DoctorKnowledgeEngine::version() { return QLatin1String(kKnowledgeVersion); }
-int DoctorKnowledgeEngine::ruleCount() { return 17; }
+int DoctorKnowledgeEngine::ruleCount() { return 20; }
 
 KnowledgeAnalysis DoctorKnowledgeEngine::analyze(DoctorSession &session,
     const ReadOnlyDiagnosticSnapshot &snapshot) const
@@ -391,6 +400,24 @@ KnowledgeAnalysis DoctorKnowledgeEngine::analyze(DoctorSession &session,
             QStringLiteral("Configuration and user-mode management may be incomplete."), Repairability::PotentialRepairAvailableButUnqualified,
             {QStringLiteral("client/driver component asymmetry")}, {}, facts.contradictions, partialEvidence));
     }
+    if (facts.serviceRegistrationBroken) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-SERVICE-REGISTRATION"), QStringLiteral("HD-KSIG-SERVICE-REGISTRATION-V1"),
+        FindingSeverity::Error, 95, QStringLiteral("HidHide service registration is inconsistent"), QStringLiteral("Component registration"),
+        QStringLiteral("Exact HidHide service evidence differs from the catalogued package registration."),
+        QStringLiteral("A bounded service-registration observation reported an exact HidHide inconsistency; unrelated services were not considered."),
+        QStringLiteral("The HidHide driver service may not start with its approved package configuration."), Repairability::PotentialRepairAvailableButUnqualified,
+        {QStringLiteral("exact HidHide service registration evidence")}, {}, facts.contradictions, evidenceFor(session, {"HD-DRV-003", "HD-DRV-004", "HD-DRV-006"})));
+    if (facts.filterRegistrationBroken) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-FILTER-REGISTRATION"), QStringLiteral("HD-KSIG-FILTER-REGISTRATION-V1"),
+        FindingSeverity::Error, 95, QStringLiteral("HidHide filter registration is inconsistent"), QStringLiteral("Component registration"),
+        QStringLiteral("Exact HidHide filter ordering differs from the package-qualified state."),
+        QStringLiteral("The observation is limited to the known HidHide filter; unrelated filters remain preserved evidence."),
+        QStringLiteral("HidHide filtering may not load in the expected chain order."), Repairability::PotentialRepairAvailableButUnqualified,
+        {QStringLiteral("exact HidHide filter registration evidence")}, {}, facts.contradictions, evidenceFor(session, {"HD-DRV-009", "HD-DRV-011", "HD-DRV-012"})));
+    if (facts.recoveryRequired) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-RECOVERY-REQUIRED"), QStringLiteral("HD-KSIG-RECOVERY-REQUIRED-V1"),
+        FindingSeverity::Critical, 100, QStringLiteral("HidHide recovery is required"), QStringLiteral("Failed repair recovery"),
+        QStringLiteral("A durable transaction/recovery observation reports a damaged or incomplete HidHide repair state."),
+        QStringLiteral("Recovery is a separately authorized R5 path and never inherits a prior repair authorization."),
+        QStringLiteral("Normal repair cannot safely proceed until the recovery plan is reviewed."), Repairability::PotentialRepairAvailableButUnqualified,
+        {QStringLiteral("durable recovery-required evidence")}, {}, facts.contradictions, evidenceFor(session, {"HD-WIN-015", "HD-SYS-010"})));
     if (facts.newerPackageAndOldDriver) diagnoses.append(diagnosis(QStringLiteral("HD-DIAG-INCOMPLETE-REPLACEMENT"), QStringLiteral("HD-KSIG-002-V1"),
         FindingSeverity::Error, 97, QStringLiteral("Incomplete HidHide driver replacement"), QStringLiteral("Version and restart correlation"),
         QStringLiteral("A newer installed component/package is present while an older driver remains loaded and replacement evidence is pending."),

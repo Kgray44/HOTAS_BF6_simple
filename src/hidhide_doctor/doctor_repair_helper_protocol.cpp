@@ -61,6 +61,7 @@ QJsonObject planJson(const RepairPlan &plan)
         {QStringLiteral("authorization"), static_cast<int>(plan.authorization)}, {QStringLiteral("preconditions"), preconditions},
         {QStringLiteral("preconditionFingerprint"), plan.preconditionFingerprint}, {QStringLiteral("expectedPreState"), plan.expectedPreState},
         {QStringLiteral("expectedPostState"), plan.expectedPostState}, {QStringLiteral("expectedPostFingerprint"), plan.expectedPostFingerprint},
+        {QStringLiteral("maximumReboots"), plan.maximumReboots}, {QStringLiteral("deepRepair"), plan.deepRepair},
         {QStringLiteral("operations"), operations}, {QStringLiteral("planDigest"), plan.integrityDigest}};
 }
 
@@ -78,11 +79,13 @@ std::optional<RepairPlan> planFromJson(const QJsonObject &object, QString *reaso
     plan.expectedPreState = object.value(QStringLiteral("expectedPreState")).toString();
     plan.expectedPostState = object.value(QStringLiteral("expectedPostState")).toString();
     plan.expectedPostFingerprint = object.value(QStringLiteral("expectedPostFingerprint")).toString();
+    plan.maximumReboots = object.value(QStringLiteral("maximumReboots")).toInt();
+    plan.deepRepair = object.value(QStringLiteral("deepRepair")).toObject();
     plan.integrityDigest = object.value(QStringLiteral("planDigest")).toString();
     const QJsonArray preconditions = object.value(QStringLiteral("preconditions")).toArray();
     const QJsonArray operations = object.value(QStringLiteral("operations")).toArray();
-    if (preconditions.size() > 32 || operations.isEmpty() || operations.size() > 6) {
-        if (reason) *reason = QStringLiteral("Helper plan exceeds the bounded Phase 3 R1 request shape.");
+    if (preconditions.size() > 48 || operations.isEmpty() || operations.size() > 10) {
+        if (reason) *reason = QStringLiteral("Helper plan exceeds the bounded typed-operation request shape.");
         return std::nullopt;
     }
     for (const QJsonValue &value : preconditions) {
@@ -155,6 +158,22 @@ bool containsOperation(const QList<RepairOperation> &operations, RepairOperation
 
 bool planDeltaMatches(const RepairPlan &plan, QString *reason)
 {
+    if (plan.riskClass != RepairRiskClass::R1Configuration) {
+        const QJsonObject package = plan.deepRepair.value(QStringLiteral("package")).toObject();
+        if ((plan.riskClass == RepairRiskClass::R3Package || plan.riskClass == RepairRiskClass::R4ApprovedUpgrade
+                || plan.riskClass == RepairRiskClass::R5Recovery)
+            && (package.value(QStringLiteral("packageId")).toString().isEmpty()
+                || !QRegularExpression(QStringLiteral("^[a-fA-F0-9]{64}$")).match(package.value(QStringLiteral("expectedSha256")).toString()).hasMatch()
+                || package.contains(QStringLiteral("path")) || package.contains(QStringLiteral("arguments")))) {
+            if (reason) *reason = QStringLiteral("Deep helper plan lacks a sealed package identity or contains a forbidden path/argument field.");
+            return false;
+        }
+        if (plan.maximumReboots < 0 || plan.maximumReboots > 2) {
+            if (reason) *reason = QStringLiteral("Deep helper plan exceeds the bounded recipe reboot policy.");
+            return false;
+        }
+        return true;
+    }
     const std::optional<QJsonObject> before = configurationState(plan.expectedPreState, reason);
     const std::optional<QJsonObject> after = configurationState(plan.expectedPostState, reason);
     if (!before || !after) return false;
@@ -269,10 +288,29 @@ bool RepairHelperProtocol::targetIsAllowed(const RepairOperation &operation, QSt
             return false;
         }
         return true;
+    case RepairOperationKind::RepairExactServiceConfiguration:
+        if (operation.targetIdentity == QStringLiteral("HidHide")) return true;
+        break;
+    case RepairOperationKind::RepairExactFilterRegistration:
+        if (operation.targetIdentity == QStringLiteral("HidHideFilterRegistration")) return true;
+        break;
+    case RepairOperationKind::ValidateApprovedPackage:
+    case RepairOperationKind::StageApprovedPackage:
+    case RepairOperationKind::InstallApprovedHidHidePackage:
+    case RepairOperationKind::RemoveSpecificInactiveHidHidePackage:
+        if (QRegularExpression(QStringLiteral("^HD-PKG-[A-Z0-9.-]+$"), QRegularExpression::CaseInsensitiveOption).match(operation.targetIdentity).hasMatch()) return true;
+        break;
+    case RepairOperationKind::ReconcileHidHideConfiguration:
+        if (operation.targetIdentity == QStringLiteral("DeepRecoverySnapshot")) return true;
+        break;
+    case RepairOperationKind::RequestSystemRestart:
+        if (operation.targetIdentity == QStringLiteral("WindowsRestart")) return true;
+        break;
     default:
-        if (reason) *reason = QStringLiteral("Operation is outside the Phase 3 R1 helper allow-list.");
-        return false;
+        break;
     }
+    if (reason) *reason = QStringLiteral("Operation is outside the typed HidHide Doctor helper allow-list.");
+    return false;
 }
 
 bool RepairHelperProtocol::validate(const RepairHelperRequest &request, const DoctorEnvironment &environment,

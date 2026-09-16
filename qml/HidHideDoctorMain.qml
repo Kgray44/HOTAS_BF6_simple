@@ -517,7 +517,17 @@ ApplicationWindow {
                         Repeater { model: doctorSession.repairPlanCollateral
                             delegate: Label { required property string modelData; text: "• " + modelData; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: 9; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
                         }
-                        Label { text: "BACKUP  " + repairPlanColumn.plan.backup + "\nROLLBACK  " + repairPlanColumn.plan.rollback + "\nADMINISTRATOR ACCESS  " + repairPlanColumn.plan.elevation + "\nRESTART  " + repairPlanColumn.plan.restart + "\nUSER ACTION  " + repairPlanColumn.plan.userAction; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 9; lineHeight: 1.18; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Label { text: "BACKUP  " + repairPlanColumn.plan.backup + "\nROLLBACK  " + repairPlanColumn.plan.rollback + "\nADMINISTRATOR ACCESS  " + repairPlanColumn.plan.elevation + "\nRESTART  " + repairPlanColumn.plan.restart + "\nCONTINUATION  " + repairPlanColumn.plan.continuation + "\nUSER ACTION  " + repairPlanColumn.plan.userAction; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 9; lineHeight: 1.18; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        Rectangle {
+                            visible: repairPlanColumn.plan.package && repairPlanColumn.plan.package !== "Not applicable"
+                            Layout.fillWidth: true
+                            implicitHeight: packagePlanText.implicitHeight + 12
+                            color: Theme.inset
+                            border.color: Theme.separator
+                            border.width: 1
+                            radius: 1
+                            Label { id: packagePlanText; anchors.fill: parent; anchors.margins: 6; text: "APPROVED PACKAGE\n" + repairPlanColumn.plan.package; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: 9; wrapMode: Text.WrapAnywhere }
+                        }
                         Rectangle {
                             visible: doctorSession.labRepairMode
                             Layout.fillWidth: true

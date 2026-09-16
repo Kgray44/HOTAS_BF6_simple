@@ -15,3 +15,6 @@ replacement for them.
 
 The Phase 0 architecture record states what this branch implements, what it
 does not implement, and the evidence needed before Phase 1 is considered.
+The Phase 4 deep-recovery candidate record documents the LabQualified R2–R5
+planning, package-identity, reboot-continuation, and recovery boundaries; it
+does not promote a fixture package record to a production repair source.

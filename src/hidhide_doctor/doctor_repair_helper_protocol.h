@@ -11,7 +11,7 @@ namespace hotas::doctor {
 // The pipe transport has a separately generated name; the nonce binds this
 // short-lived payload to that one launch.
 struct RepairHelperRequest final {
-    static constexpr int protocolVersion = 1;
+    static constexpr int protocolVersion = 2;
     static constexpr qsizetype maximumMessageBytes = 64 * 1024;
 
     int version = protocolVersion;

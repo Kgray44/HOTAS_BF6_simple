@@ -1,6 +1,7 @@
 #include "doctor_repair_contract.h"
 
 #include <QCryptographicHash>
+#include <QJsonDocument>
 #include <QRegularExpression>
 
 namespace hotas::doctor {
@@ -19,9 +20,14 @@ bool targetMatches(RepairOperationKind operation, RepairTargetKind target)
     case RepairOperationKind::AddBlacklistEntry:
     case RepairOperationKind::RemoveBlacklistEntry: return target == RepairTargetKind::BlacklistEntry;
     case RepairOperationKind::StageApprovedPackage: return target == RepairTargetKind::ApprovedPackage;
+    case RepairOperationKind::ValidateApprovedPackage: return target == RepairTargetKind::ApprovedPackage;
+    case RepairOperationKind::InstallApprovedHidHidePackage: return target == RepairTargetKind::ApprovedPackage;
+    case RepairOperationKind::RemoveSpecificInactiveHidHidePackage: return target == RepairTargetKind::InactiveHidHidePackage;
+    case RepairOperationKind::ReconcileHidHideConfiguration: return target == RepairTargetKind::TransactionSnapshot;
+    case RepairOperationKind::RequestSystemRestart: return target == RepairTargetKind::RebootBoundary;
     case RepairOperationKind::RestoreSnapshot: return target == RepairTargetKind::TransactionSnapshot;
-    case RepairOperationKind::RepairExactServiceConfiguration:
-    case RepairOperationKind::RepairExactFilterRegistration: return target != RepairTargetKind::None;
+    case RepairOperationKind::RepairExactServiceConfiguration: return target == RepairTargetKind::HidHideService;
+    case RepairOperationKind::RepairExactFilterRegistration: return target == RepairTargetKind::HidHideFilterRegistration;
     case RepairOperationKind::Unknown: return false;
     }
     return false;
@@ -36,7 +42,10 @@ RepairTransactionId::RepairTransactionId(QString value) : m_value(normalized(std
 bool RepairTransactionId::isValid() const { return m_value.startsWith(QStringLiteral("REPAIR-TX-")) && isStable(m_value); }
 const QString &RepairTransactionId::value() const { return m_value; }
 RepairRecipeId::RepairRecipeId(QString value) : m_value(normalized(std::move(value))) {}
-bool RepairRecipeId::isValid() const { return m_value.startsWith(QStringLiteral("HD-R1-")) && isStable(m_value); }
+bool RepairRecipeId::isValid() const
+{
+    return QRegularExpression(QStringLiteral("^HD-R[1-5]-[A-Z0-9-]{3,127}$")).match(m_value).hasMatch();
+}
 const QString &RepairRecipeId::value() const { return m_value; }
 
 bool RepairOperation::isWellFormed(QString *reason) const
@@ -46,14 +55,18 @@ bool RepairOperation::isWellFormed(QString *reason) const
         if (reason) *reason = QStringLiteral("Repair operation is not a known typed operation with an allowed target.");
         return false;
     }
-    // Phase 3's helper protocol is structurally incapable of accepting the
-    // future R2+ placeholders that remain in the long-lived enum for report
-    // compatibility.  A future phase needs a new reviewed allow-list.
-    if (kind == RepairOperationKind::RepairExactServiceConfiguration
-        || kind == RepairOperationKind::RepairExactFilterRegistration
-        || kind == RepairOperationKind::StageApprovedPackage
-        || kind == RepairOperationKind::RestoreSnapshot) {
-        if (reason) *reason = QStringLiteral("This operation is deferred beyond Phase 3 R1 configuration repair.");
+    const auto isExactIdentifier = [](const QString &value) {
+        return !value.contains(QLatin1Char('\\')) && !value.contains(QLatin1Char('/'))
+            && !value.contains(QLatin1Char(':')) && !value.contains(QStringLiteral(".."));
+    };
+    if ((kind == RepairOperationKind::RepairExactServiceConfiguration && targetIdentity != QStringLiteral("HidHide"))
+        || (kind == RepairOperationKind::RepairExactFilterRegistration && targetIdentity != QStringLiteral("HidHideFilterRegistration"))
+        || ((kind == RepairOperationKind::ValidateApprovedPackage || kind == RepairOperationKind::StageApprovedPackage
+                || kind == RepairOperationKind::InstallApprovedHidHidePackage
+                || kind == RepairOperationKind::RemoveSpecificInactiveHidHidePackage)
+            && (!targetIdentity.startsWith(QStringLiteral("HD-PKG-")) || !isExactIdentifier(targetIdentity)))
+        || (kind == RepairOperationKind::RequestSystemRestart && targetIdentity != QStringLiteral("WindowsRestart"))) {
+        if (reason) *reason = QStringLiteral("Deep-repair operation target is not the exact allow-listed HidHide identity.");
         return false;
     }
     for (const RepairVerification &check : verification) {
@@ -72,6 +85,7 @@ QString RepairHelperContract::seal(const RepairPlan &plan)
     canonical += QByteArray::number(static_cast<int>(plan.riskClass)) + '\n';
     canonical += QByteArray::number(static_cast<int>(plan.qualification)) + '\n';
     canonical += QByteArray::number(static_cast<int>(plan.authorization)) + '\n';
+    canonical += QByteArray::number(plan.maximumReboots) + '\n';
     canonical += plan.preconditionFingerprint.toUtf8() + '\n';
     canonical += plan.expectedPreState.toUtf8() + '\n' + plan.expectedPostState.toUtf8() + '\n'
         + plan.expectedPostFingerprint.toUtf8() + '\n';
@@ -85,6 +99,7 @@ QString RepairHelperContract::seal(const RepairPlan &plan)
             + operation.targetIdentity.toUtf8() + '|'
             + operation.requestedValue.toUtf8() + '\n';
     }
+    canonical += QJsonDocument(plan.deepRepair).toJson(QJsonDocument::Compact);
     return QString::fromLatin1(QCryptographicHash::hash(canonical, QCryptographicHash::Sha256).toHex());
 }
 
@@ -101,8 +116,8 @@ bool RepairHelperContract::validate(const RepairPlan &plan, const DoctorEnvironm
         if (reason) *reason = QStringLiteral("Repair plan lacks a stable identity, session, or typed operations.");
         return false;
     }
-    if (plan.riskClass != RepairRiskClass::R1Configuration) {
-        if (reason) *reason = QStringLiteral("Phase 3 accepts R1 configuration operations only.");
+    if (plan.riskClass == RepairRiskClass::R0Observe || plan.qualification == RepairQualificationLevel::Retired) {
+        if (reason) *reason = QStringLiteral("Repair plan has an invalid active repair class or retired qualification.");
         return false;
     }
     const bool fieldAuthorized = plan.authorization == RepairAuthorization::UserAuthorized
@@ -115,6 +130,27 @@ bool RepairHelperContract::validate(const RepairPlan &plan, const DoctorEnvironm
     }
     if (!environment.capabilities.helperArchitectureCompatible || !environment.capabilities.directProtocolAvailable) {
         if (reason) *reason = QStringLiteral("Repair helper architecture is not compatible with the measured platform.");
+        return false;
+    }
+    const auto requiredTier = [&] {
+        switch (plan.riskClass) {
+        case RepairRiskClass::R1Configuration: return RepairCapabilityTier::ConfigurationRepairSupported;
+        case RepairRiskClass::R2Component: return RepairCapabilityTier::ComponentRepairSupported;
+        case RepairRiskClass::R3Package: return RepairCapabilityTier::PackageRepairSupported;
+        case RepairRiskClass::R4ApprovedUpgrade: return RepairCapabilityTier::UpgradeRepairSupported;
+        case RepairRiskClass::R5Recovery: return RepairCapabilityTier::RecoverySupported;
+        case RepairRiskClass::R0Observe: return RepairCapabilityTier::DiagnosisSupported;
+        }
+        return RepairCapabilityTier::RecoverySupported;
+    }();
+    if (plan.riskClass != RepairRiskClass::R1Configuration
+        && static_cast<int>(environment.capabilities.highestQualifiedRepairTier) < static_cast<int>(requiredTier)) {
+        if (reason) *reason = QStringLiteral("The measured platform is not qualified for this repair class.");
+        return false;
+    }
+    if (plan.riskClass != RepairRiskClass::R1Configuration
+        && (plan.deepRepair.isEmpty() || plan.maximumReboots < 0)) {
+        if (reason) *reason = QStringLiteral("Deep repair is missing sealed package, continuation, or recovery metadata.");
         return false;
     }
     for (const RepairOperation &operation : plan.operations) {

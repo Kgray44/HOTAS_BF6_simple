@@ -178,6 +178,8 @@ struct DiagnosticRunOutcome final {
     qint64 durationMs = 0;
     bool cancelled = false;
     QString knowledgeEngineVersion;
+    QString repairPlanningStatus;
+    QString repairPlanningReason;
     int findingRuleCount = 0;
     int diagnosisRuleCount = 0;
 };
@@ -187,7 +189,8 @@ public:
     using ProgressCallback = std::function<void(const DoctorSession &)>;
 
     DiagnosticRunOutcome run(IReadOnlyDiagnosticProvider &provider,
-        std::atomic_bool *cancelled = nullptr, ProgressCallback onProgress = {}) const;
+        std::atomic_bool *cancelled = nullptr, ProgressCallback onProgress = {},
+        bool explicitApprovedUpgradeRequest = false) const;
     DoctorSession createPreparedSession() const;
     static QByteArray serializeJson(const DiagnosticRunOutcome &outcome, bool redactSensitive);
 

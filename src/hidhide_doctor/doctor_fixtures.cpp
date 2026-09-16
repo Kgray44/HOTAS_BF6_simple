@@ -40,7 +40,20 @@ QStringList developmentFixtureNames()
     return {QStringLiteral("Healthy System"), QStringLiteral("GetWhitelist 0x57"), QStringLiteral("Broken HID Device"),
         QStringLiteral("Client Driver Mismatch"), QStringLiteral("Pending Restart"), QStringLiteral("Partial Install"),
         QStringLiteral("Contradictory Evidence"), QStringLiteral("Missing HOTAS Exemption"),
-        QStringLiteral("Stale HOTAS Exemption"), QStringLiteral("Hidden Virtual Output")};
+        QStringLiteral("Stale HOTAS Exemption"), QStringLiteral("Hidden Virtual Output"),
+        QStringLiteral("Deep Incomplete Driver Replacement"), QStringLiteral("Same Version Reinstall"),
+        QStringLiteral("Approved Upgrade"), QStringLiteral("Failed Install"), QStringLiteral("Reboot Required"),
+        QStringLiteral("Post-Reboot Success"), QStringLiteral("Post-Reboot Failure"), QStringLiteral("Config Restoration Required"),
+        QStringLiteral("Rollback"), QStringLiteral("Rollback Across Reboot"), QStringLiteral("Recovery"),
+        QStringLiteral("Recovery Unavailable"), QStringLiteral("Missing HidHide Service Registration"),
+        QStringLiteral("Incorrect HidHide Filter Registration"), QStringLiteral("Wrong Architecture Package"),
+        QStringLiteral("Bad Package Signature"), QStringLiteral("Bad Package Hash"), QStringLiteral("Package Download Failure"),
+        QStringLiteral("Insufficient Disk Space"), QStringLiteral("Maximum Reboot Count Exceeded"),
+        QStringLiteral("Client Only"), QStringLiteral("Driver Only"), QStringLiteral("Restart Later"),
+        QStringLiteral("Restart Now"), QStringLiteral("Doctor Restart Before OS Reboot"), QStringLiteral("Config Preserved"),
+        QStringLiteral("Package Rollback Success"), QStringLiteral("Package Rollback Requires Reboot"),
+        QStringLiteral("Helper Crash During Install"), QStringLiteral("Power Loss Reconciliation"),
+        QStringLiteral("Unknown Windows Build"), QStringLiteral("ARM64 Architecture"), QStringLiteral("Stale Transaction")};
 }
 
 ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString *displayLabel)
@@ -48,6 +61,10 @@ ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString
     ReadOnlyDiagnosticSnapshot snapshot = healthySnapshot();
     const QString key = normalizedName(name);
     QString label = QStringLiteral("Healthy System");
+    const auto configureDeepLab = [&snapshot] {
+        snapshot.environment.hidhide.provider = QStringLiteral("fixture-official-nefarius");
+        snapshot.environment.capabilities.highestQualifiedRepairTier = RepairCapabilityTier::RecoverySupported;
+    };
     if (key.contains(QStringLiteral("whitelist")) || key.contains(QStringLiteral("0x57"))) {
         label = QStringLiteral("GetWhitelist 0x57");
         snapshot.protocol[3] = {QStringLiteral("GET_WHITELIST_SIZE"), DoctorCheckStatus::Failed, QStringLiteral("GET_WHITELIST failed"), {},
@@ -91,6 +108,89 @@ ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString
         snapshot.protocol[6].multiStringValues.append(QStringLiteral("ROOT\\VJOY\\0000"));
         snapshot.protocol[6].value = QStringLiteral("2 entries");
         snapshot.registryBlacklist = snapshot.protocol[6].multiStringValues;
+    } else if (key.contains(QStringLiteral("deep incomplete")) || key.contains(QStringLiteral("reboot required"))
+        || key.contains(QStringLiteral("restart later")) || key.contains(QStringLiteral("restart now"))
+        || key.contains(QStringLiteral("doctor restart")) || key.contains(QStringLiteral("config preserved"))) {
+        if (key.contains(QStringLiteral("restart later")))
+            label = QStringLiteral("Restart Later");
+        else if (key.contains(QStringLiteral("restart now")))
+            label = QStringLiteral("Restart Now");
+        else if (key.contains(QStringLiteral("doctor restart")))
+            label = QStringLiteral("Doctor Restart Before OS Reboot");
+        else if (key.contains(QStringLiteral("config preserved")))
+            label = QStringLiteral("Config Preserved");
+        else if (key.contains(QStringLiteral("reboot")))
+            label = QStringLiteral("Reboot Required");
+        else
+            label = QStringLiteral("Deep Incomplete Driver Replacement");
+        configureDeepLab();
+        snapshot.artifacts[1].fileVersion = QStringLiteral("1.5.212.0");
+        snapshot.environment.hidhide.driverVersion = QStringLiteral("1.5.212.0");
+        snapshot.driverPackages.append({QStringLiteral("hidhide.inf_amd64"), QStringLiteral("Nefarius"), QStringLiteral("1.5.230.0"), QStringLiteral("fixture-driver-store"), CpuArchitecture::X64, true, false, std::nullopt});
+        snapshot.pendingRestart.append({QStringLiteral("PendingFileRenameOperations"), QStringLiteral("fixture HidHide replacement"), EvidenceSensitivity::SensitiveLocalOnly, std::nullopt});
+    } else if (key.contains(QStringLiteral("same version")) || key.contains(QStringLiteral("failed install"))
+        || key.contains(QStringLiteral("client only")) || key.contains(QStringLiteral("driver only"))) {
+        label = key.contains(QStringLiteral("failed")) ? QStringLiteral("Failed Install") : QStringLiteral("Same Version Reinstall");
+        configureDeepLab();
+        snapshot.service = {};
+        snapshot.artifacts.removeLast();
+        snapshot.environment.hidhide.driverVersion.clear();
+    } else if (key.contains(QStringLiteral("approved upgrade"))) {
+        label = QStringLiteral("Approved Upgrade");
+        configureDeepLab();
+        snapshot.artifacts[1].fileVersion = QStringLiteral("1.5.212.0");
+        snapshot.environment.hidhide.driverVersion = QStringLiteral("1.5.212.0");
+    } else if (key.contains(QStringLiteral("missing hidhide service"))) {
+        label = QStringLiteral("Missing HidHide Service Registration");
+        configureDeepLab();
+        snapshot.catalogObservations.append({QStringLiteral("HD-PHASE4-SERVICE-REGISTRATION"), DoctorCheckStatus::Failed,
+            QStringLiteral("Fixture exact HidHide service registration is absent."), {}, std::nullopt});
+    } else if (key.contains(QStringLiteral("incorrect hidhide filter"))) {
+        label = QStringLiteral("Incorrect HidHide Filter Registration");
+        configureDeepLab();
+        snapshot.catalogObservations.append({QStringLiteral("HD-PHASE4-FILTER-REGISTRATION"), DoctorCheckStatus::Failed,
+            QStringLiteral("Fixture exact HidHide filter order is inconsistent."), {}, std::nullopt});
+    } else if (key.contains(QStringLiteral("recovery")) || key.contains(QStringLiteral("rollback"))
+        || key.contains(QStringLiteral("helper crash")) || key.contains(QStringLiteral("power loss"))
+        || key.contains(QStringLiteral("stale transaction"))) {
+        label = key.contains(QStringLiteral("unavailable")) ? QStringLiteral("Recovery Unavailable")
+            : (key.contains(QStringLiteral("across")) ? QStringLiteral("Rollback Across Reboot")
+            : (key.contains(QStringLiteral("rollback")) ? QStringLiteral("Rollback") : QStringLiteral("Recovery")));
+        configureDeepLab();
+        snapshot.catalogObservations.append({QStringLiteral("HD-PHASE4-RECOVERY-REQUIRED"), DoctorCheckStatus::Failed,
+            QStringLiteral("Fixture durable repair transaction requires separately authorized recovery."), {}, std::nullopt});
+        if (key.contains(QStringLiteral("unavailable"))) snapshot.environment.hidhide.provider = QStringLiteral("fixture-unapproved-provider");
+    } else if (key.contains(QStringLiteral("post reboot success"))) {
+        label = QStringLiteral("Post-Reboot Success");
+        configureDeepLab();
+    } else if (key.contains(QStringLiteral("post reboot failure")) || key.contains(QStringLiteral("maximum reboot"))) {
+        label = key.contains(QStringLiteral("maximum")) ? QStringLiteral("Maximum Reboot Count Exceeded") : QStringLiteral("Post-Reboot Failure");
+        configureDeepLab();
+        snapshot.artifacts[1].fileVersion = QStringLiteral("1.5.212.0");
+        snapshot.environment.hidhide.driverVersion = QStringLiteral("1.5.212.0");
+    } else if (key.contains(QStringLiteral("config restoration"))) {
+        label = QStringLiteral("Config Restoration Required");
+        configureDeepLab();
+        snapshot.registryWhitelist = {QStringLiteral("C:\\Conflicted\\External.exe")};
+    } else if (key.contains(QStringLiteral("wrong architecture"))) {
+        label = QStringLiteral("Wrong Architecture Package");
+        snapshot.environment = fixtures::wrongArchitecturePackage();
+    } else if (key.contains(QStringLiteral("unknown windows"))) {
+        label = QStringLiteral("Unknown Windows Build");
+        snapshot.environment = fixtures::unknownFutureWindows();
+    } else if (key.contains(QStringLiteral("arm64"))) {
+        label = QStringLiteral("ARM64 Architecture");
+        snapshot.environment = fixtures::windows11Arm64();
+    } else if (key.contains(QStringLiteral("bad package signature")) || key.contains(QStringLiteral("bad package hash"))
+        || key.contains(QStringLiteral("download failure")) || key.contains(QStringLiteral("insufficient disk"))) {
+        label = key.contains(QStringLiteral("signature")) ? QStringLiteral("Bad Package Signature")
+            : (key.contains(QStringLiteral("hash")) ? QStringLiteral("Bad Package Hash")
+            : (key.contains(QStringLiteral("download")) ? QStringLiteral("Package Download Failure") : QStringLiteral("Insufficient Disk Space")));
+        configureDeepLab();
+        snapshot.artifacts[1].fileVersion = QStringLiteral("1.5.212.0");
+        snapshot.environment.hidhide.driverVersion = QStringLiteral("1.5.212.0");
+        snapshot.driverPackages.append({QStringLiteral("hidhide.inf_amd64"), QStringLiteral("Nefarius"), QStringLiteral("1.5.230.0"), QStringLiteral("fixture-driver-store"), CpuArchitecture::X64, true, false, std::nullopt});
+        snapshot.pendingRestart.append({QStringLiteral("PendingFileRenameOperations"), QStringLiteral("fixture HidHide replacement"), EvidenceSensitivity::SensitiveLocalOnly, std::nullopt});
     }
     if (displayLabel) *displayLabel = label;
     return snapshot;
