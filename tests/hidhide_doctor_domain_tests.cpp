@@ -11,7 +11,9 @@
 
 #include <QtTest>
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -155,6 +157,7 @@ private slots:
     void phaseThreeJournalDetectsCorruption();
     void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
     void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
+    void phaseFiveReportExportVerifiesDestinationAndReportsPath();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -855,6 +858,27 @@ void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBun
     QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/manifest.json"))));
 }
 
+void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReportsPath()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    DiagnosticRunOutcome outcome = engine.run(provider);
+    DoctorSessionViewModel model(outcome.session, QStringLiteral("test-build"));
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString destination = directory.filePath(QStringLiteral("test-report.md"));
+
+    model.exportReport(destination, QStringLiteral("Entire Session"), QStringLiteral("Detailed"),
+                       QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(destination), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.reportBusy(), 10000);
+    const QFileInfo report(destination);
+    QVERIFY2(report.isFile(), qPrintable(model.reportStatus()));
+    QVERIFY(report.size() > 0);
+    QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(report.absoluteFilePath())));
+}
+
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
 {
     QFile provider(QStringLiteral(HOTAS_DOCTOR_SOURCE_ROOT "/src/hidhide_doctor/doctor_windows_provider.cpp"));
@@ -866,6 +890,6 @@ void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
     QVERIFY(!source.contains("CreateProcess"));
 }
 
-QTEST_APPLESS_MAIN(HidHideDoctorDomainTests)
+QTEST_GUILESS_MAIN(HidHideDoctorDomainTests)
 
 #include "hidhide_doctor_domain_tests.moc"

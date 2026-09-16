@@ -1,15 +1,18 @@
 #include "doctor_session_view_model.h"
 #include "doctor_report_composer.h"
 
-#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonObject>
-#include <QPointer>
 #include <QSaveFile>
 #include <QSettings>
+#include <QTimer>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <thread>
 
 namespace hotas::doctor {
@@ -23,6 +26,12 @@ constexpr std::array<double, 4> kDefaultPaneFractions{0.49, 0.145, 0.22, 0.145};
 constexpr std::array<double, 2> kDefaultBottomDockFractions{0.4, 0.6};
 constexpr double kMinimumPersistedPaneFraction = 0.08;
 constexpr double kFractionSumTolerance = 0.015;
+
+struct ExportWriteResult final {
+    std::atomic_bool complete = false;
+    bool written = false;
+    QString error;
+};
 
 QString presentationKey(const QString &suffix)
 {
@@ -770,8 +779,22 @@ void DoctorSessionViewModel::beginAsynchronousExport(QString destination, QStrin
     emit presentationChanged();
     const DoctorSession session = m_session;
     const QString buildIdentity = m_buildIdentity;
-    const QPointer<DoctorSessionViewModel> guard(this);
-    std::thread([guard, session, buildIdentity, destination = std::move(destination), scope = std::move(scope),
+    const QString reportedDestination = QDir::toNativeSeparators(QFileInfo(destination).absoluteFilePath());
+    const auto result = std::make_shared<ExportWriteResult>();
+    auto *completionTimer = new QTimer(this);
+    completionTimer->setInterval(40);
+    QObject::connect(completionTimer, &QTimer::timeout, this, [this, result, format, reportedDestination, completionTimer] {
+        if (!result->complete.load(std::memory_order_acquire)) return;
+        completionTimer->stop();
+        completionTimer->deleteLater();
+        m_reportBusy = false;
+        m_reportStatus = result->written ? QStringLiteral("%1 export completed locally: %2. Nothing was uploaded.")
+            .arg(format, reportedDestination)
+            : QStringLiteral("Export failed safely: %1").arg(result->error);
+        emit presentationChanged();
+    });
+    completionTimer->start();
+    std::thread([result, session, buildIdentity, destination = std::move(destination), scope = std::move(scope),
                  detail = std::move(detail), format = std::move(format), privacy = std::move(privacy)] {
         DoctorReportRequest request;
         request.scope = scope;
@@ -779,15 +802,8 @@ void DoctorSessionViewModel::beginAsynchronousExport(QString destination, QStrin
         request.detail = doctorReportDetailFromString(detail);
         request.privacy = doctorReportPrivacyFromString(privacy);
         const DoctorReportDocument report = DoctorReportComposer::compose(session, buildIdentity, request);
-        QString error;
-        const bool written = DoctorReportComposer::write(report, destination, request.format, &error);
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [guard, written, error, format] {
-            if (!guard) return;
-            guard->m_reportBusy = false;
-            guard->m_reportStatus = written ? QStringLiteral("%1 export completed locally. Nothing was uploaded.").arg(format)
-                : QStringLiteral("Export failed safely: %1").arg(error);
-            emit guard->presentationChanged();
-        }, Qt::QueuedConnection);
+        result->written = DoctorReportComposer::write(report, destination, request.format, &result->error);
+        result->complete.store(true, std::memory_order_release);
     }).detach();
 }
 

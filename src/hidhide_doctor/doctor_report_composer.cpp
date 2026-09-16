@@ -111,9 +111,32 @@ bool atomicWrite(const QString &path, const QByteArray &payload, QString *error)
         if (error) *error = QStringLiteral("Report exceeds the bounded 8 MiB export limit.");
         return false;
     }
+    const QFileInfo destination(path);
+    if (!destination.dir().exists()) {
+        if (error) *error = QStringLiteral("The selected export folder does not exist: %1")
+            .arg(QDir::toNativeSeparators(destination.dir().absolutePath()));
+        return false;
+    }
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit()) {
-        if (error) *error = QStringLiteral("Could not write the requested report file.");
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error) *error = QStringLiteral("Could not start writing %1: %2")
+            .arg(QDir::toNativeSeparators(destination.absoluteFilePath()), file.errorString());
+        return false;
+    }
+    if (file.write(payload) != payload.size()) {
+        if (error) *error = QStringLiteral("Could not write all report data to %1: %2")
+            .arg(QDir::toNativeSeparators(destination.absoluteFilePath()), file.errorString());
+        return false;
+    }
+    if (!file.commit()) {
+        if (error) *error = QStringLiteral("Could not finalize %1: %2")
+            .arg(QDir::toNativeSeparators(destination.absoluteFilePath()), file.errorString());
+        return false;
+    }
+    const QFileInfo written(destination.absoluteFilePath());
+    if (!written.isFile() || written.size() != payload.size()) {
+        if (error) *error = QStringLiteral("Export did not create the expected file: %1")
+            .arg(QDir::toNativeSeparators(destination.absoluteFilePath()));
         return false;
     }
     return true;

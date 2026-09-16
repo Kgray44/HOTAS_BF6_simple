@@ -49,6 +49,16 @@ same composer as export; no pane text is treated as the report source of truth.
 The bundle writer uses atomic per-file writes, a per-file 8 MiB cap, and has no
 network/upload capability.
 
+The export command remains asynchronous, but it is not reported as successful
+until the atomic writer has committed and verified the selected destination.
+The completion state names that native local path and explicitly says that
+nothing was uploaded. Missing destination folders, partial writes, failed
+commits, and a post-commit path/size mismatch are surfaced as safe export
+failures with the affected path. The domain export test uses a real Qt event
+loop and verifies the requested Markdown file, nonzero contents, cleared busy
+state, and exact completion path; it is not a substitute for an owner desktop
+export retest.
+
 The Command Center no longer continuously binds persisted pane fractions back
 into a live `SplitView`. Saved fractions are restored once, a user drag owns
 the geometry until release, and the released geometry alone is persisted. A
