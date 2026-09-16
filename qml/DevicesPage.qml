@@ -22,6 +22,7 @@ Page {
 
     readonly property var rigs: backendObject ? backendObject.deviceRigs : []
     readonly property var controllers: backendObject ? backendObject.controllers : []
+    readonly property var hidhideHealth: backendObject ? (backendObject.hidhideHealth || ({})) : ({})
     readonly property bool trueEmpty: rigs.length === 0 && controllers.length === 0
     // Theme.qml uses typed colors while Legacy exposes its established tokens
     // as a compact map. Normalize here so every shared Devices surface is
@@ -263,6 +264,43 @@ Page {
             property real measuredHeight: 0
             function refreshMeasuredHeight() {
                 measuredHeight = Math.max(implicitHeight, childrenRect.height)
+            }
+
+            Panel {
+                objectName: "hidhideHealthPanel"
+                Layout.fillWidth: true
+                visible: backendObject !== null
+                implicitHeight: hidhideHealthContent.implicitHeight + 30
+                border.color: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor
+                ColumnLayout {
+                    id: hidhideHealthContent
+                    anchors.fill: parent; anchors.margins: 16; spacing: 8
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            SmallLabel { text: "HIDHIDE HEALTH" }
+                            Text { text: root.hidhideHealth.overallState || "CHECKING"; color: String(root.hidhideHealth.overallState || "").indexOf("READY") >= 0 ? root.readyColor : root.warningColor; font.pixelSize: 18; font.bold: true }
+                        }
+                        Text { text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking")) : ""; color: root.mutedColor; font.pixelSize: 10; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight }
+                    }
+                    Text { Layout.fillWidth: true; text: "HidHide Health is a read-only, contextual check. The established Setup Health transaction remains the only in-app repair authority."; color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Repeater {
+                        model: root.hidhideHealth.dimensions || []
+                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + String(modelData.title || "HidHide") + " · " + String(modelData.state || "UNKNOWN"); color: root.mutedColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    }
+                    Repeater {
+                        model: root.hidhideHealth.physicalDevices || []
+                        delegate: Text { required property var modelData; Layout.fillWidth: true; text: "• " + String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.state || "UNKNOWN") + (String(modelData.state || "") === "REPAIR AVAILABLE" ? " · Visible to games — Fix Isolation" : ""); color: String(modelData.state || "") === "READY" ? root.readyColor : root.warningColor; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    }
+                    Flow {
+                        Layout.fillWidth: true; spacing: 8
+                        ThemedButton { theme: themeTokens; compact: true; text: root.hidhideHealth.inProgress ? "CHECKING…" : "RUN FULL CHECK"; commandEnabled: !root.hidhideHealth.inProgress; onTriggered: root.showActionFeedback(backendObject.runHidHideFullCheck(), "HidHide check did not start", "Wait for the current check to complete.") }
+                        ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; visible: root.hidhideHealth.inProgress; text: "CANCEL"; onTriggered: backendObject.cancelHidHideFullCheck() }
+                        ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: "REVIEW REPAIR"; onTriggered: root.showActionFeedback(backendObject.reviewHidHideHealthRepair(), "No HidHide repair is available", "Run a Full Check or open Doctor for deeper diagnosis.") }
+                        ThemedButton { theme: themeTokens; compact: true; tone: "secondary"; text: "OPEN DOCTOR"; onTriggered: root.showActionFeedback(backendObject.openHidHideDoctor(), "HidHide Doctor is unavailable", "The optional Doctor was not found beside this build.") }
+                    }
+                }
             }
             Component.onCompleted: {
                 devicesScroll.contentLayout = this

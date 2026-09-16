@@ -6,6 +6,7 @@
 #include "activation_resolver.h"
 #include "controller_readiness.h"
 #include "controller_diagnostics.h"
+#include "hidhide_health_service.h"
 #include "device_rig.h"
 #include "adaptive_response.h"
 #include "axis_transform.h"
@@ -27,6 +28,8 @@
 #include <QWindow>
 
 #include <array>
+#include <atomic>
+#include <memory>
 #include <vector>
 
 class QAction;
@@ -156,6 +159,10 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool hidhideCloakStateKnown READ hidhideCloakStateKnown NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideCloaked READ hidhideCloaked NOTIFY stateChanged)
     Q_PROPERTY(bool hidhideMapperAllowed READ hidhideMapperAllowed NOTIFY stateChanged)
+    // HidHide Health is a dedicated control-plane projection. It never reads
+    // or writes the report path and remains independent from Setup Truth.
+    Q_PROPERTY(QVariantMap hidhideHealth READ hidhideHealth NOTIFY stateChanged)
+    Q_PROPERTY(bool hidhideHealthCheckActive READ hidhideHealthCheckActive NOTIFY stateChanged)
     Q_PROPERTY(QVariantList controllerReadinessChecks READ controllerReadinessChecks NOTIFY stateChanged)
     // A beginner-facing projection of readiness.  It is intentionally a
     // structured control-plane model rather than a list of UI sentences, so
@@ -361,6 +368,13 @@ public:
     bool configureMultiControllerRigFixtureForTest();
     bool commitExactControllerVerificationForTest(const QString &recordId);
     bool disconnectFixtureControllerForTest(const QString &recordId);
+    QString hidHideHealthContextKeyForTest() const;
+    bool reconnectFixtureControllerWithHidIdentityForTest(const QString &recordId, const QString &hidInstanceId);
+    bool hidHideHealthResultAcceptedForTest(const QString &contextKey);
+    void setHidHideHealthRepairFixtureForTest(bool qualifiedRepairAvailable);
+    // Installs a cancellable, read-only delayed provider for native QML
+    // lifecycle coverage. This seam exists only in startup-test binaries.
+    void configureDelayedHidHideHealthForTest(int delayMs);
     QVariantMap beginSetupCheckSessionForTest();
     bool completeFreshSetupCheckWithFixturePlansForTest();
     bool configureStaleWaitingForUserFixtureForTest();
@@ -443,6 +457,8 @@ public:
     bool hidhideCloakStateKnown() const;
     bool hidhideCloaked() const;
     bool hidhideMapperAllowed() const;
+    QVariantMap hidhideHealth() const;
+    bool hidhideHealthCheckActive() const;
     QVariantList controllerReadinessChecks() const;
     QVariantList setupAssistantIssues() const;
     QVariantList setupAssistantSteps() const;
@@ -798,6 +814,11 @@ public:
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool repairHidHideAccess();
     Q_INVOKABLE bool openHidHideConfiguration();
+    Q_INVOKABLE QVariantMap runHidHideFullCheck();
+    Q_INVOKABLE bool cancelHidHideFullCheck();
+    Q_INVOKABLE QVariantMap reviewHidHideHealthRepair();
+    Q_INVOKABLE QVariantMap openHidHideDoctor();
+    Q_INVOKABLE bool copyHidHideHealthEvidence();
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();
@@ -1273,6 +1294,11 @@ private:
     PhysicalControllerCapabilities currentPhysicalCapabilities() const;
     void startQuickVerification();
     void startVerification(VerificationMode mode, const QString &exactRecordId = {});
+    HidHideHealthContext buildHidHideHealthContext(quint64 sessionId) const;
+    void scheduleEssentialHidHideHealthCheck();
+    void startHidHideHealthCheck(HidHideHealthScanDepth depth);
+    void completeHidHideHealthCheck(HidHideHealthSnapshot snapshot);
+    void appendHidHideHealthActivity(const QString &event, const QString &detail = {});
     // Startup uses the established read-only quick verifier, then inspects
     // every output on the viewed Rig before publishing the first durable
     // Setup Truth snapshot.  This is intentionally separate from the
@@ -1519,6 +1545,16 @@ private:
     QString m_pendingControllerArrivalId;
     bool m_verificationInProgress = false;
     QPointer<QThread> m_verificationThread;
+    HidHideHealthService m_hidhideHealthService;
+    HidHideHealthSnapshot m_hidhideHealthSnapshot;
+    HidHideHealthSnapshot m_hidhideHealthLastKnownGoodSnapshot;
+    QList<HidHideHealthActivity> m_hidhideHealthActivity;
+    QPointer<QThread> m_hidhideHealthThread;
+    std::shared_ptr<std::atomic_bool> m_hidhideHealthCancellation;
+    QTimer m_hidhideHealthEssentialTimer;
+    quint64 m_hidhideHealthNextSessionId = 1;
+    bool m_hidhideHealthFullCheckPending = false;
+    bool m_hidhideHealthEssentialCheckPending = false;
     // A quick startup inspection is followed by bounded, read-only probes
     // for non-active outputs on the viewed Rig.  Keep that worker distinct
     // from the primary verifier so shutdown can join both safely.

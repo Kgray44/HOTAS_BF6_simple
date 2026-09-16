@@ -2184,6 +2184,63 @@ Page {
  spacing: 14
                 PageTitle { heading: "Diagnostics"
                 detail: "Worker-side DirectInput telemetry; presentation samples the latest snapshot at 30 Hz" }
+                Panel {
+                    id: standardHidHideHealthDiagnostics
+                    width: parent.width
+                    height: 138
+                    property var health: backend.hidhideHealth
+                    // This redraw-only tick makes a slow bounded worker feel
+                    // alive without polling HidHide or touching MappingWorker.
+                    property int hidhideElapsedTick: 0
+                    Timer { interval: 100; repeat: true; running: Boolean(standardHidHideHealthDiagnostics.health.inProgress)
+                        onTriggered: standardHidHideHealthDiagnostics.hidhideElapsedTick++ }
+                    Column {
+                        anchors.fill: parent
+                        anchors.margins: 13
+                        spacing: 5
+                        Text { text: "HIDHIDE HEALTH · " + String(standardHidHideHealthDiagnostics.health.overallState || "CHECKING")
+                            color: String(standardHidHideHealthDiagnostics.health.overallState || "").indexOf("READY") >= 0 ? theme.ready : theme.warning
+                            font.pixelSize: 11; font.bold: true }
+                        Text { width: parent.width; text: {
+                                const tick = standardHidHideHealthDiagnostics.hidhideElapsedTick
+                                const health = standardHidHideHealthDiagnostics.health
+                                if (health.inProgress) {
+                                    const elapsed = Math.max(0, Math.floor(Number(health.elapsedMs || 0) / 1000))
+                                    const lastGood = health.lastKnownGoodContextMatches
+                                        ? " · LAST VERIFIED " + String(health.lastKnownGoodState || "UNKNOWN") : ""
+                                    return String(health.currentStage || "Checking HidHide in the background")
+                                        + " · " + String(health.currentInspectionState || "CHECKING IN BACKGROUND")
+                                        + " · " + elapsed + "s elapsed" + lastGood
+                                }
+                                return health.currentStage || "Read-only control-plane inspection; mapping remains independent."
+                            }
+                            color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight }
+                        Row {
+                            spacing: 8
+                            Button { objectName: "standardHidHideFullCheck"; text: standardHidHideHealthDiagnostics.health.inProgress ? "CHECKING" : "RUN FULL CHECK"
+                                enabled: !standardHidHideHealthDiagnostics.health.inProgress
+                                onClicked: backend.runHidHideFullCheck() }
+                            Button { objectName: "standardHidHideCancel"; text: "CANCEL"; visible: standardHidHideHealthDiagnostics.health.inProgress; onClicked: backend.cancelHidHideFullCheck() }
+                            Button { text: "REVIEW REPAIR"; onClicked: {
+                                    const result = backend.reviewHidHideHealthRepair()
+                                    if (root.notificationCenter) root.notificationCenter.enqueue(result,
+                                        "No HidHide repair is available", "Run a Full Check or open Doctor for deeper diagnosis.", 5000)
+                                } }
+                            Button { text: "COPY SANITIZED EVIDENCE"; onClicked: {
+                                    const copied = backend.copyHidHideHealthEvidence()
+                                    const result = copied
+                                        ? ({ success: true, title: "Sanitized HidHide evidence copied", message: "The shareable diagnostic report is on the clipboard." })
+                                        : ({ success: false, title: "Could not copy HidHide evidence", message: "The clipboard is unavailable in this session." })
+                                    if (root.notificationCenter) root.notificationCenter.enqueue(result,
+                                        "Could not copy HidHide evidence", "The clipboard is unavailable in this session.", 5000)
+                                } }
+                        }
+                        Text { width: parent.width; text: ((standardHidHideHealthDiagnostics.health.dimensions || []).slice(0, 3).map(function(entry) {
+                                return String(entry.title || "HidHide") + " · " + String(entry.state || "UNKNOWN")
+                            }).join("    "))
+                            color: theme.textFaint; font.pixelSize: 9; elide: Text.ElideRight }
+                    }
+                }
                 GridLayout { width: parent.width
  columns: width >= 1100 ? 5 : (width >= 760 ? 3 : 2)
  columnSpacing: 10

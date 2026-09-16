@@ -24,6 +24,7 @@ Flickable {
     // Setup Health is a frozen, shared projection. Do not replay the older
     // readiness presentation while Devices shows the same rig's session.
     readonly property var setupTruth: backend.setupTruthSnapshot || ({})
+    readonly property var hidhideHealth: backend.hidhideHealth || ({})
 
     function setupGroup(id) {
         const groups = setupTruth.groups || []
@@ -50,6 +51,14 @@ Flickable {
     readonly property var setupPhysical: setupGroup("physical")
     readonly property var setupOutput: setupGroup("vjoy")
     readonly property var setupIsolation: setupGroup("isolation")
+
+    function hidhideTone() {
+        const state = String(hidhideHealth.overallState || "CHECKING").toUpperCase()
+        if (state === "READY") return "healthy"
+        if (state.indexOf("REPAIR") >= 0 || state.indexOf("ACTION") >= 0 || state.indexOf("DOCTOR") >= 0) return "attention"
+        if (state === "DEGRADED") return "fault"
+        return "informational"
+    }
 
     FlightDeckTheme {
         id: deck
@@ -310,10 +319,10 @@ Flickable {
             FlightDeckHealthCard {
                 objectName: "flightDeckHealthIsolation"
                 tokens: deck
-                eyebrow: "HIDHIDE ISOLATION"
-                title: setupIsolation.title || "Checking"
-                detail: setupIsolation.detail || ""
-                tone: root.setupTone(setupIsolation)
+                eyebrow: "HIDHIDE HEALTH"
+                title: root.hidhideHealth.overallState || setupIsolation.title || "Checking"
+                detail: root.hidhideHealth.currentStage || setupIsolation.detail || ""
+                tone: root.hidhideTone()
                 actionLabel: "OPEN ISOLATION"
                 onActionRequested: root.navigateToDevices("isolation")
             }

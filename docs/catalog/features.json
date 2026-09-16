@@ -228,7 +228,10 @@
       "Automatic Activation may use the established virtual-output visibility transaction, but never hides, shows, adopts, or changes a physical controller's HidHide membership.",
       "HidHide affects future enumeration; a game that already opened a device handle may need a restart after an output-layout switch.",
       "Existing HidHide allowlist entries, inverse behavior, and unrelated hidden devices are preserved.",
-      "Direct action to open the HidHide Configuration Client."
+      "Direct action to open the HidHide Configuration Client.",
+      "HidHide Health adds one typed, low-frequency control-plane snapshot to Overview, Devices, Diagnostics, Flight Deck, and App Health without changing the DirectInput-to-vJoy report loop.",
+      "A Full Check opens HidHide only with GENERIC_READ and issues documented GET_ACTIVE, GET_INVERSE, GET_WHITELIST, and GET_BLACKLIST requests with bounded timeouts; it never issues a SET request.",
+      "Stable HIDHIDE_ App Health findings distinguish a qualified existing repair path from incomplete evidence, user recovery, or Doctor-required conditions; a Doctor handoff contains only a sanitized context summary."
     ]
   },
   {

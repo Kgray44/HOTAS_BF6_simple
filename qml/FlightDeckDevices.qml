@@ -25,6 +25,7 @@ Flickable {
     // create/edit/activate operation below is routed through AppBackend.
     property string selectedRigId: ""
     property var actionFeedback: ({})
+    property var hidhideRepairPlan: ({})
     property bool outputCreationForNewRig: false
     // The application shell owns the actual card/queue. Keep this only for
     // the exact-record async verification transition below.
@@ -86,6 +87,7 @@ Flickable {
         ? backend.hidhideCloaked : state.hidhideCloaked
     readonly property bool hidhideMapperAllowed: state.hidhideMapperAllowed === undefined
         ? backend.hidhideMapperAllowed : state.hidhideMapperAllowed
+    readonly property var hidhideHealth: backend.hidhideHealth || ({})
 
     FlightDeckTheme {
         id: deck
@@ -135,6 +137,15 @@ Flickable {
             return "fault";
         if (severity === "warning" || severity === "waiting" || label.indexOf("ATTENTION") >= 0 || label.indexOf("WAITING") >= 0)
             return "attention";
+        return "informational";
+    }
+
+    function hidhideHealthTone() {
+        const state = String(hidhideHealth.overallState || "CHECKING").toUpperCase();
+        if (state === "READY") return "healthy";
+        if (state.indexOf("REPAIR") >= 0 || state.indexOf("ACTION") >= 0 || state.indexOf("DOCTOR") >= 0)
+            return "attention";
+        if (state === "DEGRADED") return "fault";
         return "informational";
     }
 
@@ -1200,8 +1211,89 @@ Flickable {
                     FlightDeckStatusChip { tokens: deck; label: "HIDHIDE"; value: String(root.isolationCheck.state || "CHECKING").toUpperCase(); tone: root.toneFor(root.isolationCheck); visible: root.medium }
                 }
                 Text { text: "Device isolation prevents games from seeing both the physical controller and virtual output."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: hidhideHealthSummary.implicitHeight + deck.space20
+                    radius: deck.radiusControl
+                    color: deck.elevatedSurface
+                    border.color: deck.statusColor(root.hidhideHealthTone())
+                    ColumnLayout {
+                        id: hidhideHealthSummary
+                        anchors.fill: parent
+                        anchors.margins: deck.space10
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "HIDHIDE HEALTH"; color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: 10; font.bold: true }
+                            Item { Layout.fillWidth: true }
+                            Text { text: String(root.hidhideHealth.overallState || "CHECKING"); color: deck.statusColor(root.hidhideHealthTone()); font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true }
+                        }
+                        Text { Layout.fillWidth: true; text: root.hidhideHealth.inProgress ? (String(root.hidhideHealth.checksCompleted || 0) + " / " + String(root.hidhideHealth.checksTotal || 0) + " · " + String(root.hidhideHealth.percentComplete || 0) + "%\n" + (root.hidhideHealth.currentCheckTitle || root.hidhideHealth.currentStage || "Checking HidHide")) : "Independent health dimensions are kept separate from the existing setup transaction."; color: deck.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        Repeater {
+                            model: root.hidhideHealth.dimensions || []
+                            delegate: Text {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                text: "• " + String(modelData.title || "HidHide") + " · " + String(modelData.state || "UNKNOWN") + " — " + String(modelData.shortSummary || "")
+                                color: deck.textMuted; font.pixelSize: 9; wrapMode: Text.WordWrap
+                            }
+                        }
+                        Repeater {
+                            model: root.hidhideHealth.physicalDevices || []
+                            delegate: Text { required property var modelData; Layout.fillWidth: true; text: String(modelData.friendlyName || "Physical controller") + " · " + String(modelData.state || "UNKNOWN") + (String(modelData.state || "") === "REPAIR AVAILABLE" ? " · Visible to games" : ""); color: deck.statusColor(String(modelData.state || "") === "READY" ? "healthy" : "attention"); font.pixelSize: 10; wrapMode: Text.WordWrap }
+                        }
+                    }
+                }
                 RowLayout {
                     Layout.fillWidth: true
+                    Button {
+                        text: root.hidhideHealth.inProgress ? "CHECKING…" : "RUN FULL CHECK"
+                        enabled: !root.hidhideHealth.inProgress
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.showActionFeedback(backend.runHidHideFullCheck(), "HidHide check did not start", "Try again after the current check completes.")
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        visible: root.hidhideHealth.inProgress
+                        text: "CANCEL"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.cancelHidHideFullCheck()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: deck.border; border.width: 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        visible: String(root.hidhideHealth.overallState || "") === "REPAIR AVAILABLE"
+                        text: "REVIEW & REPAIR"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: { root.hidhideRepairPlan = backend.reviewHidHideHealthRepair(); root.showActionFeedback(root.hidhideRepairPlan, "HidHide repair plan unavailable", "Run a Full Check for current evidence.") }
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.warning; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.warning; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        visible: root.hidhideRepairPlan && root.hidhideRepairPlan.success === true
+                        text: "APPLY EXISTING REPAIR"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: {
+                            const next = String(root.hidhideRepairPlan.nextAction || "")
+                            const result = next === "repair-hidhide-access" ? { success: backend.repairHidHideAccess(), title: "HidHide access repair requested", message: "The existing mapper-only transaction was used." } : backend.repairSetupHealth()
+                            root.showActionFeedback(result, "HidHide repair did not start", "The current setup evidence no longer supports that repair.")
+                        }
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.accent; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        text: "OPEN DOCTOR"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.showActionFeedback(backend.openHidHideDoctor(), "HidHide Doctor is unavailable", "Copy evidence or install the optional Doctor alongside HOTAS BF6.")
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
                     Button {
                         visible: root.toneFor(root.isolationCheck) !== "healthy"
                         text: "VIEW SETUP HEALTH"
@@ -1237,6 +1329,15 @@ Flickable {
                         Text { text: root.hidhideAvailable ? "Service and tools are available." : "Service or tools are unavailable."; color: deck.textSecondary; font.pixelSize: 10 }
                         Text { text: root.hidhideCloakStateKnown ? (root.hidhideCloaked ? "Cloaking is enabled." : "Cloaking is disabled.") : "Cloaking state is still unknown."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text { text: root.hidhideMapperAllowed ? "HOTAS BF6 is allow-listed." : "HOTAS BF6 is not allow-listed."; color: deck.textSecondary; font.pixelSize: 10 }
+                        Repeater {
+                            model: root.hidhideHealth.checks || []
+                            delegate: Text {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                text: String(modelData.operation || "CHECK") + " · " + String(modelData.state || "UNKNOWN") + (modelData.nativeError ? " · " + String(modelData.nativeError.message || "") : "")
+                                color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 9; wrapMode: Text.WrapAnywhere
+                            }
+                        }
                     }
                 }
             }
