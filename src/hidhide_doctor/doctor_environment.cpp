@@ -39,6 +39,8 @@ DoctorEnvironment baseEnvironment(quint32 build, CpuArchitecture architecture)
     environment.platform.revision = 1000;
     environment.platform.nativeArchitecture = architecture;
     environment.platform.processArchitecture = architecture;
+    environment.platform.doctorBinaryArchitecture = architecture;
+    environment.platform.helperBinaryArchitecture = architecture;
     environment.platform.localeName = QStringLiteral("en-US");
     environment.hidhide.present = true;
     environment.hidhide.provider = QStringLiteral("official-nefarius");

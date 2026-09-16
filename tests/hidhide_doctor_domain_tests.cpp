@@ -425,7 +425,7 @@ void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(report, &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 4);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
     QCOMPARE(document.object().value(QStringLiteral("evidenceRecords")).toArray().size(), DoctorCatalog::v11DefinedCheckIds().size());
 }
 
@@ -569,7 +569,7 @@ void HidHideDoctorDomainTests::phaseTwoReportCarriesFindingsDiagnosesAndKnowledg
     DoctorDiagnosticEngine engine;
     const DiagnosticRunOutcome outcome = engine.run(provider);
     const QJsonDocument document = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 4);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
     QVERIFY(!document.object().value(QStringLiteral("knowledgeEngine")).toObject().value(QStringLiteral("version")).toString().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("findings")).toArray().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("diagnoses")).toArray().isEmpty());

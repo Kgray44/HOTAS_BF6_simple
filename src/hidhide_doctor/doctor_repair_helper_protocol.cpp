@@ -1,4 +1,5 @@
 #include "doctor_repair_helper_protocol.h"
+#include "doctor_deep_repair.h"
 
 #include "doctor_repair_engine.h"
 
@@ -61,6 +62,7 @@ QJsonObject planJson(const RepairPlan &plan)
         {QStringLiteral("authorization"), static_cast<int>(plan.authorization)}, {QStringLiteral("preconditions"), preconditions},
         {QStringLiteral("preconditionFingerprint"), plan.preconditionFingerprint}, {QStringLiteral("expectedPreState"), plan.expectedPreState},
         {QStringLiteral("expectedPostState"), plan.expectedPostState}, {QStringLiteral("expectedPostFingerprint"), plan.expectedPostFingerprint},
+        {QStringLiteral("maximumReboots"), plan.maximumReboots}, {QStringLiteral("deepRepair"), plan.deepRepair},
         {QStringLiteral("operations"), operations}, {QStringLiteral("planDigest"), plan.integrityDigest}};
 }
 
@@ -78,11 +80,13 @@ std::optional<RepairPlan> planFromJson(const QJsonObject &object, QString *reaso
     plan.expectedPreState = object.value(QStringLiteral("expectedPreState")).toString();
     plan.expectedPostState = object.value(QStringLiteral("expectedPostState")).toString();
     plan.expectedPostFingerprint = object.value(QStringLiteral("expectedPostFingerprint")).toString();
+    plan.maximumReboots = object.value(QStringLiteral("maximumReboots")).toInt();
+    plan.deepRepair = object.value(QStringLiteral("deepRepair")).toObject();
     plan.integrityDigest = object.value(QStringLiteral("planDigest")).toString();
     const QJsonArray preconditions = object.value(QStringLiteral("preconditions")).toArray();
     const QJsonArray operations = object.value(QStringLiteral("operations")).toArray();
-    if (preconditions.size() > 32 || operations.isEmpty() || operations.size() > 6) {
-        if (reason) *reason = QStringLiteral("Helper plan exceeds the bounded Phase 3 R1 request shape.");
+    if (preconditions.size() > 48 || operations.isEmpty() || operations.size() > 10) {
+        if (reason) *reason = QStringLiteral("Helper plan exceeds the bounded typed-operation request shape.");
         return std::nullopt;
     }
     for (const QJsonValue &value : preconditions) {
@@ -155,6 +159,79 @@ bool containsOperation(const QList<RepairOperation> &operations, RepairOperation
 
 bool planDeltaMatches(const RepairPlan &plan, QString *reason)
 {
+    if (plan.riskClass != RepairRiskClass::R1Configuration) {
+        const QJsonObject package = plan.deepRepair.value(QStringLiteral("package")).toObject();
+        const auto exactOperationSequence = [&](const QList<RepairOperationKind> &expected) {
+            if (plan.operations.size() != expected.size()) return false;
+            for (int index = 0; index < expected.size(); ++index)
+                if (plan.operations.at(index).kind != expected.at(index)) return false;
+            return true;
+        };
+        if (plan.riskClass == RepairRiskClass::R2Component) {
+            const bool service = plan.recipeId.value() == QStringLiteral("HD-R2-REPAIR-HIDHIDE-SERVICE")
+                && exactOperationSequence({RepairOperationKind::RepairExactServiceConfiguration})
+                && plan.operations.first().targetIdentity == QStringLiteral("HidHide");
+            const bool filter = plan.recipeId.value() == QStringLiteral("HD-R2-REPAIR-HIDHIDE-FILTER")
+                && exactOperationSequence({RepairOperationKind::RepairExactFilterRegistration})
+                && plan.operations.first().targetIdentity == QStringLiteral("HidHideFilterRegistration");
+            if (!service && !filter) {
+                if (reason) *reason = QStringLiteral("R2 helper plan is not one exact HidHide service or filter registration operation.");
+                return false;
+            }
+        } else {
+            const std::optional<ApprovedPackage> approved = ApprovedPackageCatalog::find(package.value(QStringLiteral("packageId")).toString());
+            const QSet<QString> allowedKeys{QStringLiteral("packageId"), QStringLiteral("provider"), QStringLiteral("version"),
+                QStringLiteral("architecture"), QStringLiteral("channel"), QStringLiteral("source"), QStringLiteral("sourceKind"),
+                QStringLiteral("expectedSha256"), QStringLiteral("signaturePolicy"), QStringLiteral("signerIdentity"),
+                QStringLiteral("minimumWindowsBuild"), QStringLiteral("maximumWindowsBuild"), QStringLiteral("expectedMaximumReboots"),
+                QStringLiteral("qualification"), QStringLiteral("provenance"), QStringLiteral("artifactFileName"),
+                QStringLiteral("artifactVersion"), QStringLiteral("expectedSize"), QStringLiteral("rollbackPackageId")};
+            for (auto it = package.constBegin(); it != package.constEnd(); ++it) {
+                if (!allowedKeys.contains(it.key())) {
+                    if (reason) *reason = QStringLiteral("Deep helper package payload contains a forbidden executable, path, INF, service, filter, or restart field.");
+                    return false;
+                }
+            }
+            if (!approved
+                || package.value(QStringLiteral("provider")).toString() != approved->provider
+                || package.value(QStringLiteral("version")).toString() != approved->version
+                || package.value(QStringLiteral("architecture")).toString() != displayName(approved->architecture)
+                || package.value(QStringLiteral("source")).toString() != approved->source
+                || package.value(QStringLiteral("expectedSha256")).toString().compare(approved->expectedSha256, Qt::CaseInsensitive) != 0
+                || package.value(QStringLiteral("signerIdentity")).toString() != approved->signerIdentity
+                || package.value(QStringLiteral("artifactFileName")).toString() != approved->artifactFileName
+                || package.value(QStringLiteral("artifactVersion")).toString() != approved->artifactVersion
+                || static_cast<quint64>(package.value(QStringLiteral("expectedSize")).toDouble()) != approved->expectedSize
+                || package.value(QStringLiteral("rollbackPackageId")).toString() != approved->rollbackPackageId) {
+                if (reason) *reason = QStringLiteral("Deep helper package payload is not an exact current approved catalog record.");
+                return false;
+            }
+            const QList<RepairOperationKind> packageOperations = plan.riskClass == RepairRiskClass::R5Recovery
+                ? QList<RepairOperationKind>{RepairOperationKind::ValidateApprovedPackage, RepairOperationKind::StageApprovedPackage,
+                    RepairOperationKind::RemoveSpecificInactiveHidHidePackage, RepairOperationKind::InstallApprovedHidHidePackage,
+                    RepairOperationKind::RequestSystemRestart, RepairOperationKind::ReconcileHidHideConfiguration}
+                : QList<RepairOperationKind>{RepairOperationKind::ValidateApprovedPackage, RepairOperationKind::StageApprovedPackage,
+                    RepairOperationKind::InstallApprovedHidHidePackage, RepairOperationKind::RequestSystemRestart,
+                    RepairOperationKind::ReconcileHidHideConfiguration};
+            if (!exactOperationSequence(packageOperations)) {
+                if (reason) *reason = QStringLiteral("Deep helper package plan has an unexpected typed-operation sequence.");
+                return false;
+            }
+            for (const RepairOperation &operation : plan.operations) {
+                if ((operation.kind == RepairOperationKind::ValidateApprovedPackage || operation.kind == RepairOperationKind::StageApprovedPackage
+                        || operation.kind == RepairOperationKind::InstallApprovedHidHidePackage || operation.kind == RepairOperationKind::RemoveSpecificInactiveHidHidePackage)
+                    && operation.targetIdentity != approved->packageId) {
+                    if (reason) *reason = QStringLiteral("Deep helper package operation target does not match its approved catalog record.");
+                    return false;
+                }
+            }
+        }
+        if (plan.maximumReboots < 0 || plan.maximumReboots > 2) {
+            if (reason) *reason = QStringLiteral("Deep helper plan exceeds the bounded recipe reboot policy.");
+            return false;
+        }
+        return true;
+    }
     const std::optional<QJsonObject> before = configurationState(plan.expectedPreState, reason);
     const std::optional<QJsonObject> after = configurationState(plan.expectedPostState, reason);
     if (!before || !after) return false;
@@ -269,10 +346,29 @@ bool RepairHelperProtocol::targetIsAllowed(const RepairOperation &operation, QSt
             return false;
         }
         return true;
+    case RepairOperationKind::RepairExactServiceConfiguration:
+        if (operation.targetIdentity == QStringLiteral("HidHide")) return true;
+        break;
+    case RepairOperationKind::RepairExactFilterRegistration:
+        if (operation.targetIdentity == QStringLiteral("HidHideFilterRegistration")) return true;
+        break;
+    case RepairOperationKind::ValidateApprovedPackage:
+    case RepairOperationKind::StageApprovedPackage:
+    case RepairOperationKind::InstallApprovedHidHidePackage:
+    case RepairOperationKind::RemoveSpecificInactiveHidHidePackage:
+        if (QRegularExpression(QStringLiteral("^HD-PKG-[A-Z0-9.-]+$"), QRegularExpression::CaseInsensitiveOption).match(operation.targetIdentity).hasMatch()) return true;
+        break;
+    case RepairOperationKind::ReconcileHidHideConfiguration:
+        if (operation.targetIdentity == QStringLiteral("DeepRecoverySnapshot")) return true;
+        break;
+    case RepairOperationKind::RequestSystemRestart:
+        if (operation.targetIdentity == QStringLiteral("WindowsRestart")) return true;
+        break;
     default:
-        if (reason) *reason = QStringLiteral("Operation is outside the Phase 3 R1 helper allow-list.");
-        return false;
+        break;
     }
+    if (reason) *reason = QStringLiteral("Operation is outside the typed HidHide Doctor helper allow-list.");
+    return false;
 }
 
 bool RepairHelperProtocol::validate(const RepairHelperRequest &request, const DoctorEnvironment &environment,

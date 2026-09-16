@@ -15,3 +15,7 @@ replacement for them.
 
 The Phase 0 architecture record states what this branch implements, what it
 does not implement, and the evidence needed before Phase 1 is considered.
+The Phase 4 deep-recovery candidate record documents the LabQualified R2–R5
+implementation, exact official-package identity, reboot continuation, and
+recovery boundaries. Its single official package is pinned and independently
+revalidated, but is not FieldQualified and does not authorize a live repair.

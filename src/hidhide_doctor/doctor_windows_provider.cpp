@@ -393,6 +393,9 @@ DoctorEnvironment observeEnvironment(QList<PendingRestartObservation> *pendingRe
     environment.platform.revision = registryDword(ubr).value_or(0);
     environment.platform.nativeArchitecture = nativeArchitecture();
     environment.platform.processArchitecture = sizeof(void *) == 8 ? CpuArchitecture::X64 : CpuArchitecture::X86;
+    environment.platform.doctorBinaryArchitecture = binaryArchitecture(QCoreApplication::applicationFilePath());
+    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHide Doctor Repair.exe"));
+    environment.platform.helperBinaryArchitecture = binaryArchitecture(helperPath);
     BOOL wow64 = FALSE;
     if (IsWow64Process(GetCurrentProcess(), &wow64)) environment.platform.wow64OrEmulated = wow64 != FALSE;
     wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
@@ -412,6 +415,13 @@ DoctorEnvironment observeEnvironment(QList<PendingRestartObservation> *pendingRe
     }
     environment.capabilities.diagnosisSupported = true;
     environment.capabilities.highestQualifiedRepairTier = RepairCapabilityTier::DiagnosisSupported;
+    // Do not guess this from CMake or pointer size.  The helper is paired by
+    // its on-disk image and must be native to the measured Windows platform.
+    environment.capabilities.helperArchitectureCompatible = environment.platform.nativeArchitecture != CpuArchitecture::Unknown
+        && environment.platform.processArchitecture == environment.platform.nativeArchitecture
+        && environment.platform.doctorBinaryArchitecture == environment.platform.nativeArchitecture
+        && environment.platform.helperBinaryArchitecture == environment.platform.nativeArchitecture
+        && !environment.platform.wow64OrEmulated;
 
     const auto appendMarker = [&](const QString &key, const QString &value) {
         const RegistryRead marker = readRegistryValue(HKEY_LOCAL_MACHINE, key, value);
@@ -1013,7 +1023,20 @@ void observeDriverStore(ReadOnlyDiagnosticSnapshot &snapshot, std::atomic_bool *
                 const QRegularExpression versionExpression(QStringLiteral("^\\s*DriverVer\\s*=\\s*(.+?)\\s*$"), QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption);
                 const QRegularExpressionMatch provider = providerExpression.match(text);
                 const QRegularExpressionMatch version = versionExpression.match(text);
-                if (provider.hasMatch()) package.provider = provider.captured(1).trimmed();
+                if (provider.hasMatch()) {
+                    package.provider = provider.captured(1).trimmed();
+                    // HidHide's official INF declares Provider as the string
+                    // token %ManufacturerName%. Resolve that token only from
+                    // the same signed package metadata; never substitute a
+                    // provider merely because a path contains "HidHide".
+                    if (package.provider.compare(QStringLiteral("%ManufacturerName%"), Qt::CaseInsensitive) == 0) {
+                        const QRegularExpression manufacturerExpression(
+                            QStringLiteral("^\\s*ManufacturerName\\s*=\\s*\\\"([^\\\"]+)\\\"\\s*$"),
+                            QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption);
+                        const QRegularExpressionMatch manufacturer = manufacturerExpression.match(text);
+                        if (manufacturer.hasMatch()) package.provider = manufacturer.captured(1).trimmed();
+                    }
+                }
                 if (version.hasMatch()) package.version = version.captured(1).trimmed();
             }
         }
@@ -1606,6 +1629,12 @@ ReadOnlyDiagnosticSnapshot ReadOnlyWindowsDiagnosticProvider::observe(std::atomi
     if (!snapshot.driverPackages.isEmpty()) {
         snapshot.environment.hidhide.packageVersion = snapshot.driverPackages.front().version;
         snapshot.environment.hidhide.packageArchitecture = snapshot.driverPackages.front().architecture;
+        const auto provider = std::find_if(snapshot.driverPackages.cbegin(), snapshot.driverPackages.cend(),
+            [](const DriverPackageObservation &package) {
+                return package.provider.contains(QStringLiteral("Nefarius Software Solutions"), Qt::CaseInsensitive);
+            });
+        if (provider != snapshot.driverPackages.cend())
+            snapshot.environment.hidhide.provider = QStringLiteral("Nefarius Software Solutions e.U.");
     }
     for (const ProtocolObservation &probe : snapshot.protocol) {
         if (probe.status == DoctorCheckStatus::Healthy && probe.operation != QStringLiteral("OPEN_CONTROL"))
@@ -1614,6 +1643,13 @@ ReadOnlyDiagnosticSnapshot ReadOnlyWindowsDiagnosticProvider::observe(std::atomi
             snapshot.environment.capabilities.directProtocolAvailable = true;
     }
     snapshot.environment.hidhide.protocolCapabilities.removeDuplicates();
+    if (snapshot.environment.capabilities.directProtocolAvailable
+        && snapshot.environment.capabilities.helperArchitectureCompatible) {
+        // This expresses measured execution compatibility only.  Each plan
+        // remains separately gated by its Lab/Field qualification and exact
+        // package catalog record.
+        snapshot.environment.capabilities.highestQualifiedRepairTier = RepairCapabilityTier::RecoverySupported;
+    }
     snapshot.environment.devices.physicalControllerCount = std::count_if(snapshot.devices.cbegin(), snapshot.devices.cend(),
         [](const DeviceObservation &device) { return device.classification == DeviceClassification::PhysicalGamingInput; });
     for (const DeviceObservation &device : snapshot.devices) {

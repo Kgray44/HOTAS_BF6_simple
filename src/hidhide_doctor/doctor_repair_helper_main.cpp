@@ -1,5 +1,6 @@
 #include "doctor_diagnostics.h"
 #include "doctor_hidhide_configuration_mutator.h"
+#include "doctor_deep_execution.h"
 #include "doctor_repair_helper_protocol.h"
 #include "doctor_repair_engine.h"
 #include "hotas_build_version.h"
@@ -163,10 +164,27 @@ int serveOneRequest(const QString &pipeName, const QString &nonce, const QString
     RepairPlanProposal proposal;
     proposal.status = RepairProposalStatus::AvailableForOwnerLab;
     proposal.plan = request->plan;
+    RepairJournalStore journal;
+    if (request->plan.riskClass != RepairRiskClass::R1Configuration) {
+        // Deep execution is sealed-plan-only and has its own intentionally
+        // narrow native implementation. It is never routed through the R1
+        // HidHide SET mutator or a generic process/command abstraction.
+        const RepairExecutionResult staged = RepairTransactionCoordinator().dryRun(proposal, observed.environment,
+            request->plan.sessionId, journal, request->transactionId);
+        if (!staged.transaction.id.isValid() || staged.transaction.state == RepairTransactionState::FailedSafely) {
+            writeExact(pipe, response(false, staged.detail.isEmpty() ? QStringLiteral("Deep repair journal could not be created.") : staged.detail, &staged));
+            return 6;
+        }
+        const RepairExecutionResult result = DeepRepairExecutor::execute(request->plan, observed.environment,
+            staged.transaction, journal);
+        const bool accepted = result.transaction.state == RepairTransactionState::Completed
+            || result.transaction.state == RepairTransactionState::AwaitingReboot;
+        writeExact(pipe, response(accepted, result.detail, &result));
+        return accepted ? 0 : 6;
+    }
     HidHideConfigurationMutator mutator(observed.environment.hidhide.provider.isEmpty()
             ? QStringLiteral("HidHide WDM control device") : observed.environment.hidhide.provider,
         observed.environment.hidhide.driverVersion);
-    RepairJournalStore journal;
     NativePostconditionVerifier postconditionVerifier;
     const RepairExecutionResult result = RepairTransactionCoordinator().executeOwnerLab(proposal, observed.environment,
         mutator, journal, request->transactionId, &postconditionVerifier);
@@ -180,7 +198,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication application(argc, argv);
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Narrow elevated R1 HidHide repair helper"));
+    parser.setApplicationDescription(QStringLiteral("Narrow elevated sealed-plan HidHide repair helper"));
     parser.addHelpOption();
     parser.addOption({QStringLiteral("pipe"), QStringLiteral("One-time secured named-pipe suffix."), QStringLiteral("name")});
     parser.addOption({QStringLiteral("nonce"), QStringLiteral("One-time upper-case hexadecimal request nonce."), QStringLiteral("nonce")});

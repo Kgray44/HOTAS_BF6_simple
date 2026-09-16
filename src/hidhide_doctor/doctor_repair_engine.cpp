@@ -1,5 +1,7 @@
 #include "doctor_repair_engine.h"
 
+#include "doctor_deep_repair.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
@@ -78,6 +80,33 @@ QJsonObject configurationObject(const HidHideConfigurationSnapshot &snapshot)
     object.insert(QStringLiteral("provider"), snapshot.provider);
     object.insert(QStringLiteral("providerVersion"), snapshot.providerVersion);
     return object;
+}
+
+QString canonicalJson(const QJsonObject &object);
+
+QString configurationReconciliationDisposition(const HidHideConfigurationSnapshot &current, const QString &serializedBefore)
+{
+    QJsonParseError error;
+    const QJsonDocument beforeDocument = QJsonDocument::fromJson(serializedBefore.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !beforeDocument.isObject()) return QStringLiteral("incompatible-legacy-entry");
+    QJsonObject before = beforeDocument.object();
+    QJsonObject after = configurationObject(current);
+    const QString previousProvider = before.value(QStringLiteral("provider")).toString();
+    const QString previousVersion = before.value(QStringLiteral("providerVersion")).toString();
+    const bool settingsWereLost = (!before.value(QStringLiteral("whitelist")).toArray().isEmpty()
+            && after.value(QStringLiteral("whitelist")).toArray().isEmpty())
+        || (!before.value(QStringLiteral("blacklist")).toArray().isEmpty()
+            && after.value(QStringLiteral("blacklist")).toArray().isEmpty());
+    // A signed package replacement necessarily changes its provider version.
+    // This is migration evidence, not a user-configuration edit; ownership
+    // reconciliation deliberately compares only the HidHide settings.
+    before.remove(QStringLiteral("providerVersion"));
+    after.remove(QStringLiteral("providerVersion"));
+    if (canonicalJson(before) == canonicalJson(after))
+        return current.providerVersion != previousVersion ? QStringLiteral("migration-preserved") : QStringLiteral("preserved");
+    if (settingsWereLost) return QStringLiteral("restoration-required");
+    if (current.provider != previousProvider) return QStringLiteral("incompatible-legacy-entry");
+    return QStringLiteral("external-conflict");
 }
 
 QString canonicalJson(const QJsonObject &object)
@@ -177,9 +206,20 @@ RepairTransaction transactionFor(const RepairPlan &plan, const DoctorEnvironment
     transaction.preconditions = plan.preconditions;
     transaction.preconditionFingerprint = plan.preconditionFingerprint;
     transaction.expectedPostFingerprint = plan.expectedPostFingerprint;
-    transaction.verificationPlan = QStringLiteral("Independent read-back and exact collateral comparison.");
-    transaction.rollbackPlan = QStringLiteral("Restore the exact captured R1 configuration only if no external change is detected.");
-    transaction.rebootBoundary = QStringLiteral("None — R1 configuration repair");
+    transaction.verificationPlan = plan.riskClass == RepairRiskClass::R1Configuration
+        ? QStringLiteral("Independent read-back and exact collateral comparison.")
+        : QStringLiteral("Observe package, loaded driver, service/filter, direct API, configuration reconciliation, then run a new Doctor diagnostic session.");
+    transaction.rollbackPlan = plan.riskClass == RepairRiskClass::R1Configuration
+        ? QStringLiteral("Restore the exact captured R1 configuration only if no external change is detected.")
+        : QStringLiteral("Use only the locally available, verified rollback package and preserved configuration after conflict-safe revalidation.");
+    transaction.rebootBoundary = plan.restartRequired
+        ? QStringLiteral("AwaitingReboot — continuation must observe before any follow-up action")
+        : QStringLiteral("None — no reboot expected by this recipe");
+    transaction.maximumReboots = plan.maximumReboots;
+    transaction.deepRepair = plan.deepRepair;
+    transaction.continuationState = {{QStringLiteral("stage"), QStringLiteral("NotStarted")},
+        {QStringLiteral("observeFirst"), true}, {QStringLiteral("forwardOrRollback"), QStringLiteral("forward")}};
+    transaction.separateRecoveryAuthorizationRequired = plan.riskClass == RepairRiskClass::R5Recovery;
     return transaction;
 }
 
@@ -224,6 +264,8 @@ QJsonObject transactionObject(const RepairTransaction &transaction, bool include
         {QStringLiteral("architecture"), transaction.backupManifest.architecture},
         {QStringLiteral("privacy"), transaction.backupManifest.privacyClassification},
         {QStringLiteral("restoreEligible"), transaction.backupManifest.restoreEligible}};
+    if (transaction.schemaVersion >= 3)
+        backup.insert(QStringLiteral("deepRecoverySnapshot"), transaction.backupManifest.deepRecoverySnapshot);
     QJsonObject object{{QStringLiteral("schemaVersion"), transaction.schemaVersion}, {QStringLiteral("transactionId"), transaction.id.value()},
         {QStringLiteral("sessionId"), transaction.sessionId.value()}, {QStringLiteral("planId"), transaction.planId.value()},
         {QStringLiteral("recipeId"), transaction.recipeId.value()}, {QStringLiteral("recipeVersion"), transaction.recipeVersion},
@@ -236,6 +278,13 @@ QJsonObject transactionObject(const RepairTransaction &transaction, bool include
         {QStringLiteral("operations"), operationsJson(transaction.operations)}, {QStringLiteral("currentOperation"), transaction.currentOperation},
         {QStringLiteral("verificationPlan"), transaction.verificationPlan}, {QStringLiteral("rollbackPlan"), transaction.rollbackPlan},
         {QStringLiteral("rebootBoundary"), transaction.rebootBoundary}, {QStringLiteral("finalStatus"), transaction.finalStatus}};
+    if (transaction.schemaVersion >= 3) {
+        object.insert(QStringLiteral("rebootCount"), transaction.rebootCount);
+        object.insert(QStringLiteral("maximumReboots"), transaction.maximumReboots);
+        object.insert(QStringLiteral("continuationState"), transaction.continuationState);
+        object.insert(QStringLiteral("deepRepair"), transaction.deepRepair);
+        object.insert(QStringLiteral("separateRecoveryAuthorizationRequired"), transaction.separateRecoveryAuthorizationRequired);
+    }
     if (includeChecksum) object.insert(QStringLiteral("checksum"), transaction.checksum);
     return object;
 }
@@ -263,6 +312,11 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
     transaction.rebootBoundary = object.value(QStringLiteral("rebootBoundary")).toString();
     transaction.finalStatus = object.value(QStringLiteral("finalStatus")).toString();
     transaction.checksum = object.value(QStringLiteral("checksum")).toString();
+    transaction.rebootCount = object.value(QStringLiteral("rebootCount")).toInt();
+    transaction.maximumReboots = object.value(QStringLiteral("maximumReboots")).toInt();
+    transaction.continuationState = object.value(QStringLiteral("continuationState")).toObject();
+    transaction.deepRepair = object.value(QStringLiteral("deepRepair")).toObject();
+    transaction.separateRecoveryAuthorizationRequired = object.value(QStringLiteral("separateRecoveryAuthorizationRequired")).toBool();
     for (const QJsonValue &value : object.value(QStringLiteral("preconditions")).toArray()) {
         const QJsonObject condition = value.toObject();
         transaction.preconditions.append({condition.value(QStringLiteral("key")).toString(), condition.value(QStringLiteral("expected")).toString()});
@@ -281,6 +335,7 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
     transaction.backupManifest.architecture = backup.value(QStringLiteral("architecture")).toString();
     transaction.backupManifest.privacyClassification = backup.value(QStringLiteral("privacy")).toString();
     transaction.backupManifest.restoreEligible = backup.value(QStringLiteral("restoreEligible")).toBool();
+    transaction.backupManifest.deepRecoverySnapshot = backup.value(QStringLiteral("deepRecoverySnapshot")).toObject();
     transaction.currentOperation = object.value(QStringLiteral("currentOperation")).toInt(-1);
     for (const QJsonValue &value : object.value(QStringLiteral("operations")).toArray()) {
         const QJsonObject item = value.toObject();
@@ -303,7 +358,7 @@ std::optional<RepairTransaction> transactionFromObject(const QJsonObject &object
             error.value(QStringLiteral("code")).toString().toLongLong(), error.value(QStringLiteral("name")).toString(), error.value(QStringLiteral("message")).toString()};
         transaction.operations.append(std::move(operation));
     }
-    if (transaction.schemaVersion != 2 || !transaction.id.isValid() || !transaction.sessionId.isValid()
+    if ((transaction.schemaVersion != 2 && transaction.schemaVersion != 3) || !transaction.id.isValid() || !transaction.sessionId.isValid()
         || !transaction.planId.isValid() || !transaction.recipeId.isValid() || transaction.checksum.isEmpty()) {
         if (reason) *reason = QStringLiteral("Repair journal has an invalid schema or required stable identifier.");
         return std::nullopt;
@@ -337,6 +392,15 @@ BackupManifest backupFor(const HidHideConfigurationSnapshot &snapshot, const Doc
     backup.architecture = displayName(environment.platform.nativeArchitecture);
     backup.privacyClassification = QStringLiteral("Sensitive local diagnostic data; explicit redacted export only.");
     backup.restoreEligible = snapshot.isComplete();
+    if (plan.riskClass != RepairRiskClass::R1Configuration) {
+        backup.scope = QStringLiteral("Deep HidHide recovery snapshot: configuration, package identity, service/filter intent, driver-store digest, version evidence, reboot/recovery metadata");
+        backup.targetScope = QStringLiteral("%1 :: %2 typed deep operation(s)")
+            .arg(plan.recipeId.value()).arg(plan.operations.size());
+        backup.deepRecoverySnapshot = {{QStringLiteral("configuration"), configurationObject(snapshot)},
+            {QStringLiteral("planDeepRepair"), plan.deepRepair},
+            {QStringLiteral("preconditionFingerprint"), plan.preconditionFingerprint},
+            {QStringLiteral("capturedBeforeMutation"), true}};
+    }
     return backup;
 }
 
@@ -429,6 +493,60 @@ QList<RepairRecipe> RepairRecipeRegistry::recipes()
             {QStringLiteral("GET_BLACKLIST")}, QStringLiteral("HOTAS launch context with verified virtual-output identity"),
             QStringLiteral("Full HidHide configuration snapshot"), QStringLiteral("Read back blacklist and rerun virtual-output isolation check."),
             QStringLiteral("Restore the exact virtual-output entry only when no external change occurred."), true, false},
+        {RepairRecipeId(QStringLiteral("HD-R2-REPAIR-HIDHIDE-SERVICE")), QStringLiteral("1.0"),
+            QStringLiteral("Repair exact HidHide service registration"),
+            QStringLiteral("Restores only the catalogued HidHide service registration after independent service and package evidence proves the expected state."),
+            RepairRiskClass::R2Component, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-SERVICE-REGISTRATION")}, DiagnosisConfidence::VeryHigh,
+            {QStringLiteral("GET_ACTIVE")}, QStringLiteral("Confirmed exact HidHide service identity"),
+            QStringLiteral("Deep recovery snapshot including service configuration"),
+            QStringLiteral("Read back exact HidHide service configuration and control availability."),
+            QStringLiteral("Restore captured HidHide service configuration only if its post-state remains unchanged."), true, false, 0, 20},
+        {RepairRecipeId(QStringLiteral("HD-R2-REPAIR-HIDHIDE-FILTER")), QStringLiteral("1.0"),
+            QStringLiteral("Repair exact HidHide filter registration"),
+            QStringLiteral("Restores only a known HidHide filter registration while preserving every unrelated filter and its order."),
+            RepairRiskClass::R2Component, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-FILTER-REGISTRATION")}, DiagnosisConfidence::VeryHigh,
+            {QStringLiteral("GET_ACTIVE")}, QStringLiteral("Confirmed exact HidHide filter and catalogued expected order"),
+            QStringLiteral("Deep recovery snapshot including filter registration"),
+            QStringLiteral("Re-read filter ordering and affected device/filter evidence."),
+            QStringLiteral("Restore the captured filter position without rebuilding the class list."), true, false, 0, 25},
+        {RepairRecipeId(QStringLiteral("HD-R3-REPAIR-INSTALLATION")), QStringLiteral("1.0"),
+            QStringLiteral("Repair approved HidHide installation"),
+            QStringLiteral("Repairs a confirmed partial HidHide installation using a single approved, verified package and durable restart continuation."),
+            RepairRiskClass::R3Package, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-PARTIAL-INSTALL"), QStringLiteral("HD-DIAG-CONTROL-MISSING")}, DiagnosisConfidence::VeryHigh,
+            {QStringLiteral("GET_ACTIVE")}, QStringLiteral("Confirmed package/component diagnosis"),
+            QStringLiteral("Deep package/configuration/service/filter recovery snapshot"),
+            QStringLiteral("Verify installed and loaded package state, protocol, configuration, and a fresh diagnosis session."),
+            QStringLiteral("Use locally staged, verified rollback package and saved configuration only after conflict checks."), true, true, 1, 120},
+        {RepairRecipeId(QStringLiteral("HD-R3-COMPLETE-DRIVER-REPLACEMENT")), QStringLiteral("1.0"),
+            QStringLiteral("Complete approved HidHide driver replacement"),
+            QStringLiteral("Completes a confirmed package-newer-than-loaded-driver replacement with an observation-first reboot continuation."),
+            RepairRiskClass::R3Package, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-INCOMPLETE-REPLACEMENT")}, DiagnosisConfidence::VeryHigh,
+            {QStringLiteral("GET_ACTIVE"), QStringLiteral("GET_INVERSE")}, QStringLiteral("Confirmed installed-versus-loaded driver mismatch"),
+            QStringLiteral("Deep package/configuration/service/filter recovery snapshot"),
+            QStringLiteral("Verify target package, loaded driver, control API, configuration reconciliation, and a fresh diagnosis session."),
+            QStringLiteral("Retain exact locally verified rollback asset before any replacement boundary."), true, true, 1, 150},
+        {RepairRecipeId(QStringLiteral("HD-R4-UPGRADE-APPROVED-PACKAGE")), QStringLiteral("1.0"),
+            QStringLiteral("Upgrade to an approved HidHide package"),
+            QStringLiteral("Applies an explicitly requested, catalogued version transition; it is never offered solely because a higher version exists."),
+            RepairRiskClass::R4ApprovedUpgrade, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-VERSION-MISMATCH")}, DiagnosisConfidence::VeryHigh,
+            {QStringLiteral("GET_ACTIVE")}, QStringLiteral("Explicit owner upgrade request with a qualified version transition"),
+            QStringLiteral("Deep package/configuration/service/filter recovery snapshot"),
+            QStringLiteral("Verify target package, loaded driver, control API, configuration reconciliation, and a fresh diagnosis session."),
+            QStringLiteral("Retain a locally verified rollback package before package transition."), true, true, 1, 180},
+        {RepairRecipeId(QStringLiteral("HD-R5-RECOVER-APPROVED-PACKAGE")), QStringLiteral("1.0"),
+            QStringLiteral("Recover HidHide from a damaged repair state"),
+            QStringLiteral("Uses a separate recovery plan and authorization to restore a known-good approved package after a confirmed failed/degraded transaction."),
+            RepairRiskClass::R5Recovery, RepairQualificationLevel::LabQualified,
+            {QStringLiteral("HD-DIAG-RECOVERY-REQUIRED")}, DiagnosisConfidence::Confirmed,
+            {QStringLiteral("GET_ACTIVE")}, QStringLiteral("Confirmed damaged state or explicit owner-selected recovery"),
+            QStringLiteral("Complete deep recovery snapshot and locally verified rollback assets"),
+            QStringLiteral("Verify package, loaded driver, control API, configuration reconciliation, and a new full diagnosis session."),
+            QStringLiteral("Recovery does not inherit forward-repair authorization and may itself require a separately journaled restart rollback."), true, true, 2, 240},
     };
 }
 
@@ -458,8 +576,14 @@ std::optional<HidHideConfigurationSnapshot> RepairPlanner::configurationFrom(con
 }
 
 RepairPlanProposal RepairPlanner::propose(const DoctorSession &session, const ReadOnlyDiagnosticSnapshot &snapshot,
-    bool ownerLabMode) const
+    bool ownerLabMode, bool explicitApprovedUpgradeRequest) const
 {
+    // Deep planning runs before the R1 ownership/launch-context gates. R2-R5
+    // are diagnosis/package driven and must not be mistaken for a HOTAS
+    // whitelist repair. A blocked deep plan remains a visible, read-only
+    // result rather than falling through to an unrelated R1 suggestion.
+    const RepairPlanProposal deepProposal = DeepRepairPlanner().propose(session, snapshot, ownerLabMode, explicitApprovedUpgradeRequest);
+    if (deepProposal.status != RepairProposalStatus::NotApplicable) return deepProposal;
     RepairPlanProposal proposal;
     const std::optional<HidHideConfigurationSnapshot> observed = configurationFrom(snapshot);
     if (!observed) { proposal.status = RepairProposalStatus::Blocked; proposal.reason = QStringLiteral("R1 planning requires complete independent HidHide configuration evidence."); return proposal; }
@@ -826,6 +950,85 @@ RepairRecoveryResult RepairTransactionCoordinator::reconcileIncomplete(const Rep
     return result;
 }
 
+RepairRecoveryResult RepairTransactionCoordinator::reconcileAfterReboot(const RepairTransaction &transaction,
+    const ReadOnlyDiagnosticSnapshot &snapshot, const RepairJournalStore &journal) const
+{
+    RepairRecoveryResult result;
+    result.transaction = transaction;
+    if (!transaction.id.isValid() || transaction.riskClass == RepairRiskClass::R1Configuration
+        || transaction.state != RepairTransactionState::AwaitingReboot) {
+        result.detail = QStringLiteral("No deep AwaitingReboot transaction requires post-reboot observation.");
+        return result;
+    }
+    result.transaction.state = RepairTransactionState::ContinuingAfterReboot;
+    result.transaction.rebootCount += 1;
+    result.transaction.continuationState = {{QStringLiteral("stage"), QStringLiteral("ObservingAfterReboot")},
+        {QStringLiteral("observeFirst"), true}, {QStringLiteral("forwardOrRollback"), QStringLiteral("forward")},
+        {QStringLiteral("observedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}};
+    const QJsonObject package = transaction.deepRepair.value(QStringLiteral("package")).toObject();
+    const QString targetVersion = package.value(QStringLiteral("version")).toString();
+    const bool targetPackageActive = !targetVersion.isEmpty()
+        && snapshot.environment.hidhide.packageVersion == targetVersion;
+    const bool targetDriverLoaded = !targetVersion.isEmpty()
+        && snapshot.environment.hidhide.driverVersion == targetVersion;
+    const std::optional<HidHideConfigurationSnapshot> configuration = RepairPlanner::configurationFrom(snapshot);
+    const QString configurationDisposition = !configuration ? QStringLiteral("unreadable")
+        : transaction.backupManifest.serializedState.isEmpty() ? QStringLiteral("incompatible-legacy-entry")
+        : configurationReconciliationDisposition(*configuration, transaction.backupManifest.serializedState);
+    const bool configurationMatchesBackup = configurationDisposition == QStringLiteral("preserved")
+        || configurationDisposition == QStringLiteral("migration-preserved");
+    const bool controlApiHealthy = readable(protocol(snapshot, QStringLiteral("GET_ACTIVE")))
+        && readable(protocol(snapshot, QStringLiteral("GET_INVERSE")))
+        && readable(protocol(snapshot, QStringLiteral("GET_WHITELIST")))
+        && readable(protocol(snapshot, QStringLiteral("GET_BLACKLIST")));
+    result.transaction.continuationState.insert(QStringLiteral("targetPackageActive"), targetPackageActive);
+    result.transaction.continuationState.insert(QStringLiteral("targetDriverLoaded"), targetDriverLoaded);
+    result.transaction.continuationState.insert(QStringLiteral("controlApiHealthy"), controlApiHealthy);
+    result.transaction.continuationState.insert(QStringLiteral("configurationReadable"), configuration.has_value());
+    result.transaction.continuationState.insert(QStringLiteral("configurationDisposition"), configurationDisposition);
+
+    if (result.transaction.rebootCount > result.transaction.maximumReboots) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Maximum reboot count exceeded; automatic continuation is stopped and recovery requires a new owner-authorized plan.");
+        result.requiresOwnerReview = true;
+    } else if (!targetPackageActive) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Post-reboot observation found the target package missing or inactive; no mutation was replayed.");
+        result.requiresOwnerReview = true;
+    } else if (!targetDriverLoaded) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Post-reboot observation found the previous driver still loaded; no additional reboot or mutation was assumed safe.");
+        result.requiresOwnerReview = true;
+    } else if (!controlApiHealthy) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Post-reboot target package/driver evidence exists but the HidHide control API did not verify; recovery review is required.");
+        result.requiresOwnerReview = true;
+    } else if (!configuration) {
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = QStringLiteral("Post-reboot configuration cannot be read completely; restoration is withheld pending conflict-safe recovery review.");
+        result.requiresOwnerReview = true;
+    } else if (!configurationMatchesBackup) {
+        // Do not guess whether this is an installer migration, incompatible
+        // legacy record, or an external edit. Any automatic restore could
+        // overwrite user-owned HidHide configuration, so a distinct plan is
+        // required after the read-only classification is shown to the owner.
+        result.transaction.state = RepairTransactionState::RecoveryRequired;
+        result.transaction.finalStatus = configurationDisposition == QStringLiteral("restoration-required")
+            ? QStringLiteral("Post-reboot configuration lost one or more captured settings; restoration requires a separately authorized exact plan.")
+            : configurationDisposition == QStringLiteral("incompatible-legacy-entry")
+                ? QStringLiteral("Post-reboot configuration is incompatible with the captured legacy representation; no migration or restore was attempted.")
+                : QStringLiteral("Post-reboot configuration differs from the captured backup and is classified as an external conflict; no restoration or rollback was attempted.");
+        result.requiresOwnerReview = true;
+    } else {
+        result.transaction.state = RepairTransactionState::Completed;
+        result.transaction.continuationState.insert(QStringLiteral("stage"), QStringLiteral("VerifiedAfterReboot"));
+        result.transaction.finalStatus = QStringLiteral("Post-reboot observation verified target package, loaded driver, control API, and readable configuration. A new Doctor session supplied independent verification evidence.");
+    }
+    journal.persist(result.transaction, nullptr);
+    result.detail = result.transaction.finalStatus;
+    return result;
+}
+
 QString displayName(ConfigurationOwnership ownership)
 {
     switch (ownership) {
@@ -842,7 +1045,7 @@ QString displayName(RepairProposalStatus status)
     switch (status) {
     case RepairProposalStatus::AvailableForOwnerLab: return QStringLiteral("LAB QUALIFIED — OWNER TEST ONLY");
     case RepairProposalStatus::IdentifiedButNotFieldQualified: return QStringLiteral("REPAIR IDENTIFIED — NOT FIELD QUALIFIED");
-    case RepairProposalStatus::NotApplicable: return QStringLiteral("NO R1 REPAIR APPLICABLE");
+    case RepairProposalStatus::NotApplicable: return QStringLiteral("NO QUALIFIED REPAIR APPLICABLE");
     case RepairProposalStatus::Blocked: return QStringLiteral("REPAIR BLOCKED");
     }
     return QStringLiteral("REPAIR BLOCKED");
@@ -857,12 +1060,21 @@ QString displayName(RepairTransactionState state)
     case RepairTransactionState::CapturingBackup: return QStringLiteral("CAPTURING BACKUP");
     case RepairTransactionState::Revalidating: return QStringLiteral("REVALIDATING");
     case RepairTransactionState::AwaitingElevation: return QStringLiteral("AWAITING ELEVATION");
+    case RepairTransactionState::PreparingPackage: return QStringLiteral("PREPARING APPROVED PACKAGE");
+    case RepairTransactionState::PackageValidated: return QStringLiteral("PACKAGE VALIDATED");
+    case RepairTransactionState::StagingPackage: return QStringLiteral("STAGING VERIFIED PACKAGE");
+    case RepairTransactionState::Installing: return QStringLiteral("INSTALLING APPROVED PACKAGE");
+    case RepairTransactionState::AwaitingReboot: return QStringLiteral("RESTART REQUIRED");
+    case RepairTransactionState::ContinuingAfterReboot: return QStringLiteral("RESUMING REPAIR — OBSERVING SYSTEM STATE");
+    case RepairTransactionState::ReconcilingConfiguration: return QStringLiteral("RECONCILING CONFIGURATION");
     case RepairTransactionState::Executing: return QStringLiteral("REPAIR IN PROGRESS");
     case RepairTransactionState::Verifying: return QStringLiteral("VERIFYING REPAIR");
     case RepairTransactionState::RollingBack: return QStringLiteral("ROLLING BACK");
     case RepairTransactionState::Completed: return QStringLiteral("REPAIR COMPLETE");
     case RepairTransactionState::FailedSafely: return QStringLiteral("REPAIR FAILED SAFELY");
     case RepairTransactionState::RecoveryRequired: return QStringLiteral("RECOVERY REQUIRED");
+    case RepairTransactionState::RecoveryPlanning: return QStringLiteral("RECOVERY PLAN REVIEW");
+    case RepairTransactionState::Recovering: return QStringLiteral("RECOVERY IN PROGRESS");
     case RepairTransactionState::Cancelled: return QStringLiteral("REPAIR CANCELLED");
     case RepairTransactionState::StalePlan: return QStringLiteral("PLAN BECAME STALE");
     }

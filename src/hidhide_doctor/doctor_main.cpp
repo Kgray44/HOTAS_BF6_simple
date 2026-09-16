@@ -18,6 +18,7 @@
 #include <QUuid>
 
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <thread>
@@ -71,8 +72,9 @@ QString reconcileIncompleteJournals(const hotas::doctor::ReadOnlyDiagnosticSnaps
     const QList<hotas::doctor::RepairTransaction> records = journal.history(&ignoredReason);
     QStringList notices;
     for (const hotas::doctor::RepairTransaction &record : records) {
-        ReadOnlyConfigurationObserver observer(*configuration);
-        const hotas::doctor::RepairRecoveryResult result = hotas::doctor::RepairTransactionCoordinator().reconcileIncomplete(record, observer, journal);
+        const hotas::doctor::RepairRecoveryResult result = record.riskClass == hotas::doctor::RepairRiskClass::R1Configuration
+            ? [&] { ReadOnlyConfigurationObserver observer(*configuration); return hotas::doctor::RepairTransactionCoordinator().reconcileIncomplete(record, observer, journal); }()
+            : hotas::doctor::RepairTransactionCoordinator().reconcileAfterReboot(record, snapshot, journal);
         if (result.requiresOwnerReview)
             notices.append(QStringLiteral("%1 — %2").arg(result.transaction.id.value(), result.detail));
     }
@@ -95,6 +97,18 @@ public:
         m_cancelled.store(false);
         ++m_generation;
         const quint64 generation = m_generation.load();
+        // A scheduled deep continuation never replays installation here. It
+        // only makes the observe-first restart state visible while this fresh
+        // native scan is in progress.
+        hotas::doctor::RepairJournalStore startupJournal;
+        QString ignoredReason;
+        const QList<hotas::doctor::RepairTransaction> records = startupJournal.history(&ignoredReason);
+        const bool resuming = std::any_of(records.cbegin(), records.cend(), [](const hotas::doctor::RepairTransaction &record) {
+            return record.riskClass != hotas::doctor::RepairRiskClass::R1Configuration
+                && record.state == hotas::doctor::RepairTransactionState::AwaitingReboot;
+        });
+        m_model.setRecoveryNotice(resuming
+            ? QStringLiteral("RESUMING REPAIR — rerunning a fresh read-only Doctor scan before any continuation decision.") : QString());
         hotas::doctor::DoctorDiagnosticEngine engine;
         m_model.replaceSession(engine.createPreparedSession());
         m_worker = std::thread([this, generation] {
@@ -247,6 +261,8 @@ int main(int argc, char *argv[])
     const bool labRepairMode = fixtureMode && hasArgument(argc, argv, "--lab-repair-mode");
     const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
     const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
+    const bool approvedUpgradeRequested = fixtureMode && hasArgument(argc, argv, "--approved-upgrade");
+    const QString resumeTransaction = argumentValue(argc, argv, "--resume-transaction");
     const QString buildIdentity = QStringLiteral("Development build %1 · %2 · %3")
         .arg(QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID), QSysInfo::buildCpuArchitecture());
     const QString reportPath = argumentValue(argc, argv, "--report");
@@ -259,14 +275,14 @@ int main(int argc, char *argv[])
         hotas::doctor::FixtureDiagnosticProvider provider(hotas::doctor::createDevelopmentFixture(
             fixtureName.isEmpty() ? QStringLiteral("Healthy System") : fixtureName, &fixtureLabel));
         hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
-        hotas::doctor::DiagnosticRunOutcome outcome = diagnosticEngine.run(provider);
+        hotas::doctor::DiagnosticRunOutcome outcome = diagnosticEngine.run(provider, nullptr, {}, approvedUpgradeRequested);
         outcome.session.setSessionLabel(fixtureLabel);
         // Planning is always read-only.  The explicit switch exists for
         // headless callers that want to assert this intent in an invocation;
         // normal UI diagnosis also plans when evidence supports a candidate.
         if (dryRunRequested && !repairPlanningRequested) return 2;
         if (dryRunRequested) {
-            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true, approvedUpgradeRequested);
             if (proposal.status != hotas::doctor::RepairProposalStatus::AvailableForOwnerLab) return 2;
             hotas::doctor::RepairJournalStore journal;
             const hotas::doctor::RepairExecutionResult dryRun = hotas::doctor::RepairTransactionCoordinator().dryRun(
@@ -283,7 +299,7 @@ int main(int argc, char *argv[])
         hotas::doctor::DoctorSessionViewModel viewModel(outcome.session, buildIdentity);
         std::optional<LabRepairController> labController;
         if (labRepairMode) {
-            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true, approvedUpgradeRequested);
             if (proposal.status != hotas::doctor::RepairProposalStatus::AvailableForOwnerLab) return 2;
             labController.emplace(viewModel, proposal, outcome.snapshot.environment, QString::fromLatin1(HOTAS_BF6_BUILD_ID));
             viewModel.setLabRepairActions(true, [&labController](bool executeMutation) { labController->start(executeMutation); });
@@ -296,12 +312,25 @@ int main(int argc, char *argv[])
         return application.exec();
     }
     if (hasArgument(argc, argv, "--headless")) {
-        if (dryRunRequested) return 2; // Real-machine dry-runs require an explicit owner/lab fixture path.
+        if (dryRunRequested && !repairPlanningRequested) return 2;
         std::atomic_bool cancellationRequested{false};
         hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
         hotas::doctor::DoctorDiagnosticEngine engine;
         hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &cancellationRequested);
         reconcileIncompleteJournals(outcome.snapshot);
+        if (dryRunRequested) {
+            // A real-machine Phase 4 dry run is intentionally planning-only:
+            // no UAC, helper launch, installer, restart, or HidHide mutation.
+            // A missing exact approved package is a successful safe block,
+            // not a reason to substitute "latest" or an arbitrary cache.
+            const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(
+                outcome.session, outcome.snapshot, false);
+            if (!proposal.plan.operations.isEmpty()) {
+                hotas::doctor::RepairJournalStore journal;
+                hotas::doctor::RepairTransactionCoordinator().dryRun(proposal, outcome.snapshot.environment,
+                    outcome.session.id(), journal);
+            }
+        }
         stampBuildProvenance(outcome);
         if (!reportPath.isEmpty()) {
             QFile report(reportPath);
@@ -310,6 +339,10 @@ int main(int argc, char *argv[])
         }
         return outcome.cancelled ? 2 : 0;
     }
+    // The RunOnce continuation is deliberately just a normal Doctor launch
+    // with a stable transaction reference. ScanController independently
+    // enumerates durable AwaitingReboot records and performs no replay.
+    Q_UNUSED(resumeTransaction);
     hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
     hotas::doctor::DoctorSession prepared = diagnosticEngine.createPreparedSession();
     hotas::doctor::DoctorSessionViewModel viewModel(prepared, buildIdentity);

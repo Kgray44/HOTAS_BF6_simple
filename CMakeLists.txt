@@ -297,6 +297,12 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_repair_helper_client.cpp
     src/hidhide_doctor/doctor_repair_engine.h
     src/hidhide_doctor/doctor_repair_engine.cpp
+    src/hidhide_doctor/doctor_deep_repair.h
+    src/hidhide_doctor/doctor_deep_repair.cpp
+    src/hidhide_doctor/doctor_approved_package_runtime.h
+    src/hidhide_doctor/doctor_approved_package_runtime.cpp
+    src/hidhide_doctor/doctor_deep_execution.h
+    src/hidhide_doctor/doctor_deep_execution.cpp
     src/hidhide_doctor/doctor_session_view_model.h
     src/hidhide_doctor/doctor_session_view_model.cpp
     src/hidhide_doctor/doctor_diagnostics.h
@@ -307,7 +313,7 @@ add_library(hidhide_doctor_core STATIC
     src/hidhide_doctor/doctor_fixtures.cpp
     src/hidhide_doctor/doctor_windows_provider.cpp
 )
-target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)
+target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core Qt6::Network)
 target_include_directories(hidhide_doctor_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor")
 if (WIN32)
@@ -416,6 +422,12 @@ if (BUILD_TESTING)
             COMMENT "Copying the Qt runtime for HidHide Doctor domain tests")
     endif()
     add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
+    qt_add_executable(hidhide_doctor_deep_repair_tests
+        tests/hidhide_doctor_deep_repair_tests.cpp
+    )
+    set_target_properties(hidhide_doctor_deep_repair_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(hidhide_doctor_deep_repair_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
+    add_test(NAME hidhide_doctor_deep_repair_tests COMMAND hidhide_doctor_deep_repair_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
     qt_add_executable(hidhide_doctor_layout_tests
         tests/hidhide_doctor_layout_tests.cpp
@@ -434,6 +446,8 @@ if (BUILD_TESTING)
     add_test(NAME hidhide_doctor_layout_tests COMMAND hidhide_doctor_layout_tests)
     if (WIN32)
         set_tests_properties(hidhide_doctor_domain_tests PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(hidhide_doctor_deep_repair_tests PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
         set_tests_properties(hidhide_doctor_standalone_startup_smoke PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"

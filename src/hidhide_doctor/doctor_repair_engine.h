@@ -49,6 +49,8 @@ struct RepairRecipe final {
     QString rollbackSummary;
     bool elevationRequired = true;
     bool restartRequired = false;
+    int maxReboots = 0;
+    int estimatedSeconds = 5;
 };
 
 struct RepairPlanProposal final {
@@ -83,7 +85,7 @@ class RepairPlanner final {
 public:
     static std::optional<HidHideConfigurationSnapshot> configurationFrom(const ReadOnlyDiagnosticSnapshot &snapshot);
     RepairPlanProposal propose(const DoctorSession &session, const ReadOnlyDiagnosticSnapshot &snapshot,
-        bool ownerLabMode) const;
+        bool ownerLabMode, bool explicitApprovedUpgradeRequest = false) const;
 };
 
 class IRepairConfigurationMutator {
@@ -158,6 +160,13 @@ public:
     // a transaction automatically after a restart.
     RepairRecoveryResult reconcileIncomplete(const RepairTransaction &transaction,
         IRepairConfigurationMutator &mutator, const RepairJournalStore &journal) const;
+
+    // Phase 4 continuation is read-only by construction. It consumes a new
+    // independently collected Doctor snapshot and records whether the reboot
+    // actually produced the expected package/driver/API/configuration state;
+    // it never replays installation or rollback work on startup.
+    RepairRecoveryResult reconcileAfterReboot(const RepairTransaction &transaction,
+        const ReadOnlyDiagnosticSnapshot &snapshot, const RepairJournalStore &journal) const;
 };
 
 QString displayName(ConfigurationOwnership ownership);
