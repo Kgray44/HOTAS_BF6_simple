@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "contention_resilience_controller.h"
 #include "crash_diagnostics.h"
 #include "hotas_build_version.h"
 #include "interactive_scheduling_policy.h"
@@ -138,6 +139,8 @@ int main(int argc, char *argv[])
     hotas::ThemeManager themeManager;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("contentionResilience"),
+                                             backend.contentionResilienceController());
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
     QObject::connect(&engine, &QQmlEngine::warnings, &application,
         [](const QList<QQmlError> &warnings) {
