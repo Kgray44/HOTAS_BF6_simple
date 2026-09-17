@@ -454,7 +454,30 @@ bool NativeQualificationDriver::navigate(int page, const QString &name)
         ++m_navigationFallbacks;
     }
     if (!clicked) fail(QStringLiteral("synthetic native navigation target was unavailable for %1").arg(name));
+    if (page == 5) {
+        // Profiles-only construction evidence.  The page itself owns the
+        // timestamps/counters and this qualification driver only captures the
+        // published snapshot after its normal loader turn.
+        QTimer::singleShot(0, this, [this] { captureProfilesConstruction(); });
+    }
     return clicked;
+}
+
+void NativeQualificationDriver::captureProfilesConstruction()
+{
+    if (!m_window || m_profilesConstructionSamples.size() >= 64) return;
+    QObject *profiles = m_window->findChild<QObject *>(QStringLiteral("flightDeckProfiles"));
+    if (!profiles) return;
+    const QVariantMap metrics = profiles->property("constructionMetrics").toMap();
+    if (metrics.isEmpty()) return;
+    QVariantMap sample = metrics;
+    sample.insert(QStringLiteral("categoryDelegateCount"),
+                  profiles->property("libraryCategoryDelegateCount"));
+    sample.insert(QStringLiteral("profileDelegateCount"),
+                  profiles->property("libraryProfileDelegateCount"));
+    sample.insert(QStringLiteral("detailDelegateCount"), profiles->property("detailDelegateCount"));
+    sample.insert(QStringLiteral("capturedDuring"), QStringLiteral("Profiles navigation"));
+    m_profilesConstructionSamples.append(sample);
 }
 
 void NativeQualificationDriver::bringIntoView(QQuickItem *item, QQuickItem *viewport) const
@@ -501,6 +524,8 @@ void NativeQualificationDriver::writeSummary()
                        {QStringLiteral("failures"), stringArray(m_failures)},
                        {QStringLiteral("controllerEnumerationMs"), m_controllerEnumerationMs},
                        {QStringLiteral("controllers"), QJsonArray::fromVariantList(m_controllerSummary)},
+                       {QStringLiteral("profilesConstruction"),
+                        QJsonArray::fromVariantList(m_profilesConstructionSamples)},
                        {QStringLiteral("contentionResilience"),
                         QJsonObject::fromVariantMap(m_backend
                             ? m_backend->contentionResilienceController()->evidence() : QVariantMap{})},

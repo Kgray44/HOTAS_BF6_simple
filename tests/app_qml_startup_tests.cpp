@@ -3913,16 +3913,26 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             {QStringLiteral("mappedAxes"), 1}, {QStringLiteral("mappedButtons"), 4},
             {QStringLiteral("mappedPovs"), 0}, {QStringLiteral("automationCount"), 0},
             {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Global response defaults")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-transport")},
+            {QStringLiteral("name"), QStringLiteral("Transport")},
+            {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("categoryName"), QStringLiteral("Battlefield")},
+            {QStringLiteral("displayName"), QStringLiteral("Battlefield / Transport")},
+            {QStringLiteral("active"), false}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("mappedAxes"), 2}, {QStringLiteral("mappedButtons"), 6},
+            {QStringLiteral("mappedPovs"), 1}, {QStringLiteral("automationCount"), 0},
+            {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Global response defaults")}},
     };
     const QVariantList categoryVisualFixture{
         QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-battlefield")},
-            {QStringLiteral("name"), QStringLiteral("Battlefield")}, {QStringLiteral("profileCount"), 3},
+            {QStringLiteral("name"), QStringLiteral("Battlefield")}, {QStringLiteral("profileCount"), 4},
             {QStringLiteral("defaultProfileId"), QStringLiteral("fixture-helicopter")},
             {QStringLiteral("defaultProfileName"), QStringLiteral("Battlefield / Helicopter")},
             {QStringLiteral("lastActiveProfileId"), QStringLiteral("fixture-helicopter")},
             {QStringLiteral("lastActiveProfileName"), QStringLiteral("Battlefield / Helicopter")},
             {QStringLiteral("profileIds"), QStringList{QStringLiteral("fixture-helicopter"),
-                QStringLiteral("fixture-aircraft"), QStringLiteral("fixture-infantry")}},
+                QStringLiteral("fixture-aircraft"), QStringLiteral("fixture-infantry"),
+                QStringLiteral("fixture-transport")}},
             {QStringLiteral("active"), true}, {QStringLiteral("enabled"), true},
             {QStringLiteral("restoreLastProfile"), true}, {QStringLiteral("adaptiveOverrideAxes"), 2},
             {QStringLiteral("executableRules"), QStringList{QStringLiteral("bf6.exe")}}},
@@ -3969,10 +3979,134 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("profilesForCategory('fixture-battlefield').map(function(profile) { return profile.id; }).join(',')"));
     const QString profileFixtureIds = profileFixtureDedup.evaluate().toString();
     if (profileFixtureDedup.hasError()
-        || profileFixtureIds != QStringLiteral("fixture-helicopter,fixture-aircraft,fixture-infantry")) {
+        || profileFixtureIds != QStringLiteral("fixture-helicopter,fixture-aircraft,fixture-infantry,fixture-transport")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile library duplicated an ordered profile")
             .arg(appearance));
     }
+    QQmlExpression smallFixtureRows(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("libraryRows.length"));
+    if (smallFixtureRows.hasError() || smallFixtureRows.evaluate().toInt() != 6) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles small fixture did not preserve two categories and four profiles")
+            .arg(appearance));
+    }
+    const auto reportProfilesConstruction = [&](const QString &fixtureName) {
+        const QVariantMap metrics = profilesPage->property("constructionMetrics").toMap();
+        const QByteArray compactMetrics = QJsonDocument::fromVariant(metrics).toJson(QJsonDocument::Compact);
+        std::fprintf(stderr, "profiles_phase5_fixture=%s rows=%d delegates=%d metrics=%s\n",
+            fixtureName.toUtf8().constData(), static_cast<int>(profilesPage->property("libraryRows").toList().size()),
+            profilesPage->property("libraryCategoryDelegateCount").toInt()
+                + profilesPage->property("libraryProfileDelegateCount").toInt(), compactMetrics.constData());
+    };
+    QQmlExpression beginSmallConstruction(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("constructionQualificationEnabled = true; beginConstructionQualification(); true"));
+    beginSmallConstruction.evaluate();
+    settlePresentation();
+    if (beginSmallConstruction.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles small construction fixture could not start")
+            .arg(appearance));
+    }
+    reportProfilesConstruction(QStringLiteral("small-2-categories-4-profiles"));
+    // Phase 5 construction fixtures are presentation-only.  They exercise
+    // the exact flattened-library contract without changing the owner's
+    // profile configuration or invoking an activation command.
+    const auto installSyntheticProfilesFixture = [&](const QString &prefix, const int categoryCount,
+                                                       const int profilesPerCategory) {
+        QVariantList fixtureProfiles;
+        QVariantList fixtureCategories;
+        for (int categoryIndex = 0; categoryIndex < categoryCount; ++categoryIndex) {
+            const QString categoryId = QStringLiteral("%1-category-%2").arg(prefix).arg(categoryIndex);
+            QVariantList profileIds;
+            for (int profileIndex = 0; profileIndex < profilesPerCategory; ++profileIndex) {
+                const int ordinal = categoryIndex * profilesPerCategory + profileIndex;
+                const QString profileId = QStringLiteral("%1-profile-%2").arg(prefix).arg(ordinal);
+                profileIds.append(profileId);
+                fixtureProfiles.append(QVariantMap{
+                    {QStringLiteral("id"), profileId},
+                    {QStringLiteral("name"), QStringLiteral("%1 Profile %2").arg(prefix).arg(ordinal)},
+                    {QStringLiteral("displayName"), QStringLiteral("%1 / Profile %2").arg(categoryId).arg(ordinal)},
+                    {QStringLiteral("categoryId"), categoryId},
+                    {QStringLiteral("categoryName"), QStringLiteral("%1 Category %2").arg(prefix).arg(categoryIndex)},
+                    {QStringLiteral("active"), ordinal == 0}, {QStringLiteral("enabled"), true},
+                    {QStringLiteral("mappedAxes"), ordinal % 7}, {QStringLiteral("mappedButtons"), ordinal % 11},
+                    {QStringLiteral("mappedPovs"), ordinal % 3}, {QStringLiteral("automationCount"), ordinal % 2},
+                    {QStringLiteral("adaptiveOverrideAxes"), ordinal % 4}});
+            }
+            fixtureCategories.append(QVariantMap{
+                {QStringLiteral("id"), categoryId},
+                {QStringLiteral("name"), QStringLiteral("%1 Category %2").arg(prefix).arg(categoryIndex)},
+                {QStringLiteral("profileCount"), profilesPerCategory}, {QStringLiteral("profileIds"), profileIds},
+                {QStringLiteral("active"), categoryIndex == 0}, {QStringLiteral("enabled"), true},
+                {QStringLiteral("executableRules"), QVariantList{}}});
+        }
+        if (!profilesPage->setProperty("profilesPresentationOverride", fixtureProfiles)
+            || !profilesPage->setProperty("categoriesPresentationOverride", fixtureCategories)) {
+            return false;
+        }
+        settlePresentation();
+        QQmlExpression beginConstruction(qmlContext(profilesPage), profilesPage,
+            QStringLiteral("constructionQualificationEnabled = true; beginConstructionQualification(); libraryRows.length"));
+        const int rowCount = beginConstruction.evaluate().toInt();
+        settlePresentation();
+        QQmlExpression delegateCount(qmlContext(profilesPage), profilesPage,
+            QStringLiteral("libraryCategoryDelegateCount + libraryProfileDelegateCount"));
+        const int instantiated = delegateCount.evaluate().toInt();
+        reportProfilesConstruction(QStringLiteral("%1-%2-categories-%3-profiles")
+            .arg(prefix).arg(categoryCount).arg(categoryCount * profilesPerCategory));
+        return !beginConstruction.hasError() && !delegateCount.hasError()
+            && rowCount == categoryCount * (profilesPerCategory + 1)
+            && instantiated > 0 && instantiated < categoryCount * profilesPerCategory;
+    };
+    if (!installSyntheticProfilesFixture(QStringLiteral("fixture-medium"), 6, 4)
+        || !installSyntheticProfilesFixture(QStringLiteral("fixture-large"), 12, 8)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles virtualization fixture did not keep large rows bounded")
+            .arg(appearance));
+    }
+    QQmlExpression scrollLargeProfiles(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("scrollLibraryRowsToEnd(); true"));
+    scrollLargeProfiles.evaluate();
+    settlePresentation();
+    QQmlExpression largeDelegateCount(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("libraryCategoryDelegateCount + libraryProfileDelegateCount"));
+    const int largeInstantiated = largeDelegateCount.evaluate().toInt();
+    const auto *lastLargeProfile = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckProfileCard_fixture-large-profile-95"));
+    if (scrollLargeProfiles.hasError() || largeDelegateCount.hasError()
+        || largeInstantiated >= 96 || !lastLargeProfile) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 Profiles virtualization did not recycle large-library rows (scroll=%2, delegates=%3, last=%4)")
+            .arg(appearance, scrollLargeProfiles.hasError() ? scrollLargeProfiles.error().toString() : QStringLiteral("ok"))
+            .arg(largeInstantiated).arg(lastLargeProfile ? QStringLiteral("visible") : QStringLiteral("missing")));
+    }
+    if (!profilesPage->setProperty("profilesPresentationOverride", profileVisualFixture)
+        || !profilesPage->setProperty("categoriesPresentationOverride", categoryVisualFixture)
+        || !profilesPage->setProperty("profileDetailPresentationOverride", fixtureDetails)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles fixture could not restore after virtualization qualification")
+            .arg(appearance));
+    }
+    QQmlExpression restoreSmallProfiles(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("returnToLibrary(); profileFilter = 'all'; searchText = ''; beginConstructionQualification(); true"));
+    restoreSmallProfiles.evaluate();
+    settlePresentation();
+    if (restoreSmallProfiles.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles state restore failed after virtualization qualification")
+            .arg(appearance));
+    }
+    QQmlExpression restoreProfileState(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("presentationState = ({ view: 'library', selectedCategoryId: 'fixture-battlefield', selectedProfileId: 'fixture-aircraft', profileFilter: 'all', searchText: 'aircraft', contentY: 12 }); restorePresentationState(); true"));
+    restoreProfileState.evaluate();
+    settlePresentation();
+    if (restoreProfileState.hasError()
+        || profilesPage->property("view").toString() != QStringLiteral("library")
+        || profilesPage->property("selectedCategoryId").toString() != QStringLiteral("fixture-battlefield")
+        || profilesPage->property("selectedProfileId").toString() != QStringLiteral("fixture-aircraft")
+        || profilesPage->property("searchText").toString() != QStringLiteral("aircraft")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles did not restore library selection state")
+            .arg(appearance));
+    }
+    QQmlExpression resetRestoredProfileState(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("returnToLibrary(); profileFilter = 'all'; searchText = ''; true"));
+    resetRestoredProfileState.evaluate();
+    settlePresentation();
     // Searching the Running list is presentation-only until the user presses
     // an existing ADD action. Exercise the actual text field so case-folded
     // display-name and executable matching cannot silently regress.
