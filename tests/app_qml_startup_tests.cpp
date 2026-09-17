@@ -3633,6 +3633,189 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     settlePresentation();
     const bool inTaskStepTwo = intentPointer && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
         && backend.setupAssistantTask().value(QStringLiteral("stage")).toString() == QStringLiteral("purpose");
+    // Exercise both Flight Deck checkbox roles through their rendered
+    // indicator, label, and keyboard path.  These are draft-only actions:
+    // each must keep the same task/stage and never create or activate state.
+    auto *setupScroll = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantScroll"));
+    auto *setupViewport = flickableContentItem(setupScroll);
+    auto *copyCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfile"));
+    auto *copyIndicator = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileIndicator"));
+    auto *copyLabel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileLabel"));
+    auto *rigNameField = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRigName"));
+    auto *profileNameField = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupProfileName"));
+    const auto opaqueColor = [](QQuickItem *item) {
+        return item && item->property("color").value<QColor>().isValid()
+            && item->property("color").value<QColor>().alpha() == 255;
+    };
+    const bool readableNamePlaceholders = rigNameField && profileNameField
+        && rigNameField->property("placeholderTextColor").value<QColor>().isValid()
+        && profileNameField->property("placeholderTextColor").value<QColor>().isValid()
+        && rigNameField->property("placeholderTextColor").value<QColor>()
+            != rigNameField->property("color").value<QColor>()
+        && profileNameField->property("placeholderTextColor").value<QColor>()
+            != profileNameField->property("color").value<QColor>();
+    const auto revealSetupItem = [&](QQuickItem *item) {
+        if (!setupViewport || !item) return false;
+        const qreal maximumY = std::max<qreal>(0.0, setupViewport->property("contentHeight").toReal()
+            - setupViewport->height());
+        setupViewport->setProperty("contentY", std::clamp(contentPoint(item, setupViewport).y() - 84.0,
+            0.0, maximumY));
+        settlePresentation();
+        return true;
+    };
+    const QString checkboxCaptureDirectory = qEnvironmentVariable(
+        "HOTAS_SETUP_CHECKBOX_CAPTURE_DIR").trimmed();
+    const auto captureSetupCheckbox = [&](const QString &state) {
+        if (checkboxCaptureDirectory.isEmpty()) return true;
+        QDir directory(checkboxCaptureDirectory);
+        if (!directory.exists() && !QDir().mkpath(directory.absolutePath())) return false;
+        return window->grabWindow().save(directory.filePath(
+            QStringLiteral("setup-checkbox-%1-%2.png").arg(appearance.toLower(), state)));
+    };
+    const bool copyUncheckedCaptured = revealSetupItem(copyCheckbox)
+        && captureSetupCheckbox(QStringLiteral("unchecked"));
+    const bool copyIndicatorPointer = inTaskStepTwo && setupViewport && copyCheckbox && copyIndicator
+        && clickFlightDeckSettingsItem(window, setupViewport, copyIndicator);
+    settlePresentation();
+    const bool copyIndicatorSaved = copyIndicatorPointer && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("stage")).toString() == QStringLiteral("purpose");
+    const bool copyLabelPointer = copyIndicatorSaved && copyLabel
+        && clickFlightDeckSettingsItem(window, setupViewport, copyLabel);
+    settlePresentation();
+    const bool copyLabelSaved = copyLabelPointer && !copyCheckbox->property("checked").toBool()
+        && !backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    if (copyCheckbox) copyCheckbox->forceActiveFocus(Qt::TabFocusReason);
+    settlePresentation();
+    const bool copyKeyboardFocus = copyLabelSaved && copyCheckbox && copyCheckbox->hasActiveFocus();
+    if (copyKeyboardFocus) QTest::keyClick(window, Qt::Key_Space);
+    settlePresentation();
+    const bool copyKeyboardSaved = copyKeyboardFocus && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    const bool copyCheckedCaptured = copyKeyboardSaved && revealSetupItem(copyCheckbox)
+        && captureSetupCheckbox(QStringLiteral("checked"));
+    auto *copyChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoice"));
+    auto *copyChoiceDisplay = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoiceDisplay"));
+    const int copyChoiceCount = copyChoice ? copyChoice->property("count").toInt() : 0;
+    const bool copySourcePointer = copyKeyboardSaved && copyChoice && setupViewport
+        && (copyChoiceCount == 0 || clickPresentationChoice(window, setupViewport, copyChoice, 0,
+            copyChoiceCount));
+    settlePresentation();
+    const QString copiedProfileId = backend.setupAssistantTask().value(QStringLiteral("copyProfileId")).toString();
+    const bool copySourceSaved = copySourcePointer && copyChoice && copyChoice->property("visible").toBool()
+        && copyChoice->property("enabled").toBool() && opaqueColor(copyChoiceDisplay)
+        && (copyChoiceCount == 0 || (!copiedProfileId.isEmpty()
+            && copiedProfileId == copyChoice->property("currentValue").toString()));
+    const QColor copyCheckedColor = copyIndicator ? copyIndicator->property("color").value<QColor>() : QColor{};
+    if (copyCheckbox) copyCheckbox->setProperty("enabled", false);
+    settlePresentation();
+    const bool copyDisabledVisual = copyCheckbox && copyIndicator && !copyCheckbox->property("enabled").toBool()
+        && opaqueColor(copyIndicator) && copyIndicator->property("color").value<QColor>() != copyCheckedColor;
+    const bool copyDisabledPointer = copyDisabledVisual && copyLabel
+        && clickFlightDeckSettingsItem(window, setupViewport, copyLabel);
+    settlePresentation();
+    const bool copyDisabledSafe = copyDisabledPointer && copyCheckbox && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool();
+    if (copyCheckbox) copyCheckbox->setProperty("enabled", true);
+    settlePresentation();
+
+    const QSize setupWindowSize = window->size();
+    const QString setupTextSize = themeManager.textSize();
+    window->resize(900, 650);
+    bool setupCheckboxGeometryStable = copyCheckbox && copyLabel && setupScroll;
+    auto *setupFooter = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantFooter"));
+    for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
+             QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
+        themeManager.setTextSize(textSize);
+        settlePresentation();
+        const QRectF footerRect = setupFooter ? setupFooter->mapRectToScene(setupFooter->boundingRect()) : QRectF{};
+        setupCheckboxGeometryStable = setupCheckboxGeometryStable && copyCheckbox->property("visible").toBool()
+            && copyLabel->height() > 0 && copyCheckbox->height() >= copyLabel->height()
+            && copyCheckbox->width() <= setupScroll->width() + 1.0
+            && footerRect.height() > 0 && footerRect.top() >= -1.0
+            && footerRect.bottom() <= window->height() + 1.0;
+    }
+    themeManager.setTextSize(setupTextSize);
+    window->resize(setupWindowSize);
+    settlePresentation();
+
+    if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
+    settlePresentation();
+    const bool resumedTask = guidedSetupDialog
+        && QMetaObject::invokeMethod(guidedSetupDialog, "openForResume");
+    settlePresentation();
+    auto *resumedCopyCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfile"));
+    auto *resumedCopyChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoice"));
+    const bool resumedCopyDraft = resumedTask && resumedCopyCheckbox && resumedCopyChoice
+        && resumedCopyCheckbox->property("checked").toBool() && resumedCopyChoice->property("visible").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("copyProfileId")).toString() == copiedProfileId;
+    auto *sharedIntent = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupIntentShared"));
+    auto *resumedScroll = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantScroll"));
+    auto *resumedViewport = flickableContentItem(resumedScroll);
+    const bool sharedIntentPointer = resumedCopyDraft && sharedIntent && resumedViewport
+        && clickFlightDeckSettingsItem(window, resumedViewport, sharedIntent);
+    settlePresentation();
+    auto *requiredCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembership"));
+    auto *requiredIndicator = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembershipIndicator"));
+    auto *requiredLabel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembershipLabel"));
+    const bool requiredInitial = requiredCheckbox && requiredCheckbox->property("checked").toBool();
+    const bool requiredIndicatorPointer = sharedIntentPointer && requiredCheckbox && requiredIndicator
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredIndicator);
+    settlePresentation();
+    const bool requiredIndicatorSaved = requiredIndicatorPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    const bool requiredLabelPointer = requiredIndicatorSaved && requiredLabel
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredLabel);
+    settlePresentation();
+    const bool requiredLabelSaved = requiredLabelPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() == requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() == requiredInitial;
+    if (requiredCheckbox) requiredCheckbox->forceActiveFocus(Qt::TabFocusReason);
+    settlePresentation();
+    const bool requiredKeyboardFocus = requiredLabelSaved && requiredCheckbox
+        && requiredCheckbox->hasActiveFocus();
+    if (requiredKeyboardFocus) QTest::keyClick(window, Qt::Key_Space);
+    settlePresentation();
+    const bool requiredKeyboardSaved = requiredKeyboardFocus && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial;
+    const QColor requiredCheckedColor = requiredIndicator
+        ? requiredIndicator->property("color").value<QColor>() : QColor{};
+    if (requiredCheckbox) requiredCheckbox->setProperty("enabled", false);
+    settlePresentation();
+    const bool requiredDisabledVisual = requiredCheckbox && requiredIndicator
+        && !requiredCheckbox->property("enabled").toBool() && opaqueColor(requiredIndicator)
+        && requiredIndicator->property("color").value<QColor>() != requiredCheckedColor;
+    const bool requiredDisabledPointer = requiredDisabledVisual && requiredLabel
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredLabel);
+    settlePresentation();
+    const bool requiredDisabledSafe = requiredDisabledPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial;
+    if (requiredCheckbox) requiredCheckbox->setProperty("enabled", true);
+    settlePresentation();
     if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
     backend.dismissSetupAssistantTask();
     settlePresentation();
@@ -3644,8 +3827,22 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
-    if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo || !setupActionReset) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck persistent setup entry did not complete its pointer and keyboard Step 1/2 journey"));
+    if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
+        || !readableNamePlaceholders || !copyUncheckedCaptured || !copyIndicatorSaved || !copyLabelSaved || !copyKeyboardSaved
+        || !copyCheckedCaptured
+        || !copySourceSaved || !copyDisabledVisual || !copyDisabledSafe || !setupCheckboxGeometryStable
+        || !resumedCopyDraft || !requiredIndicatorSaved || !requiredLabelSaved || !requiredKeyboardSaved
+        || !requiredDisabledVisual || !requiredDisabledSafe || !setupActionReset) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck setup journey failed (open=%1 controller=%2 next=%3 step2=%4 placeholders=%5 "
+            "copyIndicator=%6 copyLabel=%7 copyKey=%8 copySource=%9 copyDisabledVisual=%10 copyDisabledSafe=%11 "
+            "copyLayout=%12 resume=%13 requiredIndicator=%14 requiredLabel=%15 requiredKey=%16 "
+            "requiredDisabledVisual=%17 requiredDisabledSafe=%18 reset=%19)")
+            .arg(guidedSetupOpened).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
+            .arg(readableNamePlaceholders).arg(copyIndicatorSaved).arg(copyLabelSaved).arg(copyKeyboardSaved)
+            .arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
+            .arg(resumedCopyDraft).arg(requiredIndicatorSaved).arg(requiredLabelSaved).arg(requiredKeyboardSaved)
+            .arg(requiredDisabledVisual).arg(requiredDisabledSafe).arg(setupActionReset));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
         ? QStringLiteral("Light") : QStringLiteral("Dark");

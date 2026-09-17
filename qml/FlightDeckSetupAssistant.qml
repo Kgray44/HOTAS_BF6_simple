@@ -231,8 +231,97 @@ FlightDeckDialog {
         }
     }
 
+    // This remains a Qt Quick CheckBox so accessibility, Tab navigation, and
+    // Space activation stay owned by Controls.  The assistant owns every
+    // visible part rather than inheriting a platform checkbox in Flight Deck.
+    component SetupCheckBox: CheckBox {
+        id: setupCheck
+        implicitHeight: Math.max(root.tokens.controlHeight,
+            checkLabel.implicitHeight + root.tokens.space12)
+        leftPadding: root.tokens.space8
+        rightPadding: root.tokens.space8
+        topPadding: root.tokens.space6
+        bottomPadding: root.tokens.space6
+        spacing: root.tokens.space10
+        hoverEnabled: enabled
+        focusPolicy: Qt.StrongFocus
+        font.family: root.tokens.bodyFont
+        font.pixelSize: root.tokens.body
+        Accessible.name: text
+
+        indicator: Rectangle {
+            id: checkIndicator
+            objectName: setupCheck.objectName + "Indicator"
+            implicitWidth: root.tokens.scale(18)
+            implicitHeight: implicitWidth
+            x: setupCheck.leftPadding
+            y: (setupCheck.height - height) / 2
+            radius: Math.max(3, Math.round(width * 0.24))
+            color: !setupCheck.enabled ? root.tokens.disabled
+                : setupCheck.down ? (setupCheck.checked ? root.tokens.accentMuted : root.tokens.secondarySurface)
+                : setupCheck.checked ? root.tokens.accent
+                : setupCheck.hovered ? root.tokens.elevatedSurface : root.tokens.secondarySurface
+            border.width: setupCheck.activeFocus ? 2 : 1
+            border.color: setupCheck.activeFocus ? root.tokens.focus
+                : !setupCheck.enabled ? root.tokens.border
+                : setupCheck.checked ? root.tokens.accent
+                : setupCheck.hovered ? root.tokens.focus : root.tokens.border
+
+            Canvas {
+                id: checkMark
+                anchors.centerIn: parent
+                width: parent.width - root.tokens.space8
+                height: parent.height - root.tokens.space8
+                visible: setupCheck.checked
+                antialiasing: true
+                onPaint: {
+                    const context = getContext("2d")
+                    context.reset()
+                    context.strokeStyle = root.tokens.light ? "#ffffff" : root.tokens.primarySurface
+                    context.lineWidth = Math.max(2, Math.round(width * 0.16))
+                    context.lineCap = "round"
+                    context.lineJoin = "round"
+                    context.beginPath()
+                    context.moveTo(width * 0.16, height * 0.52)
+                    context.lineTo(width * 0.42, height * 0.76)
+                    context.lineTo(width * 0.84, height * 0.24)
+                    context.stroke()
+                }
+                onVisibleChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+                Connections {
+                    target: root.tokens
+                    function onLightChanged() { checkMark.requestPaint() }
+                }
+            }
+        }
+
+        contentItem: Text {
+            id: checkLabel
+            objectName: setupCheck.objectName + "Label"
+            leftPadding: setupCheck.indicator.width + setupCheck.spacing
+            rightPadding: root.tokens.space4
+            text: setupCheck.text
+            color: setupCheck.enabled ? root.tokens.textPrimary : root.tokens.textSecondary
+            font: setupCheck.font
+            wrapMode: Text.WordWrap
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        background: Rectangle {
+            radius: root.tokens.radiusControl
+            color: !setupCheck.enabled ? "transparent"
+                : setupCheck.down ? root.tokens.secondarySurface
+                : setupCheck.hovered ? root.tokens.elevatedSurface : "transparent"
+            border.width: setupCheck.activeFocus ? 2 : 0
+            border.color: root.tokens.focus
+        }
+    }
+
     component SetupCombo: ComboBox {
         id: setupCombo
+        property string emptyText: ""
         implicitHeight: root.tokens.controlHeight
         font.family: root.tokens.bodyFont
         font.pixelSize: root.tokens.body
@@ -245,15 +334,17 @@ FlightDeckDialog {
             border.color: parent.activeFocus ? root.tokens.focus : root.tokens.border
         }
         contentItem: Text {
+            objectName: setupCombo.objectName + "Display"
             leftPadding: root.tokens.space12
             rightPadding: root.tokens.space32
-            text: parent.displayText
-            color: root.tokens.textPrimary
+            text: parent.currentIndex >= 0 ? parent.displayText : parent.emptyText
+            color: parent.currentIndex >= 0 ? root.tokens.textPrimary : root.tokens.textSecondary
             font: parent.font
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
         indicator: Text {
+            objectName: setupCombo.objectName + "Indicator"
             x: parent.width - width - root.tokens.space12
             y: (parent.height - height) / 2
             text: "⌄"
@@ -262,6 +353,7 @@ FlightDeckDialog {
             font.pixelSize: root.tokens.bodyStrong
         }
         delegate: ItemDelegate {
+            objectName: setupCombo.objectName + "Choice_" + index
             width: parent ? parent.width : 0
             height: root.tokens.controlHeight
             highlighted: parent && parent.highlightedIndex === index
@@ -276,10 +368,11 @@ FlightDeckDialog {
                 elide: Text.ElideRight
             }
             background: Rectangle {
-                color: parent.highlighted ? root.tokens.selected : "transparent"
+                color: parent.highlighted || parent.hovered ? root.tokens.selected : "transparent"
             }
         }
         popup: Popup {
+            objectName: setupCombo.objectName + "Popup"
             y: parent.height + root.tokens.space4
             width: parent.width
             implicitHeight: Math.min(contentItem.implicitHeight + root.tokens.space8, root.tokens.scale(280))
@@ -302,6 +395,7 @@ FlightDeckDialog {
 
     contentItem: ScrollView {
         id: scroller
+        objectName: "flightDeckSetupAssistantScroll"
         implicitHeight: Math.min(setupContent.implicitHeight, root.maximumBodyHeight)
         contentWidth: availableWidth
         contentHeight: setupContent.implicitHeight
@@ -450,6 +544,7 @@ FlightDeckDialog {
                     visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"
                     Layout.fillWidth: true
                     placeholderText: "My flight controls"
+                    placeholderTextColor: root.tokens.textSecondary
                     text: String(root.task.rigNameDraft || "")
                     onEditingFinished: root.savePurposeDraft()
                     color: root.tokens.textPrimary
@@ -465,6 +560,7 @@ FlightDeckDialog {
                     visible: root.taskIntent !== "add-to-rig"
                     Layout.fillWidth: true
                     placeholderText: "General flight"
+                    placeholderTextColor: root.tokens.textSecondary
                     text: String(root.task.profileNameDraft || "")
                     onEditingFinished: root.savePurposeDraft()
                     color: root.tokens.textPrimary
@@ -495,31 +591,35 @@ FlightDeckDialog {
                     textRole: "name"
                     onActivated: root.savePurposeDraft()
                 }
-                CheckBox {
+                SetupCheckBox {
                     id: copyProfile
+                    objectName: "flightDeckSetupCopyProfile"
                     visible: root.taskIntent !== "add-to-rig"
-                    text: "Start from an existing Profile"
+                    Layout.fillWidth: true
+                    text: "Start from an existing profile."
                     checked: Boolean(root.task.copyExistingDraft)
                     onToggled: root.savePurposeDraft()
-                    font.family: root.tokens.bodyFont
-                    font.pixelSize: root.tokens.bodySmall
                 }
+                Text { visible: copyProfile.visible && copyProfile.checked; text: "SOURCE PROFILE"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: copyChoice
+                    objectName: "flightDeckSetupCopyProfileChoice"
                     visible: copyProfile.visible && copyProfile.checked
+                    enabled: copyProfile.checked
                     Layout.fillWidth: true
                     model: root.profiles
                     textRole: "displayName"
+                    emptyText: "Choose a profile to copy"
                     currentIndex: root.task.copyProfileId ? root.profiles.findIndex(function(profile) { return String(profile.id || "") === String(root.task.copyProfileId || "") }) : -1
                     onActivated: root.savePurposeDraft()
                 }
-                CheckBox {
+                SetupCheckBox {
                     id: requiredMembership
+                    objectName: "flightDeckSetupRequiredMembership"
                     visible: root.taskIntent === "add-to-rig"
+                    Layout.fillWidth: true
                     checked: root.task.requiredMembershipDraft === undefined ? true : Boolean(root.task.requiredMembershipDraft)
                     text: "This controller is required for this Device Rig"
-                    font.family: root.tokens.bodyFont
-                    font.pixelSize: root.tokens.bodySmall
                     onToggled: root.savePurposeDraft()
                 }
                 Text { visible: root.taskIntent === "add-to-rig"; text: "PROFILE TO EDIT AFTERWARD (OPTIONAL)"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
@@ -674,6 +774,7 @@ FlightDeckDialog {
     }
 
     footer: FlightDeckDialogFooter {
+        objectName: "flightDeckSetupAssistantFooter"
         tokens: root.tokens
         RowLayout {
             id: footerActions
