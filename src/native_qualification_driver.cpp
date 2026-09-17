@@ -1,6 +1,7 @@
 #include "native_qualification_driver.h"
 
 #include "app_backend.h"
+#include "contention_resilience_controller.h"
 #include "controller_discovery.h"
 #include "theme_manager.h"
 #include "vjoy_ownership.h"
@@ -189,6 +190,12 @@ void NativeQualificationDriver::startControls()
     navigate(9, QStringLiteral("Adaptive Response controls"));
     QTimer::singleShot(130, this, [this] {
         QQuickItem *adaptive = findItem(QStringLiteral("flightDeckAdaptiveResponse"));
+        if (adaptive) {
+            // This is a presentation-source choice in the isolated test
+            // window. It lets qualification count the real live-graph cadence
+            // without changing Adaptive Response runtime or mapper behavior.
+            adaptive->setProperty("responseLabSource", QStringLiteral("live"));
+        }
         if (QQuickItem *advanced = findItem(QStringLiteral("flightDeckAdaptiveAdvancedToggle"))) {
             // This page is deliberately long. Make the control visible in the
             // actual Flickable before injecting the native-window click rather
@@ -494,6 +501,9 @@ void NativeQualificationDriver::writeSummary()
                        {QStringLiteral("failures"), stringArray(m_failures)},
                        {QStringLiteral("controllerEnumerationMs"), m_controllerEnumerationMs},
                        {QStringLiteral("controllers"), QJsonArray::fromVariantList(m_controllerSummary)},
+                       {QStringLiteral("contentionResilience"),
+                        QJsonObject::fromVariantMap(m_backend
+                            ? m_backend->contentionResilienceController()->evidence() : QVariantMap{})},
                        {QStringLiteral("vjoyReadOnly"), QJsonObject::fromVariantMap(m_vjoySummary)}};
     const QFileInfo info(path);
     QDir().mkpath(info.absolutePath());

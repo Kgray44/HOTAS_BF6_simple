@@ -1,6 +1,8 @@
 #include "app_backend.h"
 #include "crash_diagnostics.h"
 
+#include "contention_resilience_controller.h"
+
 #include "adaptive_response.h"
 #include "axis_transform.h"
 #include "automation_engine.h"
@@ -503,6 +505,7 @@ AppBackend::AppBackend(QObject *parent)
           [](const MapperConfiguration &configuration) { return ConfigStore::saveDetailed(configuration); },
           [](const MapperConfiguration &configuration) { return ConfigStore::save(configuration); }))
     , m_worker(m_configuration)
+    , m_contentionResilience(std::make_unique<ContentionResilienceController>())
 {
     // Package/installer startup acceptance needs the real QML shell, backend
     // models, and tray construction, but it must not acquire DirectInput,
@@ -557,6 +560,8 @@ AppBackend::AppBackend(QObject *parent)
     });
     connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
     connect(&m_foregroundGameTimer, &QTimer::timeout, this, &AppBackend::sampleForegroundGameContext);
+    connect(m_contentionResilience.get(), &ContentionResilienceController::policyChanged,
+            this, &AppBackend::applyContentionPolicy);
     m_requiredDisconnectGraceTimer.setSingleShot(true);
     connect(&m_requiredDisconnectGraceTimer, &QTimer::timeout, this, [this] {
         updateRequiredDeviceDisconnectGrace();
@@ -631,6 +636,9 @@ AppBackend::AppBackend(QObject *parent)
     m_activationControlPlaneClock.start();
     m_foregroundGameTimer.setInterval(kForegroundGameProbeIntervalMs);
     if (!startupSmoke && !isolatedPresentation && m_configuration.automaticGameDetection) m_foregroundGameTimer.start();
+    // Apply a development override before optional startup work begins.
+    // Normal preserves every established cadence exactly.
+    applyContentionPolicy();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -14888,12 +14896,13 @@ void AppBackend::setAutomaticGameDetection(bool enabled)
     m_configuration.automaticGameDetection = enabled;
     m_lastDetectedExecutables.clear();
     if (enabled) {
-        const int interval = m_presentationLifecycle == PresentationLifecycleState::Visible
-            ? kVisibleGameDetectionIntervalMs
-            : m_presentationLifecycle == PresentationLifecycleState::Minimized
-                ? kMinimizedGameDetectionIntervalMs : kTrayHiddenGameDetectionIntervalMs;
+        const int interval = scaledBackgroundInterval(
+            m_presentationLifecycle == PresentationLifecycleState::Visible
+                ? kVisibleGameDetectionIntervalMs
+                : m_presentationLifecycle == PresentationLifecycleState::Minimized
+                    ? kMinimizedGameDetectionIntervalMs : kTrayHiddenGameDetectionIntervalMs);
         m_gameDetectionTimer.start(interval);
-        m_foregroundGameTimer.start(kForegroundGameProbeIntervalMs);
+        m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         startRunningApplicationSnapshot(false);
     } else {
         m_gameDetectionTimer.stop();
@@ -16640,6 +16649,15 @@ bool AppBackend::setProfileCurveTransitionDurationMs(const QString &profileId, i
 void AppBackend::checkForUpdates()
 {
     if (m_updateChecking) return;
+    if (m_contentionResilience && m_contentionResilience->isSevere()) {
+        // A check that has not begun is optional work. Defer it rather than
+        // competing with interaction recovery; a later automatic retry keeps
+        // update behavior intact without touching mapping or persistence.
+        m_updateStatusText = u"Update check deferred while the desktop is under severe contention."_qs;
+        QTimer::singleShot(30'000, this, &AppBackend::checkForUpdates);
+        emit stateChanged();
+        return;
+    }
     m_updateChecking = true;
     m_updateTimedOut = false;
     m_updateCheckFailed = false;
@@ -19083,7 +19101,10 @@ bool AppBackend::launchUninstaller()
 
 void AppBackend::evaluateGameDetection()
 {
-    if (m_configuration.automaticGameDetection) startRunningApplicationSnapshot(false);
+    if (m_configuration.automaticGameDetection) {
+        if (m_contentionResilience) m_contentionResilience->recordBackgroundPoll(QStringLiteral("game"));
+        startRunningApplicationSnapshot(false);
+    }
 }
 
 void AppBackend::refreshControllerInventory()
@@ -19095,6 +19116,7 @@ void AppBackend::refreshControllerInventory()
     if (qEnvironmentVariableIsSet("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION")) return;
 #endif
     if (m_controllerDiscoveryInProgress) return;
+    if (m_contentionResilience) m_contentionResilience->recordBackgroundPoll(QStringLiteral("controller"));
     m_controllerDiscoveryInProgress = true;
     if (m_uiPerformanceInstrumentationEnabled) ++m_controllerDiscoveryBackgroundRuns;
     QThread *thread = QThread::create([this] {
@@ -19296,13 +19318,14 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
     switch (state) {
     case PresentationLifecycleState::Visible:
         restorePresentationResources();
-        m_snapshotTimer.start(kVisibleSnapshotIntervalMs);
-        m_buttonTelemetryTimer.start(kVisibleButtonTelemetryIntervalMs);
-        m_legacyButtonTelemetryTimer.start(kVisibleLegacyButtonTelemetryIntervalMs);
-        m_numericTelemetryTimer.start(kVisibleNumericTelemetryIntervalMs);
-        m_controllerDiscoveryTimer.start(kVisibleControllerDiscoveryIntervalMs);
+        m_snapshotTimer.start(m_contentionResilience->telemetryIntervalMs());
+        m_buttonTelemetryTimer.start(visibleButtonTelemetryIntervalMs());
+        m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kVisibleLegacyButtonTelemetryIntervalMs));
+        m_numericTelemetryTimer.start(scaledBackgroundInterval(kVisibleNumericTelemetryIntervalMs));
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kVisibleControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kVisibleGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kVisibleGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         // Project the latest worker atomics before the visible QML tree has a
         // chance to render. This is presentation work only; MappingWorker has
@@ -19310,13 +19333,14 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         refreshUiSnapshot();
         break;
     case PresentationLifecycleState::Minimized:
-        m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);
-        m_buttonTelemetryTimer.start(kMinimizedButtonTelemetryIntervalMs);
-        m_legacyButtonTelemetryTimer.start(kMinimizedLegacyButtonTelemetryIntervalMs);
-        m_numericTelemetryTimer.start(kMinimizedNumericTelemetryIntervalMs);
-        m_controllerDiscoveryTimer.start(kMinimizedControllerDiscoveryIntervalMs);
+        m_snapshotTimer.start(scaledBackgroundInterval(kMinimizedSnapshotIntervalMs));
+        m_buttonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedButtonTelemetryIntervalMs));
+        m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedLegacyButtonTelemetryIntervalMs));
+        m_numericTelemetryTimer.start(scaledBackgroundInterval(kMinimizedNumericTelemetryIntervalMs));
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kMinimizedControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kMinimizedGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kMinimizedGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         break;
     case PresentationLifecycleState::TrayHidden:
@@ -19324,14 +19348,83 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
         m_buttonTelemetryTimer.stop();
         m_legacyButtonTelemetryTimer.stop();
         m_numericTelemetryTimer.stop();
-        m_controllerDiscoveryTimer.start(kTrayHiddenControllerDiscoveryIntervalMs);
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kTrayHiddenControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kTrayHiddenGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kTrayHiddenGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         releasePresentationResources();
         break;
     }
     emit presentationStateChanged();
+}
+
+ContentionResilienceController *AppBackend::contentionResilienceController() const
+{
+    return m_contentionResilience.get();
+}
+
+int AppBackend::scaledBackgroundInterval(int baseIntervalMs) const
+{
+    const int multiplier = m_contentionResilience
+        ? m_contentionResilience->backgroundPollMultiplier() : 1;
+    return baseIntervalMs * multiplier;
+}
+
+int AppBackend::visibleButtonTelemetryIntervalMs() const
+{
+    if (!m_contentionResilience) return kVisibleButtonTelemetryIntervalMs;
+    return std::max(kVisibleButtonTelemetryIntervalMs,
+                    m_contentionResilience->telemetryIntervalMs());
+}
+
+int AppBackend::adaptiveResponseHistoryIntervalMs() const
+{
+    if (!m_contentionResilience) return kAdaptiveResponseHistoryIntervalMs;
+    switch (m_contentionResilience->level()) {
+    case ContentionResilienceController::Level::Normal: return kAdaptiveResponseHistoryIntervalMs;
+    case ContentionResilienceController::Level::Pressure: return 50;
+    case ContentionResilienceController::Level::Severe: return 83;
+    }
+    return kAdaptiveResponseHistoryIntervalMs;
+}
+
+void AppBackend::applyContentionPolicy()
+{
+    if (!m_contentionResilience) return;
+    const auto &policy = m_contentionResilience->policy();
+    if (m_presentationLifecycle == PresentationLifecycleState::Visible) {
+        if (m_snapshotTimer.isActive()) m_snapshotTimer.start(policy.telemetryIntervalMs);
+        if (m_buttonTelemetryTimer.isActive()) m_buttonTelemetryTimer.start(visibleButtonTelemetryIntervalMs());
+        if (m_legacyButtonTelemetryTimer.isActive())
+            m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kVisibleLegacyButtonTelemetryIntervalMs));
+        if (m_numericTelemetryTimer.isActive())
+            m_numericTelemetryTimer.start(scaledBackgroundInterval(kVisibleNumericTelemetryIntervalMs));
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kVisibleControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kVisibleGameDetectionIntervalMs));
+    } else if (m_presentationLifecycle == PresentationLifecycleState::Minimized) {
+        if (m_snapshotTimer.isActive()) m_snapshotTimer.start(scaledBackgroundInterval(kMinimizedSnapshotIntervalMs));
+        if (m_buttonTelemetryTimer.isActive()) m_buttonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedButtonTelemetryIntervalMs));
+        if (m_legacyButtonTelemetryTimer.isActive())
+            m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedLegacyButtonTelemetryIntervalMs));
+        if (m_numericTelemetryTimer.isActive())
+            m_numericTelemetryTimer.start(scaledBackgroundInterval(kMinimizedNumericTelemetryIntervalMs));
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kMinimizedControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kMinimizedGameDetectionIntervalMs));
+    } else {
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kTrayHiddenControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kTrayHiddenGameDetectionIntervalMs));
+    }
+    if (m_foregroundGameTimer.isActive())
+        m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
+    if (m_adaptiveResponseHistoryTimer.isActive())
+        m_adaptiveResponseHistoryTimer.start(adaptiveResponseHistoryIntervalMs());
 }
 
 void AppBackend::releasePresentationResources()
@@ -19697,6 +19790,7 @@ void AppBackend::processInputLearning()
 
 void AppBackend::refreshUiSnapshot()
 {
+    if (m_contentionResilience) m_contentionResilience->recordTelemetryPublication();
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
@@ -19734,7 +19828,7 @@ void AppBackend::refreshUiSnapshot()
     if (captureAdaptiveHistory && !m_adaptiveResponseHistoryTimer.isActive()) {
         // Record diagnostic history at 83 Hz; QML renders independently at
         // roughly 30 Hz and only while its section is near the viewport.
-        m_adaptiveResponseHistoryTimer.start(kAdaptiveResponseHistoryIntervalMs);
+        m_adaptiveResponseHistoryTimer.start(adaptiveResponseHistoryIntervalMs());
     } else if (!captureAdaptiveHistory && m_adaptiveResponseHistoryTimer.isActive()) {
         m_adaptiveResponseHistoryTimer.stop();
     }
@@ -19823,6 +19917,7 @@ void AppBackend::sampleAdaptiveResponseHistory()
         % static_cast<int>(m_adaptiveResponseHistory.size());
     m_adaptiveResponseHistoryCount = std::min(m_adaptiveResponseHistoryCount + 1,
         static_cast<int>(m_adaptiveResponseHistory.size()));
+    if (m_contentionResilience) m_contentionResilience->recordAdaptiveHistorySample();
 }
 
 void AppBackend::refreshNumericTelemetry()

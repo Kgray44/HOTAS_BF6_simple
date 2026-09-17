@@ -39,6 +39,7 @@ class QSystemTrayIcon;
 namespace hotas {
 
 struct PortableConfigurationBundle;
+class ContentionResilienceController;
 class ConfigPersistenceCoordinator;
 
 class AppBackend final : public QObject {
@@ -282,6 +283,10 @@ class AppBackend final : public QObject {
 public:
     explicit AppBackend(QObject *parent = nullptr);
     ~AppBackend() override;
+
+    // Presentation and background-control cadence authority. Its policy is
+    // intentionally absent from MappingWorker and all report-path types.
+    ContentionResilienceController *contentionResilienceController() const;
 
     // Called before responsiveness evidence is exported. This is the one
     // bounded shutdown durability barrier; normal UI edits never wait here.
@@ -1208,6 +1213,10 @@ private:
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
+    void applyContentionPolicy();
+    int scaledBackgroundInterval(int baseIntervalMs) const;
+    int visibleButtonTelemetryIntervalMs() const;
+    int adaptiveResponseHistoryIntervalMs() const;
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
     void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
@@ -1445,6 +1454,7 @@ private:
     QString m_signalFlowFocusObjectId;
     bool m_signalFlowCommandInFlight = false;
     MappingWorker m_worker;
+    std::unique_ptr<ContentionResilienceController> m_contentionResilience;
     // Canonical GUI-side desired Mapping state. It is updated synchronously
     // for every user click and reconciled from worker-side Automation changes.
     bool m_mappingDesired = false;
