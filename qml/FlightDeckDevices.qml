@@ -1,4 +1,4 @@
-import QtQuick 6.5
+import QtQuick 6.7
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 
@@ -2102,8 +2102,22 @@ Flickable {
             objectName: "flightDeckRigDetailsFooter"
             implicitHeight: footerActions.implicitHeight + deck.space16
             color: deck.secondarySurface
-            border.width: 1
-            border.color: deck.divider
+            radius: deck.radiusPanel
+            topLeftRadius: 0
+            topRightRadius: 0
+            bottomLeftRadius: deck.radiusPanel
+            bottomRightRadius: deck.radiusPanel
+            // The shared dialog background owns the exterior perimeter.  This
+            // footer only owns its straight inner seam and rounded lower fill,
+            // avoiding a square paint leak or doubled bottom border.
+            border.width: 0
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 1
+                color: deck.divider
+            }
             RowLayout {
                 id: footerActions
                 anchors.fill: parent

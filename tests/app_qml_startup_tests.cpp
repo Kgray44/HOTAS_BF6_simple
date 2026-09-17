@@ -3515,6 +3515,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
     }
+    // The default strip is one restrained toolbar row.  It may grow when text
+    // genuinely needs to wrap, but it must not retain the former permanent
+    // hardware grid/help rows or an open Details overlay at normal desktop
+    // width and default text size.
+    const bool defaultContextCompact = !contextStrip->property("technicalDetailsVisible").toBool()
+        && contextStrip->height() <= 56.0;
     // Context is readable at a glance, while canonical identifiers remain in
     // the technical disclosure. Exercise the hard cases without changing any
     // backend selection: duplicate display names, an override using the same
@@ -3559,6 +3565,21 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && contextStrip->property("technicalDetailsVisible").toBool()
         && contextStrip->property("technicalDetailsText").toString().contains(
             QStringLiteral("duplicate-profile-a"));
+    auto *contextDetailsPopover = window->findChild<QObject *>(
+        QStringLiteral("flightDeckContextDetailsPopover"));
+    auto *contextDetailsClose = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextDetailsClose"));
+    const bool detailsOverlayVisible = rawIdentityDisclosedOnly && contextDetailsPopover
+        && contextDetailsPopover->property("visible").toBool() && contextDetailsClose;
+    const bool detailsClosePointer = detailsOverlayVisible
+        && clickFlightDeckSettingsItem(window, window->contentItem(), contextDetailsClose);
+    if (detailsClosePointer && contextStrip->property("technicalDetailsVisible").toBool()) {
+        QMetaObject::invokeMethod(contextDetailsClose, "click");
+        settlePresentation();
+    }
+    const bool detailsClosedWithFocusReturn = detailsClosePointer
+        && !contextStrip->property("technicalDetailsVisible").toBool()
+        && contextTechnicalToggle->property("activeFocus").toBool();
     const QVariantMap noProfileContext{
         {QStringLiteral("editingId"), QString{}}, {QStringLiteral("editingName"), QString{}},
         {QStringLiteral("activeId"), QString{}}, {QStringLiteral("activeName"), QString{}},
@@ -3572,7 +3593,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && !contextStrip->property("runtimeOverride").toBool();
     contextStrip->setProperty("presentationOverride", QVariant{});
     settlePresentation();
-    if (!readableDuplicateContext || !rawIdentityDisclosedOnly || !noProfileReadable) {
+    if (!defaultContextCompact || !readableDuplicateContext || !rawIdentityDisclosedOnly
+        || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
@@ -3899,6 +3921,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const QString rigDialogTextSize = themeManager.textSize();
     window->resize(900, 650);
     bool rigDetailsGeometryStable = rigFooter && rigFooter->height() > 0;
+    // The footer's exact visual radius is owned by the shared theme; its
+    // local QML properties prove that only its lower exterior corners round,
+    // while the test captures below retain the body/footer containment proof.
+    const bool rigFooterCornersRounded = rigFooter
+        && rigFooter->property("bottomLeftRadius").toReal() > 0.0
+        && rigFooter->property("bottomRightRadius").toReal() > 0.0
+        && rigFooter->property("topLeftRadius").toReal() == 0.0
+        && rigFooter->property("topRightRadius").toReal() == 0.0;
     for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
              QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
         themeManager.setTextSize(textSize);
@@ -3925,7 +3955,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     window->resize(rigDialogWindowSize);
     settlePresentation();
     if (!rigSummaryCaptured || !rigExpandedCaptured || !renameCancelled || !memberExpanded || !outputsManaged || !technicalExpanded
-        || !deleteConfirmationSafe || !rigDetailsGeometryStable
+        || !deleteConfirmationSafe || !rigFooterCornersRounded || !rigDetailsGeometryStable
         || flightDeckConfigurationSnapshot(backend) != rigDetailsBeforePresentation) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig Details disclosures, footer, or type-scale stability regressed"));
     }
