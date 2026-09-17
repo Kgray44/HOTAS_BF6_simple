@@ -578,16 +578,34 @@
     "releaseTitle": "v2.6.0",
     "title": "Signal Flow",
     "summary": "Adds a canonical editable Signal Flow workspace while preserving bounded DirectInput-to-vJoy mapping and the established focused editors.",
-    "status": "current",
-    "replacement": null,
+    "status": "historical-stable",
+    "replacement": "v2.6.7",
     "syncToGitHubRelease": true,
-    "statusNote": "Current recommended release. The governed tag workflow supplies the installer, checksum, update manifest, and public updater validation; controller compatibility remains dependent on each user's configured hardware and setup.",
+    "statusNote": "Historical published release. Use v2.6.7 or newer for a new installation; controller compatibility remains dependent on each user's configured hardware and setup.",
     "highlights": [
       "Stable canonical routes, endpoints, processors, mixers, and workspace metadata persist with profile configuration; existing focused editors project that same state rather than maintain parallel stores.",
       "Analog destination collisions require a visible Replace, Average, Sum Clamped, or Highest Magnitude choice. Mixer behavior is deterministic and bounded, and hidden analog fan-in is not created.",
       "Signal Flow direct manipulation, visible wire routing, contextual inspection, and revision-aware undo/redo span Legacy, Standard, Top Gun, Day Ops, and a native Flight Deck surface rather than a recolored Standard workspace.",
       "Schema 28 migrates canonical topology and preserves implicit focused-editor button defaults through persistence, focused-editor edits, and portable-profile round trips.",
       "Qualification covers topology/migration, collision semantics, focused-editor projection, QML lifecycle/source contracts, isolated snapshot capture, and the synthetic zero-allocation mapping benchmark; physical controller-to-vJoy and signing claims retain their separate evidence boundaries."
+    ]
+  },
+  {
+    "version": "2.6.7",
+    "tag": "v2.6.7",
+    "releaseTitle": "v2.6.7",
+    "title": "Whole-app responsiveness",
+    "summary": "Delivers a smoother whole-app control plane under normal and heavy system load while preserving V2.6.6 device, axis-acquisition, and Virtual Output behavior.",
+    "status": "current",
+    "replacement": null,
+    "syncToGitHubRelease": true,
+    "createReleaseIfMissing": false,
+    "statusNote": "Current recommended release. The governed V2.6.7 tag workflow supplies the installer, checksum, update manifest, and public updater validation; controller compatibility remains dependent on each user's configured hardware and setup.",
+    "highlights": [
+      "Ordinary configuration persistence is coalesced and asynchronous, keeping save work off the interactive UI path while preserving bounded transactional and shutdown handling.",
+      "Flight Deck presentation now adapts gracefully under pressure: decorative work and background refresh are reduced before interactive control paths, with MappingWorker ownership unchanged.",
+      "Profiles uses flattened virtualized and recycled rows with lazy construction, removing the former heavy-library presentation bottleneck while retaining correct filtering, categories, and details.",
+      "The accepted release preserves V2.6.6 Device Rig and Virtual Output authority plus physical-axis acquisition evidence, without changing DirectInput-to-vJoy mapping semantics."
     ]
   }
 ]

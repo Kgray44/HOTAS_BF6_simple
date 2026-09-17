@@ -8,14 +8,14 @@ This document summarizes what each versioned project release or candidate added.
 
 Versions are shown newest first.
 
-## v2.6.7 — Whole-app responsiveness (owner-acceptance candidate)
+## v2.6.7 — Whole-app responsiveness
 
 Integrates the seven-phase responsiveness campaign onto the V2.6.6 baseline, preserving the bounded DirectInput-to-vJoy mapping path and existing device, axis, and Virtual Output contracts.
 
 - Ordinary configuration persistence is coalesced and performed asynchronously; current state wins while transactional and shutdown paths retain explicit bounded handling.
 - Presentation work has explicit interactive scheduling and contention-aware Normal, Pressure, and Severe policies that degrade decoration and background refresh before interaction; MappingWorker ownership remains unchanged.
 - Flight Deck Profiles uses flattened, recycled rows and lazy construction; controlled native interaction qualification covers navigation, scrolling, keyboard editing, slider activity, persistence bursts, responsive layout, and read-only DirectInput/vJoy inspection.
-- This is the intended V2.6.7 responsiveness release candidate. Automated qualification is recorded, but owner physical HOTAS, pedal, vJoy, HidHide, Battlefield 6, and full visual acceptance remain pending. No tag, public artifact, updater publication, or protected-main merge is implied.
+- Owner acceptance passed cleanly across general navigation, scrolling, settings persistence, physical HOTAS and pedals, vJoy, HidHide, profile/game detection, high-load usability, Battlefield 6, Flight Deck visual review, Profiles virtualization, and V2.6.6 device, axis-acquisition, and Virtual Output workflows.
 
 ## v2.6.6 — Polish, editable Virtual Outputs, and axis acquisition evidence
 
