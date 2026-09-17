@@ -812,7 +812,10 @@ void HidHideDoctorDomainTests::phaseFiveIntegrationContextIsBoundedOneTimeAndUnp
 void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBundleCapable()
 {
     QString label;
-    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    ReadOnlyDiagnosticSnapshot snapshot = createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label);
+    snapshot.environment.hidhide.clientVersion.append(QChar::Null);
+    snapshot.environment.hidhide.driverVersion.append(QChar::Null);
+    FixtureDiagnosticProvider provider(std::move(snapshot));
     DoctorDiagnosticEngine engine;
     const DiagnosticRunOutcome outcome = engine.run(provider);
     DoctorReportRequest request;
@@ -830,6 +833,10 @@ void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBun
     QVERIFY(!document.object().value(QStringLiteral("redactionManifest")).toObject()
                  .value(QStringLiteral("excluded")).toArray().isEmpty());
     QVERIFY(report.markdown.contains("HIDHIDE DOCTOR REPORT"));
+    QVERIFY(!report.markdown.contains(QChar::Null));
+    const QJsonObject environment = document.object().value(QStringLiteral("environment")).toObject();
+    QVERIFY(!environment.value(QStringLiteral("hidhideClientVersion")).toString().contains(QChar::Null));
+    QVERIFY(!environment.value(QStringLiteral("hidhideDriverVersion")).toString().contains(QChar::Null));
     QVERIFY(!report.redacted.isEmpty());
 
     DoctorReportRequest currentSteps;
@@ -905,6 +912,9 @@ void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
         QVERIFY2(!source.contains(forbidden), forbidden.constData());
     QVERIFY(!source.contains("ShellExecute"));
     QVERIFY(!source.contains("CreateProcess"));
+    QVERIFY(source.contains("UINT valueCharacters"));
+    QVERIFY(source.contains("fromWCharArray(value, static_cast<qsizetype>(valueCharacters))"));
+    QVERIFY(source.contains("text.truncate(terminator)"));
 }
 
 QTEST_GUILESS_MAIN(HidHideDoctorDomainTests)

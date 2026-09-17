@@ -56,8 +56,11 @@ nothing was uploaded. Missing destination folders, partial writes, failed
 commits, and a post-commit path/size mismatch are surfaced as safe export
 failures with the affected path. The domain export test uses a real Qt event
 loop and verifies the requested Markdown file, nonzero contents, cleared busy
-state, and exact completion path; it is not a substitute for an owner desktop
-export retest.
+state, and exact completion path. The owner also used the native file picker to
+write a Local / Unredacted report to Downloads, opened `test_report2.md`, and
+confirmed that it was present and looked good. That is direct evidence for the
+desktop destination, commit, and reopen path; it is not a Safe to Share privacy
+review.
 
 The Qt Quick file and folder dialogs now hand their selected `QUrl` values to
 typed model invokables. Local-path conversion occurs only in C++, not through
@@ -65,8 +68,17 @@ a JavaScript URL method; a non-local URL reports a visible safe failure. The
 domain contract asserts both dialog handoffs, rejects the former invalid QML
 conversion, asserts the visible `Exporting…` and completion-status bindings,
 and exercises the same `file:///` local URL type through a real export. The
-configured 17-test CTest suite passed again after this correction. That does
-not substitute for the pending owner desktop export/reopen retest.
+configured 17-test CTest suite passed again after this correction.
+
+The owner-exported report exposed a separate text-integrity issue: Windows
+version-resource strings could retain their terminating NUL. The provider now
+preserves the API's character count and truncates only at that terminator; the
+composer also removes NUL characters defensively from report text. A report
+fixture injects NUL into both HidHide version values and asserts that neither
+Markdown nor JSON contains one. A fresh staged, read-only owner-machine report
+contained zero NUL bytes while retaining the full `1.5.230.0` client and
+`1.4.181.0` driver versions. This was diagnostic observation only; it invoked
+no repair or elevation.
 
 The Command Center no longer continuously binds persisted pane fractions back
 into a live `SplitView`. Saved fractions are restored once, a user drag owns
@@ -111,6 +123,12 @@ Helper protocol is v2 and integration protocol is v1.
   set passed 4/4; both build-directory and staged repeat-launch probes exited
   0 without increasing the one-process count.
 - Staged Doctor startup smoke exited 0.
+- After the owner desktop export confirmation, the corrected staged package
+  passed startup smoke and the focused domain, deep-repair, standalone-startup,
+  and layout set 4/4. Its fresh read-only report contained zero NUL bytes and
+  retained the complete 1.5.230.0 client / 1.4.181.0 driver version strings.
+- The final configured CTest suite passed 17/17 after the report-text
+  correction.
 - A staged owner-machine read-only scan exited 0 with 238 checks, 3 findings,
   and 2 diagnoses. It retained the known 1.5.230.0 client / 1.4.181.0 driver
   mismatch, pending-restart evidence, and degraded HID enumeration as separate
@@ -154,7 +172,7 @@ negative product claim, nor a substituted real-machine result.
 | 18–22. R1–R5 qualification | R1–R3 remain LabQualified; R4 is unavailable without an approved newer package; R5 is unavailable without an independently verified rollback package. No FieldQualified promotion occurred. |
 | 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. A complete hostile-input audit remains Not qualified. |
 | 24. Fuzz results | Targeted malformed context/report/fixture coverage exists; sustained fuzzing is Not qualified. |
-| 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. Native owner privacy review remains open. |
+| 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. Native owner Safe to Share privacy review remains open. |
 | 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
 | 27–28. Performance and CPU contention | No measured release budgets or contention campaign was run; Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |

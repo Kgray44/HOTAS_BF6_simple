@@ -15,6 +15,11 @@ namespace {
 constexpr int kReportSchemaVersion = 1;
 constexpr qsizetype kMaximumReportBytes = 8 * 1024 * 1024;
 
+QString reportText(QString value)
+{
+    return value.remove(QChar::Null);
+}
+
 QString actionStateName(UserActionLedgerState state)
 {
     switch (state) {
@@ -59,7 +64,7 @@ QString safeText(const QString &value, EvidenceSensitivity sensitivity, DoctorRe
             sensitivity == EvidenceSensitivity::PotentiallyIdentifying ? QStringLiteral("Potentially identifying") : QStringLiteral("Sensitive")));
         return QStringLiteral("[REDACTED — local diagnostic detail]");
     }
-    return value;
+    return reportText(value);
 }
 
 bool includes(const QString &scope, const QString &section)
@@ -91,13 +96,13 @@ QJsonObject environmentJson(const DoctorSession &session)
 {
     if (!session.environment()) return {{QStringLiteral("status"), QStringLiteral("Unknown")}};
     const DoctorEnvironment &environment = *session.environment();
-    return {{QStringLiteral("windowsEdition"), environment.platform.windowsEdition},
-        {QStringLiteral("windowsVersion"), environment.platform.windowsVersion},
+    return {{QStringLiteral("windowsEdition"), reportText(environment.platform.windowsEdition)},
+        {QStringLiteral("windowsVersion"), reportText(environment.platform.windowsVersion)},
         {QStringLiteral("build"), static_cast<qint64>(environment.platform.build)}, {QStringLiteral("revision"), static_cast<qint64>(environment.platform.revision)},
         {QStringLiteral("architecture"), displayName(environment.platform.nativeArchitecture)},
         {QStringLiteral("hidhidePresent"), environment.hidhide.present},
-        {QStringLiteral("hidhideClientVersion"), environment.hidhide.clientVersion},
-        {QStringLiteral("hidhideDriverVersion"), environment.hidhide.driverVersion}};
+        {QStringLiteral("hidhideClientVersion"), reportText(environment.hidhide.clientVersion)},
+        {QStringLiteral("hidhideDriverVersion"), reportText(environment.hidhide.driverVersion)}};
 }
 
 void addLine(QStringList *lines, const QString &line)

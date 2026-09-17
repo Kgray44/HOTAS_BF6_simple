@@ -232,10 +232,13 @@ QString fileVersionString(const QString &path, const wchar_t *field)
         .arg(translation->codePage, 4, 16, QLatin1Char('0'))
         .arg(QString::fromWCharArray(field));
     wchar_t *value = nullptr;
-    UINT valueBytes = 0;
-    if (!VerQueryValueW(buffer.data(), reinterpret_cast<LPCWSTR>(query.utf16()), reinterpret_cast<LPVOID *>(&value), &valueBytes)
-        || !value || valueBytes == 0) return {};
-    return QString::fromWCharArray(value, static_cast<int>(valueBytes)).trimmed();
+    UINT valueCharacters = 0;
+    if (!VerQueryValueW(buffer.data(), reinterpret_cast<LPCWSTR>(query.utf16()), reinterpret_cast<LPVOID *>(&value), &valueCharacters)
+        || !value || valueCharacters == 0) return {};
+    QString text = QString::fromWCharArray(value, static_cast<qsizetype>(valueCharacters));
+    const qsizetype terminator = text.indexOf(QChar::Null);
+    if (terminator >= 0) text.truncate(terminator);
+    return text.trimmed();
 }
 
 QString sha256(const QString &path)
