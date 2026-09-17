@@ -63,6 +63,51 @@ enum class PhysicalAxis : int {
     Slider1,
 };
 
+// Axis acquisition is deliberately a controller capability concern.  These
+// values are resolved while a device is discovered or re-acquired; the report
+// worker receives only RuntimeAxisAcquisition below.
+enum class AxisResolutionSource : std::uint8_t {
+    Unresolved = 0,
+    StandardSemanticGuid,
+    ReportedOffset,
+    Manual,
+};
+
+enum class AxisResolutionConfidence : std::uint8_t {
+    Low = 0,
+    Medium,
+    High,
+    Contradictory,
+    Manual,
+};
+
+enum class AxisAcquisitionMode : std::uint8_t {
+    Automatic = 0,
+    DirectInputFormattedSlot,
+    NativeDirectInputObject,
+    RawHidValue,
+};
+
+enum class AxisRawRangePolicy : std::uint8_t {
+    Automatic = 0,
+    DriverReported,
+    Observed,
+    Manual,
+};
+
+enum class AxisRawInterpretation : std::uint8_t {
+    Automatic = 0,
+    CenteredAbsolute,
+    OneSidedAbsolute,
+    Relative,
+};
+
+enum class AxisRawPolarity : std::uint8_t {
+    Automatic = 0,
+    Normal,
+    Reversed,
+};
+
 // This is control-plane metadata captured from DirectInput object
 // enumeration.  It deliberately describes a controller's technical input
 // identity, not a guessed flight-control role: a device can expose Rz without
@@ -95,7 +140,55 @@ struct NativeAxisDescriptor {
     // 0 = standard DIJOYSTATE2 field. 1 = buffered DirectInput object. The
     // value is a fixed primitive consumed by the mapper, never a QML string.
     int acquisitionMethod = 0;
+    // The native object's reported state-layout offset remains technical
+    // evidence.  `formattedSource` is the independently resolved field that
+    // the mapper reads from DIJOYSTATE2.  A standard semantic GUID wins when
+    // the two contradict, which covers controllers such as the Saitek pedals
+    // that report GUID_RzAxis with DIJOFS_Z yet publish live lRz samples.
+    int canonicalAxis = -1;
+    int formattedSource = -1;
+    AxisResolutionSource resolutionSource = AxisResolutionSource::Unresolved;
+    AxisResolutionConfidence resolutionConfidence = AxisResolutionConfidence::Low;
+    bool metadataContradiction = false;
 };
+
+// A manual override never contains a driver handle, enumeration ordinal, or
+// any report-path object.  The native signature is re-matched on acquisition;
+// a missing or ambiguous object falls back safely to automatic resolution.
+struct AxisAcquisitionOverride {
+    bool enabled = false;
+    PhysicalAxis target = PhysicalAxis::X;
+    AxisAcquisitionMode mode = AxisAcquisitionMode::Automatic;
+    int formattedSource = -1;
+    QString nativeSemanticGuid;
+    quint32 nativeDirectInputType = 0;
+    quint32 nativeDirectInputOffset = 0;
+    QString nativeName;
+    AxisRawRangePolicy rangePolicy = AxisRawRangePolicy::Automatic;
+    qint32 manualMinimum = -10000;
+    qint32 manualMaximum = 10000;
+    AxisRawInterpretation interpretation = AxisRawInterpretation::Automatic;
+    AxisRawPolarity polarity = AxisRawPolarity::Automatic;
+};
+
+// This is the complete worker-facing acquisition plan.  It contains no
+// QString, GUID, map, diagnostic, persistence, or UI state and is copied only
+// at acquisition/configuration boundaries.
+struct RuntimeAxisAcquisition {
+    std::uint8_t sourceKind = 0; // 0 = DIJOYSTATE2 formatted slot.
+    std::uint8_t sourceIndex = 0;
+    std::uint8_t flags = 0;
+    bool valid = false;
+    float scale = 0.0001F;
+    float offset = 0.0F;
+    float minimum = -10000.0F;
+    float maximum = 10000.0F;
+};
+
+constexpr std::uint8_t RuntimeAxisAcquisitionOneSided = 1U << 0;
+constexpr std::uint8_t RuntimeAxisAcquisitionReversed = 1U << 1;
+constexpr std::uint8_t RuntimeAxisAcquisitionAllowBufferedEvidence = 1U << 2;
+constexpr std::uint8_t RuntimeAxisAcquisitionManual = 1U << 3;
 
 enum class VirtualAxis : int {
     Disabled = 0,
@@ -873,6 +966,10 @@ struct SavedControllerRecord {
     // metadata shared by the editor, diagnostics, reconnect checks, and the
     // compiled runtime; they are never page-local QML state.
     std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    // Per-verified-controller manual escape hatches. The array records an
+    // originating automatic axis slot while each entry carries its explicit
+    // target, so validation can reject unsafe duplicate target bindings.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> axisAcquisitionOverrides{};
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;

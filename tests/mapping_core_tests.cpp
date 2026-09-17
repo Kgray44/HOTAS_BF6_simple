@@ -869,6 +869,9 @@ private slots:
     void nativeAxisIdentityIsIndependentOfEnumerationOrder();
     void saitekRzObjectIdentityOverridesContradictoryStateOffset();
     void directInputOffsetAccessIgnoresEnumerationOrder();
+    void semanticDirectInputGuidWinsContradictoryReportedOffset();
+    void compiledManualAxisAcquisitionOverridesAreSafeAndDeterministic();
+    void axisAcquisitionOverridePersistenceRejectsInvalidRange();
     void nativeAxisNormalizationUsesObservedRange();
     void nativeAxisAcquisitionEvidencePersists();
     void saitekRudderRzSamplesDistinctly();
@@ -4487,6 +4490,153 @@ void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()
         QCOMPARE(directInputAxisValueAtOffset(state, scrambled[static_cast<size_t>(index)]),
                  expected[static_cast<size_t>(index)]);
     }
+}
+
+void MappingCoreTests::semanticDirectInputGuidWinsContradictoryReportedOffset()
+{
+    struct Case {
+        GUID semantic;
+        DWORD offset;
+        PhysicalAxis expected;
+    };
+    const std::array<Case, 6> cases{{
+        {GUID_XAxis, DIJOFS_RZ, PhysicalAxis::X},
+        {GUID_YAxis, DIJOFS_Z, PhysicalAxis::Y},
+        {GUID_ZAxis, DIJOFS_RZ, PhysicalAxis::Z},
+        {GUID_RxAxis, DIJOFS_X, PhysicalAxis::Rx},
+        {GUID_RyAxis, DIJOFS_Y, PhysicalAxis::Ry},
+        {GUID_RzAxis, DIJOFS_Z, PhysicalAxis::Rz},
+    }};
+    for (const Case &test : cases) {
+        DIDEVICEOBJECTINSTANCEW instance{};
+        instance.dwSize = sizeof(instance);
+        instance.guidType = test.semantic;
+        instance.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(1);
+        instance.dwOfs = test.offset;
+        const NativeAxisDescriptor descriptor = describeDirectInputAxisObject(nullptr, instance);
+        QCOMPARE(descriptor.canonicalAxis, static_cast<int>(test.expected));
+        QCOMPARE(descriptor.formattedSource, static_cast<int>(test.expected));
+        QCOMPARE(descriptor.resolutionSource, AxisResolutionSource::StandardSemanticGuid);
+        QCOMPARE(descriptor.resolutionConfidence, AxisResolutionConfidence::High);
+        QVERIFY(descriptor.metadataContradiction);
+    }
+
+    // Slider GUIDs are intentionally not used as a fake Slider0/Slider1
+    // identity. Their explicit slots remain distinct and deterministic.
+    DIDEVICEOBJECTINSTANCEW slider{};
+    slider.dwSize = sizeof(slider);
+    slider.guidType = GUID_Slider;
+    slider.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(0);
+    slider.dwOfs = DIJOFS_SLIDER(1);
+    const NativeAxisDescriptor sliderDescriptor = describeDirectInputAxisObject(nullptr, slider);
+    QCOMPARE(sliderDescriptor.canonicalAxis, static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(sliderDescriptor.formattedSource, static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(sliderDescriptor.resolutionSource, AxisResolutionSource::ReportedOffset);
+    QVERIFY(!sliderDescriptor.metadataContradiction);
+}
+
+void MappingCoreTests::compiledManualAxisAcquisitionOverridesAreSafeAndDeterministic()
+{
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> descriptors{};
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        NativeAxisDescriptor &descriptor = descriptors[static_cast<size_t>(axis)];
+        descriptor.present = true;
+        descriptor.canonicalAxis = axis;
+        descriptor.formattedSource = axis;
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.directInputGuid = QStringLiteral("{TEST-%1}").arg(axis);
+        descriptor.directInputType = 0x100U + static_cast<quint32>(axis);
+        descriptor.directInputOffset = 0x200U + static_cast<quint32>(axis);
+    }
+    for (int target = 0; target < kPhysicalAxisCount; ++target) {
+        std::array<AxisAcquisitionOverride, kPhysicalAxisCount> overrides{};
+        AxisAcquisitionOverride &override = overrides[0];
+        override.enabled = true;
+        override.target = static_cast<PhysicalAxis>(target);
+        override.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+        override.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+        override.rangePolicy = AxisRawRangePolicy::Manual;
+        override.manualMinimum = 100;
+        override.manualMaximum = 1100;
+        override.interpretation = AxisRawInterpretation::CenteredAbsolute;
+        override.polarity = AxisRawPolarity::Reversed;
+        std::array<bool, kPhysicalAxisCount> manual{};
+        const auto bindings = compileRuntimeAxisAcquisitions(descriptors, overrides, &manual);
+        const RuntimeAxisAcquisition &binding = bindings[static_cast<size_t>(target)];
+        QVERIFY(binding.valid);
+        QCOMPARE(binding.sourceIndex, static_cast<std::uint8_t>(PhysicalAxis::Rz));
+        QVERIFY((binding.flags & RuntimeAxisAcquisitionManual) != 0);
+        QVERIFY((binding.flags & RuntimeAxisAcquisitionReversed) != 0);
+        QVERIFY(manual[static_cast<size_t>(target)]);
+        QCOMPARE(normalizeRuntimeAxisAcquisition(100, binding), 1.0F);
+        QCOMPARE(normalizeRuntimeAxisAcquisition(1100, binding), -1.0F);
+    }
+
+    // Exact native binding survives a matching reconnect, but any changed
+    // identity falls back safely to the automatic acquisition binding.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> exactOverrides{};
+    AxisAcquisitionOverride &exact = exactOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    exact.enabled = true;
+    exact.target = PhysicalAxis::Rz;
+    exact.mode = AxisAcquisitionMode::NativeDirectInputObject;
+    exact.nativeSemanticGuid = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputGuid;
+    exact.nativeDirectInputType = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputType;
+    exact.nativeDirectInputOffset = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputOffset;
+    std::array<bool, kPhysicalAxisCount> exactManual{};
+    const auto exactBindings = compileRuntimeAxisAcquisitions(descriptors, exactOverrides, &exactManual);
+    QVERIFY(exactBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QVERIFY(exactManual[static_cast<size_t>(PhysicalAxis::Rz)]);
+    descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputOffset++;
+    const auto staleBindings = compileRuntimeAxisAcquisitions(descriptors, exactOverrides, &exactManual);
+    QVERIFY(staleBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QVERIFY(!exactManual[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QVERIFY((staleBindings[static_cast<size_t>(PhysicalAxis::Rz)].flags
+        & RuntimeAxisAcquisitionManual) == 0);
+}
+
+void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    DiscoveredController controller;
+    controller.name = QStringLiteral("Manual acquisition fixture");
+    controller.directInputId = QStringLiteral("{MANUAL-AXIS}");
+    controller.connected = true;
+    controller.axes[static_cast<size_t>(PhysicalAxis::Rz)] = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].present = true;
+    configuration.savedControllers.push_back(ControllerManager::verifiedRecord(controller, {}, {}));
+    AxisAcquisitionOverride &override = configuration.savedControllers.front()
+        .axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    override.enabled = true;
+    override.target = PhysicalAxis::Rz;
+    override.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    override.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    override.rangePolicy = AxisRawRangePolicy::Manual;
+    override.manualMinimum = 12;
+    override.manualMaximum = 400;
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const AxisAcquisitionOverride &restoredOverride = restored.savedControllers.front()
+        .axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    QVERIFY(restoredOverride.enabled);
+    QCOMPARE(restoredOverride.manualMinimum, 12);
+    QCOMPARE(restoredOverride.manualMaximum, 400);
+
+    QJsonObject invalid = ConfigStore::toJson(configuration);
+    QJsonArray records = invalid.value(QStringLiteral("savedControllers")).toArray();
+    QJsonObject record = records.at(0).toObject();
+    QJsonArray overrides = record.value(QStringLiteral("axisAcquisitionOverrides")).toArray();
+    QJsonObject invalidOverride = overrides.at(static_cast<int>(PhysicalAxis::Rz)).toObject();
+    invalidOverride.insert(QStringLiteral("manualMinimum"), 400);
+    invalidOverride.insert(QStringLiteral("manualMaximum"), 12);
+    overrides.replace(static_cast<int>(PhysicalAxis::Rz), invalidOverride);
+    record.insert(QStringLiteral("axisAcquisitionOverrides"), overrides);
+    records.replace(0, record);
+    invalid.insert(QStringLiteral("savedControllers"), records);
+    ConfigStore::fromJson(invalid, &valid);
+    QVERIFY(!valid);
 }
 
 void MappingCoreTests::nativeAxisNormalizationUsesObservedRange()

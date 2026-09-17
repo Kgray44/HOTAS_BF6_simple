@@ -252,22 +252,19 @@ bool readBufferedAxisEvents(LPDIRECTINPUTDEVICE8W device,
     if (FAILED(result) || count == 0) return false;
     bool axisEvent = false;
     for (DWORD eventIndex = 0; eventIndex < count; ++eventIndex) {
-        // Buffered data reports the raw native offset. Resolve it against the
-        // fixed compiled descriptors rather than assuming that offset names a
-        // DIJOYSTATE2 field; a device can validly identify Rz while claiming
-        // the lZ layout offset.
-        int axis = -1;
-        for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
-            if (available[static_cast<size_t>(candidate)]
-                && descriptors[static_cast<size_t>(candidate)].directInputOffset == events[eventIndex].dwOfs) {
-                axis = candidate;
-                break;
+        // Match the buffered object against the object descriptor itself,
+        // never by treating its dwOfs as the canonical logical axis. A
+        // GUID_RzAxis / DIJOFS_Z device must still keep its Rz identity.
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            if (!available[static_cast<size_t>(axis)]
+                || descriptors[static_cast<size_t>(axis)].directInputOffset != events[eventIndex].dwOfs) {
+                continue;
             }
+            (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
+            (*known)[static_cast<size_t>(axis)] = true;
+            axisEvent = true;
+            break;
         }
-        if (axis < 0) continue;
-        (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
-        (*known)[static_cast<size_t>(axis)] = true;
-        axisEvent = true;
     }
     return axisEvent;
 }
@@ -728,17 +725,22 @@ BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *
     const DWORD objectType = DIDFT_GETTYPE(instance->dwType);
     if ((objectType & DIDFT_AXIS) != 0) {
         const int enumerationIndex = objects->axisCount;
-        const int index = physicalAxisIndexForDirectInputObject(*instance);
+        NativeAxisDescriptor discovered = describeDirectInputAxisObject(objects->device, *instance);
+        const int index = discovered.canonicalAxis;
         if (index >= 0) {
             (*objects->axes)[index] = true;
             if (objects->axisDescriptors) {
                 NativeAxisDescriptor &descriptor = (*objects->axisDescriptors)[static_cast<size_t>(index)];
-                descriptor = describeDirectInputAxisObject(objects->device, *instance);
-                descriptor.enumerationIndex = enumerationIndex;
+                discovered.enumerationIndex = enumerationIndex;
                 if (objects->configureAxisRanges) {
-                    configureDirectInputAxisRange(objects->device, *instance, &descriptor);
+                    configureDirectInputAxisRange(objects->device, *instance, &discovered);
                 } else {
-                    descriptor.acquisitionSourceResolved = descriptor.present;
+                    discovered.acquisitionSourceResolved = discovered.present;
+                }
+                if (!descriptor.present
+                    || (discovered.resolutionSource == AxisResolutionSource::StandardSemanticGuid
+                        && descriptor.resolutionSource != AxisResolutionSource::StandardSemanticGuid)) {
+                    descriptor = std::move(discovered);
                 }
             } else {
                 if (objects->configureAxisRanges) {
@@ -1185,128 +1187,6 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     return result;
 }
 
-DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisition(
-    const QString &expectedDirectInputId, int durationMs)
-{
-    DirectInputAxisAcquisitionProbe result;
-    const QString expected = expectedDirectInputId.trimmed();
-    result.durationMs = std::clamp(durationMs, 1000, 30000);
-    if (expected.isEmpty()) {
-        result.diagnostic = u"No exact DirectInput controller identity was supplied."_qs;
-        return result;
-    }
-    LPDIRECTINPUT8W directInput = nullptr;
-    const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
-        IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
-    if (FAILED(initialized)) {
-        result.diagnostic = u"DirectInput initialization failed: "_qs + inputErrorMessage(initialized);
-        return result;
-    }
-    const auto selected = selectDeviceByPersistedId(directInput, expected);
-    if (!selected) {
-        // A stale persisted ID must never be redirected to another controller.
-        // List only attached physical candidates so the caller can explicitly
-        // target the actual device for a subsequent read-only capture.
-        EnumerationContext candidates;
-        directInput->EnumDevices(DI8DEVCLASS_GAMECTRL, enumDeviceCallback, &candidates,
-                                 DIEDFL_ATTACHEDONLY);
-        QStringList attachedPhysical;
-        for (const DirectInputDevice &candidate : candidates.devices) {
-            if (isVirtualControllerName(candidate.name)) continue;
-            attachedPhysical << u"%1 [%2]"_qs.arg(candidate.name, guidToString(candidate.guid));
-        }
-        directInput->Release();
-        result.diagnostic = u"The requested DirectInput controller was not visible. Attached physical controllers: "_qs
-            + (attachedPhysical.isEmpty() ? u"none"_qs : attachedPhysical.join(u"; "_qs));
-        return result;
-    }
-    LPDIRECTINPUTDEVICE8W device = nullptr;
-    HRESULT status = directInput->CreateDevice(selected->guid, &device, nullptr);
-    if (SUCCEEDED(status)) status = device->SetDataFormat(&c_dfDIJoystick2);
-    if (SUCCEEDED(status)) status = device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
-    if (FAILED(status)) {
-        if (device) device->Release();
-        directInput->Release();
-        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs + inputErrorMessage(status);
-        return result;
-    }
-    std::array<bool, kPhysicalAxisCount> axes{};
-    std::array<bool, kMaximumPhysicalButtons> buttons{};
-    ObjectEnumerationContext objects{device, &axes, &buttons, &result.axisDescriptors, false};
-    device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
-    result.bufferedConfigureResult = static_cast<qint32>(configureDirectInputBufferedEvents(device));
-    status = device->Acquire();
-    if (FAILED(status)) {
-        device->Release();
-        directInput->Release();
-        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs + inputErrorMessage(status);
-        return result;
-    }
-    result.standardMinimum.fill(std::numeric_limits<LONG>::max());
-    result.standardMaximum.fill(std::numeric_limits<LONG>::min());
-    result.stateFieldMinimum.fill(std::numeric_limits<LONG>::max());
-    result.stateFieldMaximum.fill(std::numeric_limits<LONG>::min());
-    result.bufferedMinimum.fill(std::numeric_limits<LONG>::max());
-    result.bufferedMaximum.fill(std::numeric_limits<LONG>::min());
-    std::array<LONG, kPhysicalAxisCount> lastStandard{};
-    std::array<bool, kPhysicalAxisCount> standardKnown{};
-    std::array<LONG, kPhysicalAxisCount> lastStateField{};
-    std::array<bool, kPhysicalAxisCount> stateFieldKnown{};
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(result.durationMs);
-    while (std::chrono::steady_clock::now() < deadline) {
-        DIJOYSTATE2 state{};
-        status = device->Poll();
-        if (SUCCEEDED(status)) status = device->GetDeviceState(sizeof(state), &state);
-        if (SUCCEEDED(status)) {
-            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
-                result.stateFieldMinimum[static_cast<size_t>(axis)] = std::min(result.stateFieldMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.stateFieldMaximum[static_cast<size_t>(axis)] = std::max(result.stateFieldMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                if (stateFieldKnown[static_cast<size_t>(axis)] && lastStateField[static_cast<size_t>(axis)] != value) ++result.stateFieldChanges[static_cast<size_t>(axis)];
-                lastStateField[static_cast<size_t>(axis)] = value;
-                stateFieldKnown[static_cast<size_t>(axis)] = true;
-            }
-            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) if (axes[static_cast<size_t>(axis)]) {
-                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
-                result.standardMinimum[static_cast<size_t>(axis)] = std::min(result.standardMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.standardMaximum[static_cast<size_t>(axis)] = std::max(result.standardMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                if (standardKnown[static_cast<size_t>(axis)] && lastStandard[static_cast<size_t>(axis)] != value) ++result.standardChanges[static_cast<size_t>(axis)];
-                lastStandard[static_cast<size_t>(axis)] = value;
-                standardKnown[static_cast<size_t>(axis)] = true;
-            }
-        }
-        std::array<DIDEVICEOBJECTDATA, 32> events{};
-        DWORD count = static_cast<DWORD>(events.size());
-        const HRESULT buffered = device->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), events.data(), &count, 0);
-        result.lastBufferedReadResult = static_cast<qint32>(buffered);
-        if (SUCCEEDED(buffered)) for (DWORD event = 0; event < count; ++event) {
-            int axis = -1;
-            for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
-                if (axes[static_cast<size_t>(candidate)]
-                    && result.axisDescriptors[static_cast<size_t>(candidate)].directInputOffset == events[event].dwOfs) {
-                    axis = candidate;
-                    break;
-                }
-            }
-            if (axis >= 0) {
-                const LONG value = static_cast<LONG>(events[event].dwData);
-                result.bufferedMinimum[static_cast<size_t>(axis)] = std::min(result.bufferedMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.bufferedMaximum[static_cast<size_t>(axis)] = std::max(result.bufferedMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                ++result.bufferedEvents[static_cast<size_t>(axis)];
-            }
-        }
-        QThread::msleep(4);
-    }
-    result.acquired = true;
-    result.name = selected->name;
-    result.directInputId = guidToString(selected->guid);
-    result.diagnostic = u"Read-only standard-state and buffered-object capture completed."_qs;
-    device->Unacquire();
-    device->Release();
-    directInput->Release();
-    return result;
-}
-
 void MappingWorker::requestStop()
 {
     m_stopRequested = true;
@@ -1469,6 +1349,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     HANDLE inputEvent = nullptr;
     std::array<bool, kPhysicalAxisCount> availableAxes{};
     std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> axisAcquisitions{};
+    std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
     std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
     std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
     std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
@@ -1719,6 +1601,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         }
         availableAxes.fill(false);
         axisDescriptors = {};
+        axisAcquisitions = {};
+        manualAcquisitionApplied.fill(false);
         bufferedAxisValuesKnown.fill(false);
         axisAcquisitionMethods.fill(0);
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -1782,6 +1666,20 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         }
         ObjectEnumerationContext objects{device, &availableAxes, &availableButtons, &axisDescriptors};
         device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+        const SavedControllerRecord *record = nullptr;
+        if (!configuration.activeControllerRecordId.isEmpty()) {
+            const auto found = std::find_if(configuration.savedControllers.cbegin(),
+                configuration.savedControllers.cend(), [&configuration](const SavedControllerRecord &candidate) {
+                    return candidate.id == configuration.activeControllerRecordId;
+                });
+            if (found != configuration.savedControllers.cend()) record = &*found;
+        }
+        static const std::array<AxisAcquisitionOverride, kPhysicalAxisCount> noOverrides{};
+        axisAcquisitions = compileRuntimeAxisAcquisitions(axisDescriptors,
+            record ? record->axisAcquisitionOverrides : noOverrides, &manualAcquisitionApplied);
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            availableAxes[static_cast<size_t>(axis)] = axisAcquisitions[static_cast<size_t>(axis)].valid;
+        }
         // Buffered data is a preconfigured, bounded corroboration channel.
         // A failure is recorded by the absent fallback rather than changing
         // normal DIJOYSTATE2 acquisition behavior.
@@ -1807,7 +1705,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (AxisCenterResolverState &state : centerResolverStates) state = {};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             m_runtime.axisAvailable[index] = availableAxes[index];
-            m_runtime.axisAcquisitionSource[index] = availableAxes[index] ? 0 : -1;
+            m_runtime.axisAcquisitionSource[index] = availableAxes[index]
+                ? (manualAcquisitionApplied[static_cast<size_t>(index)] ? 2 : 0) : -1;
             m_runtime.axisLiveMovementObserved[index] = false;
             m_runtime.axisLastMovementAgeMs[index] = -1;
         }
@@ -2099,13 +1998,15 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         PhysicalInputReport physicalReport;
         const auto observedAt = std::chrono::steady_clock::now();
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            if (!availableAxes[index]) continue;
-            const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
-            const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(index));
+            const RuntimeAxisAcquisition &binding = axisAcquisitions[static_cast<size_t>(index)];
+            if (!availableAxes[index] || !binding.valid) continue;
+            const LONG standardValue = directInputAxisValue(state,
+                static_cast<PhysicalAxis>(binding.sourceIndex));
             if (bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 && axisAcquisitionMethods[static_cast<size_t>(index)] == 0
-                && std::abs(normalizeDirectInputAxisValue(bufferedAxisValues[static_cast<size_t>(index)], descriptor)
-                            - normalizeDirectInputAxisValue(standardValue, descriptor)) > 0.002F) {
+                && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
+                && std::abs(normalizeRuntimeAxisAcquisition(bufferedAxisValues[static_cast<size_t>(index)], binding)
+                            - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                 // The same enumerated object reported a different live value
                 // than the standard field. Prefer the evidence-backed object
                 // channel for this acquired controller session.
@@ -2115,7 +2016,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             const LONG acquiredValue = axisAcquisitionMethods[static_cast<size_t>(index)] == 1
                     && bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 ? bufferedAxisValues[static_cast<size_t>(index)] : standardValue;
-            physicalReport.axes[index] = normalizeDirectInputAxisValue(acquiredValue, descriptor);
+            physicalReport.axes[index] = normalizeRuntimeAxisAcquisition(acquiredValue, binding);
             const float current = physicalReport.axes[index];
             if (!std::isfinite(lastObservedAxisValues[static_cast<size_t>(index)])) {
                 lastObservedAxisValues[static_cast<size_t>(index)] = current;
@@ -2671,6 +2572,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         HANDLE inputEvent = nullptr;
         std::array<bool, kPhysicalAxisCount> availableAxes{};
         std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+        std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> axisAcquisitions{};
+        std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
         std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
         std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
         std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
@@ -2822,6 +2725,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         }
         session.availableAxes.fill(false);
         session.axisDescriptors = {};
+        session.axisAcquisitions = {};
+        session.manualAcquisitionApplied.fill(false);
         session.bufferedAxisValuesKnown.fill(false);
         session.axisAcquisitionMethods.fill(0);
         session.lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -2934,6 +2839,18 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         ObjectEnumerationContext objects{device, &session.availableAxes, &session.availableButtons,
                                          &session.axisDescriptors};
         device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+        const auto record = std::find_if(configuration.savedControllers.cbegin(),
+            configuration.savedControllers.cend(), [&session](const SavedControllerRecord &candidate) {
+                return session.member && candidate.id == session.member->controllerRecordId;
+            });
+        static const std::array<AxisAcquisitionOverride, kPhysicalAxisCount> noOverrides{};
+        session.axisAcquisitions = compileRuntimeAxisAcquisitions(session.axisDescriptors,
+            record != configuration.savedControllers.cend() ? record->axisAcquisitionOverrides : noOverrides,
+            &session.manualAcquisitionApplied);
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            session.availableAxes[static_cast<size_t>(axis)] =
+                session.axisAcquisitions[static_cast<size_t>(axis)].valid;
+        }
         configureDirectInputBufferedEvents(device);
         session.inputEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (session.inputEvent && FAILED(device->SetEventNotification(session.inputEvent))) {
@@ -3094,20 +3011,22 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             }
             const auto observedAt = std::chrono::steady_clock::now();
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                if (session.availableAxes[static_cast<size_t>(axis)]) {
-                    const NativeAxisDescriptor &descriptor = session.axisDescriptors[static_cast<size_t>(axis)];
-                    const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                const RuntimeAxisAcquisition &binding = session.axisAcquisitions[static_cast<size_t>(axis)];
+                if (session.availableAxes[static_cast<size_t>(axis)] && binding.valid) {
+                    const LONG standardValue = directInputAxisValue(state,
+                        static_cast<PhysicalAxis>(binding.sourceIndex));
                     if (session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 0
-                        && std::abs(normalizeDirectInputAxisValue(
-                                        session.bufferedAxisValues[static_cast<size_t>(axis)], descriptor)
-                                    - normalizeDirectInputAxisValue(standardValue, descriptor)) > 0.002F) {
+                        && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
+                        && std::abs(normalizeRuntimeAxisAcquisition(
+                                        session.bufferedAxisValues[static_cast<size_t>(axis)], binding)
+                                    - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                         session.axisAcquisitionMethods[static_cast<size_t>(axis)] = 1;
                     }
                     const LONG acquiredValue = session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 1
                             && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         ? session.bufferedAxisValues[static_cast<size_t>(axis)] : standardValue;
-                    report.axes[static_cast<size_t>(axis)] = normalizeDirectInputAxisValue(acquiredValue, descriptor);
+                    report.axes[static_cast<size_t>(axis)] = normalizeRuntimeAxisAcquisition(acquiredValue, binding);
                     const float current = report.axes[static_cast<size_t>(axis)];
                     if (!std::isfinite(session.lastObservedAxisValues[static_cast<size_t>(axis)])) {
                         session.lastObservedAxisValues[static_cast<size_t>(axis)] = current;
@@ -3123,7 +3042,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 const bool live = available && session.axisLiveMovementObserved[static_cast<size_t>(axis)];
                 m_runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(index)]
                     [static_cast<size_t>(axis)].store(available
-                        ? session.axisAcquisitionMethods[static_cast<size_t>(axis)] : -1,
+                        ? (session.manualAcquisitionApplied[static_cast<size_t>(axis)] ? 2
+                            : session.axisAcquisitionMethods[static_cast<size_t>(axis)]) : -1,
                         std::memory_order_relaxed);
                 m_runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(index)]
                     [static_cast<size_t>(axis)].store(live, std::memory_order_relaxed);
@@ -3334,7 +3254,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     m_runtime.axisAvailable[static_cast<size_t>(axis)] = session.availableAxes[static_cast<size_t>(axis)];
                     m_runtime.axisAcquisitionSource[static_cast<size_t>(axis)] =
                         session.availableAxes[static_cast<size_t>(axis)]
-                        ? session.axisAcquisitionMethods[static_cast<size_t>(axis)] : -1;
+                        ? (session.manualAcquisitionApplied[static_cast<size_t>(axis)] ? 2
+                            : session.axisAcquisitionMethods[static_cast<size_t>(axis)]) : -1;
                     const bool live = session.axisLiveMovementObserved[static_cast<size_t>(axis)];
                     m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = live;
                     m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = live

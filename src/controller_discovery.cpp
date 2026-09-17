@@ -55,7 +55,8 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
     if ((type & DIDFT_AXIS) != 0) {
         const int enumerationIndex = objects->controller->axisCount;
         ++objects->controller->axisCount;
-        const int index = physicalAxisIndexForDirectInputObject(*instance);
+        NativeAxisDescriptor discovered = describeDirectInputAxisObject(objects->device, *instance);
+        const int index = discovered.canonicalAxis;
         if (index >= 0) {
             objects->controller->axes[static_cast<size_t>(index)] = true;
             NativeAxisDescriptor &descriptor =
@@ -63,9 +64,17 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
             // Discovery is intentionally read-only: it captures the actual
             // native range and object identity without requesting a data
             // range or asking the user to move any control.
-            descriptor = describeDirectInputAxisObject(objects->device, *instance);
-            descriptor.enumerationIndex = enumerationIndex;
-            descriptor.acquisitionSourceResolved = descriptor.present;
+            discovered.enumerationIndex = enumerationIndex;
+            discovered.acquisitionSourceResolved = discovered.present;
+            // If a driver exposes more than one ambiguous object for one
+            // canonical slot, a known standard semantic identity outranks an
+            // offset-only fallback. The remaining object is deliberately not
+            // guessed into a second logical axis.
+            if (!descriptor.present
+                || (discovered.resolutionSource == AxisResolutionSource::StandardSemanticGuid
+                    && descriptor.resolutionSource != AxisResolutionSource::StandardSemanticGuid)) {
+                descriptor = std::move(discovered);
+            }
         }
     } else if ((type & DIDFT_BUTTON) != 0) {
         ++objects->controller->buttonCount;
