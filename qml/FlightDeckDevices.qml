@@ -2045,9 +2045,38 @@ Flickable {
         tokens: deck
         heading: root.selectedRig() ? String(root.selectedRig().name || "Device Rig") : "Device Rig"
         tone: root.rigTone(root.selectedRig()) === "fault" ? "fault" : root.rigTone(root.selectedRig()) === "attention" ? "attention" : "informational"
-        preferredWidth: 780
+        preferredWidth: 920
         property string addMemberId: ""
         property string addOutputId: ""
+        property bool renameVisible: false
+        property bool addMemberVisible: false
+        property bool manageOutputsVisible: false
+        property bool technicalDetailsVisible: false
+        property bool rigActionsVisible: false
+        property string inspectedRigId: ""
+        // Key expansion by the stable saved member ID. A telemetry refresh,
+        // resize, text-size, or theme change must not collapse the row the
+        // person is reviewing.
+        property var expandedMemberIds: ({})
+        function memberDetailsVisible(memberId) {
+            return Boolean(expandedMemberIds[String(memberId || "")]);
+        }
+        function toggleMemberDetails(memberId) {
+            const key = String(memberId || "");
+            const next = {};
+            const current = expandedMemberIds || {};
+            for (const existingKey in current) next[existingKey] = current[existingKey];
+            next[key] = !Boolean(next[key]);
+            expandedMemberIds = next;
+        }
+        function memberOutputName(member, rig) {
+            const outputs = (rig || {}).outputs || [];
+            for (let index = 0; index < outputs.length; ++index) {
+                if (String(outputs[index].id || "") === String((member || {}).preferredOutputLayoutId || ""))
+                    return String(outputs[index].name || "Virtual Output");
+            }
+            return "";
+        }
         function resetChoices() {
             const rig = root.selectedRig();
             const members = root.availableRigMemberChoices(rig);
@@ -2056,7 +2085,60 @@ Flickable {
             addOutputId = outputs.length ? String(outputs[0].id || "") : "";
             if (rig) rigRename.text = String(rig.name || "");
         }
-        onOpened: resetChoices()
+        onOpened: {
+            const currentRigId = String((root.selectedRig() || {}).id || "");
+            if (inspectedRigId !== currentRigId) {
+                inspectedRigId = currentRigId;
+                expandedMemberIds = ({});
+                renameVisible = false;
+                addMemberVisible = false;
+                manageOutputsVisible = false;
+                technicalDetailsVisible = false;
+                rigActionsVisible = false;
+            }
+            resetChoices();
+        }
+        footer: Rectangle {
+            objectName: "flightDeckRigDetailsFooter"
+            implicitHeight: footerActions.implicitHeight + deck.space16
+            color: deck.secondarySurface
+            border.width: 1
+            border.color: deck.divider
+            RowLayout {
+                id: footerActions
+                anchors.fill: parent
+                anchors.leftMargin: deck.dialogPadding
+                anchors.rightMargin: deck.dialogPadding
+                anchors.topMargin: deck.space8
+                anchors.bottomMargin: deck.space8
+                spacing: deck.space8
+                RigButton {
+                    objectName: "flightDeckRigSetupHealth"
+                    text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "CHECK SETUP" : "SETUP HEALTH"
+                    subdued: true
+                    enabled: !!rigDetailsContent.rig
+                    onClicked: {
+                        backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []);
+                        rigDetailsDialog.close();
+                        setupHealthDialog.open();
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                RigButton {
+                    objectName: "flightDeckRigUseThis"
+                    visible: !!rigDetailsContent.rig && !rigDetailsContent.rig.configured
+                    text: "USE THIS RIG"
+                    enabled: !!rigDetailsContent.rig && !!rigDetailsContent.rig.enabled
+                    onClicked: root.activateRig(rigDetailsContent.rig)
+                }
+                RigButton {
+                    objectName: "flightDeckRigDetailsClose"
+                    text: "CLOSE"
+                    subdued: true
+                    onClicked: rigDetailsDialog.close()
+                }
+            }
+        }
         contentItem: Flickable {
             width: rigDetailsDialog.availableWidth
             implicitHeight: Math.min(rigDetailsContent.implicitHeight, rigDetailsDialog.maximumBodyHeight)
@@ -2070,18 +2152,61 @@ Flickable {
                 readonly property var rig: root.selectedRig()
                 width: parent.width
                 spacing: deck.space12
-                Text { text: rigDetailsContent.rig ? "Rig ID  ·  " + String(rigDetailsContent.rig.id || "") : "This Rig is no longer available."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
                 RowLayout {
+                    objectName: "flightDeckRigDetailsSummary"
                     Layout.fillWidth: true
-                    FlightDeckStatusChip { tokens: deck; label: rigDetailsContent.rig ? String(rigDetailsContent.rig.setupStatus || rigDetailsContent.rig.healthLabel || "Offline").toUpperCase() : "OFFLINE"; value: root.rigState(rigDetailsContent.rig); tone: root.rigTone(rigDetailsContent.rig) }
-                    Text { Layout.fillWidth: true; text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "Setup has not been checked yet. Run Setup Health to verify the controller, Virtual Output, and isolation." : (rigDetailsContent.rig && rigDetailsContent.rig.unmapped ? "Hardware is active with no Profile mapped. You may create, copy, or choose a Profile without reactivating this Rig." : (rigDetailsContent.rig && rigDetailsContent.rig.configured ? "Configured by the current Profile and this Rig's primary Virtual Output." : "Viewing and editing this Rig does not activate it.")); color: deck.textSecondary; font.pixelSize: deck.scale(10); wrapMode: Text.WordWrap }
-                    RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE" : "SET ACTIVE"; enabled: rigDetailsContent.rig && rigDetailsContent.rig.enabled && !rigDetailsContent.rig.configured; onClicked: root.activateRig(rigDetailsContent.rig) }
+                    FlightDeckStatusChip {
+                        tokens: deck
+                        label: rigDetailsContent.rig && rigDetailsContent.rig.configured ? "ACTIVE RIG" : "NOT ACTIVE"
+                        value: root.rigState(rigDetailsContent.rig)
+                        tone: root.rigTone(rigDetailsContent.rig)
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: rigDetailsContent.rig && rigDetailsContent.rig.configured
+                            ? "This is the active rig. Editing this view does not change which rig is in use."
+                            : "This is not the active rig. Use the explicit action below to make it active."
+                        color: deck.textSecondary
+                        font.family: deck.bodyFont
+                        font.pixelSize: deck.bodySmall
+                        wrapMode: Text.WordWrap
+                    }
+                    RigButton {
+                        objectName: "flightDeckRigRenameToggle"
+                        text: rigDetailsDialog.renameVisible ? "HIDE RENAME" : "RENAME"
+                        subdued: true
+                        enabled: !!rigDetailsContent.rig
+                        onClicked: {
+                            rigDetailsDialog.renameVisible = !rigDetailsDialog.renameVisible;
+                            if (rigDetailsDialog.renameVisible)
+                                rigRename.text = String(rigDetailsContent.rig.name || "");
+                        }
+                    }
                 }
-                Text { text: "RIG NAME"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
-                RowLayout {
+                Text {
+                    objectName: "flightDeckRigSetupImpact"
                     Layout.fillWidth: true
+                    visible: rigDetailsContent.rig && (rigDetailsContent.rig.setupNotChecked
+                        || rigDetailsContent.rig.unmapped
+                        || root.rigTone(rigDetailsContent.rig) === "attention"
+                        || root.rigTone(rigDetailsContent.rig) === "fault")
+                    text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked
+                        ? "Setup has not been checked. Run Setup Health before relying on this rig."
+                        : rigDetailsContent.rig && rigDetailsContent.rig.unmapped
+                          ? "This rig has no mapped profile. You can choose one without activating the rig."
+                          : "This rig needs attention before it is ready to use."
+                    color: root.rigTone(rigDetailsContent.rig) === "fault" ? deck.fault : deck.attention
+                    font.family: deck.bodyFont
+                    font.pixelSize: deck.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    objectName: "flightDeckRigRenameEditor"
+                    Layout.fillWidth: true
+                    visible: rigDetailsDialog.renameVisible
                     TextField {
                         id: rigRename
+                        objectName: "flightDeckRigRename"
                         Layout.fillWidth: true
                         selectByMouse: true
                         color: deck.textPrimary
@@ -2089,9 +2214,11 @@ Flickable {
                         background: Rectangle { radius: deck.radiusControl; color: deck.elevatedSurface; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                     }
                     RigButton { text: "SAVE NAME"; enabled: rigDetailsContent.rig && rigRename.text.trim().length > 0 && rigRename.text.trim() !== String(rigDetailsContent.rig.name || ""); onClicked: root.reportBooleanAction(backend.renameDeviceRig(String(rigDetailsContent.rig.id || ""), rigRename.text), "Rig renamed", "The canonical Device Rig name was updated.", "Rig name was not updated", "Names must be unique and contain text.") }
+                    RigButton { objectName: "flightDeckRigRenameCancel"; text: "CANCEL"; subdued: true; onClicked: { rigRename.text = String((rigDetailsContent.rig || {}).name || ""); rigDetailsDialog.renameVisible = false; } }
                 }
 
-                Text { text: "DEFAULT PROFILE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                Text { text: "DEFAULT PROFILE"; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; font.bold: true }
                 RigCombo {
                     id: defaultRigProfile
                     Layout.fillWidth: true
@@ -2115,14 +2242,15 @@ Flickable {
                             "Rig default Profile was not updated", "Choose a Profile assigned to this Device Rig.");
                     }
                 }
-                Text { text: "Automatic uses compatible Profile resolution. None keeps this Rig active without mapping. An explicit Profile is attempted only after the hardware Rig is active."; color: deck.textSecondary; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Automatic finds a compatible profile. None leaves this rig without a mapping. Choosing a profile does not activate this rig."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
-                Text { text: "PHYSICAL CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
-                Text { text: "Required controllers must be connected, identity-safe, and verified for automatic activation. Optional controllers can be absent without blocking the Rig."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "CONTROLLERS"; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "Required controllers affect readiness; optional controllers may be offline. Open Details to change a controller's rig settings."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Repeater {
                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.members || []) : []
                     delegate: Rectangle {
                         required property var modelData
+                        readonly property bool detailsVisible: rigDetailsDialog.memberDetailsVisible(String(modelData.id || ""))
                         Layout.fillWidth: true
                         implicitHeight: memberDetail.implicitHeight + deck.space20
                         radius: deck.radiusControl
@@ -2139,14 +2267,44 @@ Flickable {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                    Text { text: root.memberState(modelData, rigDetailsContent.rig) + (modelData.connected ? "" : modelData.required ? " — required controllers block automatic selection while offline." : " — optional controllers do not block automatic selection while offline."); color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig)); font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                    Text { text: String(modelData.name || "Controller"); color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.body; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text {
+                                        text: (modelData.connected ? "Connected" : "Offline") + " · "
+                                            + (modelData.required ? "Required" : "Optional")
+                                            + ((rigDetailsContent.rig.outputs || []).length > 1 && rigDetailsDialog.memberOutputName(modelData, rigDetailsContent.rig).length > 0
+                                                ? " · " + rigDetailsDialog.memberOutputName(modelData, rigDetailsContent.rig) : "")
+                                        color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig))
+                                        font.family: deck.bodyFont
+                                        font.pixelSize: deck.bodySmall
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
-                                RigButton { text: modelData.required ? "REQUIRED" : "OPTIONAL"; subdued: !modelData.required; onClicked: root.reportBooleanAction(backend.setDeviceRigMemberRequired(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.required), "Controller requirement updated", !modelData.required ? "This controller is now required for automatic activation." : "This controller is now optional and will not block automatic activation while offline.", "Controller requirement was not updated", "Refresh the Rig and try again.") }
+                                RigButton {
+                                    objectName: "flightDeckRigMemberDetails_" + String(modelData.id || "")
+                                    text: detailsVisible ? "HIDE DETAILS" : "DETAILS"
+                                    subdued: true
+                                    onClicked: rigDetailsDialog.toggleMemberDetails(String(modelData.id || ""))
+                                }
                             }
-                            Text { text: "Expected identity  ·  " + String(modelData.expectedIdentity || "Not recorded") + (modelData.seenIdentity ? "\nSeen identity  ·  " + String(modelData.seenIdentity) : "") + (String(modelData.verificationDetail || "").length ? "\nVerification  ·  " + String(modelData.verificationDetail || "") : ""); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; wrapMode: Text.WrapAnywhere }
+                            Rectangle { visible: detailsVisible; Layout.fillWidth: visible; Layout.preferredHeight: visible ? 1 : 0; color: deck.divider }
+                            Text {
+                                visible: detailsVisible
+                                Layout.fillWidth: visible
+                                text: "Verification: " + root.memberState(modelData, rigDetailsContent.rig)
+                                color: deck.statusColor(root.memberTone(modelData, rigDetailsContent.rig))
+                                font.family: deck.bodyFont
+                                font.pixelSize: deck.bodySmall
+                                wrapMode: Text.WordWrap
+                            }
                             RowLayout {
+                                visible: detailsVisible
                                 Layout.fillWidth: true
+                                RigButton {
+                                    text: modelData.required ? "MAKE OPTIONAL" : "MAKE REQUIRED"
+                                    subdued: true
+                                    onClicked: root.reportBooleanAction(backend.setDeviceRigMemberRequired(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.required), "Controller requirement updated", !modelData.required ? "This controller is now required for automatic activation." : "This controller is now optional and will not block automatic activation while offline.", "Controller requirement was not updated", "Refresh the Rig and try again.")
+                                }
                                 RigCombo {
                                     Layout.fillWidth: true
                                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.outputs || []) : []
@@ -2160,7 +2318,7 @@ Flickable {
                                     }
                                     onActivated: root.reportBooleanAction(backend.setDeviceRigMemberOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), String(currentValue || "")), "Controller output assigned", "This controller will use the selected Virtual Output.", "Controller output was not assigned", "Choose an enabled output in this Rig and try again.")
                                 }
-                                RigButton { text: "OPEN"; subdued: true; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), [String(modelData.id || "")]); rigDetailsDialog.close(); Qt.callLater(function() { root.contentY = Math.max(0, controllersSection.y - deck.space8); }); } }
+                                RigButton { text: "OPEN CONTROLLER"; subdued: true; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), [String(modelData.id || "")]); rigDetailsDialog.close(); Qt.callLater(function() { root.contentY = Math.max(0, controllersSection.y - deck.space8); }); } }
                                 RigButton {
                                     text: modelData.ambiguous ? "IDENTIFY CONTROLLER"
                                         : !modelData.connected ? "RESCAN"
@@ -2177,8 +2335,16 @@ Flickable {
                         }
                     }
                 }
+                RigButton {
+                    objectName: "flightDeckRigAddControllerToggle"
+                    text: rigDetailsDialog.addMemberVisible ? "CANCEL ADD CONTROLLER" : "ADD CONTROLLER"
+                    subdued: true
+                    enabled: !!rigDetailsContent.rig
+                    onClicked: rigDetailsDialog.addMemberVisible = !rigDetailsDialog.addMemberVisible
+                }
                 RowLayout {
                     Layout.fillWidth: true
+                    visible: rigDetailsDialog.addMemberVisible
                     RigCombo {
                         id: rigMemberAdder
                         Layout.fillWidth: true
@@ -2195,39 +2361,64 @@ Flickable {
                         }
                         onActivated: rigDetailsDialog.addMemberId = String(currentValue || "")
                     }
-                    RigButton { text: "ADD CONTROLLER"; enabled: rigMemberAdder.currentIndex >= 0; onClicked: { const controller = root.controllerForCandidate(rigDetailsDialog.addMemberId); const added = controller && controller.id ? backend.addDeviceRigMember(String(rigDetailsContent.rig.id || ""), String(controller.id || ""), true) : controller ? backend.addDetectedDeviceToRig(String(rigDetailsContent.rig.id || ""), String(controller.directInputId || ""), true) : false; root.reportBooleanAction(added, "Controller added", "Review the controller routes and requirement before activation.", "Controller was not added", "Refresh devices or choose a controller that is not already in this Rig."); rigDetailsDialog.resetChoices(); } }
+                    RigButton { objectName: "flightDeckRigAddController"; text: "ADD SELECTED"; enabled: rigMemberAdder.currentIndex >= 0; onClicked: { const controller = root.controllerForCandidate(rigDetailsDialog.addMemberId); const added = controller && controller.id ? backend.addDeviceRigMember(String(rigDetailsContent.rig.id || ""), String(controller.id || ""), true) : controller ? backend.addDetectedDeviceToRig(String(rigDetailsContent.rig.id || ""), String(controller.directInputId || ""), true) : false; root.reportBooleanAction(added, "Controller added", "Review the controller routes and requirement before activation.", "Controller was not added", "Refresh devices or choose a controller that is not already in this Rig."); rigDetailsDialog.resetChoices(); } }
                 }
 
-                Text { text: "VIRTUAL OUTPUTS · PRIMARY REQUIRED"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.topMargin: deck.space4 }
+                Text { text: "VIRTUAL OUTPUTS"; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; font.bold: true; Layout.topMargin: deck.space4 }
                 Repeater {
                     model: rigDetailsContent.rig ? (rigDetailsContent.rig.outputs || []) : []
                     delegate: Rectangle {
                         required property var modelData
                         Layout.fillWidth: true
-                        implicitHeight: outputDetailRow.implicitHeight + deck.space16
+                        implicitHeight: outputDetail.implicitHeight + deck.space16
                         radius: deck.radiusControl
                         color: deck.elevatedSurface
                         border.color: modelData.ready ? deck.border : deck.attention
-                        RowLayout {
-                            id: outputDetailRow
+                        ColumnLayout {
+                            id: outputDetail
                             anchors.fill: parent
                             anchors.margins: deck.space8
                             spacing: deck.space8
-                            ColumnLayout {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                Text { text: (modelData.primary ? "PRIMARY · " : "") + String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: String(modelData.status || "Output unavailable") + "  ·  " + Number(modelData.routeCount || 0) + " configured routes"; color: modelData.ready ? deck.textMuted : deck.attention; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    Text { text: String(modelData.name || "Virtual Output"); color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: deck.body; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Text {
+                                        text: (modelData.primary ? "Primary · " : "Secondary · ")
+                                            + (modelData.enabled ? "Enabled" : "Disabled") + " · "
+                                            + (modelData.ready ? "Available" : "Needs attention")
+                                            + " · " + Number(modelData.routeCount || 0) + " routes"
+                                        color: modelData.ready ? deck.textSecondary : deck.attention
+                                        font.family: deck.bodyFont
+                                        font.pixelSize: deck.bodySmall
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                                RigButton { objectName: "flightDeckRigOutputOpen_" + String(modelData.id || ""); text: "OPEN OUTPUT"; subdued: true; onClicked: { rigDetailsDialog.close(); root.openRigOutput(String(modelData.id || "")); } }
                             }
-                            RigButton { text: "OPEN"; subdued: true; onClicked: { rigDetailsDialog.close(); root.openRigOutput(String(modelData.id || "")); } }
-                            RigButton { text: modelData.primary ? "PRIMARY" : "MAKE PRIMARY"; subdued: !!modelData.primary; enabled: !modelData.primary && !!modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigPrimaryOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Rig primary output updated", "Profiles assigned to this Rig now use this Virtual Output.", "Rig primary output was not updated", "Choose an enabled Virtual Output in this Rig.") }
-                            RigButton { text: modelData.enabled ? "IN USE" : "ENABLE"; subdued: !modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigOutputEnabled(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.enabled), "Virtual Output updated", !modelData.enabled ? "This Virtual Output is enabled for the Rig." : "This Virtual Output is disabled for the Rig.", "Virtual Output was not updated", "A Rig needs at least one enabled, unassigned output.") }
-                            RigButton { text: "REMOVE"; destructive: true; enabled: (rigDetailsContent.rig.outputs || []).length > 1; onClicked: root.reportBooleanAction(backend.removeDeviceRigOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Virtual Output removed", "The output is no longer part of this Rig.", "Virtual Output was not removed", "Move member assignments first, then keep at least one output in the Rig.") }
+                            RowLayout {
+                                visible: rigDetailsDialog.manageOutputsVisible
+                                Layout.fillWidth: true
+                                RigButton { text: modelData.primary ? "PRIMARY" : "MAKE PRIMARY"; subdued: !!modelData.primary; enabled: !modelData.primary && !!modelData.enabled; onClicked: root.reportBooleanAction(backend.setDeviceRigPrimaryOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Rig primary output updated", "Profiles assigned to this Rig now use this Virtual Output.", "Rig primary output was not updated", "Choose an enabled Virtual Output in this Rig.") }
+                                RigButton { text: modelData.enabled ? "DISABLE OUTPUT" : "ENABLE OUTPUT"; subdued: true; onClicked: root.reportBooleanAction(backend.setDeviceRigOutputEnabled(String(rigDetailsContent.rig.id || ""), String(modelData.id || ""), !modelData.enabled), "Virtual Output updated", !modelData.enabled ? "This Virtual Output is enabled for the Rig." : "This Virtual Output is disabled for the Rig.", "Virtual Output was not updated", "A Rig needs at least one enabled, unassigned output.") }
+                                RigButton { text: "REMOVE"; destructive: true; enabled: (rigDetailsContent.rig.outputs || []).length > 1; onClicked: root.reportBooleanAction(backend.removeDeviceRigOutput(String(rigDetailsContent.rig.id || ""), String(modelData.id || "")), "Virtual Output removed", "The output is no longer part of this Rig.", "Virtual Output was not removed", "Move member assignments first, then keep at least one output in the Rig.") }
+                            }
                         }
                     }
                 }
+                RigButton {
+                    objectName: "flightDeckRigManageOutputs"
+                    text: rigDetailsDialog.manageOutputsVisible ? "HIDE OUTPUT MANAGEMENT" : "MANAGE OUTPUTS"
+                    subdued: true
+                    enabled: !!rigDetailsContent.rig
+                    onClicked: rigDetailsDialog.manageOutputsVisible = !rigDetailsDialog.manageOutputsVisible
+                }
                 RowLayout {
                     Layout.fillWidth: true
+                    visible: rigDetailsDialog.manageOutputsVisible
                     RigCombo {
                         id: rigOutputAdder
                         Layout.fillWidth: true
@@ -2248,15 +2439,77 @@ Flickable {
                     RigButton { text: "CREATE OUTPUT"; subdued: true; onClicked: root.openCreateVirtualOutput(String(rigDetailsContent.rig.id || "")) }
                 }
 
-                Text { visible: root.availableOutputChoices(rigDetailsContent.rig).length === 0; text: "No unused Virtual Output is available for this Rig. Create one, or remove an existing output from another Rig first."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { visible: rigDetailsDialog.manageOutputsVisible && root.availableOutputChoices(rigDetailsContent.rig).length === 0; text: "No unused Virtual Output is available for this rig. Create one, or remove an output from another rig first."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; Layout.fillWidth: true; wrapMode: Text.WordWrap }
 
-                Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                RowLayout {
+                Text {
+                    objectName: "flightDeckRigProfileReferences"
                     Layout.fillWidth: true
-                    RigButton { text: rigDetailsContent.rig && rigDetailsContent.rig.setupNotChecked ? "CHECK & SET UP RIG" : "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
-                    Item { Layout.fillWidth: true }
-                    RigButton { text: "DELETE RIG"; destructive: true; enabled: !!rigDetailsContent.rig; onClicked: { deleteRigDialog.rigId = String(rigDetailsContent.rig.id || ""); deleteRigDialog.open(); } }
-                    RigButton { text: "CLOSE"; subdued: true; onClicked: rigDetailsDialog.close() }
+                    readonly property var references: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "")
+                    text: "Used by " + references.length + (references.length === 1 ? " profile" : " profiles")
+                        + (references.length ? ": " + references.join(", ") : ".")
+                    color: deck.textSecondary
+                    font.family: deck.bodyFont
+                    font.pixelSize: deck.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+
+                RigButton {
+                    objectName: "flightDeckRigTechnicalToggle"
+                    text: rigDetailsDialog.technicalDetailsVisible ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"
+                    subdued: true
+                    enabled: !!rigDetailsContent.rig
+                    onClicked: rigDetailsDialog.technicalDetailsVisible = !rigDetailsDialog.technicalDetailsVisible
+                }
+                ColumnLayout {
+                    objectName: "flightDeckRigTechnicalDetails"
+                    Layout.fillWidth: true
+                    visible: rigDetailsDialog.technicalDetailsVisible
+                    spacing: deck.space4
+                    Text { Layout.fillWidth: true; text: "Rig ID: " + String((rigDetailsContent.rig || {}).id || "none"); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.caption; wrapMode: Text.WrapAnywhere }
+                    Repeater {
+                        model: rigDetailsContent.rig ? (rigDetailsContent.rig.members || []) : []
+                        delegate: Text {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            text: "Controller ID: " + String(modelData.id || "none")
+                                + "\nExpected identity: " + String(modelData.expectedIdentity || "Not recorded")
+                                + "\nSeen identity: " + String(modelData.seenIdentity || "Not seen")
+                                + "\nVerification: " + String(modelData.verificationDetail || modelData.verificationState || "Not recorded")
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: deck.caption
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+                    Repeater {
+                        model: rigDetailsContent.rig ? (rigDetailsContent.rig.outputs || []) : []
+                        delegate: Text {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            text: "Output ID: " + String(modelData.id || "none")
+                                + " · " + String(modelData.descriptor || modelData.status || "No descriptor")
+                            color: deck.textMuted
+                            font.family: deck.telemetryFont
+                            font.pixelSize: deck.caption
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+                }
+
+                RigButton {
+                    objectName: "flightDeckRigActionsToggle"
+                    text: rigDetailsDialog.rigActionsVisible ? "HIDE RIG ACTIONS" : "RIG ACTIONS"
+                    destructive: rigDetailsDialog.rigActionsVisible
+                    subdued: !rigDetailsDialog.rigActionsVisible
+                    enabled: !!rigDetailsContent.rig
+                    onClicked: rigDetailsDialog.rigActionsVisible = !rigDetailsDialog.rigActionsVisible
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: rigDetailsDialog.rigActionsVisible
+                    spacing: deck.space6
+                    Text { Layout.fillWidth: true; text: "Deleting a rig is permanent and clears its profile assignments. It never remaps profiles automatically."; color: deck.textSecondary; font.family: deck.bodyFont; font.pixelSize: deck.bodySmall; wrapMode: Text.WordWrap }
+                    RigButton { objectName: "flightDeckRigDelete"; text: "DELETE RIG"; destructive: true; enabled: !!rigDetailsContent.rig; onClicked: { deleteRigDialog.rigId = String(rigDetailsContent.rig.id || ""); deleteRigDialog.open(); } }
                 }
             }
         }

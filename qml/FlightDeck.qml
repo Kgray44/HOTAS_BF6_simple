@@ -317,7 +317,10 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    // Keep the shared title controls inside the same scaled
+                    // vertical rhythm as the rest of the deck at every text
+                    // setting instead of preserving an unscaled 42 px cap.
+                    Layout.preferredHeight: deck.controlHeight
                     Text {
                         objectName: "flightDeckSharedPageTitle"
                         text: root.pageTitle(root.currentPage)

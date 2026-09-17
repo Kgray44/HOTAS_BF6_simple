@@ -2,7 +2,7 @@
 
 ## Boundary and comparison baseline
 
-- Governing material: `HOTAS_BF6_Usability_Implementation_Map_v1.0.md`, `HOTAS_BF6_Pass_A_Codex_Prompt.md`, and the owner correction addendum dated 2026-09-16.
+- Governing material: `HOTAS_BF6_Usability_Implementation_Map_v1.0.md`, `HOTAS_BF6_Pass_A_Codex_Prompt.md`, the owner correction addendum dated 2026-09-16, and the Rig Details and Banner addendum dated 2026-09-17.
 - Candidate: `codex/usability-setup-guidance` in `C:\Users\kkids\Documents\HOTAS_BF6-usability-setup-guidance`.
 - Comparison baseline: accepted `origin/main` at `bdedc52848ec18ddc4f6a387776526dcde1c7ce5` (`v2.6.6`). This candidate was reconciled with that baseline by merge commit `ffd87a4`.
 - Reconciliation conflicts: `qml/FlightDeckOverview.qml`, `qml/Standard.qml`, and `tests/app_qml_startup_tests.cpp`. The resolutions retained accepted v2.6.6 theme/pointer behavior and this pass's non-activating editor selection. No unresolved ownership conflict remains.
@@ -68,6 +68,16 @@
 - `ui_release_contract_tests` also passed with the Qt runtime environment. Its first direct invocation exited before the test body because the Qt runtime path was absent; that runner setup result is not recorded as a contract-test failure.
 - Local QML limit: the single Flight Deck visual/lifecycle path was launched after the successful QML compile but stayed idle without a terminal result and was ended. This is **NO NEW LOCAL QML VERDICT**, not a pass or product-failure claim. It is separate from the older 15-test no-verdict above. The prior head's GitHub CI remains historical evidence only; a new head requires a new CI result.
 - New-head CI: commit `0940adc9c86f71438a07438298af7f04e98befab` passed GitHub **HOTAS BF6 CI** run `35184815806` and its paired **Documentation Check** run `35184815810` on 2026-09-17. The CI completed qualified-Qt QML lint, Release configuration, compilation of the mapper and all tests, and its mapping/automation/launcher/readiness/benchmark suite. This CI result covers the corrected source; it does not convert either local QML no-verdict into a local pass or prove native visual review, physical hardware, or driver behavior.
+
+## Rig Details and context-banner presentation correction (2026-09-17)
+
+- Scope remains Pass A only. The correction is limited to the Flight Deck shared context strip, the Flight Deck header's scaled height, Rig Details composition, its shared dialog body budget, focused QML lifecycle coverage, and this implementation record. It does not change mapping, resolver, driver, installer, release, or persistence semantics.
+- The passive context strip now uses plain-language editing, active, and temporary-profile descriptions; keeps active Rig, viewed-controller, and active-output labels visible as text reflows; and places canonical profile, Rig, controller, and output IDs in an explicit Technical Details disclosure. It does not issue selection, activation, or mapping commands.
+- Rig Details now presents name/status, a concise setup-impact message only when attention is warranted, Required/Optional controller rows, default profile, Virtual Output summaries, profile-reference count, and a fixed footer first. Rename, member routing/verification, add-controller, output administration, raw identities, and destructive Rig actions are explicit on-demand disclosures. `Use this rig` remains the existing explicit resolver-backed command; merely opening, resizing, changing text size/theme, or cancelling Rename is presentation-only.
+- The shared dialog body budget reserves footer height when a footer exists, preventing the fixed action row from being hidden by long, scaled content while preserving the body budget of other dialogs.
+- Focused test coverage drives duplicate-name and same-ID runtime-override context presentation, empty profile context, technical disclosure, Rename cancel, member/output/technical/Rig Action disclosures, deletion confirmation without deletion, and Small/Medium/Large/Extra Large type changes plus a real ThemeManager appearance change with Rig Details open.
+- The focused `app_qml_startup_tests` Flight Deck visual matrix passed for Dark and Light in 69.76 seconds on 2026-09-17. It produced summary, expanded-member, and Extra Large 900×650 captures in `C:\hotas-builds\usability-setup-guidance-evidence\rig-details-20260917-final`. The captures were inspected for composition, disclosure, and footer containment. They are offscreen structural evidence only; the offscreen font fallback means they do not establish native typography, native pointer acceptance, hardware behavior, or owner acceptance.
+- Fresh isolated owner-review candidate: `C:\hotas-builds\usability-setup-guidance-rig-details-review\Release\HOTAS BF6.exe` (SHA-256 `05C3FD32A8CB96EE752320B8EAAD5B992EF2294BEC8893B9E0CD6FCC40B0900B`). It was copied from the clean Release build, launched with `--isolated-presentation`, and remained responsive after five seconds. It remains open for owner review; this establishes only safe candidate launchability, not native visual acceptance, physical input, output, or driver behavior.
 
 ## Matched synthetic mapper benchmark
 

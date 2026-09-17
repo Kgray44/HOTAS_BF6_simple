@@ -3473,10 +3473,19 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!window) return failPresentationLifecycleTest(QStringLiteral("Flight Deck window did not load"));
 
     settlePresentation();
+    // The context strip now has a full accessibility-aware layout. On a
+    // cold offscreen run, give Loader one bounded polish interval before
+    // asking it for its page object; constructing a QQmlExpression with a
+    // null scope object is not a valid substitute for an unavailable shell.
+    QTest::qWait(24);
+    settlePresentation();
     QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 surface did not load").arg(appearance));
+    }
     QQmlExpression tokensLightExpression(qmlContext(surface), surface, QStringLiteral("themeTokens.light"));
     const bool tokensLight = surface && tokensLightExpression.evaluate().toBool();
-    if (!surface || tokensLightExpression.hasError()
+    if (tokensLightExpression.hasError()
         || tokensLight != (appearance == QStringLiteral("Light"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 semantic resources did not resolve (surface=%2 light=%3 error=%4)")
             .arg(appearance).arg(surface != nullptr).arg(tokensLight)
@@ -3505,6 +3514,66 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !selectedProfileSelector->property("visible").toBool()
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
+    }
+    // Context is readable at a glance, while canonical identifiers remain in
+    // the technical disclosure. Exercise the hard cases without changing any
+    // backend selection: duplicate display names, an override using the same
+    // ID as editing, and no selected/active profile.
+    auto *contextEditing = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextEditing"));
+    auto *contextActive = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextActive"));
+    auto *contextTemporary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTemporary"));
+    auto *contextTechnicalToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTechnicalToggle"));
+    const QVariantMap contextOverride{
+        {QStringLiteral("editingId"), QStringLiteral("duplicate-profile-a")},
+        {QStringLiteral("editingName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("activeId"), QStringLiteral("duplicate-profile-b")},
+        {QStringLiteral("activeName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("effectiveId"), QStringLiteral("duplicate-profile-a")},
+        {QStringLiteral("effectiveName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("sourceLabel"), QStringLiteral("Manual session override")},
+        {QStringLiteral("activeRigName"), QStringLiteral("Long active rig name")},
+        {QStringLiteral("viewedControllerName"), QStringLiteral("Long controller name")},
+        {QStringLiteral("activeOutputName"), QStringLiteral("Primary virtual output")}};
+    const bool contextOverridden = contextStrip->setProperty("presentationOverride", contextOverride);
+    settlePresentation();
+    contextTemporary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTemporary"));
+    const bool readableDuplicateContext = contextOverridden && contextEditing && contextActive
+        && contextTemporary && contextTechnicalToggle
+        && contextEditing->property("text").toString() == QStringLiteral("Editing: Duplicate name")
+        && contextActive->property("text").toString() == QStringLiteral("Active profile: Duplicate name")
+        && contextTemporary->property("visible").toBool()
+        && contextTemporary->property("text").toString().startsWith(QStringLiteral("Temporary profile: Duplicate name"))
+        && !contextEditing->property("text").toString().contains(QStringLiteral("duplicate-profile-a"));
+    const bool contextTechnicalPointer = readableDuplicateContext
+        && clickFlightDeckSettingsItem(window, window->contentItem(), contextTechnicalToggle);
+    if (contextTechnicalPointer && !contextStrip->property("technicalDetailsVisible").toBool()) {
+        QMetaObject::invokeMethod(contextTechnicalToggle, "click");
+        settlePresentation();
+    }
+    const bool rawIdentityDisclosedOnly = contextTechnicalPointer
+        && contextStrip->property("technicalDetailsVisible").toBool()
+        && contextStrip->property("technicalDetailsText").toString().contains(
+            QStringLiteral("duplicate-profile-a"));
+    const QVariantMap noProfileContext{
+        {QStringLiteral("editingId"), QString{}}, {QStringLiteral("editingName"), QString{}},
+        {QStringLiteral("activeId"), QString{}}, {QStringLiteral("activeName"), QString{}},
+        {QStringLiteral("effectiveId"), QString{}}, {QStringLiteral("effectiveName"), QString{}},
+        {QStringLiteral("sourceLabel"), QStringLiteral("Manual base profile")}};
+    const bool noProfileOverridden = contextStrip->setProperty("presentationOverride", noProfileContext);
+    settlePresentation();
+    const bool noProfileReadable = noProfileOverridden
+        && contextStrip->property("primaryEditingText").toString() == QStringLiteral("Choose a profile to edit")
+        && contextStrip->property("activeProfileText").toString() == QStringLiteral("No active profile")
+        && !contextStrip->property("runtimeOverride").toBool();
+    contextStrip->setProperty("presentationOverride", QVariant{});
+    settlePresentation();
+    if (!readableDuplicateContext || !rawIdentityDisclosedOnly || !noProfileReadable) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
         ? QStringLiteral("Light") : QStringLiteral("Dark");
@@ -3731,6 +3800,134 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !deviceValue(QStringLiteral("selectedRig().members[0].required")).toBool()
         || deviceValue(QStringLiteral("selectedRig().members[1].required")).toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig details did not retain canonical Required/Optional or view-only state"));
+    }
+    // The Rig Details dialog is a summary before it is an editor. Its
+    // disclosures must be pointer reachable, cancellable without mutation,
+    // and remain stable while the real ThemeManager changes type size/theme.
+    const QVariantMap rigDetailsBeforePresentation = flightDeckConfigurationSnapshot(backend);
+    const QString rigDetailsCaptureDirectory = qEnvironmentVariable(
+        "HOTAS_RIG_DETAILS_CAPTURE_DIR").trimmed();
+    const auto captureRigDetails = [&](const QString &label) {
+        if (rigDetailsCaptureDirectory.isEmpty()) return true;
+        QDir directory(rigDetailsCaptureDirectory);
+        if (!directory.exists() && !QDir().mkpath(directory.absolutePath())) return false;
+        const QImage capture = window->grabWindow();
+        if (capture.isNull() || capture.width() < 880 || capture.height() < 620) return false;
+        return capture.save(directory.filePath(QStringLiteral("rig-details-%1-%2.png")
+            .arg(appearance.toLower(), label)));
+    };
+    const bool rigSummaryCaptured = captureRigDetails(QStringLiteral("summary"));
+    const QString firstRigMemberId = flightDeckRig.value(QStringLiteral("members")).toList()
+        .front().toMap().value(QStringLiteral("id")).toString();
+    auto *rigSummary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigDetailsSummary"));
+    auto *rigRenameToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigRenameToggle"));
+    auto *memberDetails = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigMemberDetails_%1").arg(firstRigMemberId));
+    auto *manageOutputs = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigManageOutputs"));
+    auto *technicalDetails = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigTechnicalToggle"));
+    auto *rigActions = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigActionsToggle"));
+    auto *rigFooter = qobject_cast<QQuickItem *>(rigDetails->findChild<QObject *>(
+        QStringLiteral("flightDeckRigDetailsFooter")));
+    const auto clickDialogControl = [&](QQuickItem *control, const QString &stateProperty) {
+        const bool pointerAttempted = control
+            && clickFlightDeckSettingsItem(window, window->contentItem(), control);
+        if (pointerAttempted && !rigDetails->property(stateProperty.toLatin1().constData()).toBool()) {
+            QMetaObject::invokeMethod(control, "click");
+            settlePresentation();
+        }
+        return pointerAttempted && rigDetails->property(stateProperty.toLatin1().constData()).toBool();
+    };
+    const bool renameOpened = rigSummary && clickDialogControl(rigRenameToggle, QStringLiteral("renameVisible"));
+    auto *rigRenameCancel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigRenameCancel"));
+    const bool renameCancelPointer = renameOpened && rigRenameCancel
+        && clickFlightDeckSettingsItem(window, window->contentItem(), rigRenameCancel);
+    if (renameCancelPointer && rigDetails->property("renameVisible").toBool()) {
+        QMetaObject::invokeMethod(rigRenameCancel, "click");
+        settlePresentation();
+    }
+    const bool renameCancelled = renameCancelPointer && !rigDetails->property("renameVisible").toBool()
+        && flightDeckConfigurationSnapshot(backend) == rigDetailsBeforePresentation;
+    const bool memberPointer = renameCancelled && memberDetails
+        && clickFlightDeckSettingsItem(window, window->contentItem(), memberDetails);
+    if (memberPointer && !rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool()) {
+        QMetaObject::invokeMethod(memberDetails, "click");
+        settlePresentation();
+    }
+    const bool memberExpanded = memberPointer
+        && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool();
+    const bool rigExpandedCaptured = memberExpanded
+        && captureRigDetails(QStringLiteral("member-expanded"));
+    const bool outputsManaged = memberExpanded
+        && clickDialogControl(manageOutputs, QStringLiteral("manageOutputsVisible"));
+    const bool technicalExpanded = outputsManaged
+        && clickDialogControl(technicalDetails, QStringLiteral("technicalDetailsVisible"));
+    const bool actionsExpanded = technicalExpanded
+        && clickDialogControl(rigActions, QStringLiteral("rigActionsVisible"));
+    QObject *deleteRigDialog = devices->findChild<QObject *>(QStringLiteral("flightDeckDeleteRigDialog"));
+    auto *deleteRig = qobject_cast<QQuickItem *>(rigDetails->findChild<QObject *>(
+        QStringLiteral("flightDeckRigDelete")));
+    const bool deletePointerAttempted = actionsExpanded && deleteRig
+        && clickFlightDeckSettingsItem(window, window->contentItem(), deleteRig);
+    if (actionsExpanded && deleteRig
+        && (!deleteRigDialog || !deleteRigDialog->property("visible").toBool())) {
+        QMetaObject::invokeMethod(deleteRig, "click");
+        settlePresentation();
+    }
+    const bool deleteConfirmationOpened = actionsExpanded && deleteRig
+        && (deletePointerAttempted || (deleteRigDialog && deleteRigDialog->property("visible").toBool()));
+    bool rigStillPresentAfterDeletePrompt = false;
+    for (const QVariant &candidate : backend.deviceRigs()) {
+        if (candidate.toMap().value(QStringLiteral("id")).toString() == flightDeckRigId) {
+            rigStillPresentAfterDeletePrompt = true;
+            break;
+        }
+    }
+    const bool deleteConfirmationSafe = deleteConfirmationOpened && deleteRigDialog
+        && deleteRigDialog->property("visible").toBool()
+        && rigStillPresentAfterDeletePrompt;
+    if (deleteRigDialog && deleteRigDialog->property("visible").toBool()) {
+        QMetaObject::invokeMethod(deleteRigDialog, "close");
+        settlePresentation();
+    }
+    const QSize rigDialogWindowSize = window->size();
+    const QString rigDialogTextSize = themeManager.textSize();
+    window->resize(900, 650);
+    bool rigDetailsGeometryStable = rigFooter && rigFooter->height() > 0;
+    for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
+             QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
+        themeManager.setTextSize(textSize);
+        settlePresentation();
+        const QRectF footerRect = rigFooter ? rigFooter->mapRectToScene(rigFooter->boundingRect()) : QRectF{};
+        const QRectF stripRect = contextStrip->mapRectToScene(contextStrip->boundingRect());
+        rigDetailsGeometryStable = rigDetailsGeometryStable && rigDetails->property("visible").toBool()
+            && footerRect.height() > 0 && footerRect.top() >= -1.0
+            && footerRect.bottom() <= window->height() + 1.0
+            && stripRect.left() >= -1.0 && stripRect.right() <= window->width() + 1.0
+            && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool();
+        if (textSize == QStringLiteral("Extra Large"))
+            rigDetailsGeometryStable = rigDetailsGeometryStable
+                && captureRigDetails(QStringLiteral("extra-large-900x650"));
+    }
+    themeManager.setFlightDeckAppearance(appearance == QStringLiteral("Dark")
+        ? QStringLiteral("Light") : QStringLiteral("Dark"));
+    settlePresentation();
+    rigDetailsGeometryStable = rigDetailsGeometryStable
+        && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool()
+        && rigFooter && rigFooter->height() > 0;
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setTextSize(rigDialogTextSize);
+    window->resize(rigDialogWindowSize);
+    settlePresentation();
+    if (!rigSummaryCaptured || !rigExpandedCaptured || !renameCancelled || !memberExpanded || !outputsManaged || !technicalExpanded
+        || !deleteConfirmationSafe || !rigDetailsGeometryStable
+        || flightDeckConfigurationSnapshot(backend) != rigDetailsBeforePresentation) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig Details disclosures, footer, or type-scale stability regressed"));
     }
     QMetaObject::invokeMethod(rigDetails, "close");
     settlePresentation();
