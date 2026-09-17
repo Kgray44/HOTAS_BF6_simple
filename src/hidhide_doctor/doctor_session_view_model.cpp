@@ -52,7 +52,11 @@ QString createDiagnosticBundleDirectory(const QString &parentPath, QString *erro
         .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmsszzz'Z'")));
     for (int sequence = 1; sequence <= 100; ++sequence) {
         const QString name = sequence == 1 ? stem : QStringLiteral("%1-%2").arg(stem).arg(sequence);
-        if (parent.mkdir(name)) return parent.filePath(name);
+        // DoctorReportComposer transactionally promotes this candidate only
+        // after every bundle file has committed.  Reserving the name by
+        // creating the final directory here would expose a partial bundle on
+        // a later write failure.
+        if (!QFileInfo::exists(parent.filePath(name))) return parent.filePath(name);
     }
     if (error) *error = QStringLiteral("Could not reserve a new diagnostic bundle folder in the selected destination.");
     return {};

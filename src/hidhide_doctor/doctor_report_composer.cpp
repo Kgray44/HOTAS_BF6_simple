@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QUuid>
 
 #include <algorithm>
 
@@ -348,15 +349,49 @@ bool DoctorReportComposer::write(const DoctorReportDocument &document, const QSt
 {
     if (destination.trimmed().isEmpty()) { if (error) *error = QStringLiteral("Choose an export destination."); return false; }
     if (format == DoctorReportFormat::DiagnosticBundle) {
-        if (!QDir().mkpath(destination)) { if (error) *error = QStringLiteral("Could not create the diagnostic bundle folder."); return false; }
-        const QDir directory(destination);
+        const QFileInfo finalBundle(destination);
+        QDir parent = finalBundle.dir();
+        if (!parent.exists()) {
+            if (!QDir().mkpath(parent.absolutePath()) || !parent.exists()) {
+                if (error) *error = QStringLiteral("Could not create the diagnostic-bundle parent folder: %1")
+                .arg(QDir::toNativeSeparators(parent.absolutePath()));
+                return false;
+            }
+        }
+        if (finalBundle.exists()) {
+            if (error) *error = QStringLiteral("The diagnostic-bundle folder already exists: %1")
+                .arg(QDir::toNativeSeparators(finalBundle.absoluteFilePath()));
+            return false;
+        }
+
+        // A bundle is one user-visible artifact.  Commit the individual files
+        // in a private sibling directory and expose the final folder only
+        // after every bounded atomic write succeeds.
+        const QString stagingName = QStringLiteral(".%1.partial-%2")
+            .arg(finalBundle.fileName(), QUuid::createUuid().toString(QUuid::WithoutBraces));
+        if (!parent.mkdir(stagingName)) {
+            if (error) *error = QStringLiteral("Could not create a private diagnostic-bundle staging folder.");
+            return false;
+        }
+        const QString stagingPath = parent.filePath(stagingName);
+        const QDir staging(stagingPath);
         const QJsonObject manifest{{QStringLiteral("schemaVersion"), kReportSchemaVersion}, {QStringLiteral("files"), QJsonArray{
             QStringLiteral("report.md"), QStringLiteral("report.json"), QStringLiteral("timeline.json"), QStringLiteral("evidence.json")}}};
-        return atomicWrite(directory.filePath(QStringLiteral("report.md")), document.markdown, error)
-            && atomicWrite(directory.filePath(QStringLiteral("report.json")), document.json, error)
-            && atomicWrite(directory.filePath(QStringLiteral("timeline.json")), document.timelineJson, error)
-            && atomicWrite(directory.filePath(QStringLiteral("evidence.json")), document.evidenceJson, error)
-            && atomicWrite(directory.filePath(QStringLiteral("manifest.json")), QJsonDocument(manifest).toJson(QJsonDocument::Indented), error);
+        const bool written = atomicWrite(staging.filePath(QStringLiteral("report.md")), document.markdown, error)
+            && atomicWrite(staging.filePath(QStringLiteral("report.json")), document.json, error)
+            && atomicWrite(staging.filePath(QStringLiteral("timeline.json")), document.timelineJson, error)
+            && atomicWrite(staging.filePath(QStringLiteral("evidence.json")), document.evidenceJson, error)
+            && atomicWrite(staging.filePath(QStringLiteral("manifest.json")), QJsonDocument(manifest).toJson(QJsonDocument::Indented), error);
+        if (!written) {
+            QDir(stagingPath).removeRecursively();
+            return false;
+        }
+        if (!parent.rename(stagingName, finalBundle.fileName())) {
+            QDir(stagingPath).removeRecursively();
+            if (error) *error = QStringLiteral("Could not finalize the diagnostic bundle folder.");
+            return false;
+        }
+        return true;
     }
     const QByteArray payload = format == DoctorReportFormat::Json ? document.json
         : format == DoctorReportFormat::PlainText ? document.plainText : document.markdown;

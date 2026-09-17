@@ -164,6 +164,7 @@ private slots:
     void phaseFiveBoundedProtocolJournalReportAndPackageFuzz();
     void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
     void phaseFiveReportExportVerifiesDestinationAndReportsPath();
+    void phaseFiveBundleExportIsTransactionalOnFailure();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -1087,6 +1088,41 @@ void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReport
     QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("evidence.json"))));
     QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("manifest.json"))));
     QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(bundleDirectory.absoluteFilePath())));
+}
+
+void HidHideDoctorDomainTests::phaseFiveBundleExportIsTransactionalOnFailure()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    const DoctorReportDocument report = DoctorReportComposer::compose(engine.run(provider).session,
+        QStringLiteral("test-build"), {});
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const QString bundle = directory.filePath(QStringLiteral("transactional-bundle"));
+    QString error;
+    QVERIFY2(DoctorReportComposer::write(report, bundle, DoctorReportFormat::DiagnosticBundle, &error), qPrintable(error));
+    QVERIFY(QFileInfo(bundle).isDir());
+    const QFileInfoList siblings = QDir(directory.path()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sibling : siblings) {
+        QVERIFY2(!sibling.fileName().contains(QStringLiteral(".partial-")), qPrintable(sibling.absoluteFilePath()));
+    }
+
+    const QString blockedParent = directory.filePath(QStringLiteral("not-a-directory"));
+    QFile blocked(blockedParent);
+    QVERIFY(blocked.open(QIODevice::WriteOnly));
+    QVERIFY(blocked.write("occupied") > 0);
+    blocked.close();
+    const QString blockedBundle = QDir(blockedParent).filePath(QStringLiteral("bundle"));
+    error.clear();
+    QVERIFY(!DoctorReportComposer::write(report, blockedBundle, DoctorReportFormat::DiagnosticBundle, &error));
+    QVERIFY(!error.isEmpty());
+    QVERIFY(!QFileInfo::exists(blockedBundle));
+    const QFileInfoList afterFailure = QDir(directory.path()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sibling : afterFailure) {
+        QVERIFY2(!sibling.fileName().contains(QStringLiteral(".partial-")), qPrintable(sibling.absoluteFilePath()));
+    }
 }
 
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
