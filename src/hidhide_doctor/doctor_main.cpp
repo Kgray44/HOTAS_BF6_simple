@@ -25,6 +25,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -133,6 +134,12 @@ QString reconcileIncompleteJournals(const hotas::doctor::ReadOnlyDiagnosticSnaps
 // The controller owns a single bounded worker for a scan.  It never exposes a
 // repair operation; cancellation simply tells the observational provider not
 // to schedule further reads and safely joins the worker on shutdown.
+struct ScanCompletion final {
+    hotas::doctor::DoctorSession session;
+    QString recoveryNotice;
+    QByteArray redactedReport;
+};
+
 class ScanController final {
 public:
     ScanController(hotas::doctor::DoctorSessionViewModel &model, QString reportPath)
@@ -164,28 +171,26 @@ public:
         m_worker = std::thread([this, generation] {
             hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
             hotas::doctor::DoctorDiagnosticEngine engine;
-            hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &m_cancelled,
-                [this, generation](const hotas::doctor::DoctorSession &session) {
-                    const hotas::doctor::DoctorSession copy = session;
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, copy] {
-                        if (generation == m_generation.load()) m_model.replaceSession(copy);
-                    }, Qt::QueuedConnection);
-                });
-            const QString recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
+            hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &m_cancelled);
+            auto completion = std::make_shared<ScanCompletion>();
+            completion->recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
             stampBuildProvenance(outcome);
-            const QByteArray redactedReport = hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true);
+            completion->redactedReport = hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true);
             if (!m_reportPath.isEmpty()) {
                 QFile report(m_reportPath);
                 if (report.open(QIODevice::WriteOnly | QIODevice::Truncate))
-                    report.write(redactedReport);
+                    report.write(completion->redactedReport);
             }
-            const hotas::doctor::DoctorSession finished = outcome.session;
+            completion->session = std::move(outcome.session);
             m_running.store(false);
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished, recoveryNotice, redactedReport] {
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, completion] {
                 if (generation == m_generation.load()) {
-                    m_model.replaceSession(finished);
-                    m_model.setRecoveryNotice(recoveryNotice);
-                    m_model.setRedactedDiagnosticReport(redactedReport);
+                    // The worker transfers its completed session exactly once.
+                    // Do not copy a mutable implicitly-shared session through a
+                    // queued callback: that was the native QtCore crash path.
+                    m_model.replaceSession(std::move(completion->session));
+                    m_model.setRecoveryNotice(std::move(completion->recoveryNotice));
+                    m_model.setRedactedDiagnosticReport(std::move(completion->redactedReport));
                 }
             }, Qt::QueuedConnection);
         });
@@ -310,13 +315,15 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
+    const bool scanSmoke = hasArgument(argc, argv, "--scan-smoke");
     const QString integrationToken = argumentValue(argc, argv, "--integration-context");
     // Only the interactive production workstation is single-instance. The
     // explicit headless, fixture, and startup-smoke paths remain independent
     // verification processes and must never bind to an owner's open Doctor.
     const bool interactiveProductionWindow = !fixtureMode
         && !hasArgument(argc, argv, "--headless")
-        && !hasArgument(argc, argv, "--startup-smoke");
+        && !hasArgument(argc, argv, "--startup-smoke")
+        && !scanSmoke;
     if (interactiveProductionWindow && forwardToExistingDoctor(integrationToken)) return 0;
     std::optional<QLocalServer> instanceServer;
     if (interactiveProductionWindow) {
@@ -471,6 +478,19 @@ int main(int argc, char *argv[])
                 hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Diagnosis complete"),
                     QStringLiteral("A fresh read-only scan completed; HOTAS BF6 may refresh its low-frequency readiness view."));
             });
+    }
+    bool scanSmokeFinished = false;
+    if (scanSmoke) {
+        QObject::connect(&viewModel, &hotas::doctor::DoctorSessionViewModel::sessionChanged, &application,
+            [&application, &viewModel, &scanSmokeFinished] {
+                if (!viewModel.scanRunning() && !scanSmokeFinished) {
+                    scanSmokeFinished = true;
+                    QTimer::singleShot(750, &application, &QCoreApplication::quit);
+                }
+            });
+        // A scan-smoke timeout is a test failure. It remains a read-only
+        // verification process and never claims an interactive owner window.
+        QTimer::singleShot(30000, &application, [] { QCoreApplication::exit(2); });
     }
     controller.start();
     if (hasArgument(argc, argv, "--startup-smoke")) QTimer::singleShot(0, &application, &QCoreApplication::quit);
