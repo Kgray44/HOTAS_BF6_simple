@@ -104,6 +104,7 @@ class AppBackend final : public QObject {
     // always-live Flight Deck shell merely to recompute profile text.
     Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged)
     Q_PROPERTY(QString effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged)
+    Q_PROPERTY(QString effectiveProfileId READ effectiveProfileId NOTIFY profilePresentationChanged)
     Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
@@ -373,6 +374,14 @@ public:
     // unverified. These seams exercise member-scoped UI/control-plane truth
     // without enumerating the owner's DirectInput devices.
     bool configureMultiControllerRigFixtureForTest();
+    bool setEffectiveProfileOverrideForTest(const QString &profileId, int physicalButton = 1);
+    // Publishes one exact member's fixed runtime snapshot for the independent
+    // input-inspection contract. It cannot select a Rig, start mapping, or
+    // acquire an output; tests use it to prove one controller never borrows
+    // another member's controls.
+    bool publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
+                                                     float axisValue, bool buttonPressed,
+                                                     int povValue);
     bool commitExactControllerVerificationForTest(const QString &recordId);
     bool disconnectFixtureControllerForTest(const QString &recordId);
     QString hidHideHealthContextKeyForTest() const;
@@ -1224,6 +1233,10 @@ private:
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
+    int activeRigMemberIndexForRecord(const QString &recordId) const;
+    void requestReadOnlyPhysicalInputProbe();
+    void acceptReadOnlyPhysicalInputProbe(quint64 sessionId,
+                                          const DirectInputControllerProbe &probe);
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
     void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
@@ -1480,9 +1493,11 @@ private:
     quint64 m_setupAssistantOutputBaseline = 0;
     std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
     std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
-    // Devices can offer a passive input check before a controller belongs to
-    // a Rig or Profile. These transient fields are GUI-side snapshots of the
-    // existing worker counter; MappingWorker performs no test bookkeeping.
+    // Devices can offer an input-only inspection before a controller belongs
+    // to a Rig or Profile.  Active Rig members use their own existing worker
+    // atomics.  Every other target uses a bounded, nonexclusive DirectInput
+    // snapshot on a control-plane thread; neither path changes activation,
+    // driver state, mapping choice, or virtual output.
     bool m_readOnlyPhysicalInputTestActive = false;
     QString m_readOnlyPhysicalInputTestRecordId;
     QString m_readOnlyPhysicalInputTestDirectInputId;
@@ -1491,6 +1506,18 @@ private:
     int m_readOnlyPhysicalInputTestButtonCount = 0;
     int m_readOnlyPhysicalInputTestPovCount = 0;
     quint64 m_readOnlyPhysicalInputTestBaseline = 0;
+    quint64 m_readOnlyPhysicalInputTestSessionId = 0;
+    quint64 m_readOnlyPhysicalInputTestSampleSequence = 0;
+    bool m_readOnlyPhysicalInputTestProbeInFlight = false;
+    bool m_readOnlyPhysicalInputTestProbeAttempted = false;
+    bool m_readOnlyPhysicalInputTestProbeAcquired = false;
+    QString m_readOnlyPhysicalInputTestProbeDiagnostic;
+    QString m_readOnlyPhysicalInputTestProbeHidInstanceId;
+    QVariantList m_readOnlyPhysicalInputTestProbeAxes;
+    QVariantList m_readOnlyPhysicalInputTestProbeButtons;
+    QVariantList m_readOnlyPhysicalInputTestProbePovs;
+    QPointer<QThread> m_readOnlyPhysicalInputTestProbeThread;
+    QTimer m_readOnlyPhysicalInputTestProbeTimer;
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;

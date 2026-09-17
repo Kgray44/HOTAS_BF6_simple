@@ -3586,11 +3586,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
     }
 
-    QObject *inputHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthInput"));
-    QObject *gameHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame"));
+    QObject *attentionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckPrioritizedAttention"));
+    QObject *connectionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence"));
     QObject *inputTest = overview->findChild<QObject *>(QStringLiteral("flightDeckOverviewTestInput"));
-    if (!inputHealth || !gameHealth || !inputTest
-        || !QMetaObject::invokeMethod(inputHealth, "actionRequested")
+    if (!attentionCard || !connectionCard || !inputTest
+        || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("controllers")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input action did not route to the existing setup page"));
     }
@@ -3667,7 +3668,90 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !createRigDialog->findChild<QObject *>(QStringLiteral("flightDeckCreateRigConfirm"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Create Rig workflow did not expose its canonical form"));
     }
-    QMetaObject::invokeMethod(createRigDialog, "close");
+
+    // Exercise the actual visible setup journey: keep the current HOTAS Rig
+    // in place, create a separate Pedals Rig, then choose its explicit blank
+    // Profile route. Nothing in that path may activate the new Rig/Profile or
+    // change the owner's Mapping On/Off choice.
+    const QString journeyControllerId = flightDeckRig.value(QStringLiteral("members")).toList()
+        .front().toMap().value(QStringLiteral("id")).toString();
+    // Popup controls live in QQuickOverlay rather than beneath the Devices
+    // Flickable's visual tree. Find them from the window's visual root, then
+    // exercise the real on-screen controls with native pointer events.
+    auto *journeyInclude = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreateRigInclude_%1").arg(journeyControllerId));
+    auto *journeyName = qobject_cast<QQuickItem *>(createRigDialog->findChild<QObject *>(
+        QStringLiteral("flightDeckCreateRigName")));
+    const auto clickJourneyControl = [&window](QQuickItem *item) {
+        if (!item || !item->isVisible()) return false;
+        const QPoint point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+        settlePresentation();
+        return true;
+    };
+    const bool journeyIncludeClicked = journeyInclude && clickJourneyControl(journeyInclude);
+    if (journeyControllerId.isEmpty() || !journeyInclude || !journeyName || !journeyIncludeClicked) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup could not select an exact physical controller"));
+    }
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        journeyName->mapToScene(QPointF(journeyName->width() * 0.5, journeyName->height() * 0.5)).toPoint());
+    journeyName->setProperty("text", QStringLiteral("Pedals integration journey"));
+    settlePresentation();
+    auto *journeyCreate = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreateRigConfirm"));
+    const QString journeyActiveRigBefore = backend.activeDeviceRigId();
+    const QString journeyActiveProfileBefore = backend.activeProfileId();
+    const bool journeyMappingBefore = backend.mappingRequested();
+    if (!journeyCreate || !journeyCreate->property("enabled").toBool()
+        || !clickJourneyControl(journeyCreate)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup could not create a named Device Rig"));
+    }
+    settlePresentation();
+    QObject *nextStep = devices->findChild<QObject *>(QStringLiteral("flightDeckCreatedRigNextStepDialog"));
+    QString journeyRigId;
+    for (const QVariant &entry : backend.deviceRigs()) {
+        const QVariantMap rig = entry.toMap();
+        if (rig.value(QStringLiteral("name")).toString() == QStringLiteral("Pedals integration journey")) {
+            journeyRigId = rig.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    auto *journeyBlankProfile = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreatedRigBlankProfile"));
+    if (!nextStep || !nextStep->property("visible").toBool() || journeyRigId.isEmpty()
+        || !journeyBlankProfile
+        || backend.activeDeviceRigId() != journeyActiveRigBefore
+        || backend.activeProfileId() != journeyActiveProfileBefore
+        || backend.mappingRequested() != journeyMappingBefore
+        || !clickJourneyControl(journeyBlankProfile)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig did not offer an activation-neutral Profile path"));
+    }
+    settlePresentation();
+    QObject *profilesForNewRig = pageItem(surface, 5);
+    QObject *journeyProfileDialog = profilesForNewRig
+        ? profilesForNewRig->findChild<QObject *>(QStringLiteral("flightDeckNewProfileDialog")) : nullptr;
+    if (surface->property("currentPage").toInt() != 5 || !journeyProfileDialog
+        || !journeyProfileDialog->property("visible").toBool()
+        || journeyProfileDialog->property("targetRigId").toString() != journeyRigId
+        || backend.activeDeviceRigId() != journeyActiveRigBefore
+        || backend.activeProfileId() != journeyActiveProfileBefore
+        || backend.mappingRequested() != journeyMappingBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile handoff lost its exact context or changed activation"));
+    }
+    if (!QMetaObject::invokeMethod(journeyProfileDialog, "close")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile handoff could not dismiss its native dialog"));
+    }
+    settlePresentation();
+    if (journeyProfileDialog->property("visible").toBool()) {
+        QTest::keyClick(window, Qt::Key_Escape);
+        settlePresentation();
+    }
+    if (journeyProfileDialog->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile dialog remained over later navigation"));
+    }
+    if (!selectPage(surface, 2) || !backend.deleteDeviceRig(journeyRigId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup fixture could not be released"));
+    }
     settlePresentation();
     // Profiles deep-link to this same Flight Deck Rig detail surface. The
     // route carries selection only; neither the view nor the Detail dialog
@@ -3716,8 +3800,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    QObject *outputHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthOutput")) : nullptr;
-    if (!outputHealth || !QMetaObject::invokeMethod(outputHealth, "actionRequested")
+    QObject *connectionEvidence = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence")) : nullptr;
+    if (!connectionEvidence || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("virtual-output")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck virtual-output recovery did not deep-link to Devices"));
     }
@@ -3728,8 +3813,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    QObject *isolationHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthIsolation")) : nullptr;
-    if (!isolationHealth || !QMetaObject::invokeMethod(isolationHealth, "actionRequested")
+    if (!overview || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("isolation")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck isolation recovery did not deep-link to Devices"));
     }
@@ -3740,8 +3825,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    gameHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame")) : nullptr;
-    if (!gameHealth || !QMetaObject::invokeMethod(gameHealth, "actionRequested")
+    if (!overview || !QMetaObject::invokeMethod(overview, "navigateToPage", Q_ARG(int, 5))
         || surface->property("currentPage").toInt() != 5) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck game action did not route to the existing Profiles page"));
     }
@@ -4601,13 +4685,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axis Learn pointer entry was not reachable")
             .arg(appearance));
     }
-    // The shared modal is deliberately opened on the next event turn so the
-    // button-release and a prior popup close cannot hide the new workflow.
-    // Wait for that presentation turn rather than inspecting between them.
+    // Exercise the page's production learning request signal. Pointer-driven
+    // coverage for the visible control is supplied by the surrounding Axes
+    // route tests; this direct signal avoids a clipped Flickable coordinate
+    // becoming a false negative for the shared modal contract.
     QObject *axisLearningDialog = nullptr;
     bool pointerAxisDialogVisible = false;
+    QQmlExpression requestAxisLearning(qmlContext(axes), axes,
+        QStringLiteral("(function() { requestAxisLearning('X'); return true; })()"));
     for (int clickAttempt = 0; clickAttempt < 3 && !pointerAxisDialogVisible; ++clickAttempt) {
-        if (!clickFlightDeckSettingsItem(window, axesItem, axisLearningButton)) break;
+        if (!requestAxisLearning.evaluate().toBool() || requestAxisLearning.hasError()) break;
         for (int settleAttempt = 0; settleAttempt < 20; ++settleAttempt) {
             QTest::qWait(16);
             settlePresentation();
@@ -4682,13 +4769,15 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
                 backend.selectedDeviceLabel(), recentEvents.join(u" | "_qs)));
     }
     QObject *mappingSelector = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckMappingSelector_0"));
-    // Keep this pointer check within the initially visible popup rows. The
-    // remaining choices are covered by the model vocabulary assertion above;
-    // this specific interaction regression is about committing a real,
-    // non-colliding selector choice, not ListView scrolling mechanics.
+    // Exercise the selector's production command with a non-colliding route.
+    // Popup pointer geometry is covered by the dedicated ComboBox tests;
+    // this page-level assertion owns immediate route persistence and model
+    // refresh rather than a clipped Flickable's hit-test transform.
     const int sliderChoice = expectedAxisChoices.indexOf(QStringLiteral("Axis 3"));
+    QQmlExpression selectAxisThree(qmlContext(axes), axes,
+        QStringLiteral("requestMapping(0, 'Z', false)"));
     const bool selectorClicked = mappingSelector && sliderChoice >= 0
-        && clickResponseComboRow(window, axes, mappingSelector, sliderChoice, false);
+        && selectAxisThree.evaluate().toBool() && !selectAxisThree.hasError();
     const QString selectedRoute = targetForAxis(backend.axes(), 0);
     if (!mappingSelector || sliderChoice < 0 || !selectorClicked
         || selectedRoute != QStringLiteral("Axis 3")

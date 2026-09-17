@@ -1630,6 +1630,7 @@ Page {
                 notificationCenter: root.notificationCenter
                 profileCreationRequest: root.flightDeckProfileCreationRequest
                 presentationState: root.flightDeckProfilesPresentationState
+                onProfileCreationRequestConsumed: root.flightDeckProfileCreationRequest = ({})
                 onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
                 onNavigateToPage: function(page) { root.currentPage = page }
                 onNavigateToDeviceRig: function(rigId) {

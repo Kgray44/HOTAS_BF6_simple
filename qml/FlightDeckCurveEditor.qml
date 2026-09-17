@@ -304,7 +304,7 @@ Flickable {
                                 for (let index = 0; index < profiles.length; ++index) {
                                     if (String(profiles[index].id || "") === selectedId) return index
                                 }
-                                return 0
+                                return -1
                             }
                             // Choosing a curve-editing target must remain a view/edit
                             // operation. Runtime activation stays an explicit Profile action.

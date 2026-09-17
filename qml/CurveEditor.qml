@@ -401,7 +401,7 @@ Item {
                                 for (let index = 0; index < profiles.length; ++index) {
                                     if (String(profiles[index].id || "") === selectedId) return index
                                 }
-                                return 0
+                                return -1
                             }
                             onActivated: backendObject.selectProfileForEditing(currentValue)
                         }

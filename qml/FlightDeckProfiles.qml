@@ -44,6 +44,10 @@ Flickable {
     signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
+    // The shell owns the request value. A one-shot handoff must clear it
+    // after this page has consumed it, otherwise recreating the lazy Profile
+    // page can reopen a stale dialog and pull later navigation back here.
+    signal profileCreationRequestConsumed()
     signal presentationStateCaptured(var state)
 
     readonly property var categories: categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined ? categoriesPresentationOverride : backend.profileCategories
@@ -206,6 +210,7 @@ Flickable {
         if (!token || token === consumedProfileCreationToken)
             return;
         consumedProfileCreationToken = token;
+        profileCreationRequestConsumed();
         const mode = String(request.mode || "choose");
         if (mode === "choose") {
             compatibleRigId = String(request.rigId || "");

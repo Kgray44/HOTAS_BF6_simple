@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <utility>
 
@@ -1281,6 +1282,16 @@ bool verifySelectedProfileEditorContext()
     }
     backend->setActivationFaultInjectionsForTest({});
 
+    const auto profileEffective = [&backend](const QString &id) {
+        for (const QVariant &entry : backend->profiles()) {
+            const QVariantMap profile = entry.toMap();
+            if (profile.value(QStringLiteral("id")).toString() == id)
+                return profile.value(QStringLiteral("effective")).toBool()
+                    && profile.value(QStringLiteral("effectiveSource")).toString()
+                        != QStringLiteral("Manual base profile");
+        }
+        return false;
+    };
     if (!backend->activateProfile(helicopterProfileId)
         || backend->activeProfileId() != helicopterProfileId
         || backend->selectedProfileId() != helicopterProfileId
@@ -1296,14 +1307,30 @@ bool verifySelectedProfileEditorContext()
         std::fprintf(stderr, "selected Profile did not remain independent of manual and automatic activation\n");
         return false;
     }
+    // The context strip must use canonical IDs, not names: Active A,
+    // Editing B, and an override Effective B are three distinct facts even
+    // when the effective Profile happens to equal the editor selection.
+    if (!backend->activateProfile(helicopterProfileId)
+        || !backend->selectProfileForEditing(precisionProfileId)
+        || !backend->setEffectiveProfileOverrideForTest(precisionProfileId, 3)
+        || backend->activeProfileId() != helicopterProfileId
+        || backend->selectedProfileId() != precisionProfileId
+        || !profileEffective(precisionProfileId)
+        || backend->selectProfileForEditing(QStringLiteral("missing-profile"))
+        || backend->selectedProfileId() != precisionProfileId) {
+        std::fprintf(stderr, "selected, active, and effective Profile identities were not independently retained\n");
+        return false;
+    }
     return true;
 }
 
 bool verifyReadOnlyPhysicalInputTest()
 {
-    constexpr auto kRecordId = "activation-transaction-controller";
+    constexpr auto kPrimaryRecordId = "activation-transaction-controller";
+    constexpr auto kRecordId = "multi-controller-xbox";
     auto backend = std::make_unique<hotas::AppBackend>();
-    if (!backend->configureSetupTruthReadyToActivateFixtureForTest()) {
+    if (!backend->configureMultiControllerRigFixtureForTest()
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.25F, false, -1)) {
         std::fprintf(stderr, "read-only input fixture could not be configured\n");
         return false;
     }
@@ -1318,8 +1345,11 @@ bool verifyReadOnlyPhysicalInputTest()
     const QVariantMap test = backend->readOnlyPhysicalInputTest();
     if (!result.value(QStringLiteral("success")).toBool()
         || !test.value(QStringLiteral("active")).toBool()
+        || test.value(QStringLiteral("session")).toString() != QStringLiteral("active-rig-member")
+        || !test.value(QStringLiteral("available")).toBool()
         || test.value(QStringLiteral("recordId")).toString() != QLatin1String(kRecordId)
         || test.value(QStringLiteral("axisCount")).toInt() <= 0
+        || test.value(QStringLiteral("axes")).toList().isEmpty()
         || test.value(QStringLiteral("state")).toString().isEmpty()
         || backend->activeProfileId() != activeProfileBefore
         || backend->selectedProfileId() != selectedProfileBefore
@@ -1327,7 +1357,62 @@ bool verifyReadOnlyPhysicalInputTest()
         || backend->editingDeviceRigId() != editingRigBefore
         || backend->vjoyDeviceId() != outputBefore
         || backend->mappingRequested() != mappingRequestedBefore) {
-        std::fprintf(stderr, "read-only input test changed configuration or did not expose passive controller evidence\n");
+        std::fprintf(stderr,
+                     "read-only input evidence failed: success=%d active=%d session=%s available=%d record=%s "
+                     "axisCount=%d axes=%lld state=%s profileStable=%d selectedStable=%d rigStable=%d "
+                     "editingStable=%d outputStable=%d mappingStable=%d\n",
+                     result.value(QStringLiteral("success")).toBool(),
+                     test.value(QStringLiteral("active")).toBool(),
+                     test.value(QStringLiteral("session")).toString().toUtf8().constData(),
+                     test.value(QStringLiteral("available")).toBool(),
+                     test.value(QStringLiteral("recordId")).toString().toUtf8().constData(),
+                     test.value(QStringLiteral("axisCount")).toInt(),
+                     static_cast<long long>(test.value(QStringLiteral("axes")).toList().size()),
+                     test.value(QStringLiteral("state")).toString().toUtf8().constData(),
+                     backend->activeProfileId() == activeProfileBefore,
+                     backend->selectedProfileId() == selectedProfileBefore,
+                     backend->activeDeviceRigId() == activeRigBefore,
+                     backend->editingDeviceRigId() == editingRigBefore,
+                     backend->vjoyDeviceId() == outputBefore,
+                     backend->mappingRequested() == mappingRequestedBefore);
+        return false;
+    }
+
+    // The active Rig has two physical members. Changing the primary must not
+    // advance this optional controller's test or borrow its button/POV/axis
+    // values; only a publication from the requested record can do so.
+    if (!backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kPrimaryRecordId),
+                                                               0.75F, true, 9000)) {
+        std::fprintf(stderr, "primary input fixture could not publish\n");
+        return false;
+    }
+    const QVariantMap afterOtherController = backend->readOnlyPhysicalInputTest();
+    const QVariantList otherAxes = afterOtherController.value(QStringLiteral("axes")).toList();
+    const double optionalAxisBefore = otherAxes.isEmpty() ? 99.0
+        : otherAxes.front().toMap().value(QStringLiteral("value")).toDouble();
+    if (afterOtherController.value(QStringLiteral("inputDetected")).toBool()
+        || std::abs(optionalAxisBefore + 0.25) > 0.001
+        || afterOtherController.value(QStringLiteral("buttons")).toList().isEmpty()
+        || afterOtherController.value(QStringLiteral("buttons")).toList().front().toMap()
+               .value(QStringLiteral("pressed")).toBool()) {
+        std::fprintf(stderr, "read-only input test borrowed another controller's state\n");
+        return false;
+    }
+
+    if (!backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId),
+                                                               0.80F, true, 18000)) {
+        std::fprintf(stderr, "requested input fixture could not publish\n");
+        return false;
+    }
+    const QVariantMap afterRequestedController = backend->readOnlyPhysicalInputTest();
+    if (!afterRequestedController.value(QStringLiteral("inputDetected")).toBool()
+        || afterRequestedController.value(QStringLiteral("buttons")).toList().isEmpty()
+        || !afterRequestedController.value(QStringLiteral("buttons")).toList().front().toMap()
+               .value(QStringLiteral("pressed")).toBool()
+        || afterRequestedController.value(QStringLiteral("povs")).toList().isEmpty()
+        || afterRequestedController.value(QStringLiteral("povs")).toList().front().toMap()
+               .value(QStringLiteral("value")).toInt() != 18000) {
+        std::fprintf(stderr, "read-only input test did not publish exact controller state\n");
         return false;
     }
 

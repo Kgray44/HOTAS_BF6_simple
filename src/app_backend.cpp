@@ -539,6 +539,12 @@ AppBackend::AppBackend(QObject *parent)
         if (refreshButtonUiModelRuntimeState()) emit buttonTelemetryChanged();
     });
     connect(&m_numericTelemetryTimer, &QTimer::timeout, this, &AppBackend::refreshNumericTelemetry);
+    // An unassigned controller is sampled only after the owner explicitly
+    // opens its input inspector.  The timer never runs discovery or mapper
+    // work and refuses to overlap bounded DirectInput probes.
+    m_readOnlyPhysicalInputTestProbeTimer.setInterval(250);
+    connect(&m_readOnlyPhysicalInputTestProbeTimer, &QTimer::timeout, this,
+            &AppBackend::requestReadOnlyPhysicalInputProbe);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     m_setupTruthStartupInspectionTimer.setSingleShot(true);
     connect(&m_setupTruthStartupInspectionTimer, &QTimer::timeout, this,
@@ -754,6 +760,12 @@ AppBackend::~AppBackend()
     }
     if (m_gameDetectionThread) {
         QThread *thread = m_gameDetectionThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_readOnlyPhysicalInputTestProbeThread) {
+        QThread *thread = m_readOnlyPhysicalInputTestProbeThread;
         thread->disconnect(this);
         thread->wait(5000);
         delete thread;
@@ -2892,6 +2904,49 @@ bool AppBackend::configureMultiControllerRigFixtureForTest()
     m_setupTruthCheckSnapshot = m_setupTruthSnapshot;
     emit deviceRigsChanged();
     emit stateChanged();
+    return true;
+}
+
+bool AppBackend::setEffectiveProfileOverrideForTest(const QString &profileId, int physicalButton)
+{
+    const QString requestedId = profileId.trimmed();
+    const auto profile = std::find_if(m_configuration.profiles.cbegin(), m_configuration.profiles.cend(),
+        [&requestedId](const ControllerProfile &candidate) { return candidate.id == requestedId; });
+    if (profile == m_configuration.profiles.cend()) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.effectiveProfileIndex = static_cast<int>(std::distance(m_configuration.profiles.cbegin(), profile));
+    runtime.profileOverrideMode = static_cast<int>(ProfileTriggerMode::Hold);
+    runtime.profileOverrideButton = std::max(1, physicalButton);
+    runtime.profileOverridePovHat = -1;
+    runtime.profileOverridePovDirection = -1;
+    runtime.profileOverrideAutomationRule = -1;
+    publishProfilePresentationIfChanged();
+    return true;
+}
+
+bool AppBackend::publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
+                                                             float axisValue, bool buttonPressed,
+                                                             int povValue)
+{
+    const int memberIndex = activeRigMemberIndexForRecord(recordId.trimmed());
+    if (memberIndex < 0) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    AtomicAdaptiveTelemetry &source = memberIndex == 0
+        ? static_cast<AtomicAdaptiveTelemetry &>(runtime)
+        : runtime.deviceRigMemberAdaptive[static_cast<size_t>(memberIndex)];
+    source.physicalConnected = true;
+    source.raw[0] = axisValue;
+    source.normalized[0] = axisValue;
+    if (memberIndex == 0) {
+        runtime.physicalConnected = true;
+        runtime.physicalButtonPressed[0] = buttonPressed;
+        runtime.povValues[0] = povValue;
+    }
+    runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)] = true;
+    runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(memberIndex)][0] = buttonPressed;
+    runtime.deviceRigMemberPovValues[static_cast<size_t>(memberIndex)][0] = povValue;
+    runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].fetch_add(
+        1, std::memory_order_relaxed);
     return true;
 }
 
@@ -10226,16 +10281,64 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
             break;
         }
     }
-    const PhysicalControllerCapabilities physical = currentPhysicalCapabilities();
-    const bool connected = discovered && discovered->connected;
-    // DirectInput may have discovered a controller that the mapper is not
-    // currently acquiring. Do not borrow that other controller's telemetry:
-    // the read-only test is only truthful for this exact current identity.
-    const bool available = connected && physical.connected
-        && m_readOnlyPhysicalInputTestDirectInputId == physical.directInputId;
-    const quint64 sequence = m_worker.runtime().meaningfulInputSequence.load(std::memory_order_relaxed);
+    const int memberIndex = activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId);
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const bool activeRigSession = memberIndex >= 0;
+    const bool discoveredConnected = discovered && discovered->connected;
+    const bool memberConnected = activeRigSession && (memberIndex == 0
+        ? runtime.physicalConnected.load(std::memory_order_relaxed)
+        : runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed));
+    const bool connected = activeRigSession ? (memberConnected || discoveredConnected) : discoveredConnected;
+    const bool available = activeRigSession ? memberConnected : m_readOnlyPhysicalInputTestProbeAcquired;
+    const quint64 sequence = activeRigSession
+        ? runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed)
+        : m_readOnlyPhysicalInputTestSampleSequence;
     const bool detected = m_readOnlyPhysicalInputTestActive && available
         && sequence > m_readOnlyPhysicalInputTestBaseline;
+    QVariantList axes = m_readOnlyPhysicalInputTestProbeAxes;
+    QVariantList buttons = m_readOnlyPhysicalInputTestProbeButtons;
+    QVariantList povs = m_readOnlyPhysicalInputTestProbePovs;
+    if (activeRigSession) {
+        const AtomicAdaptiveTelemetry &source = memberIndex == 0
+            ? static_cast<const AtomicAdaptiveTelemetry &>(runtime)
+            : runtime.deviceRigMemberAdaptive[static_cast<size_t>(memberIndex)];
+        axes.clear();
+        buttons.clear();
+        povs.clear();
+        const int axisLimit = std::min(m_readOnlyPhysicalInputTestAxisCount, kPhysicalAxisCount);
+        for (int axis = 0; axis < axisLimit; ++axis) {
+            const NativeAxisDescriptor descriptor = record
+                ? record->axisDescriptors[static_cast<size_t>(axis)] : NativeAxisDescriptor{};
+            // Older verified records predate explicit axis descriptors.  Their
+            // saved physical count still identifies real axes; show that
+            // exact count with an ordinal label rather than hiding live
+            // evidence or substituting another controller's labels.
+            const QString label = descriptor.present
+                ? physicalAxisDisplayLabel(descriptor, static_cast<PhysicalAxis>(axis))
+                : QString(u"Axis %1"_qs).arg(axis + 1);
+            axes.append(QVariantMap{{u"index"_qs, axis},
+                {u"label"_qs, label},
+                {u"value"_qs, source.raw[static_cast<size_t>(axis)].load(std::memory_order_relaxed)}});
+        }
+        const int buttonLimit = std::min(m_readOnlyPhysicalInputTestButtonCount, kMaximumPhysicalButtons);
+        for (int button = 0; button < buttonLimit; ++button) {
+            const bool pressed = memberIndex == 0
+                ? runtime.physicalButtonPressed[static_cast<size_t>(button)].load(std::memory_order_relaxed)
+                : runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(memberIndex)]
+                    [static_cast<size_t>(button)].load(std::memory_order_relaxed);
+            buttons.append(QVariantMap{{u"index"_qs, button + 1}, {u"pressed"_qs, pressed}});
+        }
+        const int povLimit = std::min(m_readOnlyPhysicalInputTestPovCount, kMaximumPhysicalPovs);
+        for (int pov = 0; pov < povLimit; ++pov) {
+            const int value = memberIndex == 0
+                ? runtime.povValues[static_cast<size_t>(pov)].load(std::memory_order_relaxed)
+                : runtime.deviceRigMemberPovValues[static_cast<size_t>(memberIndex)]
+                    [static_cast<size_t>(pov)].load(std::memory_order_relaxed);
+            povs.append(QVariantMap{{u"index"_qs, pov + 1}, {u"value"_qs, value}});
+        }
+    }
     QString state;
     QString message;
     if (!connected) {
@@ -10243,17 +10346,24 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
         message = QString(u"Connect %1 to inspect its input. No settings, driver, or virtual output were changed."_qs)
             .arg(m_readOnlyPhysicalInputTestName);
     } else if (!available) {
-        state = u"unavailable"_qs;
-        message = QString(u"%1 is connected, but HOTAS BF6 is not currently receiving this controller. "
-                            u"This test will not select, activate, or acquire it. Use a compatible Device Rig "
-                            u"when you want live input evidence."_qs)
-            .arg(m_readOnlyPhysicalInputTestName);
+        state = m_readOnlyPhysicalInputTestProbeInFlight ? u"opening"_qs : u"unavailable"_qs;
+        message = m_readOnlyPhysicalInputTestProbeAttempted
+            ? (m_readOnlyPhysicalInputTestProbeDiagnostic.isEmpty()
+                ? QString(u"%1 did not return an input-only DirectInput report. Reconnect it, then try Test Input again."_qs)
+                      .arg(m_readOnlyPhysicalInputTestName)
+                : m_readOnlyPhysicalInputTestProbeDiagnostic)
+            : QString(u"Opening an input-only DirectInput session for %1. Mapping, output, and setup ownership stay unchanged."_qs)
+                  .arg(m_readOnlyPhysicalInputTestName);
     } else if (detected) {
         state = u"input-detected"_qs;
-        message = u"Input detected after this read-only test started. No mapped output was tested."_qs;
+        message = activeRigSession
+            ? u"This exact active Device Rig member changed after the test started. No mapped output was tested."_qs
+            : u"This exact input-only DirectInput session changed after the test started. No mapped output was tested."_qs;
     } else {
         state = u"listening"_qs;
-        message = u"Listening to the existing controller input. Move a control or press a button; no mapping or output is changed."_qs;
+        message = activeRigSession
+            ? u"Listening to this exact active Device Rig member. Move a control or press a button; mapping and output stay unchanged."_qs
+            : u"Sampling this exact controller through input-only DirectInput. Move a control or press a button; mapping and output stay unchanged."_qs;
     }
     return {{u"active"_qs, m_readOnlyPhysicalInputTestActive},
             {u"available"_qs, available}, {u"connected"_qs, connected},
@@ -10262,8 +10372,113 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
             {u"axisCount"_qs, m_readOnlyPhysicalInputTestAxisCount},
             {u"buttonCount"_qs, m_readOnlyPhysicalInputTestButtonCount},
             {u"povCount"_qs, m_readOnlyPhysicalInputTestPovCount},
+            {u"session"_qs, activeRigSession ? u"active-rig-member"_qs : u"input-only-directinput"_qs},
+            {u"sessionId"_qs, QVariant::fromValue(m_readOnlyPhysicalInputTestSessionId)},
+            {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
+            {u"sampleSequence"_qs, QVariant::fromValue(sequence)},
+            {u"axes"_qs, axes}, {u"buttons"_qs, buttons}, {u"povs"_qs, povs},
+            {u"hidInstanceId"_qs, m_readOnlyPhysicalInputTestProbeHidInstanceId},
             {u"recordId"_qs, record ? record->id : QString{}},
             {u"directInputId"_qs, m_readOnlyPhysicalInputTestDirectInputId}};
+}
+
+int AppBackend::activeRigMemberIndexForRecord(const QString &recordId) const
+{
+    if (recordId.isEmpty() || m_configuration.activeDeviceRigId.isEmpty()) return -1;
+    const DeviceRig *activeRig = findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
+    if (!activeRig) return -1;
+
+    // Device-rig telemetry is indexed by enabled member order.  Resolve that
+    // identity directly instead of requiring a compatible mapping Profile:
+    // input inspection stays available while Mapping is off or a Profile is
+    // intentionally unassigned.
+    int runtimeMemberIndex = 0;
+    for (const DeviceRigMember &member : activeRig->members) {
+        if (!member.enabled) continue;
+        if (member.controllerRecordId == recordId) return runtimeMemberIndex;
+        ++runtimeMemberIndex;
+    }
+    return -1;
+}
+
+void AppBackend::requestReadOnlyPhysicalInputProbe()
+{
+    if (!m_readOnlyPhysicalInputTestActive || m_readOnlyPhysicalInputTestProbeInFlight
+        || m_readOnlyPhysicalInputTestDirectInputId.isEmpty()
+        || activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId) >= 0) return;
+
+    const quint64 sessionId = m_readOnlyPhysicalInputTestSessionId;
+    const QString expectedId = m_readOnlyPhysicalInputTestDirectInputId;
+    const QPointer<AppBackend> backend(this);
+    auto *thread = QThread::create([backend, sessionId, expectedId] {
+        const DirectInputControllerProbe probe = MappingWorker::probeExactPhysicalController(expectedId);
+        if (!backend) return;
+        QMetaObject::invokeMethod(backend.data(), [backend, sessionId, probe] {
+            if (backend) backend->acceptReadOnlyPhysicalInputProbe(sessionId, probe);
+        }, Qt::QueuedConnection);
+    });
+    m_readOnlyPhysicalInputTestProbeInFlight = true;
+    m_readOnlyPhysicalInputTestProbeThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_readOnlyPhysicalInputTestProbeThread == thread) {
+            m_readOnlyPhysicalInputTestProbeThread = nullptr;
+            m_readOnlyPhysicalInputTestProbeInFlight = false;
+            if (m_readOnlyPhysicalInputTestActive) emit inputTelemetryChanged();
+        }
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start(QThread::LowPriority);
+}
+
+void AppBackend::acceptReadOnlyPhysicalInputProbe(quint64 sessionId,
+                                                  const DirectInputControllerProbe &probe)
+{
+    if (!m_readOnlyPhysicalInputTestActive || sessionId != m_readOnlyPhysicalInputTestSessionId) return;
+    const bool hadSample = m_readOnlyPhysicalInputTestProbeAcquired;
+    m_readOnlyPhysicalInputTestProbeAttempted = true;
+    const bool exactIdentity = probe.acquired
+        && probe.directInputId.compare(m_readOnlyPhysicalInputTestDirectInputId, Qt::CaseInsensitive) == 0;
+    m_readOnlyPhysicalInputTestProbeAcquired = exactIdentity;
+    m_readOnlyPhysicalInputTestProbeDiagnostic = exactIdentity ? probe.diagnostic
+        : (probe.diagnostic.isEmpty()
+            ? u"The input-only DirectInput session did not confirm the exact saved controller identity."_qs
+            : probe.diagnostic);
+    m_readOnlyPhysicalInputTestProbeHidInstanceId = exactIdentity ? probe.hidInstanceId : QString{};
+    if (!exactIdentity) {
+        m_readOnlyPhysicalInputTestProbeAxes.clear();
+        m_readOnlyPhysicalInputTestProbeButtons.clear();
+        m_readOnlyPhysicalInputTestProbePovs.clear();
+        emit inputTelemetryChanged();
+        return;
+    }
+
+    QVariantList axes;
+    QVariantList buttons;
+    QVariantList povs;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (!probe.axes[static_cast<size_t>(axis)]) continue;
+        axes.append(QVariantMap{{u"index"_qs, axis},
+            {u"label"_qs, physicalAxisDisplayLabel(probe.axisDescriptors[static_cast<size_t>(axis)],
+                                                       static_cast<PhysicalAxis>(axis))},
+            {u"value"_qs, probe.normalizedAxes[static_cast<size_t>(axis)]}});
+    }
+    for (int button = 0; button < probe.buttonCount; ++button) {
+        buttons.append(QVariantMap{{u"index"_qs, button + 1},
+            {u"pressed"_qs, probe.buttonPressed[static_cast<size_t>(button)]}});
+    }
+    for (int pov = 0; pov < probe.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+        povs.append(QVariantMap{{u"index"_qs, pov + 1},
+            {u"value"_qs, probe.povValues[static_cast<size_t>(pov)]}});
+    }
+    const bool changed = hadSample
+        && (axes != m_readOnlyPhysicalInputTestProbeAxes
+            || buttons != m_readOnlyPhysicalInputTestProbeButtons
+            || povs != m_readOnlyPhysicalInputTestProbePovs);
+    m_readOnlyPhysicalInputTestProbeAxes = axes;
+    m_readOnlyPhysicalInputTestProbeButtons = buttons;
+    m_readOnlyPhysicalInputTestProbePovs = povs;
+    if (changed) ++m_readOnlyPhysicalInputTestSampleSequence;
+    emit inputTelemetryChanged();
 }
 
 QVariantList AppBackend::controllerReadinessProposedChanges() const
@@ -17908,18 +18123,33 @@ QVariantMap AppBackend::startReadOnlyPhysicalInputTest(const QString &recordId)
                             u"The controller is no longer available. Refresh Devices and choose it again."_qs,
                             u"physicalDevice"_qs, requestedId);
     }
-    // The test is a GUI-side baseline around one already-published atomic.
-    // It deliberately does not call verification, discovery, activation, or
-    // any vJoy/HidHide operation, so it cannot take a competing device handle.
+    // The test owns only transient observation state. It deliberately does
+    // not call verification, discovery, activation, or any vJoy/HidHide
+    // operation. An active Rig reads its exact member atomics; a different
+    // saved controller is read through a nonexclusive input-only probe.
     m_readOnlyPhysicalInputTestRecordId = record ? record->id : QString{};
     m_readOnlyPhysicalInputTestDirectInputId = record ? record->lastDirectInputId : discovered->directInputId;
     m_readOnlyPhysicalInputTestName = record ? record->displayName : discovered->name;
     m_readOnlyPhysicalInputTestAxisCount = record ? record->axisCount : discovered->axisCount;
     m_readOnlyPhysicalInputTestButtonCount = record ? record->buttonCount : discovered->buttonCount;
     m_readOnlyPhysicalInputTestPovCount = record ? record->povCount : discovered->povCount;
-    m_readOnlyPhysicalInputTestBaseline = m_worker.runtime().meaningfulInputSequence.load(
-        std::memory_order_relaxed);
+    ++m_readOnlyPhysicalInputTestSessionId;
+    m_readOnlyPhysicalInputTestSampleSequence = 0;
+    m_readOnlyPhysicalInputTestProbeAttempted = false;
+    m_readOnlyPhysicalInputTestProbeAcquired = false;
+    m_readOnlyPhysicalInputTestProbeDiagnostic.clear();
+    m_readOnlyPhysicalInputTestProbeHidInstanceId.clear();
+    m_readOnlyPhysicalInputTestProbeAxes.clear();
+    m_readOnlyPhysicalInputTestProbeButtons.clear();
+    m_readOnlyPhysicalInputTestProbePovs.clear();
+    const int memberIndex = activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId);
+    m_readOnlyPhysicalInputTestBaseline = memberIndex >= 0
+        ? m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed)
+        : m_readOnlyPhysicalInputTestSampleSequence;
     m_readOnlyPhysicalInputTestActive = true;
+    m_readOnlyPhysicalInputTestProbeTimer.start();
+    requestReadOnlyPhysicalInputProbe();
     emit inputTelemetryChanged();
 
     const QVariantMap test = readOnlyPhysicalInputTest();
@@ -17939,6 +18169,15 @@ void AppBackend::stopReadOnlyPhysicalInputTest()
     m_readOnlyPhysicalInputTestButtonCount = 0;
     m_readOnlyPhysicalInputTestPovCount = 0;
     m_readOnlyPhysicalInputTestBaseline = 0;
+    ++m_readOnlyPhysicalInputTestSessionId;
+    m_readOnlyPhysicalInputTestProbeTimer.stop();
+    m_readOnlyPhysicalInputTestProbeAttempted = false;
+    m_readOnlyPhysicalInputTestProbeAcquired = false;
+    m_readOnlyPhysicalInputTestProbeDiagnostic.clear();
+    m_readOnlyPhysicalInputTestProbeHidInstanceId.clear();
+    m_readOnlyPhysicalInputTestProbeAxes.clear();
+    m_readOnlyPhysicalInputTestProbeButtons.clear();
+    m_readOnlyPhysicalInputTestProbePovs.clear();
     emit inputTelemetryChanged();
 }
 
