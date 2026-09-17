@@ -634,6 +634,7 @@ AppBackend::AppBackend(QObject *parent)
     // rebuilding editor data. HighPriority is intentionally below
     // TimeCriticalPriority: it favors real input responsiveness without
     // starving normal system or rendering work on a constrained CPU.
+#ifndef HOTAS_STARTUP_TESTING
     if (!startupSmoke) {
         m_worker.start(QThread::HighPriority);
         m_mappingDesired = m_configuration.startMappingOnLaunch;
@@ -641,6 +642,13 @@ AppBackend::AppBackend(QObject *parent)
             m_worker.setMappingEnabled(true);
         }
     }
+#else
+    Q_UNUSED(startupSmoke);
+    // This binary tests GUI/control-plane scheduling with deterministic
+    // fixtures. Starting the real mapper here can make test shutdown wait on
+    // owner-machine DirectInput or vJoy state after all assertions finish.
+    // Production builds retain the normal worker startup path above.
+#endif
     // Publish a typed CHECKING snapshot before QML can read setup state. The
     // normal launch path then resolves it through the passive verifier below;
     // this prevents the Overview from briefly inventing an inspection failure
