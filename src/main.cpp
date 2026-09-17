@@ -1,6 +1,7 @@
 #include "app_backend.h"
 #include "crash_diagnostics.h"
 #include "hotas_build_version.h"
+#include "interactive_scheduling_policy.h"
 #include "native_qualification_driver.h"
 #include "responsiveness_probe.h"
 #include "setup_repair_helper.h"
@@ -83,6 +84,8 @@ int main(int argc, char *argv[])
     // class, so the shipped application must use QApplication rather than
     // QGuiApplication whenever tray support is available.
     QApplication application(argc, argv);
+    if (nativeQualification) hotas::InteractiveSchedulingPolicy::installForQualification(&application);
+    else hotas::InteractiveSchedulingPolicy::installProduction(&application);
     // Flight Deck also contains regular Qt Quick Text items, which resolve
     // from QApplication's default rather than a Controls font inheritance
     // chain.  Pin the supported Windows UI face before any QML loads.
@@ -148,6 +151,9 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return -1;
     if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
         backend.attachMainWindow(window);
+        if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+            hotas::InteractiveSchedulingPolicy::attachWindow(quickWindow);
+        }
         if (nativeQualification) {
             auto *driver = new hotas::NativeQualificationDriver(&application);
             driver->start(&application, &backend, &themeManager, qobject_cast<QQuickWindow *>(window));

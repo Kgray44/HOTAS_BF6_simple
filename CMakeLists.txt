@@ -69,6 +69,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_persistence_coordinator.cpp
     src/responsiveness_probe.h
     src/responsiveness_probe.cpp
+    src/interactive_scheduling_policy.h
+    src/interactive_scheduling_policy.cpp
     src/native_qualification_driver.h
     src/native_qualification_driver.cpp
     src/controller_manager.h
@@ -326,6 +328,8 @@ if (BUILD_TESTING)
         src/config_store.cpp
         src/config_persistence_coordinator.h
         src/config_persistence_coordinator.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
         src/controller_manager.h
         src/controller_manager.cpp
         src/direct_input_axis.h
@@ -334,7 +338,7 @@ if (BUILD_TESTING)
         src/device_rig.cpp
         src/event_log.h
     )
-    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test dinput8 dxguid)
+    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test dinput8 dxguid)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     qt_add_resources(mapping_core_tests hotas_starter_profile_test_resources
         PREFIX "/"
@@ -353,10 +357,12 @@ if (BUILD_TESTING)
         tests/config_persistence_coordinator_tests.cpp
         src/config_persistence_coordinator.h
         src/config_persistence_coordinator.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
         src/config_store.h
         src/mapping_types.h
     )
-    target_link_libraries(config_persistence_coordinator_tests PRIVATE Qt6::Core Qt6::Test)
+    target_link_libraries(config_persistence_coordinator_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test)
     target_include_directories(config_persistence_coordinator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME config_persistence_coordinator_tests COMMAND config_persistence_coordinator_tests)
     if (WIN32)
@@ -497,6 +503,8 @@ if (BUILD_TESTING)
         tests/responsiveness_probe_tests.cpp
         src/responsiveness_probe.h
         src/responsiveness_probe.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
     )
     target_link_libraries(responsiveness_probe_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
     target_include_directories(responsiveness_probe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
