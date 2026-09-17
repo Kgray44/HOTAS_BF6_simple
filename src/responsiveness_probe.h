@@ -41,6 +41,20 @@ public:
     void recordPersistenceState(quint64 requests, quint64 writes, quint64 superseded,
                                 quint64 latestRequestedGeneration, quint64 durableGeneration,
                                 quint64 failures, quint64 lastFailedGeneration);
+    // Qualification-only scroll seam.  The native driver owns wheel injection
+    // and samples the actual Flickable content position; this probe joins that
+    // position change to the first following Qt Quick frame without retaining
+    // a per-pixel trace or writing during the session.
+    void beginScrollSession(const QString &page, const QString &surfaceId,
+                            const QString &pattern, const QString &windowClass,
+                            const QString &contentionLevel, qreal initialContentY);
+    void recordScrollWheel();
+    void recordScrollWheelDisposition(bool accepted);
+    void recordScrollPosition(qreal contentY);
+    void recordNotScrollable(const QString &page, const QString &surfaceId,
+                             const QString &windowClass, const QString &contentionLevel,
+                             const QString &reason);
+    void endScrollSession();
     QString exportReport(const QString &requestedPath = QString());
 
     // Narrow test seam: it verifies aggregation and bounded reporting without
@@ -101,6 +115,41 @@ private:
         double durationMs = 0.0;
     };
 
+    struct ScrollWheelRecord {
+        qint64 receivedNs = 0;
+        qint64 movementNs = -1;
+        qint64 firstPresentedNs = -1;
+        bool accepted = false;
+        bool dispositionRecorded = false;
+    };
+
+    struct ScrollSession {
+        QString page;
+        QString surfaceId;
+        QString pattern;
+        QString windowClass;
+        QString contentionLevel;
+        QString notScrollableReason;
+        qreal initialContentY = 0.0;
+        qreal lastContentY = 0.0;
+        qreal totalMovement = 0.0;
+        qint64 startedNs = 0;
+        qint64 lastWheelNs = -1;
+        qint64 lastMovementNs = -1;
+        qint64 finishedNs = -1;
+        qint64 firstWheelToVisibleMovementNs = -1;
+        quint64 wheelEvents = 0;
+        quint64 droppedWheelRecords = 0;
+        quint64 contentPositionChanges = 0;
+        quint64 acceptedWheelEvents = 0;
+        quint64 unacceptedWheelEvents = 0;
+        bool scrollable = true;
+        SampleSet movementLatency;
+        SampleSet frameLatency;
+        SampleSet activeFrameIntervals;
+        QVector<ScrollWheelRecord> wheels;
+    };
+
     explicit ResponsivenessProbe(QObject *parent);
 
     void recordInput(const QString &interactionClass);
@@ -108,6 +157,7 @@ private:
     void recordEventLoopHeartbeat();
     void completePendingInputsLocked(qint64 frameNs);
     void completePendingNavigationLocked(qint64 frameNs);
+    void completePendingScrollFramesLocked(qint64 frameNs, double frameIntervalMs);
     void addMajorEventLocked(const QString &kind, const QString &page, const QString &detail,
                              qint64 timestampNs, double durationMs);
     NavigationRecord *findOrCreateNavigationLocked(int page, const QString &pageName);
@@ -141,8 +191,11 @@ private:
     QVector<NavigationRecord> m_navigation;
     QVector<ConfigSaveRecord> m_configSaves;
     QVector<MajorEvent> m_majorEvents;
+    QVector<ScrollSession> m_scrollSessions;
+    int m_activeScrollSession = -1;
     quint64 m_droppedPendingInputs = 0;
     quint64 m_droppedNavigationRecords = 0;
+    quint64 m_droppedScrollSessions = 0;
     quint64 m_droppedConfigSaveRecords = 0;
     quint64 m_configSaveBursts = 0;
     quint64 m_configSaveFailures = 0;

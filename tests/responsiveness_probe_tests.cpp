@@ -3,6 +3,7 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -145,6 +146,13 @@ int main(int argc, char *argv[])
     for (const double delay : {0.0, 5.0, 17.0, 34.0, 51.0, 101.0, 251.0, 501.0, 1001.0, 5001.0, 20000.0}) {
         probe->recordEventLoopDelayForTest(delay);
     }
+    probe->beginScrollSession(QStringLiteral("Settings"), QStringLiteral("flightDeckSettings"),
+                              QStringLiteral("normal"), QStringLiteral("normal-1320x840"),
+                              QStringLiteral("Normal"), 0.0);
+    probe->recordScrollWheel();
+    probe->recordScrollWheelDisposition(true);
+    probe->recordScrollPosition(24.0);
+    probe->endScrollSession();
 
     const QString reportPath = probe->exportReport(temporaryDirectory.filePath(QStringLiteral("probe.json")));
     if (reportPath.isEmpty()) return fail("enabled probe did not export a report");
@@ -158,6 +166,19 @@ int main(int argc, char *argv[])
         || eventLoop.value(QStringLiteral("maximumMs")).toDouble() != 20000.0
         || eventLoop.value(QStringLiteral("over5000Ms")).toInt() != 2) {
         return fail("probe percentile or threshold aggregation was incorrect");
+    }
+    const QJsonArray scrollSessions = document.object().value(QStringLiteral("scrollSessions")).toArray();
+    if (scrollSessions.size() != 1) return fail("probe did not export one bounded scroll session");
+    const QJsonObject scroll = scrollSessions.first().toObject();
+    if (scroll.value(QStringLiteral("page")).toString() != QStringLiteral("Settings")
+        || scroll.value(QStringLiteral("surfaceId")).toString() != QStringLiteral("flightDeckSettings")
+        || scroll.value(QStringLiteral("wheelEvents")).toInt() != 1
+        || scroll.value(QStringLiteral("acceptedWheelEvents")).toInt() != 1
+        || scroll.value(QStringLiteral("contentPositionChanges")).toInt() != 1
+        || scroll.value(QStringLiteral("totalMovement")).toDouble() != 24.0
+        || scroll.value(QStringLiteral("movementLatency")).toObject()
+               .value(QStringLiteral("sampleCount")).toInt() != 1) {
+        return fail("probe scroll-session aggregation was incorrect");
     }
     return 0;
 }

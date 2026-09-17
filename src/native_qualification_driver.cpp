@@ -3,6 +3,7 @@
 #include "app_backend.h"
 #include "contention_resilience_controller.h"
 #include "controller_discovery.h"
+#include "responsiveness_probe.h"
 #include "theme_manager.h"
 #include "vjoy_ownership.h"
 
@@ -20,7 +21,6 @@
 #include <QTest>
 #include <QTimer>
 #include <QVariantMap>
-#include <QWheelEvent>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +33,65 @@ constexpr std::array<NativeQualificationDriver::Page, 10> kCampaignPages{{
     {6, "Curve Editor"}, {5, "Profiles"}, {9, "Adaptive Response"},
     {7, "Automation"}, {3, "Diagnostics"}, {4, "Settings"},
 }};
+
+struct ScrollPage {
+    int page = -1;
+    const char *name = "";
+    const char *surfaceId = "";
+};
+
+constexpr std::array<ScrollPage, 10> kScrollPages{{
+    {8, "Overview", "flightDeckOverview"},
+    {2, "Devices", "flightDeckDevices"},
+    {0, "Axes", "flightDeckAxes"},
+    {1, "Buttons", "flightDeckButtons"},
+    {6, "Curve Editor", "flightDeckCurveEditor"},
+    {5, "Profiles", "flightDeckProfiles"},
+    {9, "Adaptive Response", "flightDeckAdaptiveResponse"},
+    {7, "Automation", "flightDeckAutomation"},
+    {3, "Diagnostics", "flightDeckDiagnostics"},
+    {4, "Settings", "flightDeckSettings"},
+}};
+
+struct ScrollPattern {
+    const char *name = "";
+    int events = 0;
+    int intervalMs = 0;
+    int reversalAt = -1;
+};
+
+constexpr std::array<ScrollPattern, 4> kScrollPatterns{{
+    {"slow", 5, 100, -1},
+    {"normal", 10, 35, -1},
+    {"rapid", 16, 16, -1},
+    {"reverse", 16, 16, 8},
+}};
+
+struct ScrollWindowProfile {
+    const char *name = "";
+    QSize size;
+};
+
+const std::array<ScrollWindowProfile, 3> kScrollWindowProfiles{{
+    {"normal-1320x840", QSize(1320, 840)},
+    {"compact-900x650", QSize(900, 650)},
+    {"large-1600x1000", QSize(1600, 1000)},
+}};
+
+bool shouldMeasureScrollPage(int windowIndex, const ScrollPage &page)
+{
+    // Normal and compact cover every in-scope page. The large window is a
+    // representative cross-section: static device cards, the telemetry-heavy
+    // Adaptive page, and Diagnostics' mixed card/list layout.
+    return windowIndex < 2 || page.page == 2 || page.page == 9 || page.page == 3;
+}
+
+const ScrollPage *scrollPageForId(int pageId)
+{
+    const auto it = std::find_if(kScrollPages.cbegin(), kScrollPages.cend(),
+        [pageId](const ScrollPage &page) { return page.page == pageId; });
+    return it == kScrollPages.cend() ? nullptr : &*it;
+}
 
 QString qualificationSummaryPath()
 {
@@ -59,6 +118,16 @@ NativeQualificationDriver::NativeQualificationDriver(QObject *parent)
 {
     m_pages.reserve(static_cast<qsizetype>(kCampaignPages.size()));
     for (const Page &page : kCampaignPages) m_pages.append(page);
+    // This timer exists only while the opt-in native qualification session is
+    // measuring a real Flickable. It observes the existing contentY property;
+    // it neither forces frames nor writes per-movement data.
+    m_scrollPositionSampler.setInterval(8);
+    m_scrollPositionSampler.setTimerType(Qt::PreciseTimer);
+    connect(&m_scrollPositionSampler, &QTimer::timeout, this, [this] {
+        if (!m_scrollSessionActive || !m_scrollViewport) return;
+        if (auto *probe = ResponsivenessProbe::active())
+            probe->recordScrollPosition(m_scrollViewport->property("contentY").toReal());
+    });
 }
 
 bool NativeQualificationDriver::requested()
@@ -131,58 +200,136 @@ void NativeQualificationDriver::runNavigationStep()
 
 void NativeQualificationDriver::startScrollCharacterization()
 {
+    m_scrollWindow = 0;
     m_scrollPage = 0;
+    m_scrollPattern = 0;
     m_scrollEvent = 0;
-    runScrollStep();
+    m_scrollSessionActive = false;
+    m_window->resize(kScrollWindowProfiles[0].size);
+    QTimer::singleShot(160, this, [this] { runScrollStep(); });
 }
 
 void NativeQualificationDriver::runScrollStep()
 {
-    struct ScrollPage {
-        int page;
-        const char *name;
-        const char *viewport;
-    };
-    static constexpr std::array<ScrollPage, 3> pages{{
-        {4, "Settings-light", "flightDeckSettings"},
-        {0, "Axes-medium", "flightDeckAxes"},
-        {9, "Adaptive-heavy", "flightDeckAdaptiveResponse"},
-    }};
-    if (m_scrollPage >= static_cast<int>(pages.size())) {
+    if (m_scrollWindow >= static_cast<int>(kScrollWindowProfiles.size())) {
         startControls();
         return;
     }
-    const ScrollPage &page = pages[static_cast<size_t>(m_scrollPage)];
-    if (m_scrollEvent == 0) {
-        navigate(page.page, QString::fromLatin1(page.name));
-        QTimer::singleShot(100, this, [this] { runScrollStep(); });
-        m_scrollEvent = 1;
-        return;
-    }
-    QQuickItem *viewport = findItem(QString::fromLatin1(page.viewport));
-    if (!viewport) viewport = qobject_cast<QQuickItem *>(surface());
-    if (!viewport) {
-        fail(QStringLiteral("scroll viewport was unavailable for %1").arg(QString::fromLatin1(page.name)));
-        ++m_scrollPage;
+    if (m_scrollPage >= static_cast<int>(kScrollPages.size())) {
+        ++m_scrollWindow;
+        m_scrollPage = 0;
+        m_scrollPattern = 0;
         m_scrollEvent = 0;
-        QTimer::singleShot(1, this, [this] { runScrollStep(); });
+        m_scrollSessionActive = false;
+        if (m_scrollWindow >= static_cast<int>(kScrollWindowProfiles.size())) {
+            startControls();
+            return;
+        }
+        m_window->resize(kScrollWindowProfiles[static_cast<size_t>(m_scrollWindow)].size);
+        QTimer::singleShot(160, this, [this] { runScrollStep(); });
         return;
     }
-    // Four slow, eight normal, then twelve rapid synthetic wheel events are
-    // deliberately delivered to the actual QQuickWindow. The probe labels
-    // their frame boundary as native-window synthetic interaction.
-    const int ordinal = m_scrollEvent - 1;
-    if (ordinal >= 24) {
-        m_completedActions.append(QStringLiteral("scroll-%1").arg(QString::fromLatin1(page.name)));
+    const ScrollPage &page = kScrollPages[static_cast<size_t>(m_scrollPage)];
+    const ScrollWindowProfile &windowProfile =
+        kScrollWindowProfiles[static_cast<size_t>(m_scrollWindow)];
+    if (!shouldMeasureScrollPage(m_scrollWindow, page)) {
         ++m_scrollPage;
+        m_scrollPattern = 0;
+        m_scrollEvent = 0;
+        QTimer::singleShot(0, this, [this] { runScrollStep(); });
+        return;
+    }
+    if (m_scrollPattern >= static_cast<int>(kScrollPatterns.size())) {
+        ++m_scrollPage;
+        m_scrollPattern = 0;
         m_scrollEvent = 0;
         QTimer::singleShot(80, this, [this] { runScrollStep(); });
         return;
     }
-    wheel(viewport, -120, QStringLiteral("scroll-%1").arg(QString::fromLatin1(page.name)));
+    if (!m_scrollSessionActive && m_scrollEvent == 0) {
+        navigate(page.page, QString::fromLatin1(page.name));
+        m_scrollEvent = -1;
+        QTimer::singleShot(140, this, [this] { runScrollStep(); });
+        return;
+    }
+
+    QQuickItem *viewport = findItem(QString::fromLatin1(page.surfaceId));
+    if (!viewport) {
+        fail(QStringLiteral("scroll viewport was unavailable for %1").arg(QString::fromLatin1(page.name)));
+        ++m_scrollPage;
+        m_scrollPattern = 0;
+        m_scrollEvent = 0;
+        QTimer::singleShot(80, this, [this] { runScrollStep(); });
+        return;
+    }
+    const qreal maximumContentY = std::max<qreal>(0.0, viewport->property("contentHeight").toReal()
+                                                         - viewport->height());
+    if (maximumContentY <= 0.5) {
+        if (auto *probe = ResponsivenessProbe::active()) {
+            probe->recordNotScrollable(QString::fromLatin1(page.name),
+                                       QString::fromLatin1(page.surfaceId),
+                                       QString::fromLatin1(windowProfile.name),
+                                       m_backend->contentionResilienceController()->levelName(),
+                                       QStringLiteral("not scrollable in this fixture"));
+        }
+        ++m_scrollPage;
+        m_scrollPattern = 0;
+        m_scrollEvent = 0;
+        QTimer::singleShot(80, this, [this] { runScrollStep(); });
+        return;
+    }
+    const ScrollPattern &pattern = kScrollPatterns[static_cast<size_t>(m_scrollPattern)];
+    if (!m_scrollSessionActive) {
+        const qreal initialContentY = pattern.reversalAt >= 0 ? maximumContentY * 0.55 : 0.0;
+        viewport->setProperty("contentY", initialContentY);
+        if (auto *probe = ResponsivenessProbe::active()) {
+            probe->beginScrollSession(QString::fromLatin1(page.name),
+                                      QString::fromLatin1(page.surfaceId),
+                                      QString::fromLatin1(pattern.name),
+                                      QString::fromLatin1(windowProfile.name),
+                                      m_backend->contentionResilienceController()->levelName(),
+                                      viewport->property("contentY").toReal());
+        }
+        m_completedActions.append(QStringLiteral("scroll:%1:%2")
+                                      .arg(QString::fromLatin1(page.name), QString::fromLatin1(pattern.name)));
+        m_scrollSessionActive = true;
+        m_scrollViewport = viewport;
+        m_scrollPositionSampler.start();
+        m_scrollEvent = 0;
+        QTimer::singleShot(30, this, [this] { runScrollStep(); });
+        return;
+    }
+    if (m_scrollEvent >= pattern.events) {
+        QTimer::singleShot(225, this, &NativeQualificationDriver::finishScrollSession);
+        return;
+    }
+    const int delta = pattern.reversalAt >= 0 && m_scrollEvent >= pattern.reversalAt ? 120 : -120;
+    wheel(viewport, delta, QStringLiteral("scroll:%1:%2")
+                                .arg(QString::fromLatin1(page.name), QString::fromLatin1(pattern.name)));
     ++m_scrollEvent;
-    const int delayMs = ordinal < 4 ? 100 : ordinal < 12 ? 32 : 16;
-    QTimer::singleShot(delayMs, this, [this] { runScrollStep(); });
+    QTimer::singleShot(pattern.intervalMs, this, [this] { runScrollStep(); });
+}
+
+void NativeQualificationDriver::sampleScrollPosition(const QString &surfaceId)
+{
+    if (auto *probe = ResponsivenessProbe::active()) {
+        if (QQuickItem *viewport = findItem(surfaceId))
+            probe->recordScrollPosition(viewport->property("contentY").toReal());
+    }
+}
+
+void NativeQualificationDriver::finishScrollSession()
+{
+    if (!m_scrollSessionActive) return;
+    m_scrollPositionSampler.stop();
+    const ScrollPage &page = kScrollPages[static_cast<size_t>(m_scrollPage)];
+    sampleScrollPosition(QString::fromLatin1(page.surfaceId));
+    if (auto *probe = ResponsivenessProbe::active()) probe->endScrollSession();
+    m_scrollSessionActive = false;
+    m_scrollViewport = nullptr;
+    ++m_scrollPattern;
+    m_scrollEvent = 0;
+    QTimer::singleShot(80, this, [this] { runScrollStep(); });
 }
 
 void NativeQualificationDriver::startControls()
@@ -269,13 +416,16 @@ void NativeQualificationDriver::runSliderBurst()
     // rather than falsely treating synchronous QTest return as a rejected
     // TapHandler event.
     QTimer::singleShot(100, this, [this] {
-        if (QQuickItem *completedSlider = findItem(QStringLiteral("flightDeckAdaptiveSlider_maximumHorizonMs")))
+        QQuickItem *completedSlider = findItem(QStringLiteral("flightDeckAdaptiveSlider_maximumHorizonMs"));
+        if (completedSlider)
             m_sliderNativeActivations = completedSlider->property("pointerPresses").toInt();
         if (m_sliderNativeActivations == 0)
             fail(QStringLiteral("synthetic native slider input did not reach the QML control"));
         m_completedActions.append(QStringLiteral("native-slider-events-%1").arg(m_sliderNativeActivations));
         m_completedActions.append(QStringLiteral("isolated-persistence-slider-burst-%1")
                                       .arg(m_isolatedPersistenceEdits));
+        recordChildControlWheel(QStringLiteral("Adaptive Response slider"), completedSlider,
+                                findItem(QStringLiteral("flightDeckAdaptiveResponse")));
         QTimer::singleShot(700, this, [this] { runTextControl(); });
     });
 }
@@ -293,6 +443,8 @@ void NativeQualificationDriver::runTextControl()
                 ++m_keyEvents;
             }
             m_completedActions.append(QStringLiteral("profile-search-keyboard-edit"));
+            recordChildControlWheel(QStringLiteral("Profiles search text"), search,
+                                    findItem(QStringLiteral("flightDeckProfiles")));
         } else {
             fail(QStringLiteral("safe Profile search text field was unavailable"));
         }
@@ -369,8 +521,19 @@ void NativeQualificationDriver::runTortureStep()
     }
     const Page &page = m_pages.at(m_tortureStep % m_pages.size());
     navigate(page.id, QString::fromLatin1(page.name));
-    if (QQuickItem *viewport = qobject_cast<QQuickItem *>(surface()))
-        wheel(viewport, -120, QStringLiteral("torture-scroll"));
+    if (const ScrollPage *scrollPage = scrollPageForId(page.id)) {
+        if (QQuickItem *viewport = findItem(QString::fromLatin1(scrollPage->surfaceId))) {
+            // This keeps the established torture cadence, but targets the
+            // real page Flickable instead of the shell and alternates the
+            // wheel direction over the page cycle. Session distributions are
+            // captured by the dedicated matrix above; this is sustained
+            // native-window scroll activity during the unchanged 90-second
+            // persistence/navigation torture.
+            const int delta = m_tortureStep % 20 < 10 ? -120 : 120;
+            wheel(viewport, delta, QStringLiteral("scroll:%1:torture")
+                                      .arg(QString::fromLatin1(scrollPage->name)));
+        }
+    }
     if (m_tortureStep % 13 == 0) {
         if (QQuickItem *slider = findItem(QStringLiteral("flightDeckAdaptiveSlider_maximumHorizonMs")))
             click(slider, QStringLiteral("torture-safe-slider"));
@@ -428,9 +591,18 @@ bool NativeQualificationDriver::wheel(QQuickItem *item, int delta, const QString
 {
     if (!item || !m_window) return false;
     const QPointF point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5));
-    QWheelEvent event(point, m_window->mapToGlobal(point.toPoint()), QPoint(), QPoint(0, delta),
-                      Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
-    QCoreApplication::sendEvent(m_window, &event);
+    if (m_scrollSessionActive) {
+        if (auto *probe = ResponsivenessProbe::active()) probe->recordScrollWheel();
+    }
+    // Route through Qt's window-system test seam rather than directly sending
+    // a QWheelEvent to QQuickWindow. That preserves the same delivery path as
+    // native-window input, including Flickable's normal wheel coalescing.
+    QTest::wheelEvent(m_window, point, QPoint(0, delta));
+    if (m_scrollSessionActive) {
+        const QString surfaceId = item->objectName();
+        sampleScrollPosition(surfaceId);
+        QTimer::singleShot(0, this, [this, surfaceId] { sampleScrollPosition(surfaceId); });
+    }
     ++m_wheelEvents;
     if (m_wheelEvents == 1) m_completedActions.append(label);
     return true;
@@ -480,6 +652,51 @@ void NativeQualificationDriver::captureProfilesConstruction()
     m_profilesConstructionSamples.append(sample);
 }
 
+void NativeQualificationDriver::recordChildControlWheel(const QString &label, QQuickItem *control,
+                                                         QQuickItem *viewport)
+{
+    if (!control || !viewport || !m_window) return;
+    const QVariant valueBefore = control->property("value");
+    const QVariant textBefore = control->property("text");
+    const qreal contentYBefore = viewport->property("contentY").toReal();
+    const QPointer<QQuickItem> guardedControl(control);
+    const QPointer<QQuickItem> guardedViewport(viewport);
+    QTest::wheelEvent(m_window, viewportPoint(control, viewport,
+                                               QPointF(control->width() * 0.5, control->height() * 0.5)),
+                      QPoint(0, -120));
+    QTimer::singleShot(0, this, [this, label, guardedControl, guardedViewport, valueBefore, textBefore,
+                                  contentYBefore] {
+        QVariantMap result;
+        result.insert(QStringLiteral("label"), label);
+        result.insert(QStringLiteral("interactionSource"),
+                      QStringLiteral("native-window synthetic wheel-angle-delta scroll"));
+        result.insert(QStringLiteral("controlAvailableAfterEvent"), !guardedControl.isNull());
+        result.insert(QStringLiteral("viewportAvailableAfterEvent"), !guardedViewport.isNull());
+        result.insert(QStringLiteral("contentYBefore"), contentYBefore);
+        if (!guardedControl || !guardedViewport) {
+            result.insert(QStringLiteral("outcome"), QStringLiteral("unavailable after native wheel"));
+        } else {
+            const QVariant valueAfter = guardedControl->property("value");
+            const QVariant textAfter = guardedControl->property("text");
+            const qreal contentYAfter = guardedViewport->property("contentY").toReal();
+            const bool valueChanged = valueBefore.isValid() && valueAfter.isValid()
+                && valueBefore != valueAfter;
+            const bool textChanged = textBefore.isValid() && textAfter.isValid()
+                && textBefore != textAfter;
+            const bool viewportMoved = !qFuzzyCompare(contentYBefore + 1.0, contentYAfter + 1.0);
+            result.insert(QStringLiteral("valueChanged"), valueChanged);
+            result.insert(QStringLiteral("textChanged"), textChanged);
+            result.insert(QStringLiteral("contentYAfter"), contentYAfter);
+            result.insert(QStringLiteral("viewportMoved"), viewportMoved);
+            result.insert(QStringLiteral("outcome"), valueChanged || textChanged
+                ? QStringLiteral("child control changed")
+                : viewportMoved ? QStringLiteral("viewport scrolled without child mutation")
+                                : QStringLiteral("no observable control or viewport change"));
+        }
+        if (m_childControlWheelTests.size() < 16) m_childControlWheelTests.append(result);
+    });
+}
+
 void NativeQualificationDriver::bringIntoView(QQuickItem *item, QQuickItem *viewport) const
 {
     if (!item || !viewport) return;
@@ -526,6 +743,8 @@ void NativeQualificationDriver::writeSummary()
                        {QStringLiteral("controllers"), QJsonArray::fromVariantList(m_controllerSummary)},
                        {QStringLiteral("profilesConstruction"),
                         QJsonArray::fromVariantList(m_profilesConstructionSamples)},
+                       {QStringLiteral("childControlWheelTests"),
+                        QJsonArray::fromVariantList(m_childControlWheelTests)},
                        {QStringLiteral("contentionResilience"),
                         QJsonObject::fromVariantMap(m_backend
                             ? m_backend->contentionResilienceController()->evidence() : QVariantMap{})},
