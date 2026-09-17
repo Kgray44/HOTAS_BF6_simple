@@ -106,6 +106,20 @@ progress remains authoritative; a bounded estimate never completes an active
 step or session early. Recorded engine/session timings are exported with an
 explicit note that they are not a user-perceived latency measurement.
 
+On the exact staged candidate, three process startup-smoke samples completed
+in 473, 464, and 476 ms; three complete read-only process-launch-to-report
+samples completed in 305, 359, and 260 ms and each output had zero NUL bytes.
+One idle interactive-process working-set sample was 286,765,056 bytes. These
+are process-level baselines only, not cold-boot, user-visible interaction, CPU
+contention, or memory-pressure qualification.
+
+Production hygiene was also inspected in the staged binary. Fixture mode is
+reachable only by an explicit `--development-fixture` command-line switch;
+Lab repair requires the additional explicit `--lab-repair-mode` switch. The
+fixture-gate startup smoke passed. Normal mode is visibly read-only and cannot
+execute LabQualified repairs. This is an explicit development gate, not a
+normal-user repair path.
+
 ## Distribution and provenance
 
 The stage script requires `HidHide Doctor.exe` and `HidHideDoctorRepair.exe`,
@@ -176,7 +190,7 @@ negative product claim, nor a substituted real-machine result.
 |---|---|
 | 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR, whose head is the current candidate. |
 | 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
-| 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Updater atomicity remains Not qualified. |
+| 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Deterministic updater fixtures roll back interrupted/invalid replacement and preserve external configuration; real installed-product update atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
 | 13–15. Clean, healthy, partial HidHide | Deterministic diagnostic fixtures only; clean/healthy/partial real or VM environments are Not qualified. |
 | 16. Owner machine | Exact staged candidate `C:\hotas-builds\hidhide-doctor-phase5-rc-6734b77-stage` completed a read-only scan: Windows build 26200 x64, 238 checks, 4 findings, 3 diagnoses, zero NUL bytes, and full 1.5.230.0 client / 1.4.181.0 driver version strings. Version mismatch, restart, HID enumeration, and stale-configuration evidence remained separate. |
@@ -186,7 +200,7 @@ negative product claim, nor a substituted real-machine result.
 | 24. Fuzz results | Seeded `0x5AFEF00D`, 64-input-per-surface deterministic campaign passed without crash, hang, or malformed-input acceptance. Sustained fuzzing and resource-pressure fuzzing remain Not qualified. |
 | 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. Native owner Safe to Share privacy review remains open. |
 | 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
-| 27–28. Performance and CPU contention | No measured release budgets or contention campaign was run; Not qualified. |
+| 27–28. Performance and CPU contention | Exact-stage process baselines are recorded (464–476 ms startup smoke; 260–359 ms read-only process-launch-to-report; one 286,765,056-byte idle working-set sample). User-visible latency, controlled CPU contention, and resource-pressure qualification remain Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
