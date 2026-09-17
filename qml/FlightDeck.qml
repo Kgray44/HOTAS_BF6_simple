@@ -367,7 +367,12 @@ Item {
                     backendObject: backend
                     tokens: deck
                     Layout.fillWidth: true
-                    onReturnToSetupRequested: setupAssistantDialog.openForResume()
+                    onSetupActionRequested: {
+                        if (backend.hasSetupAssistantTask)
+                            setupAssistantDialog.openForResume()
+                        else
+                            setupAssistantDialog.openFor("independent", {})
+                    }
                 }
 
                 FlightDeckCard {
@@ -389,9 +394,6 @@ Item {
                         flightDeckLearningDialog: root.learningDialog
                         notificationCenter: root.notificationCenter
                         currentPage: 8
-                        onRequestSetupAssistant: function(intent, context) {
-                            setupAssistantDialog.openFor(intent, context)
-                        }
                         onCurrentPageChanged: {
                             if (currentPage === 7 && flightDeckAutomationContext.length > 0)
                                 root.flightDeckAutomationContext = flightDeckAutomationContext;

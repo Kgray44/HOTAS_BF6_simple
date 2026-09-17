@@ -5988,6 +5988,12 @@ void AppBackend::refreshSelectedRigOutputReadiness()
 QString AppBackend::createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
                                     const QString &outputLayoutId)
 {
+    return createDeviceRigWithId(name, controllerRecordIds, outputLayoutId, {});
+}
+
+QString AppBackend::createDeviceRigWithId(const QString &name, const QStringList &controllerRecordIds,
+                                          const QString &outputLayoutId, const QString &requestedId)
+{
     const QString trimmedName = name.trimmed().left(64);
     if (trimmedName.isEmpty() || controllerRecordIds.isEmpty()
         || controllerRecordIds.size() > kMaximumDeviceRigMembers) return {};
@@ -6000,8 +6006,10 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
         : outputLayoutId.trimmed();
     if (!findOutputLayout(m_configuration, selectedOutput)) return {};
     QSet<QString> uniqueIds;
+    const QString exactId = requestedId.trimmed();
+    if (!exactId.isEmpty() && findDeviceRig(m_configuration, exactId)) return {};
     DeviceRig rig;
-    rig.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rig.id = exactId.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : exactId;
     rig.name = trimmedName;
     rig.primaryOutputLayoutId = selectedOutput;
     rig.isDefault = m_configuration.deviceRigs.empty();
@@ -6033,6 +6041,14 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
 QVariantMap AppBackend::createDeviceRigResult(const QString &name,
                                               const QStringList &controllerRecordIds,
                                               const QString &outputLayoutId)
+{
+    return createDeviceRigResultWithId(name, controllerRecordIds, outputLayoutId, {});
+}
+
+QVariantMap AppBackend::createDeviceRigResultWithId(const QString &name,
+                                                     const QStringList &controllerRecordIds,
+                                                     const QString &outputLayoutId,
+                                                     const QString &requestedId)
 {
     const auto result = [](bool success, const QString &title, const QString &message,
                            const QString &objectId = {}, const QString &nextAction = {}) {
@@ -6117,7 +6133,7 @@ QVariantMap AppBackend::createDeviceRigResult(const QString &name,
     }
     m_configuration.savedControllers.insert(m_configuration.savedControllers.end(),
         std::make_move_iterator(newRecords.begin()), std::make_move_iterator(newRecords.end()));
-    const QString rigId = createDeviceRig(trimmedName, recordIds, selectedOutput);
+    const QString rigId = createDeviceRigWithId(trimmedName, recordIds, selectedOutput, requestedId);
     if (rigId.isEmpty()) {
         m_configuration.savedControllers.erase(std::remove_if(m_configuration.savedControllers.begin(),
             m_configuration.savedControllers.end(), [&createdRecordIds](const SavedControllerRecord &record) {
@@ -8008,7 +8024,7 @@ void AppBackend::loadSetupAssistantTask()
     reconcileSetupAssistantTask(true);
 }
 
-void AppBackend::persistSetupAssistantTask()
+bool AppBackend::persistSetupAssistantTask()
 {
     QSettings settings;
     if (m_setupAssistantTask.isEmpty()) {
@@ -8018,6 +8034,7 @@ void AppBackend::persistSetupAssistantTask()
                           QJsonDocument::fromVariant(m_setupAssistantTask).toJson(QJsonDocument::Compact));
     }
     settings.sync();
+    return settings.status() == QSettings::NoError;
 }
 
 void AppBackend::publishSetupAssistantTask()
@@ -8040,16 +8057,95 @@ QVariantMap AppBackend::reconcileSetupAssistantTask(bool persistChanges)
     if (!rigId.isEmpty() && !findDeviceRig(m_configuration, rigId)) invalidated.append(u"purpose"_qs);
     if (!profileId.isEmpty() && !findProfile(m_configuration, profileId)) invalidated.append(u"configure"_qs);
     if (!outputId.isEmpty() && !findOutputLayout(m_configuration, outputId)) invalidated.append(u"purpose"_qs);
+
+    // A task is a record of exact relationships, not a loose collection of
+    // display names.  Detect topology, output, source, and identity changes
+    // even when all selected IDs still exist.
+    const QVariantMap stored = m_setupAssistantTask.value(u"fingerprints"_qs).toMap();
+    const QVariantMap current = setupAssistantTaskFingerprints(m_setupAssistantTask);
+    const auto changed = [&stored, &current](const QString &key) {
+        return stored.contains(key) && stored.value(key) != current.value(key);
+    };
+    if (changed(u"controller"_qs)) invalidated.append(u"controllers"_qs);
+    if (changed(u"rig"_qs)) invalidated.append(u"purpose"_qs);
+    if (changed(u"output"_qs) || changed(u"category"_qs) || changed(u"copySource"_qs))
+        invalidated.append(u"purpose"_qs);
+    if (changed(u"profile"_qs)) invalidated.append(u"configure"_qs);
+
+    // If a process stopped after a canonical operation but before the task
+    // journal was advanced, recover the planned exact object instead of
+    // creating another topology on Retry.
+    const QVariantMap pending = m_setupAssistantTask.value(u"pendingOperation"_qs).toMap();
+    if (!pending.isEmpty()) {
+        const QString type = pending.value(u"type"_qs).toString();
+        const QString id = pending.value(u"id"_qs).toString();
+        const bool exists = type == u"deviceRig"_qs ? findDeviceRig(m_configuration, id) != nullptr
+            : type == u"profile"_qs ? findProfile(m_configuration, id) != nullptr : false;
+        if (exists) {
+            QVariantList operations = m_setupAssistantTask.value(u"operationRefs"_qs).toList();
+            bool recorded = false;
+            for (const QVariant &entry : operations) {
+                const QVariantMap operation = entry.toMap();
+                recorded = recorded || (operation.value(u"type"_qs).toString() == type
+                    && operation.value(u"id"_qs).toString() == id);
+            }
+            if (!recorded) operations.append(QVariantMap{{u"type"_qs, type}, {u"id"_qs, id},
+                {u"status"_qs, u"recovered"_qs}});
+            m_setupAssistantTask.insert(u"operationRefs"_qs, operations);
+            if (type == u"deviceRig"_qs) m_setupAssistantTask.insert(u"rigId"_qs, id);
+            if (type == u"profile"_qs) m_setupAssistantTask.insert(u"profileId"_qs, id);
+            m_setupAssistantTask.remove(u"pendingOperation"_qs);
+        }
+    }
     invalidated.removeDuplicates();
     m_setupAssistantTask.insert(u"invalidatedStages"_qs, invalidated);
     m_setupAssistantTask.insert(u"revalidationRequired"_qs, !invalidated.isEmpty());
-    m_setupAssistantTask.insert(u"observedConfigurationGeneration"_qs,
-                                QVariant::fromValue(m_configurationGeneration));
+    m_setupAssistantTask.insert(u"fingerprints"_qs, current);
     if (before != m_setupAssistantTask) {
         if (persistChanges) persistSetupAssistantTask();
         publishSetupAssistantTask();
     }
     return m_setupAssistantTask;
+}
+
+QVariantMap AppBackend::setupAssistantTaskFingerprints(const QVariantMap &task) const
+{
+    QVariantMap result;
+    const QString controllerId = task.value(u"controllerRecordId"_qs).toString().trimmed();
+    if (const SavedControllerRecord *record = savedControllerRecord(controllerId)) {
+        result.insert(u"controller"_qs, QString(u"%1|%2|%3|%4|%5|%6"_qs).arg(record->id,
+            record->lastDirectInputId, record->productGuid, record->hidInstanceId,
+            record->capabilityFingerprint).arg(record->axisCount).arg(record->buttonCount));
+    } else if (const DiscoveredController *discovered = discoveredController(controllerId)) {
+        result.insert(u"controller"_qs, QString(u"%1|%2|%3|%4|%5"_qs).arg(discovered->directInputId,
+            discovered->productGuid, discovered->hidInstanceId).arg(discovered->axisCount).arg(discovered->buttonCount));
+    }
+    const QString rigId = task.value(u"rigId"_qs).toString().trimmed();
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, rigId)) {
+        QStringList members;
+        for (const DeviceRigMember &member : rig->members) members.append(QString(u"%1:%2:%3:%4"_qs)
+            .arg(member.controllerRecordId).arg(member.required).arg(member.enabled).arg(member.preferredOutputLayoutId));
+        members.sort();
+        result.insert(u"rig"_qs, rig->id + u"|"_qs + rig->primaryOutputLayoutId + u"|"_qs + members.join(u","_qs));
+    }
+    const QString outputId = task.value(u"outputLayoutId"_qs).toString().trimmed();
+    if (const VirtualOutputLayout *output = findOutputLayout(m_configuration, outputId)) {
+        result.insert(u"output"_qs, QString(u"%1|%2|%3|%4|%5"_qs).arg(output->id)
+            .arg(output->requirements.deviceId).arg(output->requirements.buttons)
+            .arg(output->requirements.continuousPovs).arg(output->requirements.discretePovs));
+    }
+    const QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    if (const ControllerProfile *profile = findProfile(m_configuration, profileId)) {
+        result.insert(u"profile"_qs, profile->id + u"|"_qs + profile->deviceRigId + u"|"_qs
+            + profile->categoryId + u"|"_qs + profile->outputLayoutId);
+    }
+    const QString categoryId = task.value(u"categoryId"_qs).toString().trimmed();
+    if (const ProfileCategory *category = findProfileCategory(m_configuration, categoryId))
+        result.insert(u"category"_qs, category->id + u"|"_qs + category->name);
+    const QString sourceId = task.value(u"copyProfileId"_qs).toString().trimmed();
+    if (const ControllerProfile *source = findProfile(m_configuration, sourceId))
+        result.insert(u"copySource"_qs, source->id + u"|"_qs + source->categoryId + u"|"_qs + source->deviceRigId);
+    return result;
 }
 
 QStringList AppBackend::setupTaskAffectedProfileNames(const QString &rigId) const
@@ -8070,6 +8166,11 @@ bool AppBackend::setupTaskCanCommit(QString *reason) const
     }
     if (m_setupAssistantTask.value(u"revalidationRequired"_qs).toBool()) {
         if (reason) *reason = u"The saved setup needs review because a selected item changed or was removed."_qs;
+        return false;
+    }
+    if (m_setupAssistantTask.value(u"repairOperation"_qs).toMap().value(u"state"_qs).toString()
+        == u"applying"_qs) {
+        if (reason) *reason = u"Wait for the approved repair to finish before committing another setup change."_qs;
         return false;
     }
     return true;
@@ -8155,6 +8256,39 @@ QVariantMap AppBackend::replaceUncommittedSetupAssistantTask(const QString &inte
     return beginSetupAssistantTask(intent, context);
 }
 
+QVariantMap AppBackend::chooseSetupAssistantIntent(const QString &intent)
+{
+    const QString requested = intent.trimmed();
+    const bool known = requested == u"first-controller"_qs || requested == u"independent"_qs
+        || requested == u"add-to-rig"_qs || requested == u"profile-for-rig"_qs;
+    if (!known || m_setupAssistantTask.isEmpty()) {
+        return actionResult(false, u"Setup path is unavailable"_qs,
+                            u"Start or resume setup before choosing how to use the controller."_qs);
+    }
+    if (m_setupAssistantTask.value(u"intent"_qs).toString() == requested)
+        return actionResult(true, u"Setup path unchanged"_qs,
+                            u"Your saved choices and current task are unchanged."_qs);
+    if (!m_setupAssistantTask.value(u"operationRefs"_qs).toList().isEmpty()) {
+        QVariantMap result = actionResult(false, u"This setup already has saved work"_qs,
+            u"Finish this task, or start a separate setup task for a different topology. Existing Rigs and Profiles are retained."_qs);
+        result.insert(u"requiresSeparateTask"_qs, true);
+        return result;
+    }
+    m_setupAssistantTask.insert(u"intent"_qs, requested);
+    m_setupAssistantTask.insert(u"stage"_qs, u"purpose"_qs);
+    m_setupAssistantTask.remove(u"revalidationRequired"_qs);
+    m_setupAssistantTask.remove(u"invalidatedStages"_qs);
+    if (!persistSetupAssistantTask()) {
+        return actionResult(false, u"Setup choices were not saved"_qs,
+                            u"The setup journal could not be written, so no configuration was changed."_qs);
+    }
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Setup path selected"_qs,
+        u"This is still the same setup task. Your controller choice and drafts were preserved."_qs);
+    result.insert(u"task"_qs, m_setupAssistantTask);
+    return result;
+}
+
 QVariantMap AppBackend::updateSetupAssistantTask(const QVariantMap &changes)
 {
     if (m_setupAssistantTask.isEmpty()) {
@@ -8163,9 +8297,12 @@ QVariantMap AppBackend::updateSetupAssistantTask(const QVariantMap &changes)
     }
     static const QSet<QString> allowed{u"stage"_qs, u"controllerRecordId"_qs, u"rigId"_qs,
                                        u"profileId"_qs, u"outputLayoutId"_qs, u"categoryId"_qs,
-                                       u"copyProfileId"_qs, u"issueId"_qs, u"returnPage"_qs};
+                                       u"copyProfileId"_qs, u"issueId"_qs, u"returnPage"_qs,
+                                       u"rigNameDraft"_qs, u"profileNameDraft"_qs,
+                                       u"copyExistingDraft"_qs, u"requiredMembershipDraft"_qs};
     static const QSet<QString> stages{u"controllers"_qs, u"purpose"_qs, u"connection"_qs,
                                       u"configure"_qs, u"complete"_qs};
+    bool selectionChanged = false;
     for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
         if (!allowed.contains(it.key())) continue;
         if (it.key() == u"stage"_qs) {
@@ -8174,12 +8311,29 @@ QVariantMap AppBackend::updateSetupAssistantTask(const QVariantMap &changes)
             m_setupAssistantTask.insert(it.key(), stage);
         } else if (it.key() == u"returnPage"_qs) {
             m_setupAssistantTask.insert(it.key(), it.value().toInt());
+        } else if (it.key() == u"copyExistingDraft"_qs || it.key() == u"requiredMembershipDraft"_qs) {
+            m_setupAssistantTask.insert(it.key(), it.value().toBool());
         } else {
             m_setupAssistantTask.insert(it.key(), it.value().toString().trimmed());
         }
+        selectionChanged = selectionChanged || it.key() == u"controllerRecordId"_qs
+            || it.key() == u"rigId"_qs || it.key() == u"profileId"_qs
+            || it.key() == u"outputLayoutId"_qs || it.key() == u"categoryId"_qs
+            || it.key() == u"copyProfileId"_qs;
+    }
+    if (selectionChanged) {
+        m_setupAssistantTask.remove(u"revalidationRequired"_qs);
+        m_setupAssistantTask.remove(u"invalidatedStages"_qs);
+        // A deliberate selection edit establishes a new exact relationship;
+        // stage navigation and draft typing never erase an external stale
+        // relationship warning.
+        m_setupAssistantTask.remove(u"fingerprints"_qs);
     }
     const QVariantMap task = reconcileSetupAssistantTask(false);
-    persistSetupAssistantTask();
+    if (!persistSetupAssistantTask()) {
+        return actionResult(false, u"Setup choices were not saved"_qs,
+                            u"The setup journal could not be written, so no configuration was changed."_qs);
+    }
     publishSetupAssistantTask();
     QVariantMap result = actionResult(true, u"Setup choices saved"_qs,
                                       u"No controller, profile, output, or mapping state changed."_qs);
@@ -8192,7 +8346,8 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
                                                             const QString &controllerRecordId,
                                                             const QString &outputLayoutId,
                                                             const QString &categoryId,
-                                                            const QString &copyProfileId)
+                                                            const QString &copyProfileId,
+                                                            const QString &targetRigId)
 {
     const QVariantMap reconciled = reconcileSetupAssistantTask(true);
     QString reason;
@@ -8215,10 +8370,14 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
     }
 
     QVariantMap task = reconciled;
-    QString rigId = task.value(u"rigId"_qs).toString().trimmed();
+    QString rigId = targetRigId.trimmed().isEmpty()
+        ? task.value(u"rigId"_qs).toString().trimmed() : targetRigId.trimmed();
     const bool needsNewRig = intent == u"first-controller"_qs || intent == u"independent"_qs;
     QVariantList operations = task.value(u"operationRefs"_qs).toList();
-    if (needsNewRig) {
+    // A partial commit already owns this task's Rig. Retry must use that
+    // canonical ID, not create a second Rig merely because the intent began
+    // as an independent setup.
+    if (needsNewRig && !findDeviceRig(m_configuration, rigId)) {
         const QString selectedControllerId = controllerRecordId.trimmed();
         if (selectedControllerId.isEmpty()) {
             return actionResult(false, u"Choose a controller first"_qs,
@@ -8229,7 +8388,23 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
             return actionResult(false, u"Virtual output is unavailable"_qs,
                                 u"Choose a current virtual output before creating the Device Rig."_qs);
         }
-        const QVariantMap rigResult = createDeviceRigResult(rigName, {selectedControllerId}, selectedOutputId);
+        const QVariantMap pending = task.value(u"pendingOperation"_qs).toMap();
+        const QString plannedRigId = pending.value(u"type"_qs).toString() == u"deviceRig"_qs
+            ? pending.value(u"id"_qs).toString() : QUuid::createUuid().toString(QUuid::WithoutBraces);
+        task.insert(u"rigNameDraft"_qs, rigName.trimmed());
+        task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+        task.insert(u"controllerRecordId"_qs, selectedControllerId);
+        task.insert(u"outputLayoutId"_qs, selectedOutputId);
+        task.insert(u"categoryId"_qs, selectedCategoryId);
+        task.insert(u"copyProfileId"_qs, sourceProfileId);
+        task.insert(u"pendingOperation"_qs, QVariantMap{{u"type"_qs, u"deviceRig"_qs},
+            {u"id"_qs, plannedRigId}});
+        m_setupAssistantTask = task;
+        if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+            u"The planned Device Rig could not be journaled, so no Device Rig was created."_qs);
+        publishSetupAssistantTask();
+        const QVariantMap rigResult = createDeviceRigResultWithId(rigName, {selectedControllerId},
+                                                                    selectedOutputId, plannedRigId);
         if (!rigResult.value(u"success"_qs).toBool()) return rigResult;
         rigId = rigResult.value(u"affectedObjectId"_qs).toString();
         operations.append(QVariantMap{{u"type"_qs, u"deviceRig"_qs}, {u"id"_qs, rigId},
@@ -8242,15 +8417,35 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
         task.insert(u"controllerRecordId"_qs, createdRig && !createdRig->members.empty()
             ? createdRig->members.front().controllerRecordId : selectedControllerId);
         task.insert(u"outputLayoutId"_qs, selectedOutputId);
+        task.remove(u"pendingOperation"_qs);
     }
     const DeviceRig *rig = findDeviceRig(m_configuration, rigId);
     if (!rig) {
         return actionResult(false, u"Device Rig is unavailable"_qs,
                             u"Choose an existing enabled Device Rig before creating this Profile."_qs);
     }
-    const QString profileId = createProfileForRigInCategory(profileName, selectedCategoryId, rig->id, sourceProfileId);
+    QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    if (!profileId.isEmpty() && !findProfile(m_configuration, profileId)) profileId.clear();
     if (profileId.isEmpty()) {
-        if (!operations.isEmpty()) {
+        const QVariantMap pending = task.value(u"pendingOperation"_qs).toMap();
+        const QString plannedProfileId = pending.value(u"type"_qs).toString() == u"profile"_qs
+            ? pending.value(u"id"_qs).toString() : QUuid::createUuid().toString(QUuid::WithoutBraces);
+        task.insert(u"rigId"_qs, rig->id);
+        task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+        task.insert(u"categoryId"_qs, selectedCategoryId);
+        task.insert(u"copyProfileId"_qs, sourceProfileId);
+        task.insert(u"pendingOperation"_qs, QVariantMap{{u"type"_qs, u"profile"_qs},
+            {u"id"_qs, plannedProfileId}});
+        m_setupAssistantTask = task;
+        if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+            u"The planned Profile could not be journaled, so no Profile was created."_qs);
+        publishSetupAssistantTask();
+        profileId = createProfileForRigInCategory(profileName, selectedCategoryId, rig->id,
+                                                   sourceProfileId, plannedProfileId);
+        if (!profileId.isEmpty()) task.remove(u"pendingOperation"_qs);
+    }
+    if (profileId.isEmpty()) {
+        if (!operations.isEmpty() || needsNewRig) {
             task.insert(u"rigId"_qs, rig->id);
             task.insert(u"operationRefs"_qs, operations);
             task.insert(u"stage"_qs, u"purpose"_qs);
@@ -8263,15 +8458,20 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
                             u"The Rig remains intact. Correct the Profile choices and continue; nothing was deleted."_qs,
                             u"deviceRig"_qs, rig->id);
     }
-    operations.append(QVariantMap{{u"type"_qs, u"profile"_qs}, {u"id"_qs, profileId},
-                                  {u"status"_qs, u"created"_qs}});
+    bool profileRecorded = false;
+    for (const QVariant &entry : operations) {
+        const QVariantMap operation = entry.toMap();
+        profileRecorded = profileRecorded || (operation.value(u"type"_qs).toString() == u"profile"_qs
+            && operation.value(u"id"_qs).toString() == profileId);
+    }
+    if (!profileRecorded) operations.append(QVariantMap{{u"type"_qs, u"profile"_qs}, {u"id"_qs, profileId},
+                                                         {u"status"_qs, u"created"_qs}});
     task.insert(u"rigId"_qs, rig->id);
     task.insert(u"profileId"_qs, profileId);
     task.insert(u"categoryId"_qs, selectedCategoryId);
     task.insert(u"operationRefs"_qs, operations);
     task.insert(u"partialCommit"_qs, false);
     task.insert(u"stage"_qs, u"connection"_qs);
-    task.insert(u"observedConfigurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration));
     m_setupAssistantTask = task;
     persistSetupAssistantTask();
     publishSetupAssistantTask();
@@ -8284,7 +8484,11 @@ QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName
 
 QVariantMap AppBackend::commitSetupAssistantSharedMember(const QString &rigId,
                                                            const QString &controllerRecordId,
-                                                           bool required)
+                                                           bool required,
+                                                           const QString &profileId,
+                                                           const QString &profileName,
+                                                           const QString &categoryId,
+                                                           const QString &copyProfileId)
 {
     const QVariantMap reconciled = reconcileSetupAssistantTask(true);
     QString reason;
@@ -8297,29 +8501,71 @@ QVariantMap AppBackend::commitSetupAssistantSharedMember(const QString &rigId,
         ? reconciled.value(u"rigId"_qs).toString().trimmed() : rigId.trimmed();
     const QString selectedControllerId = controllerRecordId.trimmed();
     const DeviceRig *rig = findDeviceRig(m_configuration, selectedRigId);
-    if (!rig || !savedControllerRecord(selectedControllerId)) {
+    if (!rig || selectedControllerId.isEmpty()) {
         return actionResult(false, u"Rig membership selection is unavailable"_qs,
-                            u"Choose a current Device Rig and saved physical controller."_qs);
+                            u"Choose a current Device Rig and connected physical controller."_qs);
+    }
+    const ControllerProfile *selectedProfile = profileId.trimmed().isEmpty()
+        ? nullptr : findProfile(m_configuration, profileId.trimmed());
+    if (selectedProfile && selectedProfile->deviceRigId != selectedRigId) {
+        return actionResult(false, u"Profile belongs to a different Device Rig"_qs,
+            u"Choose a Profile attached to this Device Rig, or leave Profile editing for later."_qs);
     }
     const QStringList affectedProfiles = setupTaskAffectedProfileNames(selectedRigId);
-    if (!addDeviceRigMember(selectedRigId, selectedControllerId, required)) {
-        return actionResult(false, u"Controller was not added to the Device Rig"_qs,
-                            u"Review the Rig capacity and membership, then try again."_qs,
-                            u"deviceRig"_qs, selectedRigId);
+    QString canonicalControllerId = selectedControllerId;
+    bool alreadyMember = false;
+    for (const DeviceRigMember &member : rig->members) {
+        const SavedControllerRecord *memberRecord = savedControllerRecord(member.controllerRecordId);
+        alreadyMember = alreadyMember || member.controllerRecordId == selectedControllerId
+            || (memberRecord && memberRecord->lastDirectInputId == selectedControllerId);
+        if (alreadyMember) canonicalControllerId = member.controllerRecordId;
+    }
+    if (!alreadyMember) {
+        if (savedControllerRecord(selectedControllerId)) {
+            if (!addDeviceRigMember(selectedRigId, selectedControllerId, required)) {
+                return actionResult(false, u"Controller was not added to the Device Rig"_qs,
+                    u"Review the Rig capacity and membership, then try again."_qs,
+                    u"deviceRig"_qs, selectedRigId);
+            }
+        } else if (discoveredController(selectedControllerId)
+                   && addDetectedDeviceToRig(selectedRigId, selectedControllerId, required)) {
+            const DeviceRig *updatedRig = findDeviceRig(m_configuration, selectedRigId);
+            if (updatedRig) for (const DeviceRigMember &member : updatedRig->members) {
+                const SavedControllerRecord *memberRecord = savedControllerRecord(member.controllerRecordId);
+                if (memberRecord && memberRecord->lastDirectInputId == selectedControllerId) {
+                    canonicalControllerId = member.controllerRecordId;
+                    break;
+                }
+            }
+        } else {
+            return actionResult(false, u"Controller was not added to the Device Rig"_qs,
+                u"Reconnect the exact physical controller, refresh Devices, and try again."_qs,
+                u"deviceRig"_qs, selectedRigId);
+        }
     }
     QVariantMap task = reconciled;
     QVariantList operations = task.value(u"operationRefs"_qs).toList();
-    operations.append(QVariantMap{{u"type"_qs, u"deviceRigMember"_qs},
-                                  {u"id"_qs, selectedControllerId},
+    bool recorded = false;
+    for (const QVariant &entry : operations) {
+        const QVariantMap operation = entry.toMap();
+        recorded = recorded || (operation.value(u"type"_qs).toString() == u"deviceRigMember"_qs
+            && operation.value(u"id"_qs).toString() == canonicalControllerId
+            && operation.value(u"rigId"_qs).toString() == selectedRigId);
+    }
+    if (!recorded) operations.append(QVariantMap{{u"type"_qs, u"deviceRigMember"_qs},
+                                  {u"id"_qs, canonicalControllerId},
                                   {u"rigId"_qs, selectedRigId},
                                   {u"required"_qs, required},
                                   {u"status"_qs, u"added"_qs}});
     task.insert(u"rigId"_qs, selectedRigId);
-    task.insert(u"controllerRecordId"_qs, selectedControllerId);
+    task.insert(u"controllerRecordId"_qs, canonicalControllerId);
+    task.insert(u"profileId"_qs, selectedProfile ? selectedProfile->id : QString{});
+    task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+    task.insert(u"categoryId"_qs, categoryId.trimmed());
+    task.insert(u"copyProfileId"_qs, copyProfileId.trimmed());
     task.insert(u"affectedProfiles"_qs, affectedProfiles);
     task.insert(u"operationRefs"_qs, operations);
     task.insert(u"stage"_qs, u"connection"_qs);
-    task.insert(u"observedConfigurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration));
     m_setupAssistantTask = task;
     persistSetupAssistantTask();
     publishSetupAssistantTask();
@@ -8329,6 +8575,7 @@ QVariantMap AppBackend::commitSetupAssistantSharedMember(const QString &rigId,
                                           : u"Existing Profiles keep their routes; the new controller starts with an independent input channel."_qs,
                                       u"deviceRig"_qs, selectedRigId, u"continue-setup"_qs);
     result.insert(u"affectedProfiles"_qs, affectedProfiles);
+    result.insert(u"profileId"_qs, selectedProfile ? selectedProfile->id : QString{});
     return result;
 }
 
@@ -8372,12 +8619,77 @@ QVariantMap AppBackend::useSetupAssistantTask()
                                              u"Complete the saved setup before activating a controller context."_qs);
     const QVariantMap activation = activateDeviceRigResult(rigId, profileId);
     if (!activation.value(u"success"_qs).toBool()) return activation;
-    m_setupAssistantTask.clear();
-    persistSetupAssistantTask();
+    m_setupAssistantTask.insert(u"stage"_qs, u"complete"_qs);
+    m_setupAssistantTask.insert(u"state"_qs, u"result"_qs);
+    m_setupAssistantTask.insert(u"useResult"_qs, activation);
+    m_setupAssistantTask.insert(u"usedAtUtc"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup result was not saved"_qs,
+        u"The activation completed, but keep this window open and retry saving its result before finishing."_qs);
     publishSetupAssistantTask();
     QVariantMap result = activation;
-    result.insert(u"setupTaskCleared"_qs, true);
+    result.insert(u"setupTaskCleared"_qs, false);
+    result.insert(u"task"_qs, m_setupAssistantTask);
     return result;
+}
+
+QVariantMap AppBackend::markSetupAssistantProof(const QString &kind, const QString &state)
+{
+    const QString proofKind = kind.trimmed();
+    const QString proofState = state.trimmed();
+    if (m_setupAssistantTask.isEmpty()
+        || (proofKind != u"physical"_qs && proofKind != u"mapped"_qs)
+        || (proofState != u"not-tested"_qs && proofState != u"started"_qs
+            && proofState != u"passed"_qs && proofState != u"unavailable"_qs)) {
+        return actionResult(false, u"Test result was not recorded"_qs,
+                            u"Use the current setup task to record an honest test state."_qs);
+    }
+    QVariantMap proofs = m_setupAssistantTask.value(u"testProofs"_qs).toMap();
+    proofs.insert(proofKind, proofState);
+    m_setupAssistantTask.insert(u"testProofs"_qs, proofs);
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Test result was not saved"_qs,
+        u"No setup configuration was changed."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Test result recorded"_qs,
+        proofState == u"passed"_qs ? u"This result is recorded for the selected setup."_qs
+                                    : u"This test remains honestly marked as not tested or unavailable."_qs);
+}
+
+QVariantMap AppBackend::recordSetupAssistantRepairOperation(const QString &scopeType,
+                                                             const QString &scopeId,
+                                                             const QString &sessionId,
+                                                             const QString &state)
+{
+    if (m_setupAssistantTask.isEmpty()) return actionResult(false, u"No setup is in progress"_qs,
+        u"Start or resume setup before approving a repair."_qs);
+    const QString normalizedScope = scopeType.trimmed();
+    const QString normalizedId = scopeId.trimmed();
+    const QString taskRig = m_setupAssistantTask.value(u"rigId"_qs).toString().trimmed();
+    if (normalizedScope != u"deviceRig"_qs || normalizedId.isEmpty() || normalizedId != taskRig) {
+        return actionResult(false, u"Repair target changed"_qs,
+            u"Return to the saved Device Rig before approving a repair."_qs);
+    }
+    m_setupAssistantTask.insert(u"repairOperation"_qs, QVariantMap{{u"scopeType"_qs, normalizedScope},
+        {u"scopeId"_qs, normalizedId}, {u"sessionId"_qs, sessionId.trimmed()},
+        {u"state"_qs, state.trimmed()}});
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Repair approval was not saved"_qs,
+        u"No repair was started."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Repair target recorded"_qs,
+                        u"The confirmation applies only to this setup task's Device Rig."_qs);
+}
+
+QVariantMap AppBackend::finishSetupAssistantTask()
+{
+    if (m_setupAssistantTask.isEmpty()) return actionResult(true, u"Setup is already finished"_qs, {});
+    if (m_setupAssistantTask.value(u"repairOperation"_qs).toMap().value(u"state"_qs).toString()
+        == u"applying"_qs) return actionResult(false, u"Repair is still running"_qs,
+            u"Wait for the approved repair to reach a result before finishing setup."_qs);
+    m_setupAssistantTask.clear();
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup result was not cleared"_qs,
+        u"The saved result remains available; no configuration was changed."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Setup finished"_qs,
+                        u"The saved guidance was cleared. Your Rigs, Profiles, and activation remain unchanged."_qs);
 }
 
 QVariantMap AppBackend::saveSetupAssistantForLater()
@@ -8386,7 +8698,8 @@ QVariantMap AppBackend::saveSetupAssistantForLater()
                                                              u"Start setup before saving it for later."_qs);
     m_setupAssistantTask.insert(u"state"_qs, u"saved"_qs);
     m_setupAssistantTask.insert(u"savedAtUtc"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
-    persistSetupAssistantTask();
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+        u"The setup journal could not be written; no controller, Profile, output, or mapper state changed."_qs);
     publishSetupAssistantTask();
     return actionResult(true, u"Setup saved for later"_qs,
                         u"No controller, Profile, output, or mapper state was changed."_qs);
@@ -8396,7 +8709,8 @@ QVariantMap AppBackend::dismissSetupAssistantTask()
 {
     const bool hadTask = !m_setupAssistantTask.isEmpty();
     m_setupAssistantTask.clear();
-    persistSetupAssistantTask();
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup guidance was not dismissed"_qs,
+        u"The saved guidance could not be cleared; no configuration was changed."_qs);
     if (hadTask) publishSetupAssistantTask();
     return actionResult(true, u"Setup guidance dismissed"_qs,
                         u"Existing Device Rigs, Profiles, mappings, and active state were retained."_qs);
@@ -15550,7 +15864,8 @@ bool AppBackend::createProfileInCategory(const QString &name, const QString &cat
 
 QString AppBackend::createProfileForRigInCategory(const QString &name, const QString &categoryId,
                                                    const QString &rigId,
-                                                   const QString &startFromId)
+                                                   const QString &startFromId,
+                                                   const QString &requestedProfileId)
 {
     const QString requestedRigId = rigId.trimmed();
     const DeviceRig *rig = findDeviceRig(m_configuration, requestedRigId);
@@ -15561,7 +15876,7 @@ QString AppBackend::createProfileForRigInCategory(const QString &name, const QSt
 
     QString createdId;
     if (!hotas::createProfileInCategory(m_configuration, name.trimmed(), categoryId,
-                                        startFromId, &createdId)) {
+                                        startFromId, &createdId, requestedProfileId)) {
         appendEvent(u"Choose a category and a profile name unique within that category."_qs);
         return {};
     }

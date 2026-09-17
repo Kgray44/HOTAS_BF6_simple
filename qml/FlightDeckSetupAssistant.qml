@@ -58,12 +58,9 @@ FlightDeckDialog {
     }
 
     function chooseIntent(intent) {
-        const context = { controllerRecordId: String(task.controllerRecordId || ""),
-                          rigId: String(task.rigId || ""),
-                          outputLayoutId: String(task.outputLayoutId || "") }
-        const result = backendObject.replaceUncommittedSetupAssistantTask(intent, context)
+        const result = backendObject.chooseSetupAssistantIntent(intent)
         showResult(result, "Setup path could not be changed.")
-        replacementChoiceVisible = Boolean(result && result.requiresChoice)
+        replacementChoiceVisible = Boolean(result && result.requiresSeparateTask)
     }
 
     function controllerIndexFor(id) {
@@ -73,30 +70,28 @@ FlightDeckDialog {
             const candidate = String(item.id || item.directInputId || "")
             if (candidate === wanted) return index
         }
-        return controllers.length ? 0 : -1
+        return -1
     }
 
     function rigIndexFor(id) {
         const wanted = String(id || "")
         for (let index = 0; index < rigs.length; ++index)
             if (String(rigs[index].id || "") === wanted) return index
-        return rigs.length ? 0 : -1
+        return -1
     }
 
     function outputIndexFor(id) {
         const wanted = String(id || "")
         for (let index = 0; index < outputs.length; ++index)
             if (String(outputs[index].id || "") === wanted) return index
-        for (let index = 0; index < outputs.length; ++index)
-            if (Boolean(outputs[index].active)) return index
-        return outputs.length ? 0 : -1
+        return -1
     }
 
     function categoryIndexFor(id) {
         const wanted = String(id || "")
         for (let index = 0; index < categories.length; ++index)
             if (String(categories[index].id || "") === wanted) return index
-        return categories.length ? 0 : -1
+        return -1
     }
 
     function selectedControllerId() {
@@ -130,20 +125,32 @@ FlightDeckDialog {
 
     function savePurposeChoice() {
         const result = backendObject.updateSetupAssistantTask({
-            rigId: selectedRigId(), outputLayoutId: selectedOutputId(),
-            categoryId: selectedCategoryId(), stage: "purpose"
+            rigId: selectedRigId(), profileId: selectedProfileId(), outputLayoutId: selectedOutputId(),
+            categoryId: selectedCategoryId(), copyProfileId: copyProfile.checked ? String(copyChoice.currentValue || "") : "",
+            rigNameDraft: rigName.text, profileNameDraft: profileName.text,
+            copyExistingDraft: copyProfile.checked, requiredMembershipDraft: requiredMembership.checked,
+            stage: "purpose"
         })
         showResult(result, "Setup choices could not be saved.")
     }
 
+    function savePurposeDraft() {
+        if (root.stage !== "purpose" || root.replacementChoiceVisible) return
+        root.savePurposeChoice()
+    }
+
     function commitPurpose() {
+        savePurposeChoice()
         let result
         if (taskIntent === "add-to-rig") {
-            result = backendObject.commitSetupAssistantSharedMember(selectedRigId(), selectedControllerId(), requiredMembership.checked)
+            result = backendObject.commitSetupAssistantSharedMember(selectedRigId(), selectedControllerId(),
+                requiredMembership.checked, selectedProfileId(), profileName.text,
+                selectedCategoryId(), copyProfile.checked ? String(copyChoice.currentValue || "") : "")
         } else {
             result = backendObject.commitSetupAssistantRigAndProfile(
                 rigName.text, profileName.text, selectedControllerId(), selectedOutputId(),
-                selectedCategoryId(), copyProfile.checked ? String(copyChoice.currentValue || "") : "")
+                selectedCategoryId(), copyProfile.checked ? String(copyChoice.currentValue || "") : "",
+                taskIntent === "profile-for-rig" ? selectedRigId() : "")
         }
         showResult(result, "The selected setup could not be saved.")
     }
@@ -154,6 +161,36 @@ FlightDeckDialog {
             ? backendObject.startSetupAssistantCheckForScope("deviceRig", rigId)
             : backendObject.startSetupAssistantCheckForScope("device", String(task.controllerRecordId || ""))
         showResult(result, "The scoped setup check could not start.")
+    }
+
+    function selectedProfileId() {
+        const item = profileChoice.currentIndex >= 0 ? profilesForSelectedRig[profileChoice.currentIndex] : ({})
+        return String(item && item.id || "")
+    }
+
+    function openRepairReview() {
+        const result = backendObject.recordSetupAssistantRepairOperation("deviceRig", String(task.rigId || ""),
+            String(readinessPanel.session.sessionId || ""), "pending-consent")
+        showResult(result, "The repair target could not be recorded.")
+        if (result && result.success) repairReview.open()
+    }
+
+    function approveTaskRepair() {
+        const result = backendObject.recordSetupAssistantRepairOperation("deviceRig", String(task.rigId || ""),
+            String(readinessPanel.session.sessionId || ""), "applying")
+        showResult(result, "The repair approval could not be saved.")
+        if (result && result.success) {
+            repairReview.close()
+            backendObject.repairSetupHealth()
+        }
+    }
+
+    readonly property var profilesForSelectedRig: {
+        const selected = selectedRigId()
+        const filtered = []
+        for (let index = 0; index < profiles.length; ++index)
+            if (String(profiles[index].deviceRigId || "") === selected) filtered.push(profiles[index])
+        return filtered
     }
 
     function openEditor(page) {
@@ -195,6 +232,7 @@ FlightDeckDialog {
     }
 
     component SetupCombo: ComboBox {
+        id: setupCombo
         implicitHeight: root.tokens.controlHeight
         font.family: root.tokens.bodyFont
         font.pixelSize: root.tokens.body
@@ -214,6 +252,51 @@ FlightDeckDialog {
             font: parent.font
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
+        }
+        indicator: Text {
+            x: parent.width - width - root.tokens.space12
+            y: (parent.height - height) / 2
+            text: "⌄"
+            color: root.tokens.textSecondary
+            font.family: root.tokens.bodyFont
+            font.pixelSize: root.tokens.bodyStrong
+        }
+        delegate: ItemDelegate {
+            width: parent ? parent.width : 0
+            height: root.tokens.controlHeight
+            highlighted: parent && parent.highlightedIndex === index
+            contentItem: Text {
+                leftPadding: root.tokens.space12
+                rightPadding: root.tokens.space12
+                text: modelData && (modelData[textRole] || modelData.displayName || modelData.name)
+                color: root.tokens.textPrimary
+                font.family: root.tokens.bodyFont
+                font.pixelSize: root.tokens.body
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+            background: Rectangle {
+                color: parent.highlighted ? root.tokens.selected : "transparent"
+            }
+        }
+        popup: Popup {
+            y: parent.height + root.tokens.space4
+            width: parent.width
+            implicitHeight: Math.min(contentItem.implicitHeight + root.tokens.space8, root.tokens.scale(280))
+            padding: root.tokens.space4
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: setupCombo.delegateModel
+                currentIndex: setupCombo.highlightedIndex
+                ScrollIndicator.vertical: ScrollIndicator { }
+            }
+            background: Rectangle {
+                radius: root.tokens.radiusControl
+                color: root.tokens.elevatedSurface
+                border.width: 1
+                border.color: root.tokens.border
+            }
         }
     }
 
@@ -344,10 +427,10 @@ FlightDeckDialog {
                 Flow {
                     Layout.fillWidth: true
                     spacing: root.tokens.space8
-                    SetupButton { text: "FIRST CONTROLLER"; subdued: root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("first-controller") }
-                    SetupButton { text: "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent"; onClicked: root.chooseIntent("independent") }
-                    SetupButton { text: "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
-                    SetupButton { text: "PROFILE FOR EXISTING RIG"; subdued: root.taskIntent !== "profile-for-rig"; onClicked: root.chooseIntent("profile-for-rig") }
+                    SetupButton { objectName: "flightDeckSetupIntentFirst"; text: "FIRST CONTROLLER"; subdued: root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("first-controller") }
+                    SetupButton { objectName: "flightDeckSetupIntentIndependent"; text: "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent"; onClicked: root.chooseIntent("independent") }
+                    SetupButton { objectName: "flightDeckSetupIntentShared"; text: "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
+                    SetupButton { objectName: "flightDeckSetupIntentProfile"; text: "PROFILE FOR EXISTING RIG"; subdued: root.taskIntent !== "profile-for-rig"; onClicked: root.chooseIntent("profile-for-rig") }
                 }
                 Text { visible: root.taskIntent === "issue"; Layout.fillWidth: true; text: "This issue handoff begins with review. Select the safe topology that matches the current controller and continue."; color: root.tokens.attention; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
                 Text { visible: root.taskIntent === "add-to-rig" || root.taskIntent === "profile-for-rig"; text: "DEVICE RIG"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
@@ -358,13 +441,17 @@ FlightDeckDialog {
                     model: root.rigs
                     currentIndex: root.rigIndexFor(root.task.rigId)
                     textRole: "name"
+                    onActivated: root.savePurposeDraft()
                 }
                 Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: "DEVICE RIG NAME"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 TextField {
                     id: rigName
+                    objectName: "flightDeckSetupRigName"
                     visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"
                     Layout.fillWidth: true
                     placeholderText: "My flight controls"
+                    text: String(root.task.rigNameDraft || "")
+                    onEditingFinished: root.savePurposeDraft()
                     color: root.tokens.textPrimary
                     font.family: root.tokens.bodyFont
                     font.pixelSize: root.tokens.body
@@ -374,9 +461,12 @@ FlightDeckDialog {
                 Text { visible: root.taskIntent !== "add-to-rig"; text: "PROFILE NAME"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 TextField {
                     id: profileName
+                    objectName: "flightDeckSetupProfileName"
                     visible: root.taskIntent !== "add-to-rig"
                     Layout.fillWidth: true
                     placeholderText: "General flight"
+                    text: String(root.task.profileNameDraft || "")
+                    onEditingFinished: root.savePurposeDraft()
                     color: root.tokens.textPrimary
                     font.family: root.tokens.bodyFont
                     font.pixelSize: root.tokens.body
@@ -386,25 +476,31 @@ FlightDeckDialog {
                 Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: "VIRTUAL OUTPUT"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: outputChoice
+                    objectName: "flightDeckSetupOutputChoice"
                     visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"
                     Layout.fillWidth: true
                     model: root.outputs
                     currentIndex: root.outputIndexFor(root.task.outputLayoutId)
                     textRole: "name"
+                    onActivated: root.savePurposeDraft()
                 }
                 Text { visible: root.taskIntent !== "add-to-rig"; text: "PROFILE CATEGORY"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: categoryChoice
+                    objectName: "flightDeckSetupCategoryChoice"
                     visible: root.taskIntent !== "add-to-rig"
                     Layout.fillWidth: true
                     model: root.categories
                     currentIndex: root.categoryIndexFor(root.task.categoryId)
                     textRole: "name"
+                    onActivated: root.savePurposeDraft()
                 }
                 CheckBox {
                     id: copyProfile
                     visible: root.taskIntent !== "add-to-rig"
                     text: "Start from an existing Profile"
+                    checked: Boolean(root.task.copyExistingDraft)
+                    onToggled: root.savePurposeDraft()
                     font.family: root.tokens.bodyFont
                     font.pixelSize: root.tokens.bodySmall
                 }
@@ -414,14 +510,33 @@ FlightDeckDialog {
                     Layout.fillWidth: true
                     model: root.profiles
                     textRole: "displayName"
+                    currentIndex: root.task.copyProfileId ? root.profiles.findIndex(function(profile) { return String(profile.id || "") === String(root.task.copyProfileId || "") }) : -1
+                    onActivated: root.savePurposeDraft()
                 }
                 CheckBox {
                     id: requiredMembership
                     visible: root.taskIntent === "add-to-rig"
-                    checked: true
+                    checked: root.task.requiredMembershipDraft === undefined ? true : Boolean(root.task.requiredMembershipDraft)
                     text: "This controller is required for this Device Rig"
                     font.family: root.tokens.bodyFont
                     font.pixelSize: root.tokens.bodySmall
+                    onToggled: root.savePurposeDraft()
+                }
+                Text { visible: root.taskIntent === "add-to-rig"; text: "PROFILE TO EDIT AFTERWARD (OPTIONAL)"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                SetupCombo {
+                    id: profileChoice
+                    objectName: "flightDeckSetupSharedProfileChoice"
+                    visible: root.taskIntent === "add-to-rig"
+                    Layout.fillWidth: true
+                    model: root.profilesForSelectedRig
+                    textRole: "displayName"
+                    currentIndex: {
+                        const wanted = String(root.task.profileId || "")
+                        for (let index = 0; index < root.profilesForSelectedRig.length; ++index)
+                            if (String(root.profilesForSelectedRig[index].id || "") === wanted) return index
+                        return -1
+                    }
+                    onActivated: root.savePurposeDraft()
                 }
                 Text {
                     visible: root.taskIntent === "add-to-rig" && rigChoice.currentIndex >= 0
@@ -454,6 +569,7 @@ FlightDeckDialog {
                 Text { Layout.fillWidth: true; text: "Run the existing scoped Setup Health check. It observes the selected Rig and its output; any repair remains its own explicit, typed workflow."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 SetupButton { objectName: "flightDeckSetupRunCheck"; text: "RUN SCOPED SETUP CHECK"; onClicked: root.runConnectionCheck() }
                 ControllerReadinessPanel {
+                    id: readinessPanel
                     objectName: "flightDeckSetupReadinessPanel"
                     Layout.fillWidth: true
                     backendObject: root.backendObject
@@ -461,6 +577,15 @@ FlightDeckDialog {
                     showTitle: false
                     useHostRepairConfirmation: true
                     presentationPage: "CHECK"
+                    checkScopeType: String(root.task.rigId || "").length > 0 ? "deviceRig" : "device"
+                    checkScopeId: String(root.task.rigId || root.task.controllerRecordId || "")
+                    onRepairRequested: root.openRepairReview()
+                    onOperationStateChanged: {
+                        if (root.task.repairOperation && String(root.task.repairOperation.state || "") === "applying"
+                                && terminal)
+                            backendObject.recordSetupAssistantRepairOperation("deviceRig", String(root.task.rigId || ""),
+                                String(session.sessionId || ""), String(operationState || "complete").toLowerCase())
+                    }
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -495,25 +620,66 @@ FlightDeckDialog {
                         anchors.fill: parent
                         anchors.margins: root.tokens.space10
                         spacing: root.tokens.space6
-                        Text { text: "WHEN YOU ARE READY"; color: root.tokens.textPrimary; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.bodyStrong; font.bold: true }
-                        Text { Layout.fillWidth: true; text: "Use applies the existing Rig/Profile activation transaction. It does not prove live hardware input, game visibility, or a successful physical test; those facts stay in Setup Health."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
-                        SetupButton { objectName: "flightDeckSetupUse"; text: "USE THIS SETUP"; onClicked: { const result = backendObject.useSetupAssistantTask(); root.showResult(result, "This setup was not activated."); if (result && result.success) root.close() } }
+                        Text { text: "TEST RESULTS"; color: root.tokens.textPrimary; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.bodyStrong; font.bold: true }
+                        Text { Layout.fillWidth: true; text: "Physical input: " + String((root.task.testProofs || {}).physical || "not tested") + " · Mapped output: " + String((root.task.testProofs || {}).mapped || "not tested"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: root.tokens.space8
+                            SetupButton { objectName: "flightDeckSetupTestPhysical"; text: "START PHYSICAL TEST"; onClicked: { const result = backendObject.startReadOnlyPhysicalInputTest(String(root.task.controllerRecordId || "")); root.showResult(result, "The physical test could not start."); if (result && result.success) backendObject.markSetupAssistantProof("physical", "started") } }
+                            SetupButton { objectName: "flightDeckSetupPhysicalNotTested"; text: "PHYSICAL NOT TESTED"; subdued: true; onClicked: root.showResult(backendObject.markSetupAssistantProof("physical", "not-tested"), "Could not record the physical test result.") }
+                            SetupButton { objectName: "flightDeckSetupMappedNotTested"; text: "MAPPED OUTPUT NOT TESTED"; subdued: true; onClicked: root.showResult(backendObject.markSetupAssistantProof("mapped", "not-tested"), "Could not record the mapped output result.") }
+                        }
+                        Text { Layout.fillWidth: true; text: "Use applies the existing Rig/Profile activation transaction. It does not prove live hardware input, game visibility, or a mapped-output test."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
+                        SetupButton { objectName: "flightDeckSetupUse"; text: "USE THIS SETUP"; enabled: String(root.task.rigId || "").length > 0 && String(root.task.profileId || "").length > 0; onClicked: { const result = backendObject.useSetupAssistantTask(); root.showResult(result, "This setup was not activated.") } }
                     }
                 }
+            }
+
+            ColumnLayout {
+                visible: !root.replacementChoiceVisible && root.stage === "complete"
+                Layout.fillWidth: true
+                spacing: root.tokens.space12
+                Text { text: "SETUP RESULT"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
+                Text { Layout.fillWidth: true; text: "Rig: " + String(root.task.rigId || "not created") + "\nProfile: " + String(root.task.profileId || "not selected") + "\nPhysical input: " + String((root.task.testProofs || {}).physical || "not tested") + "\nMapped output: " + String((root.task.testProofs || {}).mapped || "not tested"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "Use was requested through the existing activation transaction. Finish clears only this saved guidance and result; it does not undo Rigs, Profiles, mapping, or activation."; color: root.tokens.textMuted; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
+                SetupButton { objectName: "flightDeckSetupFinish"; text: "FINISH"; onClicked: { const result = backendObject.finishSetupAssistantTask(); root.showResult(result, "Setup could not be finished."); if (result && result.success) root.close() } }
             }
         }
     }
 
-    footer: Rectangle {
-        implicitHeight: footerActions.implicitHeight + root.tokens.space12
-        color: root.tokens.elevatedSurface
-        border.width: 0
-        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 1; color: root.tokens.divider }
+    FlightDeckDialog {
+        id: repairReview
+        objectName: "flightDeckSetupRepairConfirmation"
+        tokens: root.tokens
+        heading: "Confirm setup repair"
+        tone: "attention"
+        preferredWidth: 620
+        contentItem: Text {
+            width: parent.width
+            text: "Repair applies only to the saved Device Rig for this setup task. It uses the existing typed repair plan and does not activate this Rig or Profile. Review the plan, then explicitly confirm."
+            color: root.tokens.textSecondary
+            font.family: root.tokens.bodyFont
+            font.pixelSize: root.tokens.body
+            wrapMode: Text.WordWrap
+        }
+        footer: FlightDeckDialogFooter {
+            tokens: root.tokens
+            RowLayout {
+                anchors.fill: parent
+                SetupButton { text: "CANCEL"; subdued: true; onClicked: repairReview.close() }
+                Item { Layout.fillWidth: true }
+                SetupButton { objectName: "flightDeckSetupApproveRepair"; text: "CONFIRM REPAIR"; onClicked: root.approveTaskRepair() }
+            }
+        }
+    }
+
+    footer: FlightDeckDialogFooter {
+        tokens: root.tokens
         RowLayout {
             id: footerActions
             anchors.fill: parent
             anchors.margins: root.tokens.space6
-            SetupButton { text: "SAVE FOR LATER"; subdued: true; visible: !root.replacementChoiceVisible && root.backendObject.hasSetupAssistantTask; onClicked: root.showResult(backendObject.saveSetupAssistantForLater(), "Setup was not saved.") }
+            SetupButton { text: "SAVE FOR LATER"; subdued: true; visible: !root.replacementChoiceVisible && root.backendObject.hasSetupAssistantTask; onClicked: { const result = backendObject.saveSetupAssistantForLater(); root.showResult(result, "Setup was not saved."); if (result && result.success) root.close() } }
             SetupButton { text: "DISMISS GUIDANCE"; subdued: true; visible: !root.replacementChoiceVisible && root.backendObject.hasSetupAssistantTask; onClicked: { root.showResult(backendObject.dismissSetupAssistantTask(), "Guidance was not dismissed."); root.close() } }
             Item { Layout.fillWidth: true }
             SetupButton { text: "CLOSE"; subdued: true; onClicked: root.close() }

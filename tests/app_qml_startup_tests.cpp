@@ -3593,12 +3593,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && !contextStrip->property("runtimeOverride").toBool();
     contextStrip->setProperty("presentationOverride", QVariant{});
     settlePresentation();
-    // Pointer coverage for the Pass B entry route: Overview requests the one
-    // shell-owned assistant, which records guidance without changing active
-    // Rig/Profile/mapping state. The backend coordinator itself has a focused
-    // persistence/staleness fixture in app_backend_startup_tests.
+    // Pointer and keyboard coverage for the one persistent top-bar setup
+    // route. It enters the same task, selects a controller by keyboard, and
+    // changes Step 2 without replacing that task or activation state.
     auto *guidedSetup = findVisualItemByObjectName(window->contentItem(),
-        QStringLiteral("flightDeckOverviewGuidedSetup"));
+        QStringLiteral("flightDeckContextSetupAction"));
     const QString activeProfileBeforeSetup = backend.activeProfileId();
     const QString activeRigBeforeSetup = backend.activeDeviceRigId();
     const bool mappingRequestedBeforeSetup = backend.mappingRequested();
@@ -3612,18 +3611,41 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && backend.activeProfileId() == activeProfileBeforeSetup
         && backend.activeDeviceRigId() == activeRigBeforeSetup
         && backend.mappingRequested() == mappingRequestedBeforeSetup;
+    const QString setupTaskId = backend.setupAssistantTask().value(QStringLiteral("id")).toString();
+    auto *setupController = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupControllerChoice"));
+    const bool controllerKeyboard = guidedSetupOpened && setupController
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupController);
+    if (controllerKeyboard) {
+        QTest::keyClick(window, Qt::Key_Down);
+        QTest::keyClick(window, Qt::Key_Return);
+        settlePresentation();
+    }
+    auto *setupNext = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupControllersNext"));
+    const bool advancedWithPointer = controllerKeyboard && setupNext
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupNext);
+    settlePresentation();
+    auto *setupIntent = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupIntentIndependent"));
+    const bool intentPointer = advancedWithPointer && setupIntent
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupIntent);
+    settlePresentation();
+    const bool inTaskStepTwo = intentPointer && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("stage")).toString() == QStringLiteral("purpose");
     if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
     backend.dismissSetupAssistantTask();
     settlePresentation();
-    const auto *returnToSetup = findVisualItemByObjectName(window->contentItem(),
-        QStringLiteral("flightDeckContextReturnToSetup"));
-    const bool returnControlCleared = !returnToSetup || !returnToSetup->isVisible();
+    const auto *setupAction = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextSetupAction"));
+    const bool setupActionReset = setupAction && setupAction->isVisible()
+        && setupAction->property("text").toString() == QStringLiteral("Guided setup");
     if (!defaultContextCompact || !readableDuplicateContext || !rawIdentityDisclosedOnly
         || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
-    if (!guidedSetupOpened || !returnControlCleared) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck guided setup entry did not open or retain its no-activation boundary"));
+    if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo || !setupActionReset) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck persistent setup entry did not complete its pointer and keyboard Step 1/2 journey"));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
         ? QStringLiteral("Light") : QStringLiteral("Dark");

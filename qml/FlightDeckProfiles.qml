@@ -44,7 +44,6 @@ Flickable {
     signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
-    signal requestSetupAssistant(string intent, var context)
     // The shell owns the request value. A one-shot handoff must clear it
     // after this page has consumed it, otherwise recreating the lazy Profile
     // page can reopen a stale dialog and pull later navigation back here.
@@ -1088,16 +1087,6 @@ Flickable {
                 text: "+ PROFILE"
                 enabled: !root.usingPresentationFixture && root.categories.length > 0
                 onClicked: root.openNewProfile(backend.activeCategoryId)
-            }
-            DeckButton {
-                objectName: "flightDeckProfilesGuidedSetup"
-                visible: root.view === "library"
-                text: "GUIDED SETUP"
-                subdued: true
-                onClicked: root.requestSetupAssistant("profile-for-rig", {
-                    rigId: String(backend.activeDeviceRigId || ""),
-                    profileId: String(root.selectedProfileId || "")
-                })
             }
         }
 

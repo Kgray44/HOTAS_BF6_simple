@@ -741,7 +741,8 @@ public:
     Q_INVOKABLE QString createProfileForRigInCategory(const QString &name,
                                                        const QString &categoryId,
                                                        const QString &rigId,
-                                                       const QString &startFromId = {});
+                                                       const QString &startFromId = {},
+                                                       const QString &requestedProfileId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);
     Q_INVOKABLE bool duplicateProfileToCategory(const QString &profileId, const QString &name,
                                                 const QString &categoryId);
@@ -901,18 +902,30 @@ public:
     Q_INVOKABLE QVariantMap resumeSetupAssistantTask();
     Q_INVOKABLE QVariantMap replaceUncommittedSetupAssistantTask(const QString &intent,
                                                                  const QVariantMap &context = {});
+    Q_INVOKABLE QVariantMap chooseSetupAssistantIntent(const QString &intent);
     Q_INVOKABLE QVariantMap updateSetupAssistantTask(const QVariantMap &changes);
     Q_INVOKABLE QVariantMap commitSetupAssistantRigAndProfile(const QString &rigName,
                                                               const QString &profileName,
                                                               const QString &controllerRecordId,
                                                               const QString &outputLayoutId,
                                                               const QString &categoryId,
-                                                              const QString &copyProfileId = {});
+                                                              const QString &copyProfileId = {},
+                                                              const QString &targetRigId = {});
     Q_INVOKABLE QVariantMap commitSetupAssistantSharedMember(const QString &rigId,
                                                              const QString &controllerRecordId,
-                                                             bool required);
+                                                             bool required,
+                                                             const QString &profileId = {},
+                                                             const QString &profileName = {},
+                                                             const QString &categoryId = {},
+                                                             const QString &copyProfileId = {});
     Q_INVOKABLE QVariantMap prepareSetupAssistantEditor(int page);
     Q_INVOKABLE QVariantMap useSetupAssistantTask();
+    Q_INVOKABLE QVariantMap markSetupAssistantProof(const QString &kind, const QString &state);
+    Q_INVOKABLE QVariantMap recordSetupAssistantRepairOperation(const QString &scopeType,
+                                                                 const QString &scopeId,
+                                                                 const QString &sessionId,
+                                                                 const QString &state);
+    Q_INVOKABLE QVariantMap finishSetupAssistantTask();
     Q_INVOKABLE QVariantMap saveSetupAssistantForLater();
     Q_INVOKABLE QVariantMap dismissSetupAssistantTask();
     // This is deliberately separate from the guided setup test: it only
@@ -1331,11 +1344,16 @@ private:
     QVariantList setupAssistantIssuesForScope(const QString &scopeType,
                                               const QString &scopeId) const;
     void loadSetupAssistantTask();
-    void persistSetupAssistantTask();
+    bool persistSetupAssistantTask();
     void publishSetupAssistantTask();
     QVariantMap reconcileSetupAssistantTask(bool persistChanges);
+    QVariantMap setupAssistantTaskFingerprints(const QVariantMap &task) const;
     QStringList setupTaskAffectedProfileNames(const QString &rigId) const;
     bool setupTaskCanCommit(QString *reason) const;
+    QString createDeviceRigWithId(const QString &name, const QStringList &controllerRecordIds,
+                                  const QString &outputLayoutId, const QString &requestedId);
+    QVariantMap createDeviceRigResultWithId(const QString &name, const QStringList &controllerRecordIds,
+                                            const QString &outputLayoutId, const QString &requestedId);
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
     bool rememberCurrentController(const QString &expectedRecordId = {},

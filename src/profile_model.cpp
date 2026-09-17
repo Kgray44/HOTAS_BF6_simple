@@ -232,7 +232,8 @@ bool createProfile(MapperConfiguration &configuration, const QString &name,
 }
 
 bool createProfileInCategory(MapperConfiguration &configuration, const QString &name,
-                             const QString &categoryId, const QString &startFromId, QString *createdId)
+                             const QString &categoryId, const QString &startFromId, QString *createdId,
+                             const QString &requestedId)
 {
     const QString trimmedName = name.trimmed();
     if (!isProfileNameAvailableInCategory(configuration, trimmedName, categoryId)) return false;
@@ -245,7 +246,9 @@ bool createProfileInCategory(MapperConfiguration &configuration, const QString &
         if (!source) return false;
         created = *source;
     }
-    created.id = newProfileId();
+    const QString exactId = requestedId.trimmed();
+    if (!exactId.isEmpty() && findProfile(configuration, exactId)) return false;
+    created.id = exactId.isEmpty() ? newProfileId() : exactId;
     created.name = trimmedName;
     created.categoryId = categoryId;
     if (createdId) *createdId = created.id;

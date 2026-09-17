@@ -22,9 +22,6 @@ Page {
     readonly property var themeTokens: theme
 
     property int currentPage: 8
-    // Flight Deck owns the one reusable guided-setup dialog. Child pages only
-    // request it with stable IDs; they never create an alternate workflow.
-    signal requestSetupAssistant(string intent, var context)
     property bool setupAssistantReturnAfterCalibration: false
     property bool deviceDetailsReturnAfterCalibration: false
     onCurrentPageChanged: backend.recordCrashPresentationState(currentPage, themeManager.currentTheme)
@@ -1563,7 +1560,6 @@ Page {
             FlightDeckOverview {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onRequestSetupAssistant: function(intent, context) { root.requestSetupAssistant(intent, context) }
                 onNavigateToPage: function(page) { root.currentPage = page }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
@@ -1674,7 +1670,6 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 notificationCenter: root.notificationCenter
-                onRequestSetupAssistant: function(intent, context) { root.requestSetupAssistant(intent, context) }
                 profileCreationRequest: root.flightDeckProfileCreationRequest
                 presentationState: root.flightDeckProfilesPresentationState
                 onProfileCreationRequestConsumed: root.flightDeckProfileCreationRequest = ({})
@@ -2085,7 +2080,6 @@ Page {
                 requestedContext: root.flightDeckDevicesContext
                 requestedIssueTarget: root.flightDeckIssueTarget
                 notificationCenter: root.notificationCenter
-                onRequestSetupAssistant: function(intent, context) { root.requestSetupAssistant(intent, context) }
                 onNavigateToPage: function(page) { root.currentPage = page }
                 onRequestProfileWorkflow: function(rigId, mode) {
                     root.flightDeckProfileCreationRequest = {

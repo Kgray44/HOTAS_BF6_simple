@@ -1533,6 +1533,7 @@ bool verifyPersistentSetupAssistantCoordinator()
         const QVariantMap started = backend->beginSetupAssistantTask(
             QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"),
                                                QLatin1String(kControllerId)}});
+        const QString taskId = backend->setupAssistantTask().value(QStringLiteral("id")).toString();
         if (!started.value(QStringLiteral("success")).toBool() || !backend->hasSetupAssistantTask()
             || backend->setupAssistantTask().value(QStringLiteral("stage")).toString()
                 != QStringLiteral("controllers")
@@ -1542,10 +1543,22 @@ bool verifyPersistentSetupAssistantCoordinator()
             std::fprintf(stderr, "setup task start changed canonical activation state\n");
             return false;
         }
+        const QVariantMap switched = backend->chooseSetupAssistantIntent(QStringLiteral("first-controller"));
+        const QVariantMap restoredIntent = backend->chooseSetupAssistantIntent(QStringLiteral("independent"));
+        if (!switched.value(QStringLiteral("success")).toBool()
+            || !restoredIntent.value(QStringLiteral("success")).toBool()
+            || backend->setupAssistantTask().value(QStringLiteral("id")).toString() != taskId
+            || backend->setupAssistantTask().value(QStringLiteral("stage")).toString() != QStringLiteral("purpose")) {
+            std::fprintf(stderr, "setup path selection replaced the current task instead of preserving it\n");
+            return false;
+        }
         const QVariantMap savedChoice = backend->updateSetupAssistantTask({
             {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
             {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
             {QStringLiteral("categoryId"), categoryId},
+            {QStringLiteral("rigNameDraft"), expectedRigName},
+            {QStringLiteral("profileNameDraft"), expectedProfileName},
+            {QStringLiteral("requiredMembershipDraft"), true},
             {QStringLiteral("stage"), QStringLiteral("purpose")},
         });
         if (!savedChoice.value(QStringLiteral("success")).toBool()) {
@@ -1568,6 +1581,8 @@ bool verifyPersistentSetupAssistantCoordinator()
         if (createdProfileId.isEmpty() || createdRigId.isEmpty()
             || task.value(QStringLiteral("stage")).toString() != QStringLiteral("connection")
             || task.value(QStringLiteral("operationRefs")).toList().size() != 2
+            || task.value(QStringLiteral("rigNameDraft")).toString() != expectedRigName
+            || task.value(QStringLiteral("profileNameDraft")).toString() != expectedProfileName
             || backend->profileDetail(createdProfileId).value(QStringLiteral("deviceRigId")).toString()
                 != createdRigId) {
             std::fprintf(stderr, "setup task did not journal its explicit Rig/Profile commit\n");
@@ -1594,6 +1609,55 @@ bool verifyPersistentSetupAssistantCoordinator()
         || !restored->setupAssistantTask().value(QStringLiteral("invalidatedStages")).toStringList()
                 .contains(QStringLiteral("configure"))) {
         std::fprintf(stderr, "setup task persistence or stale-reference protection failed\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
+
+    // The Profile-for-Rig path must honor the visible selected Rig, not the
+    // first Rig in configuration order.
+    const QString exactCategory = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("categoryId")).toString();
+    const QVariantMap exactStarted = restored->beginSetupAssistantTask(QStringLiteral("profile-for-rig"), {
+        {QStringLiteral("rigId"), createdRigId}, {QStringLiteral("categoryId"), exactCategory}});
+    const QVariantMap exactCommitted = restored->commitSetupAssistantRigAndProfile(
+        QString{}, QStringLiteral("Pass B Exact Target Profile"), QString{}, QString{}, exactCategory,
+        QString{}, createdRigId);
+    const QString exactProfileId = restored->setupAssistantTask().value(QStringLiteral("profileId")).toString();
+    if (!exactStarted.value(QStringLiteral("success")).toBool()
+        || !exactCommitted.value(QStringLiteral("success")).toBool()
+        || restored->profileDetail(exactProfileId).value(QStringLiteral("deviceRigId")).toString() != createdRigId) {
+        std::fprintf(stderr, "setup task Profile-for-Rig did not retain its exact selected target\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
+
+    // A failed second operation must retain the planned Rig ID. Retrying the
+    // Profile with corrected input is recovery, not a request for another
+    // Device Rig.
+    const QString recoveryCategory = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("categoryId")).toString();
+    const QString duplicateProfileName = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("name")).toString();
+    const QVariantMap recoveryStarted = restored->beginSetupAssistantTask(
+        QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)}});
+    restored->updateSetupAssistantTask({
+        {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
+        {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
+        {QStringLiteral("categoryId"), recoveryCategory},
+        {QStringLiteral("stage"), QStringLiteral("purpose")},
+    });
+    const QVariantMap partial = restored->commitSetupAssistantRigAndProfile(
+        QStringLiteral("Pass B Recovery Rig"), duplicateProfileName, QLatin1String(kControllerId),
+        QLatin1String(kOutputId), recoveryCategory);
+    const QString recoveredRigId = restored->setupAssistantTask().value(QStringLiteral("rigId")).toString();
+    const QVariantMap recovered = restored->commitSetupAssistantRigAndProfile(
+        QStringLiteral("Pass B Recovery Rig"), QStringLiteral("Pass B Recovery Profile"),
+        QLatin1String(kControllerId), QLatin1String(kOutputId), recoveryCategory);
+    if (!recoveryStarted.value(QStringLiteral("success")).toBool() || partial.value(QStringLiteral("success")).toBool()
+        || recoveredRigId.isEmpty() || !recovered.value(QStringLiteral("success")).toBool()
+        || restored->setupAssistantTask().value(QStringLiteral("rigId")).toString() != recoveredRigId
+        || restored->setupAssistantTask().value(QStringLiteral("operationRefs")).toList().size() != 2) {
+        std::fprintf(stderr, "setup task partial-commit retry did not reuse its planned Device Rig\n");
         return false;
     }
     restored->clearSetupAssistantTaskForTest();

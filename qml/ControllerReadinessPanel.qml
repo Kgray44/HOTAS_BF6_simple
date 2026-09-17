@@ -15,6 +15,10 @@ Item {
     property bool useHostRepairConfirmation: false
     property bool showTitle: true
     property string presentationPage: "CHECK"
+    // A hosted setup task can scope every Check/Retry to its saved target.
+    // Empty values retain the established app-wide Setup Health behavior.
+    property string checkScopeType: ""
+    property string checkScopeId: ""
     property string observedSessionId: ""
     property var frozenCheckSnapshot: ({})
     property var activationFeedback: ({})
@@ -190,8 +194,12 @@ Item {
         // Opening any setup entry point is a new inspection transaction. The
         // presentation must never reset to CHECK and then rebind an older
         // COMPLETE snapshot from the backend.
-        if (backendObject)
-            backendObject.checkSetupHealth()
+        if (backendObject) {
+            if (checkScopeType.length > 0 && checkScopeId.length > 0)
+                backendObject.startSetupAssistantCheckForScope(checkScopeType, checkScopeId)
+            else
+                backendObject.checkSetupHealth()
+        }
     }
     function startCheck() {
         beginNewSession()

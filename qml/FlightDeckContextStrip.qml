@@ -13,9 +13,9 @@ Rectangle {
     // the canonical backend properties below; this does not issue a command.
     property var presentationOverride: null
     property bool technicalDetailsVisible: false
-    // The task journal itself lives in AppBackend. This compact affordance
-    // only returns to that explicit setup task; it is never an activation.
-    signal returnToSetupRequested()
+    // The task journal itself lives in AppBackend. This is Flight Deck's one
+    // setup entry; it resumes a task or starts neutral guidance only.
+    signal setupActionRequested()
 
     function contextValue(name, fallback) {
         if (presentationOverride === null || presentationOverride === undefined)
@@ -149,27 +149,26 @@ Rectangle {
         }
 
         Button {
-            id: returnToSetup
-            objectName: "flightDeckContextReturnToSetup"
-            visible: Boolean(backendObject.hasSetupAssistantTask)
-            text: "RETURN TO SETUP"
+            id: setupAction
+            objectName: "flightDeckContextSetupAction"
+            text: backendObject.hasSetupAssistantTask ? "Continue setup" : "Guided setup"
             implicitHeight: tokens.compactControlHeight
             leftPadding: tokens.space8
             rightPadding: tokens.space8
             font.family: tokens.bodyFont
             font.pixelSize: tokens.bodySmall
-            Accessible.name: "Return to saved setup"
-            onClicked: root.returnToSetupRequested()
+            Accessible.name: text
+            onClicked: root.setupActionRequested()
             contentItem: Text {
-                text: returnToSetup.text
+                text: setupAction.text
                 color: tokens.textSecondary
-                font: returnToSetup.font
+                font: setupAction.font
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }
             background: Rectangle {
                 radius: tokens.radiusControl
-                color: returnToSetup.hovered ? tokens.elevatedSurface : "transparent"
+                color: setupAction.hovered ? tokens.elevatedSurface : "transparent"
                 border.width: 1
                 border.color: tokens.border
             }

@@ -42,7 +42,6 @@ Flickable {
     // The shell routes this presentation request to the one canonical
     // Profile Library/create dialog. It carries no runtime activation.
     signal requestProfileWorkflow(string rigId, string mode)
-    signal requestSetupAssistant(string intent, var context)
 
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
@@ -1069,13 +1068,6 @@ Flickable {
                 enabled: root.controllerItems.length > 0
                 onClicked: createRigDialog.open()
             }
-            RigButton {
-                objectName: "flightDeckDevicesGuidedSetup"
-                text: "GUIDED SETUP"
-                onClicked: root.requestSetupAssistant("first-controller", {
-                    controllerRecordId: String(backend.activeControllerRecordId || "")
-                })
-            }
         }
         Text {
             text: "Group the physical controllers and Virtual Outputs a Profile needs. Viewing a Rig never activates it."
@@ -1102,7 +1094,6 @@ Flickable {
                     Layout.fillWidth: true
                     RigButton { text: "SCAN FOR DEVICES"; subdued: true; onClicked: backend.refreshControllers() }
                     RigButton { text: "+ CREATE RIG"; enabled: root.controllerItems.length > 0; onClicked: createRigDialog.open() }
-                    RigButton { objectName: "flightDeckDevicesEmptyGuidedSetup"; text: "GUIDED SETUP"; onClicked: root.requestSetupAssistant("first-controller", {}) }
                     Item { Layout.fillWidth: true }
                 }
             }
@@ -2107,26 +2098,9 @@ Flickable {
             }
             resetChoices();
         }
-        footer: Rectangle {
+        footer: FlightDeckDialogFooter {
             objectName: "flightDeckRigDetailsFooter"
-            implicitHeight: footerActions.implicitHeight + deck.space16
-            color: deck.secondarySurface
-            radius: deck.radiusPanel
-            topLeftRadius: 0
-            topRightRadius: 0
-            bottomLeftRadius: deck.radiusPanel
-            bottomRightRadius: deck.radiusPanel
-            // The shared dialog background owns the exterior perimeter.  This
-            // footer only owns its straight inner seam and rounded lower fill,
-            // avoiding a square paint leak or doubled bottom border.
-            border.width: 0
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: 1
-                color: deck.divider
-            }
+            tokens: deck
             RowLayout {
                 id: footerActions
                 anchors.fill: parent
