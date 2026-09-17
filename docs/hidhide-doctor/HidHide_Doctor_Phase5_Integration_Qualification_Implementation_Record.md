@@ -7,14 +7,14 @@
 - Worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase5-integration-qualification`.
 - Product implementation SHA exercised in the owner review:
   `6734b773a5f2a70764ef029b705b804625cea154`.
-- Current PR #68 evidence head: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
+- Qualification-evidence baseline: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
   The intervening changes add deterministic qualification coverage and records;
   the staged runtime file list (1,387 files, paths, byte counts, and SHA-256
   values) is identical to the owner-reviewed product implementation stage.
-- The current-head Documentation Check is `SUCCESS`; the current-head HOTAS BF6
-  CI run is still in progress at the time of this record update. The earlier
-  product-implementation checks reached terminal `SUCCESS`; neither result is
-  substituted for the current-head CI result.
+- At that fixed evidence baseline, the Documentation Check was `SUCCESS` and
+  the HOTAS BF6 CI run was still in progress. The earlier product-implementation
+  checks reached terminal `SUCCESS`; neither result is substituted for a later
+  PR head's CI result.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -195,7 +195,7 @@ negative product claim, nor a substituted real-machine result.
 
 | Required category | Current evidence / status |
 |---|---|
-| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. The owner-reviewed product implementation is `6734b773a5f2a70764ef029b705b804625cea154`; current evidence head `7ee23194e18e8bbd80ce143e11052800669ce19c` adds qualification coverage and records only. |
+| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. The owner-reviewed product implementation is `6734b773a5f2a70764ef029b705b804625cea154`; qualification-evidence baseline `7ee23194e18e8bbd80ce143e11052800669ce19c` adds coverage and records only. |
 | 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Deterministic updater fixtures roll back interrupted/invalid replacement and preserve external configuration; real installed-product update atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
