@@ -115,7 +115,12 @@ private sibling directory, removes it on a write failure, and promotes it to
 the user-selected timestamped directory only after all five artifacts commit.
 The direct domain suite verifies a successful bundle leaves no staging sibling
 visible and a blocked parent leaves no final bundle. This is deterministic
-fixture evidence; the R2 stage still needs a new owner-native bundle check.
+fixture evidence. The owner subsequently reported that the requested R2
+launch, scan, and Safe-to-Share export check looked good. Downloads contained
+only the earlier `HidHideDoctor-Diagnostic-Bundle-20260917-140145111Z` artifact,
+created at `2026-09-17T14:01:45Z`, which predates the R2 request; therefore it
+is not attributed to R2 and R2's transaction promotion has no separately
+inspected owner-created artifact yet.
 
 Two normal interactive runs of the prior candidate crashed after diagnosis.
 Their Windows error events and minidumps showed an access violation in QtCore
@@ -250,6 +255,11 @@ is v2 and integration protocol is v1.
   report redaction manifest recorded 12 included, 714 redacted, and 2 excluded
   entries, while the scoped local-identifier check found no current user or
   host/profile/temp/app-data path. This is one narrow owner-machine result.
+- For immutable R2, the owner reported that the requested native launch, scan,
+  and Safe-to-Share export sequence looked good. The retained Downloads bundle
+  was created before the R2 request, so this is owner-reported visual/runtime
+  evidence only, not a new R2 bundle artifact, independent transaction proof,
+  or a replacement for the remaining native qualification gates.
 - The final-source focused Doctor CTest set passed 5/5: domain, deep repair,
   standalone startup, path-boundary contract, and layout. The new contract
   starts the Doctor directly with `ProcessStartInfo.ArgumentList`: a Unicode
