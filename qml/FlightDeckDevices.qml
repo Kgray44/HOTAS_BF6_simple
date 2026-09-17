@@ -976,7 +976,8 @@ Flickable {
                         }
                         Text { text: controllerCard.controller.axisCount + " axes  •  " + controllerCard.controller.buttonCount + " buttons  •  " + controllerCard.controller.povCount + " hats"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text {
-                            visible: controllerCard.controller.verified && !controllerCard.controller.inDeviceRig
+                            visible: Boolean(controllerCard.controller.verified)
+                                && !Boolean(controllerCard.controller.inDeviceRig)
                             text: "NOT IN A DEVICE RIG · Add this verified controller to a Device Rig before selecting it for editing."
                             color: deck.attention
                             font.family: deck.telemetryFont
@@ -986,14 +987,15 @@ Flickable {
                             wrapMode: Text.WordWrap
                         }
                         Text {
-                            visible: controllerCard.controller.verified && controllerCard.controller.inDeviceRig
+                            visible: Boolean(controllerCard.controller.verified)
+                                && Boolean(controllerCard.controller.inDeviceRig)
                             text: "Device Rig · " + String(controllerCard.controller.rigNames || "")
                             color: deck.textSecondary
                             font.pixelSize: deck.scale(9)
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
-                        Text { visible: controllerCard.controller.selected; text: "Selected for editing."; color: deck.accent; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
+                        Text { visible: Boolean(controllerCard.controller.selected); text: "Selected for editing."; color: deck.accent; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
                         Text { visible: controllerCard.controller.active; text: "Used by the current active setup."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
                         Text { visible: !controllerCard.controller.connected; text: "This saved controller is no longer available. Reconnect it, then scan again."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         Text { visible: String(controllerCard.controller.verificationDetail || "").length > 0; text: String(controllerCard.controller.verificationDetail || ""); color: deck.textSecondary; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }

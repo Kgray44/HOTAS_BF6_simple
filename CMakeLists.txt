@@ -65,6 +65,16 @@ set(HOTAS_MAPPER_SOURCES
     src/signal_flow_model.cpp
     src/config_store.h
     src/config_store.cpp
+    src/config_persistence_coordinator.h
+    src/config_persistence_coordinator.cpp
+    src/responsiveness_probe.h
+    src/responsiveness_probe.cpp
+    src/contention_resilience_controller.h
+    src/contention_resilience_controller.cpp
+    src/interactive_scheduling_policy.h
+    src/interactive_scheduling_policy.cpp
+    src/native_qualification_driver.h
+    src/native_qualification_driver.cpp
     src/controller_manager.h
     src/controller_manager.cpp
     src/direct_input_axis.h
@@ -200,9 +210,11 @@ target_link_libraries(HOTASMapper PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Test
     Qt6::Widgets
 )
 target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(HOTASMapper PRIVATE HOTAS_ENABLE_RESPONSIVENESS_PROBE)
 set_target_properties(HOTASMapper PROPERTIES
     OUTPUT_NAME "HOTAS BF6"
     WIN32_EXECUTABLE TRUE
@@ -320,6 +332,10 @@ if (BUILD_TESTING)
         src/signal_flow_model.cpp
         src/config_store.h
         src/config_store.cpp
+        src/config_persistence_coordinator.h
+        src/config_persistence_coordinator.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
         src/controller_manager.h
         src/controller_manager.cpp
         src/direct_input_axis.h
@@ -328,7 +344,7 @@ if (BUILD_TESTING)
         src/device_rig.cpp
         src/event_log.h
     )
-    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Test dinput8 dxguid)
+    target_link_libraries(mapping_core_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test dinput8 dxguid)
     target_include_directories(mapping_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     qt_add_resources(mapping_core_tests hotas_starter_profile_test_resources
         PREFIX "/"
@@ -340,6 +356,23 @@ if (BUILD_TESTING)
 
     if (WIN32)
         set_tests_properties(mapping_core_tests PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+    endif()
+
+    qt_add_executable(config_persistence_coordinator_tests
+        tests/config_persistence_coordinator_tests.cpp
+        src/config_persistence_coordinator.h
+        src/config_persistence_coordinator.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
+        src/config_store.h
+        src/mapping_types.h
+    )
+    target_link_libraries(config_persistence_coordinator_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test)
+    target_include_directories(config_persistence_coordinator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME config_persistence_coordinator_tests COMMAND config_persistence_coordinator_tests)
+    if (WIN32)
+        set_tests_properties(config_persistence_coordinator_tests PROPERTIES
             ENVIRONMENT "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
@@ -459,8 +492,13 @@ if (BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
-    qt_add_executable(ui_release_contract_tests tests/ui_release_contract_tests.cpp)
+    qt_add_executable(ui_release_contract_tests
+        tests/ui_release_contract_tests.cpp
+        src/contention_resilience_controller.h
+        src/contention_resilience_controller.cpp
+    )
     target_link_libraries(ui_release_contract_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(ui_release_contract_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(ui_release_contract_tests PRIVATE HOTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME ui_release_contract_tests COMMAND ui_release_contract_tests)
     if (WIN32)
@@ -469,6 +507,24 @@ if (BUILD_TESTING)
             # semicolons in ENVIRONMENT values as property separators, which
             # can otherwise leave this source-contract test unable to launch
             # before it produces a QtTest result.
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+    qt_add_executable(responsiveness_probe_tests
+        tests/responsiveness_probe_tests.cpp
+        src/responsiveness_probe.h
+        src/responsiveness_probe.cpp
+        src/contention_resilience_controller.h
+        src/contention_resilience_controller.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
+    )
+    target_link_libraries(responsiveness_probe_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
+    target_include_directories(responsiveness_probe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME responsiveness_probe_disabled COMMAND responsiveness_probe_tests)
+    add_test(NAME responsiveness_probe_aggregation COMMAND responsiveness_probe_tests --enabled)
+    if (WIN32)
+        set_tests_properties(responsiveness_probe_disabled responsiveness_probe_aggregation PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
@@ -537,6 +593,13 @@ if (BUILD_TESTING)
 
     set(HOTAS_BACKEND_STARTUP_TEST_SOURCES ${HOTAS_MAPPER_SOURCES})
     list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES src/main.cpp)
+    # The opt-in driver is intentionally linked into the real GUI executable
+    # only. Startup fixtures exercise the backend/QML graph independently and
+    # must not inherit its QTest window-input dependency.
+    list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES
+        src/native_qualification_driver.h
+        src/native_qualification_driver.cpp
+    )
     qt_add_executable(app_backend_startup_tests
         tests/app_backend_startup_tests.cpp
         ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}
@@ -562,7 +625,7 @@ if (BUILD_TESTING)
             assets/starter-profiles/Battlefield-6-Helicopter.hbf6profile
     )
     target_link_libraries(app_backend_startup_tests PRIVATE dinput8 dxguid advapi32 shell32 cfgmgr32 dbghelp version)
-    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING)
+    target_compile_definitions(app_backend_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE HOTAS_STARTUP_TESTING HOTAS_ENABLE_RESPONSIVENESS_PROBE)
     # Backend startup fixtures must not acquire the owner's DirectInput or
     # vJoy session. This flag keeps AppBackend on the fixture-only control
     # plane while retaining the real models and persistence boundaries.
@@ -681,7 +744,7 @@ if (BUILD_TESTING)
             qml/FlightDeckAutomation.qml
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
+    target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING HOTAS_ENABLE_RESPONSIVENESS_PROBE)
     # The native QML lifecycle suite supplies its own deterministic controller,
     # output, and setup-assistant fixtures.  Do not let a release test inspect
     # or hold the owner's live DirectInput, vJoy, or HidHide state while those
@@ -693,7 +756,8 @@ if (BUILD_TESTING)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH};HOTAS_QML_LIFECYCLE_WATCHDOG_MS=60000"
+            TIMEOUT 75)
     endif()
 
     qt_add_executable(theme_manager_tests

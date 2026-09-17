@@ -25,7 +25,8 @@ Rectangle {
 
     implicitHeight: theme.topGun ? 62 : legacy ? 58 : 56
     radius: legacy ? 4 : theme.topGun ? 1 : theme.controlRadius
-    color: legacy ? "#132027" : theme.topGun ? theme.control : theme.panelRaised
+    color: legacy ? "#132027" : theme.topGun ? theme.control
+        : (theme.panelRaised !== undefined ? theme.panelRaised : theme.elevatedSurface)
     border.color: legacy ? "#52717c" : theme.topGun ? theme.orange : theme.borderStrong
     border.width: 1
     clip: true

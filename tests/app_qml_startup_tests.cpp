@@ -1,6 +1,8 @@
 #include "app_backend.h"
 #include "axis_transform.h"
 #include "config_store.h"
+#include "interactive_scheduling_policy.h"
+#include "responsiveness_probe.h"
 #include "response_curve.h"
 #include "theme_manager.h"
 
@@ -40,9 +42,15 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdlib>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 using namespace Qt::StringLiterals;
@@ -67,6 +75,74 @@ bool failPresentationLifecycleTest(const QString &message)
     std::fputc('\n', stderr);
     qCritical().noquote() << QStringLiteral("Presentation lifecycle test failed: %1").arg(message);
     return false;
+}
+
+class IsolatedPresentationWatchdog final {
+public:
+    explicit IsolatedPresentationWatchdog(int timeoutMs)
+        : m_timeoutMs(timeoutMs)
+        , m_startedAt(std::chrono::steady_clock::now())
+        , m_thread([this] {
+            std::unique_lock lock(m_mutex);
+            if (m_finished.wait_for(lock, std::chrono::milliseconds(m_timeoutMs),
+                                    [this] { return m_complete; })) {
+                return;
+            }
+            const QByteArray stage = m_stage.toUtf8();
+            const int activeAsyncOperations = m_activeAsyncOperations;
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_startedAt).count();
+            lock.unlock();
+            std::fprintf(stderr,
+                "app_qml_lifecycle_watchdog timeoutMs=%d elapsedMs=%lld lastCompletedOrActiveStage=%s activeAsyncOperations=%d\\n",
+                m_timeoutMs, static_cast<long long>(elapsedMs), stage.constData(), activeAsyncOperations);
+            std::fflush(stderr);
+            std::_Exit(124);
+        })
+    {
+        mark(QStringLiteral("isolated-presentation startup"));
+    }
+
+    ~IsolatedPresentationWatchdog()
+    {
+        {
+            std::scoped_lock lock(m_mutex);
+            m_complete = true;
+        }
+        m_finished.notify_one();
+        m_thread.join();
+    }
+
+    void mark(const QString &stage, int activeAsyncOperations = 0)
+    {
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - m_startedAt).count();
+        {
+            std::scoped_lock lock(m_mutex);
+            m_stage = stage;
+            m_activeAsyncOperations = activeAsyncOperations;
+        }
+        std::fprintf(stderr, "app_qml_lifecycle_progress elapsedMs=%lld stage=%s activeAsyncOperations=%d\\n",
+            static_cast<long long>(elapsedMs), stage.toUtf8().constData(), activeAsyncOperations);
+        std::fflush(stderr);
+    }
+
+private:
+    int m_timeoutMs;
+    std::chrono::steady_clock::time_point m_startedAt;
+    std::mutex m_mutex;
+    std::condition_variable m_finished;
+    QString m_stage;
+    int m_activeAsyncOperations = 0;
+    bool m_complete = false;
+    std::thread m_thread;
+};
+
+int isolatedPresentationWatchdogMs()
+{
+    bool valid = false;
+    const int configured = qEnvironmentVariableIntValue("HOTAS_QML_LIFECYCLE_WATCHDOG_MS", &valid);
+    return valid && configured >= 1'000 ? configured : 60'000;
 }
 
 void settlePresentation()
@@ -2678,9 +2754,18 @@ bool clickPresentationChoice(QQuickWindow *window, QQuickItem *settings, QQuickI
         settlePresentation();
         const QPoint selectorPoint = viewportPoint(selector, settings,
             QPointF(selector->width() * 0.5, selector->height() * 0.5));
+        // Scrolling changes the selector's native hit-test position on the
+        // next polish/render turn.  Keep the physical click route, but settle
+        // that turn before pressing so the popup is not asked to open from a
+        // stale coordinate.
+        window->contentItem()->forceActiveFocus(Qt::MouseFocusReason);
+        QTest::mouseMove(window, selectorPoint);
+        QTest::qWait(50);
+        settlePresentation();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
         QTest::qWait(8);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
+        QTest::qWait(32);
         settlePresentation();
         auto *popup = selector->findChild<QObject *>(selector->objectName()
             + QStringLiteral("Popup"));
@@ -3305,6 +3390,63 @@ bool verifyFlightDeckPageNavigationPerformance(hotas::AppBackend &backend,
         "flight_deck_page_navigation_summary appearance=%s pages=%zu total_ms=%lld max_ms=%lld\n",
         appearance.toUtf8().constData(), pages.size(), static_cast<long long>(totalMilliseconds),
         static_cast<long long>(maximumMilliseconds));
+    return true;
+}
+
+bool verifyWholeAppResponsivenessNavigation(hotas::AppBackend &backend,
+                                            hotas::ThemeManager &themeManager,
+                                            const QString &appearance)
+{
+    struct PageSample {
+        int index;
+        const char *name;
+    };
+    // Deliberately independent from the historic 11-route Flight Deck probe:
+    // Phase 0 exercises exactly the ten campaign pages and never selects or
+    // interprets Signal Flow.
+    constexpr std::array<PageSample, 10> pages{{
+        {8, "Overview"}, {2, "Devices"}, {0, "Axes"}, {1, "Buttons"},
+        {6, "Curve Editor"}, {5, "Profiles"}, {9, "Adaptive Response"},
+        {7, "Automation"}, {3, "Diagnostics"}, {4, "Settings"},
+    }};
+
+    themeManager.setCurrentTheme(QStringLiteral("Standard"));
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return failPresentationLifecycleTest(
+        QStringLiteral("Phase 0 responsiveness navigation window did not load"));
+    backend.attachMainWindow(window);
+
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface) return failPresentationLifecycleTest(
+        QStringLiteral("Phase 0 responsiveness navigation surface did not load"));
+
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const PageSample &page : pages) {
+            QElapsedTimer elapsed;
+            elapsed.start();
+            if (!selectPage(surface, page.index)) return false;
+            const qint64 milliseconds = elapsed.elapsed();
+            std::fprintf(stderr,
+                "whole_app_responsiveness_navigation appearance=%s pass=%d page=%s page_id=%d settle_ms=%lld loaded_pages=%d\n",
+                appearance.toUtf8().constData(), pass + 1, page.name, page.index,
+                static_cast<long long>(milliseconds), surface->property("loadedPageCount").toInt());
+            if (milliseconds > 1500) {
+                return failPresentationLifecycleTest(QStringLiteral(
+                    "Phase 0 responsiveness page %1 exceeded the 1500 ms isolated navigation smoke limit (%2 ms)")
+                    .arg(QString::fromLatin1(page.name)).arg(milliseconds));
+            }
+        }
+    }
+    settlePresentation();
     return true;
 }
 
@@ -4383,8 +4525,26 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     for (const int page : {8, 2, 0, 1, 6, 5, 9, 7, 3, 4}) {
         auto *nav = findVisualItemByObjectName(window->contentItem(),
             QStringLiteral("flightDeckNav_%1").arg(page));
-        if (!nav) return failPresentationLifecycleTest(QStringLiteral("Flight Deck route %1 has no nav item")
-            .arg(page));
+        auto *navigationViewport = findVisualItemByObjectName(window->contentItem(),
+            QStringLiteral("flightDeckNavigationViewport"));
+        if (!nav || !navigationViewport) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck route %1 has no navigable rail item").arg(page));
+        }
+        // The selected Diagnostics row can scroll the rail far enough that
+        // Settings is clipped below its Flickable viewport.  Establish the
+        // same visible presentation state a user would have before sending
+        // the existing native pointer click; otherwise an off-viewport click
+        // is a harness race, not a navigation result.
+        const qreal rowY = nav->mapToItem(navigationViewport, QPointF{}).y();
+        const qreal maximumContentY = std::max<qreal>(0.0,
+            navigationViewport->property("contentHeight").toReal() - navigationViewport->height());
+        const qreal desiredContentY = std::clamp(
+            navigationViewport->property("contentY").toReal() + rowY
+                - (navigationViewport->height() - nav->height()) / 2.0,
+            0.0, maximumContentY);
+        navigationViewport->setProperty("contentY", desiredContentY);
+        settlePresentation();
         const QPoint clickPoint = nav->mapToScene(QPointF(nav->width() * 0.5,
             nav->height() * 0.5)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);
@@ -4574,16 +4734,26 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             {QStringLiteral("mappedAxes"), 1}, {QStringLiteral("mappedButtons"), 4},
             {QStringLiteral("mappedPovs"), 0}, {QStringLiteral("automationCount"), 0},
             {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Global response defaults")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-transport")},
+            {QStringLiteral("name"), QStringLiteral("Transport")},
+            {QStringLiteral("categoryId"), QStringLiteral("fixture-battlefield")},
+            {QStringLiteral("categoryName"), QStringLiteral("Battlefield")},
+            {QStringLiteral("displayName"), QStringLiteral("Battlefield / Transport")},
+            {QStringLiteral("active"), false}, {QStringLiteral("enabled"), true},
+            {QStringLiteral("mappedAxes"), 2}, {QStringLiteral("mappedButtons"), 6},
+            {QStringLiteral("mappedPovs"), 1}, {QStringLiteral("automationCount"), 0},
+            {QStringLiteral("adaptiveOverrideAxes"), 0}, {QStringLiteral("adaptiveSource"), QStringLiteral("Global response defaults")}},
     };
     const QVariantList categoryVisualFixture{
         QVariantMap{{QStringLiteral("id"), QStringLiteral("fixture-battlefield")},
-            {QStringLiteral("name"), QStringLiteral("Battlefield")}, {QStringLiteral("profileCount"), 3},
+            {QStringLiteral("name"), QStringLiteral("Battlefield")}, {QStringLiteral("profileCount"), 4},
             {QStringLiteral("defaultProfileId"), QStringLiteral("fixture-helicopter")},
             {QStringLiteral("defaultProfileName"), QStringLiteral("Battlefield / Helicopter")},
             {QStringLiteral("lastActiveProfileId"), QStringLiteral("fixture-helicopter")},
             {QStringLiteral("lastActiveProfileName"), QStringLiteral("Battlefield / Helicopter")},
             {QStringLiteral("profileIds"), QStringList{QStringLiteral("fixture-helicopter"),
-                QStringLiteral("fixture-aircraft"), QStringLiteral("fixture-infantry")}},
+                QStringLiteral("fixture-aircraft"), QStringLiteral("fixture-infantry"),
+                QStringLiteral("fixture-transport")}},
             {QStringLiteral("active"), true}, {QStringLiteral("enabled"), true},
             {QStringLiteral("restoreLastProfile"), true}, {QStringLiteral("adaptiveOverrideAxes"), 2},
             {QStringLiteral("executableRules"), QStringList{QStringLiteral("bf6.exe")}}},
@@ -4630,10 +4800,134 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("profilesForCategory('fixture-battlefield').map(function(profile) { return profile.id; }).join(',')"));
     const QString profileFixtureIds = profileFixtureDedup.evaluate().toString();
     if (profileFixtureDedup.hasError()
-        || profileFixtureIds != QStringLiteral("fixture-helicopter,fixture-aircraft,fixture-infantry")) {
+        || profileFixtureIds != QStringLiteral("fixture-helicopter,fixture-aircraft,fixture-infantry,fixture-transport")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profile library duplicated an ordered profile")
             .arg(appearance));
     }
+    QQmlExpression smallFixtureRows(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("libraryRows.length"));
+    if (smallFixtureRows.hasError() || smallFixtureRows.evaluate().toInt() != 6) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles small fixture did not preserve two categories and four profiles")
+            .arg(appearance));
+    }
+    const auto reportProfilesConstruction = [&](const QString &fixtureName) {
+        const QVariantMap metrics = profilesPage->property("constructionMetrics").toMap();
+        const QByteArray compactMetrics = QJsonDocument::fromVariant(metrics).toJson(QJsonDocument::Compact);
+        std::fprintf(stderr, "profiles_phase5_fixture=%s rows=%d delegates=%d metrics=%s\n",
+            fixtureName.toUtf8().constData(), static_cast<int>(profilesPage->property("libraryRows").toList().size()),
+            profilesPage->property("libraryCategoryDelegateCount").toInt()
+                + profilesPage->property("libraryProfileDelegateCount").toInt(), compactMetrics.constData());
+    };
+    QQmlExpression beginSmallConstruction(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("constructionQualificationEnabled = true; beginConstructionQualification(); true"));
+    beginSmallConstruction.evaluate();
+    settlePresentation();
+    if (beginSmallConstruction.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles small construction fixture could not start")
+            .arg(appearance));
+    }
+    reportProfilesConstruction(QStringLiteral("small-2-categories-4-profiles"));
+    // Phase 5 construction fixtures are presentation-only.  They exercise
+    // the exact flattened-library contract without changing the owner's
+    // profile configuration or invoking an activation command.
+    const auto installSyntheticProfilesFixture = [&](const QString &prefix, const int categoryCount,
+                                                       const int profilesPerCategory) {
+        QVariantList fixtureProfiles;
+        QVariantList fixtureCategories;
+        for (int categoryIndex = 0; categoryIndex < categoryCount; ++categoryIndex) {
+            const QString categoryId = QStringLiteral("%1-category-%2").arg(prefix).arg(categoryIndex);
+            QVariantList profileIds;
+            for (int profileIndex = 0; profileIndex < profilesPerCategory; ++profileIndex) {
+                const int ordinal = categoryIndex * profilesPerCategory + profileIndex;
+                const QString profileId = QStringLiteral("%1-profile-%2").arg(prefix).arg(ordinal);
+                profileIds.append(profileId);
+                fixtureProfiles.append(QVariantMap{
+                    {QStringLiteral("id"), profileId},
+                    {QStringLiteral("name"), QStringLiteral("%1 Profile %2").arg(prefix).arg(ordinal)},
+                    {QStringLiteral("displayName"), QStringLiteral("%1 / Profile %2").arg(categoryId).arg(ordinal)},
+                    {QStringLiteral("categoryId"), categoryId},
+                    {QStringLiteral("categoryName"), QStringLiteral("%1 Category %2").arg(prefix).arg(categoryIndex)},
+                    {QStringLiteral("active"), ordinal == 0}, {QStringLiteral("enabled"), true},
+                    {QStringLiteral("mappedAxes"), ordinal % 7}, {QStringLiteral("mappedButtons"), ordinal % 11},
+                    {QStringLiteral("mappedPovs"), ordinal % 3}, {QStringLiteral("automationCount"), ordinal % 2},
+                    {QStringLiteral("adaptiveOverrideAxes"), ordinal % 4}});
+            }
+            fixtureCategories.append(QVariantMap{
+                {QStringLiteral("id"), categoryId},
+                {QStringLiteral("name"), QStringLiteral("%1 Category %2").arg(prefix).arg(categoryIndex)},
+                {QStringLiteral("profileCount"), profilesPerCategory}, {QStringLiteral("profileIds"), profileIds},
+                {QStringLiteral("active"), categoryIndex == 0}, {QStringLiteral("enabled"), true},
+                {QStringLiteral("executableRules"), QVariantList{}}});
+        }
+        if (!profilesPage->setProperty("profilesPresentationOverride", fixtureProfiles)
+            || !profilesPage->setProperty("categoriesPresentationOverride", fixtureCategories)) {
+            return false;
+        }
+        settlePresentation();
+        QQmlExpression beginConstruction(qmlContext(profilesPage), profilesPage,
+            QStringLiteral("constructionQualificationEnabled = true; beginConstructionQualification(); libraryRows.length"));
+        const int rowCount = beginConstruction.evaluate().toInt();
+        settlePresentation();
+        QQmlExpression delegateCount(qmlContext(profilesPage), profilesPage,
+            QStringLiteral("libraryCategoryDelegateCount + libraryProfileDelegateCount"));
+        const int instantiated = delegateCount.evaluate().toInt();
+        reportProfilesConstruction(QStringLiteral("%1-%2-categories-%3-profiles")
+            .arg(prefix).arg(categoryCount).arg(categoryCount * profilesPerCategory));
+        return !beginConstruction.hasError() && !delegateCount.hasError()
+            && rowCount == categoryCount * (profilesPerCategory + 1)
+            && instantiated > 0 && instantiated < categoryCount * profilesPerCategory;
+    };
+    if (!installSyntheticProfilesFixture(QStringLiteral("fixture-medium"), 6, 4)
+        || !installSyntheticProfilesFixture(QStringLiteral("fixture-large"), 12, 8)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles virtualization fixture did not keep large rows bounded")
+            .arg(appearance));
+    }
+    QQmlExpression scrollLargeProfiles(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("scrollLibraryRowsToEnd(); true"));
+    scrollLargeProfiles.evaluate();
+    settlePresentation();
+    QQmlExpression largeDelegateCount(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("libraryCategoryDelegateCount + libraryProfileDelegateCount"));
+    const int largeInstantiated = largeDelegateCount.evaluate().toInt();
+    const auto *lastLargeProfile = findVisualItemByObjectName(profilesItem,
+        QStringLiteral("flightDeckProfileCard_fixture-large-profile-95"));
+    if (scrollLargeProfiles.hasError() || largeDelegateCount.hasError()
+        || largeInstantiated >= 96 || !lastLargeProfile) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 Profiles virtualization did not recycle large-library rows (scroll=%2, delegates=%3, last=%4)")
+            .arg(appearance, scrollLargeProfiles.hasError() ? scrollLargeProfiles.error().toString() : QStringLiteral("ok"))
+            .arg(largeInstantiated).arg(lastLargeProfile ? QStringLiteral("visible") : QStringLiteral("missing")));
+    }
+    if (!profilesPage->setProperty("profilesPresentationOverride", profileVisualFixture)
+        || !profilesPage->setProperty("categoriesPresentationOverride", categoryVisualFixture)
+        || !profilesPage->setProperty("profileDetailPresentationOverride", fixtureDetails)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles fixture could not restore after virtualization qualification")
+            .arg(appearance));
+    }
+    QQmlExpression restoreSmallProfiles(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("returnToLibrary(); profileFilter = 'all'; searchText = ''; beginConstructionQualification(); true"));
+    restoreSmallProfiles.evaluate();
+    settlePresentation();
+    if (restoreSmallProfiles.hasError()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles state restore failed after virtualization qualification")
+            .arg(appearance));
+    }
+    QQmlExpression restoreProfileState(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("presentationState = ({ view: 'library', selectedCategoryId: 'fixture-battlefield', selectedProfileId: 'fixture-aircraft', profileFilter: 'all', searchText: 'aircraft', contentY: 12 }); restorePresentationState(); true"));
+    restoreProfileState.evaluate();
+    settlePresentation();
+    if (restoreProfileState.hasError()
+        || profilesPage->property("view").toString() != QStringLiteral("library")
+        || profilesPage->property("selectedCategoryId").toString() != QStringLiteral("fixture-battlefield")
+        || profilesPage->property("selectedProfileId").toString() != QStringLiteral("fixture-aircraft")
+        || profilesPage->property("searchText").toString() != QStringLiteral("aircraft")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Profiles did not restore library selection state")
+            .arg(appearance));
+    }
+    QQmlExpression resetRestoredProfileState(qmlContext(profilesPage), profilesPage,
+        QStringLiteral("returnToLibrary(); profileFilter = 'all'; searchText = ''; true"));
+    resetRestoredProfileState.evaluate();
+    settlePresentation();
     // Searching the Running list is presentation-only until the user presses
     // an existing ADD action. Exercise the actual text field so case-folded
     // display-name and executable matching cannot silently regress.
@@ -6990,6 +7284,39 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
             .arg(sliderClick.x()).arg(sliderClick.y())
             .arg(adaptive->property("contentY").toReal()));
     }
+    // Phase 1 uses the existing pointer-safe tuning slider as a real bursty
+    // configuration source. Do not settle between taps: the test verifies the
+    // GUI-side enqueue boundary while the serial persistence worker coalesces
+    // snapshots in the background. The probe records the p95/p99 evidence;
+    // this stays a deliberately generous regression ceiling for CI variance.
+    const int pointerPressesBeforeBurst = horizonSlider->property("pointerPresses").toInt();
+    std::vector<qint64> burstClickTimes;
+    burstClickTimes.reserve(100);
+    for (int index = 0; index < 100; ++index) {
+        const qreal fraction = 0.12 + static_cast<qreal>(index % 76) / 100.0;
+        const QPoint burstClick = viewportPoint(horizonSlider, adaptiveItem,
+            QPointF(horizonSlider->width() * fraction, horizonSlider->height() * 0.5));
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, burstClick);
+        burstClickTimes.push_back(elapsed.nsecsElapsed());
+    }
+    settlePresentation();
+    std::sort(burstClickTimes.begin(), burstClickTimes.end());
+    const auto burstPercentileMs = [&burstClickTimes](double fraction) {
+        const size_t index = std::min(burstClickTimes.size() - 1,
+            static_cast<size_t>(std::ceil(fraction * burstClickTimes.size())) - 1);
+        return static_cast<double>(burstClickTimes[index]) / 1'000'000.0;
+    };
+    const double p95BurstClickMs = burstPercentileMs(0.95);
+    const double p99BurstClickMs = burstPercentileMs(0.99);
+    std::fprintf(stderr,
+        "whole_app_responsiveness_slider_burst requests=100 gui_click_p95_ms=%.3f gui_click_p99_ms=%.3f\n",
+        p95BurstClickMs, p99BurstClickMs);
+    if (horizonSlider->property("pointerPresses").toInt() < pointerPressesBeforeBurst + 100
+        || p99BurstClickMs > 500.0) {
+        return fail(QStringLiteral("bursty Adaptive Response slider did not remain pointer-responsive"));
+    }
     const auto verifyPrimaryResponseSlider = [&](const QString &objectName, const QString &property) {
         auto *slider = findItem(objectName);
         if (!slider || !scrollTo(slider)) {
@@ -8844,10 +9171,14 @@ int main(int argc, char *argv[])
     // of probing the owner's HidHide/vJoy installation.
     qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
     QApplication application(argc, argv);
+    // This fixture constructs the application directly rather than calling
+    // main(), so mirror the shipped Windows interactive scheduler policy.
+    hotas::InteractiveSchedulingPolicy::installProduction(&application);
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+    hotas::ResponsivenessProbe::installIfEnabled(&application);
 
     // ConfigStore owns an explicit INI under AppConfigLocation rather than
     // QSettings' default location. The lifecycle test creates persisted
@@ -8862,6 +9193,22 @@ int main(int argc, char *argv[])
     // Conventional lifecycle coverage must not be redirected by a persisted
     // Flight Deck selection from a preceding focused fixture.
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
+    const bool isolatedPresentation = QCoreApplication::arguments().contains(
+        QStringLiteral("--isolated-presentation"));
+    // CTest owns this bounded route. It exercises the existing ten-page
+    // Phase 0 navigation workload, which deliberately does not select Signal
+    // Flow, rather than silently falling through to the broad visual matrix.
+    std::unique_ptr<IsolatedPresentationWatchdog> isolatedPresentationWatchdog;
+    if (isolatedPresentation) {
+        isolatedPresentationWatchdog = std::make_unique<IsolatedPresentationWatchdog>(
+            isolatedPresentationWatchdogMs());
+    }
+    const auto markIsolatedPresentation = [&isolatedPresentationWatchdog](const QString &stage,
+                                                                            int activeAsyncOperations = 0) {
+        if (isolatedPresentationWatchdog) {
+            isolatedPresentationWatchdog->mark(stage, activeAsyncOperations);
+        }
+    };
     // A focused geometry pass can run with Main.qml's explicit hidden
     // presentation argument. It verifies the Flight Deck choice safe-area
     // contract without raising or focusing a window on the owner's desktop.
@@ -8879,6 +9226,11 @@ int main(int argc, char *argv[])
     // qualification. It does not substitute for a native interaction review.
     const bool flightDeckPerformanceOnly = qEnvironmentVariableIsSet(
         "HOTAS_QML_FLIGHT_DECK_PERF_ONLY");
+    // The Phase 0 path has its own ten-page workload and never selects
+    // Signal Flow. It remains an isolated QML regression, not a claim about
+    // a native owner pointer pass under system contention.
+    const bool wholeAppResponsivenessNavigationOnly = isolatedPresentation
+        || qEnvironmentVariableIsSet("HOTAS_QML_WHOLE_APP_RESPONSIVENESS_ONLY");
     // The sidebar activation path is intentionally runnable on its own. It
     // provides a short native-QML regression for committed activation truth,
     // independent of the much broader visual-review matrix.
@@ -8956,6 +9308,26 @@ int main(int argc, char *argv[])
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return performanceSafe ? 0 : 1;
     }
+    if (wholeAppResponsivenessNavigationOnly) {
+        markIsolatedPresentation(QStringLiteral("whole-app navigation workload"), 1);
+        backend.setVirtualAxisAvailabilityForTest(true);
+        const bool safe = verifyWholeAppResponsivenessNavigation(
+            backend, themeManager, QStringLiteral("Dark"));
+        markIsolatedPresentation(QStringLiteral("persistence shutdown flush"));
+        backend.flushPersistenceForShutdown();
+        markIsolatedPresentation(QStringLiteral("responsiveness report export"));
+        const QString reportPath = backend.exportResponsivenessProbe();
+        if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
+            return failPresentationLifecycleTest(
+                QStringLiteral("Phase 0 responsiveness probe could not export its bounded result"));
+        }
+        if (!reportPath.isEmpty()) {
+            std::fprintf(stderr, "whole_app_responsiveness_report=%s\n", reportPath.toUtf8().constData());
+        }
+        markIsolatedPresentation(QStringLiteral("isolated presentation complete"));
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return safe ? 0 : 1;
+    }
     if (sidebarActivationOnly) {
         backend.setVirtualAxisAvailabilityForTest(true);
         const bool sidebarSafe = verifyFlightDeckSidebarActivationOnly(backend, themeManager);
@@ -8966,6 +9338,15 @@ int main(int argc, char *argv[])
         backend.setVirtualAxisAvailabilityForTest(true);
         const bool telemetrySafe = verifyFlightDeckAdaptiveResponseInteraction(
             backend, themeManager, QStringLiteral("Dark"));
+        backend.flushPersistenceForShutdown();
+        const QString reportPath = backend.exportResponsivenessProbe();
+        if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
+            return failPresentationLifecycleTest(
+                QStringLiteral("Phase 1 persistence probe could not export its bounded result"));
+        }
+        if (!reportPath.isEmpty()) {
+            std::fprintf(stderr, "whole_app_responsiveness_report=%s\n", reportPath.toUtf8().constData());
+        }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return telemetrySafe ? 0 : 1;
     }

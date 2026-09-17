@@ -1,6 +1,8 @@
 #include "app_backend.h"
 #include "crash_diagnostics.h"
 
+#include "contention_resilience_controller.h"
+
 #include "adaptive_response.h"
 #include "axis_transform.h"
 #include "automation_engine.h"
@@ -9,11 +11,13 @@
 #include "controller_discovery.h"
 #include "controller_diagnostics.h"
 #include "controller_manager.h"
+#include "config_persistence_coordinator.h"
 #include "hotas_build_version.h"
 #include "input_learning.h"
 #include "launcher_core.h"
 #include "profile_model.h"
 #include "profile_portability.h"
+#include "responsiveness_probe.h"
 #include "response_curve.h"
 #include "signal_flow_model.h"
 #include "setup_truth.h"
@@ -96,6 +100,8 @@ constexpr int kForegroundGameProbeIntervalMs = 250;
 constexpr int kForegroundGameStableMs = 450;
 constexpr int kRequiredDeviceDisconnectGraceMs = 3500;
 constexpr auto kSetupAssistantTaskSettingsKey = "setupAssistant/task-v1";
+constexpr int kPersistenceTransactionTimeoutMs = 2500;
+constexpr int kPersistenceShutdownTimeoutMs = 2000;
 
 bool startupSmokeRequested()
 {
@@ -106,7 +112,8 @@ bool startupSmokeRequested()
 
 bool isolatedPresentationRequested()
 {
-    return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs);
+    return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs)
+        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0;
 }
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,
@@ -499,7 +506,13 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
 } // namespace
 
 AppBackend::AppBackend(QObject *parent)
-    : QObject(parent), m_configuration(ConfigStore::load()), m_worker(m_configuration)
+    : QObject(parent)
+    , m_configuration(ConfigStore::load())
+    , m_persistence(std::make_unique<ConfigPersistenceCoordinator>(
+          [](const MapperConfiguration &configuration) { return ConfigStore::saveDetailed(configuration); },
+          [](const MapperConfiguration &configuration) { return ConfigStore::save(configuration); }))
+    , m_worker(m_configuration)
+    , m_contentionResilience(std::make_unique<ContentionResilienceController>())
 {
     // Package/installer startup acceptance needs the real QML shell, backend
     // models, and tray construction, but it must not acquire DirectInput,
@@ -508,6 +521,7 @@ AppBackend::AppBackend(QObject *parent)
     // launches retain the unchanged hardware startup path below.
     const bool startupSmoke = startupSmokeRequested();
     const bool isolatedPresentation = isolatedPresentationRequested();
+    m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
     // Selection starts at the authoritative active Profile, then remains a
     // session-local editor choice until the user changes it. It is never a
     // hidden activation request.
@@ -560,6 +574,8 @@ AppBackend::AppBackend(QObject *parent)
     });
     connect(&m_gameDetectionTimer, &QTimer::timeout, this, &AppBackend::evaluateGameDetection);
     connect(&m_foregroundGameTimer, &QTimer::timeout, this, &AppBackend::sampleForegroundGameContext);
+    connect(m_contentionResilience.get(), &ContentionResilienceController::policyChanged,
+            this, &AppBackend::applyContentionPolicy);
     m_requiredDisconnectGraceTimer.setSingleShot(true);
     connect(&m_requiredDisconnectGraceTimer, &QTimer::timeout, this, [this] {
         updateRequiredDeviceDisconnectGrace();
@@ -607,7 +623,6 @@ AppBackend::AppBackend(QObject *parent)
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
     m_snapshotTimer.setInterval(kVisibleSnapshotIntervalMs);
     m_snapshotTimer.start();
-    m_presentationTickClock.start();
     m_buttonTelemetryTimer.setInterval(kVisibleButtonTelemetryIntervalMs);
     m_buttonTelemetryTimer.start();
     m_legacyButtonTelemetryTimer.setInterval(kVisibleLegacyButtonTelemetryIntervalMs);
@@ -635,6 +650,9 @@ AppBackend::AppBackend(QObject *parent)
     m_activationControlPlaneClock.start();
     m_foregroundGameTimer.setInterval(kForegroundGameProbeIntervalMs);
     if (!startupSmoke && !isolatedPresentation && m_configuration.automaticGameDetection) m_foregroundGameTimer.start();
+    // Apply a development override before optional startup work begins.
+    // Normal preserves every established cadence exactly.
+    applyContentionPolicy();
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         m_trayIcon = new QSystemTrayIcon(QIcon(u":/assets/icons/png/hotas-bf6-256.png"_qs), this);
         m_trayMenu = new QMenu();
@@ -722,6 +740,7 @@ AppBackend::AppBackend(QObject *parent)
 
 AppBackend::~AppBackend()
 {
+    flushPersistenceForShutdown();
     if (m_trayIcon) {
         m_trayIcon->hide();
         // QSystemTrayIcon does not own the QMenu, so detach it before the
@@ -778,6 +797,17 @@ AppBackend::~AppBackend()
     // can abort application shutdown. Stop is observed at the next bounded
     // poll boundary, so join before member destruction.
     m_worker.wait();
+}
+
+void AppBackend::flushPersistenceForShutdown()
+{
+    if (!m_persistence) return;
+    // Shutdown has a real durability boundary. Wait only for the newest
+    // already-requested generation; starting a clean application must not
+    // manufacture a configuration write merely because it exits.
+    m_persistence->flushLatest(kPersistenceShutdownTimeoutMs);
+    m_persistence->stop(kPersistenceShutdownTimeoutMs);
+    recordPersistenceProbeTelemetry();
 }
 
 QVariantList AppBackend::axisConfiguration() const
@@ -7255,17 +7285,21 @@ QString AppBackend::presentationState() const
 
 QString AppBackend::presentationQosState() const
 {
-    switch (m_presentationQos) {
-    case PresentationQosState::Normal: return u"NORMAL"_qs;
-    case PresentationQosState::Loaded: return u"LOADED"_qs;
-    case PresentationQosState::SeverelyLoaded: return u"SEVERELY LOADED"_qs;
+    if (!m_contentionResilience) return u"NORMAL"_qs;
+    switch (m_contentionResilience->level()) {
+    case ContentionResilienceController::Level::Normal: return u"NORMAL"_qs;
+    case ContentionResilienceController::Level::Pressure: return u"LOADED"_qs;
+    case ContentionResilienceController::Level::Severe: return u"SEVERELY LOADED"_qs;
     }
     return u"NORMAL"_qs;
 }
 
 int AppBackend::presentationDroppedFrameCount() const
 {
-    return m_presentationDroppedFrameCount;
+    // The integrated controller owns cadence and intentionally does not infer
+    // dropped render frames from GUI heartbeat delay. Keep this compatibility
+    // projection truthful rather than introducing a second scheduler.
+    return 0;
 }
 
 int AppBackend::presentationSnapshotIntervalMs() const
@@ -14310,7 +14344,10 @@ QVariantMap AppBackend::signalFlowRedo(qulonglong expectedRevision)
 
 bool AppBackend::saveSignalFlowPresentation()
 {
-    if (!ConfigStore::save(m_configuration)) {
+    // The presentation contract remains an immediate durable save. Route the
+    // existing barrier through the generic serial coordinator so a previously
+    // queued non-Signal-Flow snapshot cannot write after this one.
+    if (!persistConfigurationTransaction(m_configuration, kPersistenceTransactionTimeoutMs)) {
         m_signalFlowActionFeedback = u"Signal Flow workspace could not be saved."_qs;
         emit signalFlowChanged();
         return false;
@@ -14944,7 +14981,7 @@ void AppBackend::setSelectedAxis(int physicalAxis)
 {
     if (!validAxis(physicalAxis) || m_configuration.selectedAxisIndex == physicalAxis) return;
     m_configuration.selectedAxisIndex = physicalAxis;
-    ConfigStore::save(m_configuration);
+    requestConfigurationPersistence();
     rebuildSelectedAxisCurve();
     emit stateChanged();
 }
@@ -16303,12 +16340,13 @@ void AppBackend::setAutomaticGameDetection(bool enabled)
     m_configuration.automaticGameDetection = enabled;
     m_lastDetectedExecutables.clear();
     if (enabled) {
-        const int interval = m_presentationLifecycle == PresentationLifecycleState::Visible
-            ? kVisibleGameDetectionIntervalMs
-            : m_presentationLifecycle == PresentationLifecycleState::Minimized
-                ? kMinimizedGameDetectionIntervalMs : kTrayHiddenGameDetectionIntervalMs;
+        const int interval = scaledBackgroundInterval(
+            m_presentationLifecycle == PresentationLifecycleState::Visible
+                ? kVisibleGameDetectionIntervalMs
+                : m_presentationLifecycle == PresentationLifecycleState::Minimized
+                    ? kMinimizedGameDetectionIntervalMs : kTrayHiddenGameDetectionIntervalMs);
         m_gameDetectionTimer.start(interval);
-        m_foregroundGameTimer.start(kForegroundGameProbeIntervalMs);
+        m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         startRunningApplicationSnapshot(false);
     } else {
         m_gameDetectionTimer.stop();
@@ -16488,7 +16526,7 @@ bool AppBackend::commitActivationConfiguration(const MapperConfiguration &candid
 {
     if (consumeActivationFaultForTest(u"persist"_qs)) return false;
     MapperConfiguration persisted = candidate;
-    if (!ConfigStore::save(persisted)) return false;
+    if (!persistConfigurationTransaction(persisted, kPersistenceTransactionTimeoutMs)) return false;
     m_configuration = std::move(persisted);
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
@@ -18344,6 +18382,15 @@ bool AppBackend::setProfileCurveTransitionDurationMs(const QString &profileId, i
 void AppBackend::checkForUpdates()
 {
     if (m_updateChecking) return;
+    if (m_contentionResilience && m_contentionResilience->isSevere()) {
+        // A check that has not begun is optional work. Defer it rather than
+        // competing with interaction recovery; a later automatic retry keeps
+        // update behavior intact without touching mapping or persistence.
+        m_updateStatusText = u"Update check deferred while the desktop is under severe contention."_qs;
+        QTimer::singleShot(30'000, this, &AppBackend::checkForUpdates);
+        emit stateChanged();
+        return;
+    }
     m_updateChecking = true;
     m_updateTimedOut = false;
     m_updateCheckFailed = false;
@@ -18434,7 +18481,12 @@ bool AppBackend::handoffToLauncher()
     // Ensure the existing QSettings record is durable before a separate
     // launcher process takes over. A launcher start is confirmed first; only
     // then do we begin stopping controller I/O and exit this application.
-    ConfigStore::save(m_configuration);
+    if (!persistConfigurationTransaction(m_configuration, kPersistenceTransactionTimeoutMs)) {
+        m_updateStatusText = u"Update available, but HOTAS BF6 could not durably save the latest configuration."_qs;
+        appendEvent(u"Update handoff blocked: latest configuration did not reach durable storage."_qs);
+        emit stateChanged();
+        return false;
+    }
     const QString applicationDirectory = QCoreApplication::applicationDirPath();
     const QString launcherPath = QDir(applicationDirectory).filePath(u"HOTAS BF6 Launcher.exe"_qs);
     if (!QFileInfo(launcherPath).isExecutable()) {
@@ -20189,8 +20241,8 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
         candidate.activeControllerRecordId = candidate.savedControllers.back().id;
     }
     candidate.preferredDeviceId = controller->directInputId;
-    if (!ConfigStore::save(candidate)) return false;
     m_configuration = std::move(candidate);
+    if (!requestConfigurationPersistence()) return false;
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
     // Verification changes the durable identity fact used by DeviceRigStatus.
@@ -20247,7 +20299,7 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     found->lastSeen = timestamp;
     found->lastVerified = timestamp;
 
-    if (!ConfigStore::save(candidate)) {
+    if (!persistConfigurationTransaction(candidate, kPersistenceTransactionTimeoutMs)) {
         return reject(u"HOTAS BF6 proved the selected controller but could not save its verification record. No controller, HidHide, or vJoy setting was changed."_qs);
     }
 
@@ -20365,7 +20417,7 @@ bool AppBackend::setActiveController(const QString &recordId)
             m_verificationInProgress = false;
             if (prepared && outputValid && selected && restored) {
                 m_configuration = targetConfiguration;
-                ConfigStore::save(m_configuration);
+                requestConfigurationPersistence();
                 rebuildSelectedAxisCurve();
                 rebuildControllerUiModel();
                 emit selectedAxisCurveChanged();
@@ -20720,7 +20772,7 @@ bool AppBackend::forgetController(const QString &recordId)
         }
         visibilityChanged = visibilityResult.changed;
     }
-    if (!ConfigStore::save(candidate)) {
+    if (!persistConfigurationTransaction(candidate, kPersistenceTransactionTimeoutMs)) {
         if (visibilityChanged) {
             const ManagedVisibilityTransactionResult rollback =
                 visibility.applyManagedPhysicalInputVisibility(managedHidInstances, true);
@@ -20857,7 +20909,10 @@ bool AppBackend::launchUninstaller()
 
 void AppBackend::evaluateGameDetection()
 {
-    if (m_configuration.automaticGameDetection) startRunningApplicationSnapshot(false);
+    if (m_configuration.automaticGameDetection) {
+        if (m_contentionResilience) m_contentionResilience->recordBackgroundPoll(QStringLiteral("game"));
+        startRunningApplicationSnapshot(false);
+    }
 }
 
 void AppBackend::refreshControllerInventory()
@@ -20869,6 +20924,7 @@ void AppBackend::refreshControllerInventory()
     if (qEnvironmentVariableIsSet("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION")) return;
 #endif
     if (m_controllerDiscoveryInProgress) return;
+    if (m_contentionResilience) m_contentionResilience->recordBackgroundPoll(QStringLiteral("controller"));
     m_controllerDiscoveryInProgress = true;
     if (m_uiPerformanceInstrumentationEnabled) ++m_controllerDiscoveryBackgroundRuns;
     QThread *thread = QThread::create([this] {
@@ -20991,6 +21047,9 @@ void AppBackend::attachMainWindow(QWindow *window)
     if (m_mainWindow == window) return;
     m_mainWindow = window;
     if (!m_mainWindow) return;
+    if (auto *probe = ResponsivenessProbe::active()) {
+        probe->attachWindow(qobject_cast<QQuickWindow *>(m_mainWindow.data()));
+    }
     connect(m_mainWindow, &QWindow::visibilityChanged, this,
             [this](QWindow::Visibility) { updatePresentationLifecycle(); });
     connect(m_mainWindow, &QWindow::windowStateChanged, this,
@@ -21067,43 +21126,41 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
     switch (state) {
     case PresentationLifecycleState::Visible:
         restorePresentationResources();
-        m_snapshotTimer.start(kVisibleSnapshotIntervalMs);
-        m_buttonTelemetryTimer.start(kVisibleButtonTelemetryIntervalMs);
-        m_legacyButtonTelemetryTimer.start(kVisibleLegacyButtonTelemetryIntervalMs);
-        m_numericTelemetryTimer.start(kVisibleNumericTelemetryIntervalMs);
-        m_controllerDiscoveryTimer.start(kVisibleControllerDiscoveryIntervalMs);
+        m_snapshotTimer.start(m_contentionResilience->telemetryIntervalMs());
+        m_buttonTelemetryTimer.start(visibleButtonTelemetryIntervalMs());
+        m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kVisibleLegacyButtonTelemetryIntervalMs));
+        m_numericTelemetryTimer.start(scaledBackgroundInterval(kVisibleNumericTelemetryIntervalMs));
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kVisibleControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kVisibleGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kVisibleGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         // Project the latest worker atomics before the visible QML tree has a
         // chance to render. This is presentation work only; MappingWorker has
         // remained awake and independent throughout the transition.
-        m_presentationTickClock.restart();
         refreshUiSnapshot();
-        applyPresentationQosIntervals();
+        applyContentionPolicy();
         break;
     case PresentationLifecycleState::Minimized:
-        m_presentationQos = PresentationQosState::Normal;
-        m_presentationQosStableTicks = 0;
-        m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);
-        m_buttonTelemetryTimer.start(kMinimizedButtonTelemetryIntervalMs);
-        m_legacyButtonTelemetryTimer.start(kMinimizedLegacyButtonTelemetryIntervalMs);
-        m_numericTelemetryTimer.start(kMinimizedNumericTelemetryIntervalMs);
-        m_controllerDiscoveryTimer.start(kMinimizedControllerDiscoveryIntervalMs);
+        m_snapshotTimer.start(scaledBackgroundInterval(kMinimizedSnapshotIntervalMs));
+        m_buttonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedButtonTelemetryIntervalMs));
+        m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedLegacyButtonTelemetryIntervalMs));
+        m_numericTelemetryTimer.start(scaledBackgroundInterval(kMinimizedNumericTelemetryIntervalMs));
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kMinimizedControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kMinimizedGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kMinimizedGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         break;
     case PresentationLifecycleState::TrayHidden:
-        m_presentationQos = PresentationQosState::Normal;
-        m_presentationQosStableTicks = 0;
         m_snapshotTimer.stop();
         m_buttonTelemetryTimer.stop();
         m_legacyButtonTelemetryTimer.stop();
         m_numericTelemetryTimer.stop();
-        m_controllerDiscoveryTimer.start(kTrayHiddenControllerDiscoveryIntervalMs);
+        m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kTrayHiddenControllerDiscoveryIntervalMs));
         if (m_configuration.automaticGameDetection) {
-            m_gameDetectionTimer.start(kTrayHiddenGameDetectionIntervalMs);
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kTrayHiddenGameDetectionIntervalMs));
+            m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
         }
         releasePresentationResources();
         break;
@@ -21111,52 +21168,72 @@ void AppBackend::setPresentationLifecycle(PresentationLifecycleState state)
     emit presentationStateChanged();
 }
 
-void AppBackend::applyPresentationQosIntervals()
+ContentionResilienceController *AppBackend::contentionResilienceController() const
 {
-    if (m_presentationLifecycle != PresentationLifecycleState::Visible) return;
-    const int snapshotInterval = m_presentationQos == PresentationQosState::Normal
-        ? kVisibleSnapshotIntervalMs : m_presentationQos == PresentationQosState::Loaded
-            ? kLoadedSnapshotIntervalMs : kSeverelyLoadedSnapshotIntervalMs;
-    const int buttonInterval = m_presentationQos == PresentationQosState::Normal
-        ? kVisibleButtonTelemetryIntervalMs : m_presentationQos == PresentationQosState::Loaded
-            ? kLoadedButtonTelemetryIntervalMs : kSeverelyLoadedButtonTelemetryIntervalMs;
-    const int historyInterval = m_presentationQos == PresentationQosState::Normal
-        ? kAdaptiveResponseHistoryIntervalMs : m_presentationQos == PresentationQosState::Loaded
-            ? kLoadedAdaptiveResponseHistoryIntervalMs : kSeverelyLoadedAdaptiveResponseHistoryIntervalMs;
-    m_snapshotTimer.setInterval(snapshotInterval);
-    m_buttonTelemetryTimer.setInterval(buttonInterval);
-    m_legacyButtonTelemetryTimer.setInterval(std::max(100, snapshotInterval * 2));
-    m_numericTelemetryTimer.setInterval(std::max(100, snapshotInterval * 2));
-    m_adaptiveResponseHistoryTimer.setInterval(historyInterval);
+    return m_contentionResilience.get();
 }
 
-void AppBackend::updatePresentationQos(qint64 lateByMs)
+int AppBackend::scaledBackgroundInterval(int baseIntervalMs) const
 {
-    if (m_presentationLifecycle != PresentationLifecycleState::Visible) return;
-    PresentationQosState desired = m_presentationQos;
-    if (lateByMs >= 250) {
-        desired = PresentationQosState::SeverelyLoaded;
-        m_presentationQosStableTicks = 0;
-        m_presentationDroppedFrameCount += static_cast<int>(lateByMs / kVisibleSnapshotIntervalMs);
-    } else if (lateByMs >= 50) {
-        desired = m_presentationQos == PresentationQosState::SeverelyLoaded
-            ? PresentationQosState::SeverelyLoaded : PresentationQosState::Loaded;
-        m_presentationQosStableTicks = 0;
-        m_presentationDroppedFrameCount += static_cast<int>(lateByMs / kVisibleSnapshotIntervalMs);
-    } else {
-        ++m_presentationQosStableTicks;
-        // Recover slowly. This avoids a loaded host oscillating between a
-        // dense renderer and a reduced renderer on alternate timer ticks.
-        if (m_presentationQosStableTicks >= 120) {
-            desired = m_presentationQos == PresentationQosState::SeverelyLoaded
-                ? PresentationQosState::Loaded : PresentationQosState::Normal;
-            m_presentationQosStableTicks = 0;
-        }
+    const int multiplier = m_contentionResilience
+        ? m_contentionResilience->backgroundPollMultiplier() : 1;
+    return baseIntervalMs * multiplier;
+}
+
+int AppBackend::visibleButtonTelemetryIntervalMs() const
+{
+    if (!m_contentionResilience) return kVisibleButtonTelemetryIntervalMs;
+    return std::max(kVisibleButtonTelemetryIntervalMs,
+                    m_contentionResilience->telemetryIntervalMs());
+}
+
+int AppBackend::adaptiveResponseHistoryIntervalMs() const
+{
+    if (!m_contentionResilience) return kAdaptiveResponseHistoryIntervalMs;
+    switch (m_contentionResilience->level()) {
+    case ContentionResilienceController::Level::Normal: return kAdaptiveResponseHistoryIntervalMs;
+    case ContentionResilienceController::Level::Pressure: return 50;
+    case ContentionResilienceController::Level::Severe: return 83;
     }
-    if (desired == m_presentationQos) return;
-    m_presentationQos = desired;
-    applyPresentationQosIntervals();
-    emit presentationStateChanged();
+    return kAdaptiveResponseHistoryIntervalMs;
+}
+
+void AppBackend::applyContentionPolicy()
+{
+    if (!m_contentionResilience) return;
+    const auto &policy = m_contentionResilience->policy();
+    if (m_presentationLifecycle == PresentationLifecycleState::Visible) {
+        if (m_snapshotTimer.isActive()) m_snapshotTimer.start(policy.telemetryIntervalMs);
+        if (m_buttonTelemetryTimer.isActive()) m_buttonTelemetryTimer.start(visibleButtonTelemetryIntervalMs());
+        if (m_legacyButtonTelemetryTimer.isActive())
+            m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kVisibleLegacyButtonTelemetryIntervalMs));
+        if (m_numericTelemetryTimer.isActive())
+            m_numericTelemetryTimer.start(scaledBackgroundInterval(kVisibleNumericTelemetryIntervalMs));
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kVisibleControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kVisibleGameDetectionIntervalMs));
+    } else if (m_presentationLifecycle == PresentationLifecycleState::Minimized) {
+        if (m_snapshotTimer.isActive()) m_snapshotTimer.start(scaledBackgroundInterval(kMinimizedSnapshotIntervalMs));
+        if (m_buttonTelemetryTimer.isActive()) m_buttonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedButtonTelemetryIntervalMs));
+        if (m_legacyButtonTelemetryTimer.isActive())
+            m_legacyButtonTelemetryTimer.start(scaledBackgroundInterval(kMinimizedLegacyButtonTelemetryIntervalMs));
+        if (m_numericTelemetryTimer.isActive())
+            m_numericTelemetryTimer.start(scaledBackgroundInterval(kMinimizedNumericTelemetryIntervalMs));
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kMinimizedControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kMinimizedGameDetectionIntervalMs));
+    } else {
+        if (m_controllerDiscoveryTimer.isActive())
+            m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kTrayHiddenControllerDiscoveryIntervalMs));
+        if (m_configuration.automaticGameDetection && m_gameDetectionTimer.isActive())
+            m_gameDetectionTimer.start(scaledBackgroundInterval(kTrayHiddenGameDetectionIntervalMs));
+    }
+    if (m_foregroundGameTimer.isActive())
+        m_foregroundGameTimer.start(scaledBackgroundInterval(kForegroundGameProbeIntervalMs));
+    if (m_adaptiveResponseHistoryTimer.isActive())
+        m_adaptiveResponseHistoryTimer.start(adaptiveResponseHistoryIntervalMs());
 }
 
 void AppBackend::releasePresentationResources()
@@ -21522,16 +21599,7 @@ void AppBackend::processInputLearning()
 
 void AppBackend::refreshUiSnapshot()
 {
-    // QTimer coalesces missed timeouts, so this observes only the newest
-    // worker atomics and never replays a presentation backlog. When the GUI
-    // was late, lower the display sampling rate before scheduling more work;
-    // MappingWorker is intentionally not consulted or throttled here.
-    if (m_presentationTickClock.isValid() && m_snapshotTimer.isActive()
-        && m_presentationLifecycle == PresentationLifecycleState::Visible) {
-        const qint64 elapsed = m_presentationTickClock.restart();
-        const qint64 lateBy = std::max<qint64>(0, elapsed - m_snapshotTimer.interval());
-        updatePresentationQos(lateBy);
-    }
+    if (m_contentionResilience) m_contentionResilience->recordTelemetryPublication();
     // The worker publishes raw atomics only; no calibration calculation or
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
@@ -21608,7 +21676,7 @@ void AppBackend::refreshUiSnapshot()
     if (captureAdaptiveHistory && !m_adaptiveResponseHistoryTimer.isActive()) {
         // Record diagnostic history at 83 Hz; QML renders independently at
         // roughly 30 Hz and only while its section is near the viewport.
-        m_adaptiveResponseHistoryTimer.start(kAdaptiveResponseHistoryIntervalMs);
+        m_adaptiveResponseHistoryTimer.start(adaptiveResponseHistoryIntervalMs());
     } else if (!captureAdaptiveHistory && m_adaptiveResponseHistoryTimer.isActive()) {
         m_adaptiveResponseHistoryTimer.stop();
     }
@@ -21697,6 +21765,7 @@ void AppBackend::sampleAdaptiveResponseHistory()
         % static_cast<int>(m_adaptiveResponseHistory.size());
     m_adaptiveResponseHistoryCount = std::min(m_adaptiveResponseHistoryCount + 1,
         static_cast<int>(m_adaptiveResponseHistory.size()));
+    if (m_contentionResilience) m_contentionResilience->recordAdaptiveHistorySample();
 }
 
 void AppBackend::refreshNumericTelemetry()
@@ -21799,6 +21868,32 @@ void AppBackend::resetUiPerformanceCounters()
     m_uiEventLoopDelayOver100Ms = 0;
     m_uiEventLoopDelayOver250Ms = 0;
     m_uiEventLoopHeartbeatClock.restart();
+}
+
+bool AppBackend::responsivenessProbeEnabled() const
+{
+    return ResponsivenessProbe::active() != nullptr;
+}
+
+void AppBackend::responsivenessNavigationRequested(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationRequested(page, pageName);
+}
+
+void AppBackend::responsivenessNavigationLoaderActivated(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationLoaderActivated(page, pageName);
+}
+
+void AppBackend::responsivenessNavigationObjectReady(int page, const QString &pageName)
+{
+    if (auto *probe = ResponsivenessProbe::active()) probe->recordNavigationObjectReady(page, pageName);
+}
+
+QString AppBackend::exportResponsivenessProbe(const QString &path)
+{
+    if (auto *probe = ResponsivenessProbe::active()) return probe->exportReport(path);
+    return {};
 }
 
 void AppBackend::appendEvent(const QString &event)
@@ -21963,6 +22058,58 @@ const AxisMapping *AppBackend::selectedAxisMapping() const
     return &currentProfile().axes[m_configuration.selectedAxisIndex];
 }
 
+bool AppBackend::requestConfigurationPersistence()
+{
+    if (!m_persistence) return false;
+    const ConfigPersistenceCoordinator::RequestReceipt request = m_persistence->request(m_configuration);
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (ResponsivenessProbe *probe = ResponsivenessProbe::active(); request.generation != 0 && probe) {
+        probe->recordPersistenceEnqueue(request.captureStartedNs, request.captureFinishedNs,
+                                        request.enqueuedNs, request.generation,
+                                        request.supersededPending);
+    }
+#endif
+    recordPersistenceProbeTelemetry();
+    return request.generation != 0;
+}
+
+bool AppBackend::persistConfigurationTransaction(const MapperConfiguration &configuration, int timeoutMs)
+{
+    if (!m_persistence) return false;
+    const ConfigPersistenceCoordinator::RequestReceipt request = m_persistence->request(configuration);
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (ResponsivenessProbe *probe = ResponsivenessProbe::active(); request.generation != 0 && probe) {
+        probe->recordPersistenceEnqueue(request.captureStartedNs, request.captureFinishedNs,
+                                        request.enqueuedNs, request.generation,
+                                        request.supersededPending);
+    }
+#endif
+    const ConfigPersistenceCoordinator::FlushResult result = request.generation == 0
+        ? ConfigPersistenceCoordinator::FlushResult{ConfigPersistenceCoordinator::FlushStatus::Stopped, 0, 0}
+        : m_persistence->flushThrough(request.generation, timeoutMs);
+    recordPersistenceProbeTelemetry();
+    return result.durable();
+}
+
+void AppBackend::recordPersistenceProbeTelemetry()
+{
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    if (!m_persistence) return;
+    ResponsivenessProbe *probe = ResponsivenessProbe::active();
+    if (!probe) return;
+    for (const ConfigPersistenceCoordinator::Completion &completion : m_persistence->takeCompletions()) {
+        probe->recordPersistenceWorker(completion.generation, completion.enqueuedNs,
+                                       completion.workerStartedNs, completion.workerFinishedNs,
+                                       completion.write.serializationNs, completion.write.setValueNs,
+                                       completion.write.syncNs, completion.write.success);
+    }
+    const ConfigPersistenceCoordinator::Statistics statistics = m_persistence->statistics();
+    probe->recordPersistenceState(statistics.requests, statistics.writes, statistics.superseded,
+                                  statistics.latestRequestedGeneration, statistics.durableGeneration,
+                                  statistics.failures, statistics.lastFailedGeneration);
+#endif
+}
+
 void AppBackend::persistAndApply()
 {
     // These fields existed only in unreleased candidate configurations.  A
@@ -21983,7 +22130,7 @@ void AppBackend::persistAndApply()
     // control-plane commits so a later edit/delete is surfaced as a review
     // requirement; this must never run on the DirectInput report path.
     reconcileSetupAssistantTask(true);
-    ConfigStore::save(m_configuration);
+    requestConfigurationPersistence();
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);
     rebuildSelectedAxisCurve();

@@ -9,8 +9,19 @@ namespace hotas {
 
 class ConfigStore final {
 public:
+    struct SaveResult {
+        bool success = false;
+        qint64 serializationNs = 0;
+        qint64 setValueNs = 0;
+        qint64 syncNs = 0;
+    };
+
     static MapperConfiguration load();
     static bool save(const MapperConfiguration &configuration);
+    // ConfigStore remains the synchronous low-level writer. The coordinator
+    // uses this timed form from its own serial control-plane thread; callers
+    // that need the historic synchronous API continue to use save().
+    static SaveResult saveDetailed(const MapperConfiguration &configuration);
 
     static QJsonObject toJson(const MapperConfiguration &configuration);
     static MapperConfiguration fromJson(const QJsonObject &json, bool *valid = nullptr);

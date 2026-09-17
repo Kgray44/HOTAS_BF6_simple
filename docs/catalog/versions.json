@@ -739,5 +739,16 @@
       "Physical axis technical details now record discovery, DirectInput object identity, observed native range, requested-range result, resolved acquisition source, and live movement evidence. The mapper compiles offset-based bindings before polling and can corroborate a conflicting standard state field with bounded buffered DirectInput object data without allocating in the report path.",
       "The Saitek Pro Flight Rudder Pedals Z Rotation defect remains a physical-hardware acceptance gate: this candidate does not claim a fix until the exact build has passed real three-axis, vJoy, reconnect, and restart validation on the owner's pedals."
     ]
+  },
+  {
+    "version": "2.6.7",
+    "title": "Whole-app responsiveness",
+    "summary": "Integrates the seven-phase responsiveness campaign onto the V2.6.6 baseline, preserving the bounded DirectInput-to-vJoy mapping path and existing device, axis, and Virtual Output contracts.",
+    "highlights": [
+      "Ordinary configuration persistence is coalesced and performed asynchronously; current state wins while transactional and shutdown paths retain explicit bounded handling.",
+      "Presentation work has explicit interactive scheduling and contention-aware Normal, Pressure, and Severe policies that degrade decoration and background refresh before interaction; MappingWorker ownership remains unchanged.",
+      "Flight Deck Profiles uses flattened, recycled rows and lazy construction; controlled native interaction qualification covers navigation, scrolling, keyboard editing, slider activity, persistence bursts, responsive layout, and read-only DirectInput/vJoy inspection.",
+      "Owner acceptance passed cleanly across general navigation, scrolling, settings persistence, physical HOTAS and pedals, vJoy, HidHide, profile/game detection, high-load usability, Battlefield 6, Flight Deck visual review, Profiles virtualization, and V2.6.6 device, axis-acquisition, and Virtual Output workflows."
+    ]
   }
 ]

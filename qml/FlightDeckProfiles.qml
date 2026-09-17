@@ -37,6 +37,25 @@ Flickable {
     // "Choose Profile" action. It never persists or changes category order.
     property string compatibleRigId: ""
     property double consumedProfileCreationToken: -1
+    // Presentation-only indexes and rows.  They are rebuilt only at the
+    // Profiles model/filter boundaries below, never from telemetry, frames, or
+    // contention policy updates.
+    property var categoryByIdIndex: ({})
+    property var profileByIdIndex: ({})
+    property var profilesByCategoryIndex: ({})
+    property var libraryRows: []
+    property var selectedDetail: ({})
+    // Qualification seams: inert unless a native/QML fixture explicitly
+    // enables them.  They deliberately describe this page only, not a general
+    // QML profiler.
+    property bool constructionQualificationEnabled: backend.responsivenessProbeEnabled()
+    property double constructionStartedAtMs: Date.now()
+    property var constructionMetrics: ({})
+    property int libraryCategoryDelegateCount: 0
+    property int libraryProfileDelegateCount: 0
+    property int libraryPeakDelegateCount: 0
+    property int detailDelegateCount: 0
+    property bool firstPresentedFrameRecorded: false
 
     signal navigateToPage(int page)
     // A Profile may point to a Device Rig, but inspecting that relationship
@@ -55,7 +74,6 @@ Flickable {
     readonly property var runningApplications: runningApplicationsPresentationOverride !== null && runningApplicationsPresentationOverride !== undefined ? runningApplicationsPresentationOverride : runningApplicationsSnapshot
     readonly property var selectedCategory: categoryById(selectedCategoryId)
     readonly property var selectedProfile: profileById(selectedProfileId)
-    readonly property var selectedDetail: detailFor(selectedProfileId)
     readonly property var selectedCategoryActivation: selectedCategoryId.length > 0
         ? backend.activationPreview(selectedCategoryId) : ({})
     readonly property bool usingPresentationFixture: (profilesPresentationOverride !== null && profilesPresentationOverride !== undefined) || (categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined)
@@ -94,18 +112,10 @@ Flickable {
         }, "Profile operation", "", 5000)
     }
     function categoryById(id) {
-        for (let index = 0; index < categories.length; ++index) {
-            if (String(categories[index].id || "") === String(id || ""))
-                return categories[index];
-        }
-        return null;
+        return categoryByIdIndex[String(id || "")] || null;
     }
     function profileById(id) {
-        for (let index = 0; index < profiles.length; ++index) {
-            if (String(profiles[index].id || "") === String(id || ""))
-                return profiles[index];
-        }
-        return null;
+        return profileByIdIndex[String(id || "")] || null;
     }
     function detailFor(id) {
         // Referencing profiles makes this recalculation follow stateChanged,
@@ -119,30 +129,7 @@ Flickable {
         return backend.profileDetail(String(id)) || ({});
     }
     function profilesForCategory(id) {
-        const result = [];
-        const includedIds = ({});
-        const category = categoryById(id);
-        const orderedIds = category ? (category.profileIds || []) : [];
-        for (let ordered = 0; ordered < orderedIds.length; ++ordered) {
-            const profile = profileById(orderedIds[ordered]);
-            const profileId = profile ? String(profile.id || "") : "";
-            if (profile && profileId.length > 0
-                    && String(profile.categoryId || "") === String(id || "")
-                    && !includedIds[profileId]) {
-                result.push(profile);
-                includedIds[profileId] = true;
-            }
-        }
-        for (let index = 0; index < profiles.length; ++index) {
-            const profile = profiles[index];
-            const profileId = String(profile.id || "");
-            if (String(profile.categoryId || "") === String(id || "")
-                    && profileId.length > 0 && !includedIds[profileId]) {
-                result.push(profile);
-                includedIds[profileId] = true;
-            }
-        }
-        return result;
+        return profilesByCategoryIndex[String(id || "")] || [];
     }
     function libraryProfilesForCategory(id) {
         const result = profilesForCategory(id).slice();
@@ -155,6 +142,125 @@ Flickable {
             });
         }
         return result;
+    }
+    function markConstruction(stage) {
+        if (!constructionQualificationEnabled)
+            return;
+        const next = Object.assign({}, constructionMetrics);
+        next[String(stage)] = Date.now() - constructionStartedAtMs;
+        next.categoryDelegates = libraryCategoryDelegateCount;
+        next.profileDelegates = libraryProfileDelegateCount;
+        next.detailDelegates = detailDelegateCount;
+        next.peakLibraryDelegates = libraryPeakDelegateCount;
+        next.libraryRows = libraryRows.length;
+        constructionMetrics = next;
+    }
+    function beginConstructionQualification() {
+        constructionStartedAtMs = Date.now();
+        constructionMetrics = ({ modelProfiles: profiles.length, modelCategories: categories.length });
+        libraryPeakDelegateCount = libraryCategoryDelegateCount + libraryProfileDelegateCount;
+        firstPresentedFrameRecorded = false;
+        markConstruction("qualificationStarted");
+        rebuildLibraryPresentation();
+    }
+    function registerLibraryDelegate(isCategory, delta) {
+        if (isCategory)
+            libraryCategoryDelegateCount = Math.max(0, libraryCategoryDelegateCount + delta);
+        else
+            libraryProfileDelegateCount = Math.max(0, libraryProfileDelegateCount + delta);
+        libraryPeakDelegateCount = Math.max(libraryPeakDelegateCount,
+            libraryCategoryDelegateCount + libraryProfileDelegateCount);
+        markConstruction("libraryDelegateCreation");
+    }
+    function rebuildLibraryPresentation() {
+        const categoryIndex = ({});
+        const profileIndex = ({});
+        const unorderedByCategory = ({});
+        const orderedByCategory = ({});
+        const categoryList = categories || [];
+        const profileList = profiles || [];
+        for (let categoryIndexNumber = 0; categoryIndexNumber < categoryList.length; ++categoryIndexNumber) {
+            const category = categoryList[categoryIndexNumber];
+            const categoryId = String(category.id || "");
+            if (!categoryId.length)
+                continue;
+            categoryIndex[categoryId] = category;
+            unorderedByCategory[categoryId] = [];
+        }
+        for (let profileIndexNumber = 0; profileIndexNumber < profileList.length; ++profileIndexNumber) {
+            const profile = profileList[profileIndexNumber];
+            const profileId = String(profile.id || "");
+            const categoryId = String(profile.categoryId || "");
+            if (!profileId.length)
+                continue;
+            profileIndex[profileId] = profile;
+            if (unorderedByCategory[categoryId] !== undefined)
+                unorderedByCategory[categoryId].push(profile);
+        }
+        for (let categoryNumber = 0; categoryNumber < categoryList.length; ++categoryNumber) {
+            const category = categoryList[categoryNumber];
+            const categoryId = String(category.id || "");
+            if (!categoryId.length)
+                continue;
+            const ordered = [];
+            const included = ({});
+            const requestedOrder = category.profileIds || [];
+            for (let orderIndex = 0; orderIndex < requestedOrder.length; ++orderIndex) {
+                const profile = profileIndex[String(requestedOrder[orderIndex] || "")];
+                const profileId = profile ? String(profile.id || "") : "";
+                if (profile && String(profile.categoryId || "") === categoryId && !included[profileId]) {
+                    ordered.push(profile);
+                    included[profileId] = true;
+                }
+            }
+            const unordered = unorderedByCategory[categoryId] || [];
+            for (let unorderedIndex = 0; unorderedIndex < unordered.length; ++unorderedIndex) {
+                const profile = unordered[unorderedIndex];
+                const profileId = String(profile.id || "");
+                if (!included[profileId]) {
+                    ordered.push(profile);
+                    included[profileId] = true;
+                }
+            }
+            orderedByCategory[categoryId] = ordered;
+        }
+        categoryByIdIndex = categoryIndex;
+        profileByIdIndex = profileIndex;
+        profilesByCategoryIndex = orderedByCategory;
+
+        const rows = [];
+        for (let categoryNumber = 0; categoryNumber < categoryList.length; ++categoryNumber) {
+            const category = categoryList[categoryNumber];
+            const categoryId = String(category.id || "");
+            if (!categoryId.length)
+                continue;
+            const members = (orderedByCategory[categoryId] || []).slice();
+            if (compatibleRigId.length > 0) {
+                members.sort(function(left, right) {
+                    const leftCompatible = String(left.deviceRigId || "") === compatibleRigId;
+                    const rightCompatible = String(right.deviceRigId || "") === compatibleRigId;
+                    if (leftCompatible === rightCompatible) return 0;
+                    return leftCompatible ? -1 : 1;
+                });
+            }
+            rows.push({ type: "category", categoryId: categoryId, profileId: "", category: category,
+                text: String(category.name || "Unnamed category"),
+                secondary: Number(category.profileCount !== undefined ? category.profileCount : members.length) + " profiles" });
+            for (let memberIndex = 0; memberIndex < members.length; ++memberIndex) {
+                const profile = members[memberIndex];
+                if (!profileMatchesFilter(profile))
+                    continue;
+                rows.push({ type: "profile", categoryId: categoryId, profileId: String(profile.id || ""),
+                    category: category, profile: profile, text: String(profile.name || "Profile"),
+                    secondary: profile.active ? "ACTIVE" : Number(profile.mappedAxes || 0) + " axes" });
+            }
+        }
+        libraryRows = rows;
+        markConstruction("libraryModelPrepared");
+    }
+    function scrollLibraryRowsToEnd() {
+        if (libraryRows.length > 0)
+            libraryRowsView.positionViewAtIndex(libraryRows.length - 1, ListView.End);
     }
     function categoryIndexFor(id) {
         for (let index = 0; index < categories.length; ++index) {
@@ -467,13 +573,77 @@ Flickable {
         contentY = Number(saved.contentY || 0);
     }
 
+    onCategoriesChanged: rebuildLibraryPresentation()
+    onProfilesChanged: {
+        rebuildLibraryPresentation()
+        refreshSelectedDetail()
+    }
+    onProfileFilterChanged: rebuildLibraryPresentation()
+    onSearchTextChanged: rebuildLibraryPresentation()
+    onCompatibleRigIdChanged: rebuildLibraryPresentation()
+    onSelectedProfileIdChanged: refreshSelectedDetail()
+    onProfileDetailPresentationOverrideChanged: refreshSelectedDetail()
+
+    function refreshSelectedDetail() {
+        const detailStartedAt = Date.now();
+        selectedDetail = detailFor(selectedProfileId);
+        if (constructionQualificationEnabled) {
+            const next = Object.assign({}, constructionMetrics);
+            next.selectedDetailResolutionMs = Date.now() - detailStartedAt;
+            constructionMetrics = next;
+        }
+    }
+
     Component.onCompleted: {
+        markConstruction("rootObjectCreated");
+        const restoreStartedAt = Date.now();
         restorePresentationState();
+        if (constructionQualificationEnabled) {
+            const next = Object.assign({}, constructionMetrics);
+            next.restorePresentationStateMs = Date.now() - restoreStartedAt;
+            constructionMetrics = next;
+        }
+        const refreshStartedAt = Date.now();
         refreshRunningApplications();
+        if (constructionQualificationEnabled) {
+            const next = Object.assign({}, constructionMetrics);
+            next.refreshRunningApplicationsMs = Date.now() - refreshStartedAt;
+            constructionMetrics = next;
+        }
+        const selectionStartedAt = Date.now();
+        rebuildLibraryPresentation();
         ensureLibrarySelection();
-        Qt.callLater(consumeProfileCreationRequest);
+        refreshSelectedDetail();
+        if (constructionQualificationEnabled) {
+            const next = Object.assign({}, constructionMetrics);
+            next.ensureLibrarySelectionMs = Date.now() - selectionStartedAt;
+            constructionMetrics = next;
+        }
+        markConstruction("componentCompleted");
+        Qt.callLater(function() {
+            // This page can unload before the deferred presentation turn.
+            if (!root)
+                return;
+            const requestStartedAt = Date.now();
+            root.consumeProfileCreationRequest();
+            if (root.constructionQualificationEnabled) {
+                const next = Object.assign({}, root.constructionMetrics);
+                next.consumeProfileCreationRequestMs = Date.now() - requestStartedAt;
+                root.constructionMetrics = next;
+            }
+            root.markConstruction("layoutStabilized");
+        });
     }
     Component.onDestruction: capturePresentationState()
+
+    Connections {
+        target: root.Window.window
+        enabled: root.constructionQualificationEnabled && !root.firstPresentedFrameRecorded
+        function onFrameSwapped() {
+            root.firstPresentedFrameRecorded = true;
+            root.markConstruction("firstPresentedFrame");
+        }
+    }
 
     Connections {
         target: backend
@@ -693,6 +863,8 @@ Flickable {
         id: row
         property bool selected: false
         property bool category: false
+        property bool constructionCounted: false
+        property bool countedAsCategory: false
         property string secondary: ""
         property string profileId: ""
         property string categoryId: ""
@@ -757,6 +929,22 @@ Flickable {
                 }
                 root.dragTargetCategoryId = "";
             }
+        }
+        Component.onCompleted: {
+            row.constructionCounted = true;
+            row.countedAsCategory = row.category;
+            root.registerLibraryDelegate(row.countedAsCategory, 1);
+        }
+        onCategoryChanged: {
+            if (!row.constructionCounted || row.countedAsCategory === row.category)
+                return;
+            root.registerLibraryDelegate(row.countedAsCategory, -1);
+            row.countedAsCategory = row.category;
+            root.registerLibraryDelegate(row.countedAsCategory, 1);
+        }
+        Component.onDestruction: {
+            if (row.constructionCounted)
+                root.registerLibraryDelegate(row.countedAsCategory, -1);
         }
     }
 
@@ -912,7 +1100,10 @@ Flickable {
         property var profile: ({})
         readonly property bool selectedForEditing: root.view === "profile" && String(root.selectedProfileId) === String(profile.id || "")
         objectName: "flightDeckProfileCard_" + String(profile.id || "")
-        width: root.width >= 1160 ? (profileFlow.width - deck.space12) / 2 : profileFlow.width
+        // Runtime delegates are children of the library Flow; using that
+        // parent preserves a valid width binding after recycling.
+        readonly property real flowWidth: parent ? parent.width : root.width
+        width: root.width >= 1160 ? (flowWidth - deck.space12) / 2 : flowWidth
         implicitHeight: profileContent.implicitHeight + contentPadding * 2
         color: profile.active ? deck.selected : selectedForEditing ? deck.secondarySurface : deck.elevatedSurface
         border.color: profile.active ? deck.accent : selectedForEditing ? deck.focus : deck.border
@@ -1131,36 +1322,44 @@ Flickable {
                         }
                         DeckField { id: profileSearch; objectName: "flightDeckProfileSearch"; Layout.fillWidth: true; placeholderText: "Search categories and profiles…"; text: root.searchText; onTextEdited: root.searchText = text }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
-                        Repeater {
-                            model: root.categories
-                            delegate: ColumnLayout {
+                        ListView {
+                            id: libraryRowsView
+                            objectName: "flightDeckProfileLibraryRows"
+                            Layout.fillWidth: true
+                            // A bounded viewport is what makes this a real
+                            // virtualized list rather than a Repeater wearing a
+                            // different hat.  The rest of the page retains its
+                            // existing Flickable state and visual language.
+                            Layout.preferredHeight: Math.max(210, Math.min(560,
+                                root.height - deck.space24 * 4))
+                            clip: true
+                            reuseItems: true
+                            cacheBuffer: 180
+                            model: root.libraryRows
+                            spacing: 2
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                            delegate: LibraryRow {
                                 required property var modelData
-                                Layout.fillWidth: true
-                                spacing: 2
-                                LibraryRow {
-                                    objectName: "flightDeckCategoryCard_" + String(modelData.id || "")
-                                    category: true
-                                    text: String(modelData.name || "Unnamed category")
-                                    secondary: Number(modelData.profileCount || root.profilesForCategory(modelData.id).length) + " profiles"
-                                    selected: root.selectedCategoryId === String(modelData.id || "") && !root.selectedProfileId.length
-                                    categoryId: String(modelData.id || "")
-                                    onClicked: root.selectLibraryCategory(modelData.id)
-                                }
-                                Repeater {
-                                    model: root.libraryProfilesForCategory(modelData.id)
-                                    delegate: LibraryRow {
-                                        required property var modelData
-                                        objectName: "flightDeckProfileCard_" + String(modelData.id || "")
-                                        visible: root.profileMatchesFilter(modelData)
-                                        text: String(modelData.name || "Profile")
-                                        secondary: modelData.active ? "ACTIVE" : Number(modelData.mappedAxes || 0) + " axes"
-                                        selected: root.selectedProfileId === String(modelData.id || "")
-                                        profileId: String(modelData.id || "")
-                                        categoryId: String(modelData.categoryId || "")
-                                        onClicked: root.selectLibraryProfile(modelData.id)
-                                    }
+                                objectName: modelData.type === "category"
+                                    ? "flightDeckCategoryCard_" + String(modelData.categoryId || "")
+                                    : "flightDeckProfileCard_" + String(modelData.profileId || "")
+                                category: modelData.type === "category"
+                                text: String(modelData.text || "")
+                                secondary: String(modelData.secondary || "")
+                                selected: category
+                                    ? root.selectedCategoryId === String(modelData.categoryId || "")
+                                        && !root.selectedProfileId.length
+                                    : root.selectedProfileId === String(modelData.profileId || "")
+                                profileId: String(modelData.profileId || "")
+                                categoryId: String(modelData.categoryId || "")
+                                onClicked: {
+                                    if (category)
+                                        root.selectLibraryCategory(modelData.categoryId)
+                                    else
+                                        root.selectLibraryProfile(modelData.profileId)
                                 }
                             }
+                            Component.onCompleted: root.markConstruction("libraryViewCreated")
                         }
                         Rectangle {
                             Layout.fillWidth: true
@@ -1217,6 +1416,7 @@ Flickable {
                     Layout.alignment: Qt.AlignTop
                     implicitHeight: detailPaneContent.implicitHeight + contentPadding * 2
                     color: deck.secondarySurface
+                    Component.onCompleted: root.markConstruction("detailPaneConstructed")
                     ColumnLayout {
                         id: detailPaneContent
                         anchors.fill: parent
@@ -1256,6 +1456,11 @@ Flickable {
                                         Text { text: modelData.label; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
                                         Text { text: modelData.value; color: deck.textPrimary; font.pixelSize: deck.scale(11); font.bold: true; elide: Text.ElideRight; width: parent.width }
                                     }
+                                    Component.onCompleted: {
+                                        root.detailDelegateCount += 1;
+                                        root.markConstruction("detailDelegateCreation");
+                                    }
+                                    Component.onDestruction: root.detailDelegateCount = Math.max(0, root.detailDelegateCount - 1)
                                 }
                             }
                         }
@@ -1284,11 +1489,16 @@ Flickable {
             }
         }
 
-        Item {
+        // Retain the historical library only as an unloaded compatibility
+        // component.  `visible: false` still built every card and binding.
+        Loader {
+            id: legacyLibraryLoader
             Layout.fillWidth: true
-            visible: false // Superseded by the compact hierarchical library above.
-            Layout.preferredHeight: visible ? libraryColumn.implicitHeight : 0
-            ColumnLayout {
+            active: false
+            sourceComponent: Component {
+                Item {
+                    width: root.width
+                    ColumnLayout {
                 id: libraryColumn
                 width: parent.width
                 spacing: deck.space16
@@ -1444,15 +1654,22 @@ Flickable {
                             profile: modelData
                         }
                     }
+                    }
                 }
             }
         }
+        }
 
-        Item {
+        Loader {
+            id: categoryViewLoader
             Layout.fillWidth: true
-            visible: root.view === "category"
-            Layout.preferredHeight: visible ? categoryColumn.implicitHeight : 0
-            ColumnLayout {
+            active: root.view === "category"
+            Layout.preferredHeight: item ? item.implicitHeight : 0
+            sourceComponent: Component {
+                Item {
+                    width: root.width
+                    implicitHeight: categoryColumn.implicitHeight
+                    ColumnLayout {
                 id: categoryColumn
                 width: parent.width
                 spacing: deck.space16
@@ -1803,15 +2020,22 @@ Flickable {
                         enabled: root.categories.length > 1 && !(root.selectedCategory || {}).active && !root.usingPresentationFixture
                         onClicked: root.requestDeleteCategory(root.selectedCategoryId)
                     }
+                    }
                 }
             }
         }
+        }
 
-        Item {
+        Loader {
+            id: profileViewLoader
             Layout.fillWidth: true
-            visible: root.view === "profile"
-            Layout.preferredHeight: visible ? profileDetailColumn.implicitHeight : 0
-            ColumnLayout {
+            active: root.view === "profile"
+            Layout.preferredHeight: item ? item.implicitHeight : 0
+            sourceComponent: Component {
+                Item {
+                    width: root.width
+                    implicitHeight: profileDetailColumn.implicitHeight
+                    ColumnLayout {
                 id: profileDetailColumn
                 width: parent.width
                 spacing: deck.space16
@@ -2355,8 +2579,10 @@ Flickable {
                         enabled: !root.selectedDetail.active && !root.selectedDetail.protected && !root.usingPresentationFixture
                         onClicked: root.requestDeleteProfile(root.selectedProfileId)
                     }
+                    }
                 }
             }
+        }
         }
         Item {
             Layout.preferredHeight: deck.space12
