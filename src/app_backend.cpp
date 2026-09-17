@@ -103,7 +103,8 @@ bool startupSmokeRequested()
 
 bool isolatedPresentationRequested()
 {
-    return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs);
+    return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs)
+        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0;
 }
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,

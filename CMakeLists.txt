@@ -69,6 +69,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_persistence_coordinator.cpp
     src/responsiveness_probe.h
     src/responsiveness_probe.cpp
+    src/native_qualification_driver.h
+    src/native_qualification_driver.cpp
     src/controller_manager.h
     src/controller_manager.cpp
     src/direct_input_axis.h
@@ -200,6 +202,7 @@ target_link_libraries(HOTASMapper PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Test
     Qt6::Widgets
 )
 target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -569,6 +572,13 @@ if (BUILD_TESTING)
 
     set(HOTAS_BACKEND_STARTUP_TEST_SOURCES ${HOTAS_MAPPER_SOURCES})
     list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES src/main.cpp)
+    # The opt-in driver is intentionally linked into the real GUI executable
+    # only. Startup fixtures exercise the backend/QML graph independently and
+    # must not inherit its QTest window-input dependency.
+    list(REMOVE_ITEM HOTAS_BACKEND_STARTUP_TEST_SOURCES
+        src/native_qualification_driver.h
+        src/native_qualification_driver.cpp
+    )
     qt_add_executable(app_backend_startup_tests
         tests/app_backend_startup_tests.cpp
         ${HOTAS_BACKEND_STARTUP_TEST_SOURCES}

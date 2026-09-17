@@ -150,8 +150,11 @@ try {
     Start-Sleep -Seconds 2
     $underLoad = Get-LoadSample
 
-    & $WorkloadExecutable @WorkloadArguments
-    $workloadExitCode = $LASTEXITCODE
+    # A Windows GUI subsystem executable does not reliably populate
+    # $LASTEXITCODE when invoked with the call operator. Start-Process gives
+    # the harness an explicit, per-process exit code for the native app.
+    $workloadProcess = Start-Process -FilePath $WorkloadExecutable -ArgumentList $WorkloadArguments -PassThru -Wait
+    $workloadExitCode = $workloadProcess.ExitCode
     $afterWorkload = Get-LoadSample
     if ($workloadExitCode -ne 0) { throw "Workload exited with code $workloadExitCode." }
 

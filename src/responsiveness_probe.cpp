@@ -403,6 +403,8 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
     report.insert(u"commit"_qs, qEnvironmentVariable("HOTAS_RESPONSIVENESS_COMMIT", "unknown"));
     report.insert(u"build"_qs, QCoreApplication::applicationVersion());
     report.insert(u"mode"_qs, qEnvironmentVariable("HOTAS_RESPONSIVENESS_SCENARIO", "unspecified"));
+    report.insert(u"interactionSource"_qs,
+                  qEnvironmentVariable("HOTAS_RESPONSIVENESS_INTERACTION_SOURCE", "unspecified"));
     report.insert(u"startedAt"_qs, m_startedAt);
     report.insert(u"exportedAt"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     report.insert(u"systemLoad"_qs, QJsonObject{
@@ -421,7 +423,10 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
     eventLoop.insert(u"expectedHeartbeatIntervalMs"_qs, kExpectedHeartbeatMs);
     eventLoop.insert(u"definition"_qs, u"observed heartbeat interval minus 16 ms"_qs);
     report.insert(u"eventLoop"_qs, eventLoop);
-    report.insert(u"interactionLatency"_qs, summarizeSamples(m_interactionLatencies));
+    QJsonObject interactionLatency = summarizeSamples(m_interactionLatencies);
+    interactionLatency.insert(u"source"_qs,
+                              qEnvironmentVariable("HOTAS_RESPONSIVENESS_INTERACTION_SOURCE", "unspecified"));
+    report.insert(u"interactionLatency"_qs, interactionLatency);
     report.insert(u"framePacing"_qs, summarizeSamples(m_frameIntervals));
     report.insert(u"pendingInputEventsAtExport"_qs, m_pendingInputs.size());
     report.insert(u"droppedPendingInputEvents"_qs, static_cast<qint64>(m_droppedPendingInputs));
