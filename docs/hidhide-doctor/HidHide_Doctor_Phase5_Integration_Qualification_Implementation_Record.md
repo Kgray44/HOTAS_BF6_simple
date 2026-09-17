@@ -5,16 +5,20 @@
 - Accepted Phase 4 SHA: `03c7efdf52c69e9edb78747e38780360b5969cde`.
 - Phase 5 branch: `codex/hidhide-doctor-phase5-integration-qualification`.
 - Worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase5-integration-qualification`.
-- Product implementation SHA exercised in the owner review:
+- Earlier owner-reviewed product implementation SHA:
   `6734b773a5f2a70764ef029b705b804625cea154`.
-- Qualification-evidence baseline: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
-  The intervening changes add deterministic qualification coverage and records;
-  the staged runtime file list (1,387 files, paths, byte counts, and SHA-256
-  values) is identical to the owner-reviewed product implementation stage.
-- At that fixed evidence baseline, the Documentation Check was `SUCCESS` and
-  the HOTAS BF6 CI run was still in progress. The earlier product-implementation
-  checks reached terminal `SUCCESS`; neither result is substituted for a later
-  PR head's CI result.
+- Earlier qualification-evidence baseline: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
+  Those earlier checks are historical evidence only and are not substituted for
+  a later PR head.
+- Current crash-fix and bundle-folder product candidate:
+  `0846edfc73b282660fcf2d410d9523d5e0545cb1`. Its staged `2.6.2` package is
+  `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; it has
+  1,387 component-manifest entries, a component-manifest SHA-256 of
+  `81F3CAEF21504C5456405281BD603B62947690994A86AA38E9DF358F103B590E`, and
+  `HidHide Doctor.exe` SHA-256 of
+  `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`.
+  Every staged file was locally checked against that manifest by path, byte
+  count, and SHA-256. Fresh current-head CI remains required.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -70,6 +74,36 @@ write a Local / Unredacted report to Downloads, opened `test_report2.md`, and
 confirmed that it was present and looked good. That is direct evidence for the
 desktop destination, commit, and reopen path; it is not a Safe to Share privacy
 review.
+
+On the crash-fix staged candidate, the owner selected Downloads as a parent
+destination for a real Safe-to-Share bundle. Doctor created the timestamped
+child directory `HidHideDoctor-Diagnostic-Bundle-20260917-140145111Z`, rather
+than flattening files into Downloads. It contained exactly `evidence.json`,
+`manifest.json`, `report.json`, `report.md`, and `timeline.json`; all JSON
+artifacts parsed, none were empty or contained NUL, and `manifest.json` named
+the four report artifacts. The report's redaction manifest recorded 12
+included, 714 redacted, and 2 excluded entries. A scoped content check found no
+current username, machine name, user-profile, temp, or app-data path. The
+composer records automatic network upload as not performed. This qualifies one
+owner-created artifact's stated structure and scoped privacy result only; it is
+not a universal data-classification audit, evidence of external delivery
+behavior, or an RC decision.
+
+Two normal interactive runs of the prior candidate crashed after diagnosis.
+Their Windows error events and minidumps showed an access violation in QtCore
+while a scan-worker progress callback copied a full `DoctorSession` through a
+queued UI connection. The crash-fix candidate no longer sends progress-session
+copies across that thread boundary: the scan worker retains the session and
+moves one completion payload to the UI thread, which replaces the model session
+only after the scan completes. During that scan the presentation may remain in
+its preparing state instead of showing granular live session snapshots; this is
+a deliberate stability-first tradeoff. `--scan-smoke` runs the normal QML and
+read-only scan non-interactively, exiting after final session delivery. The
+post-fix domain suite passed in 10.85 seconds; six build-output and five staged
+`--scan-smoke` runs exited 0 without a new crash dump. The current staged
+interactive process remained responsive through the owner export and the
+subsequent artifact inspection. This is focused regression evidence, not a
+general native-UI or release qualification.
 
 The Qt Quick file and folder dialogs now hand their selected `QUrl` values to
 typed model invokables. Local-path conversion occurs only in C++, not through
@@ -174,6 +208,19 @@ Helper protocol is v2 and integration protocol is v1.
   Deck routes correctly focused the existing Doctor, with one staged Doctor
   process. This is entry-point evidence only, not full native visual, DPI, accessibility,
   hardware, or repair acceptance.
+- The current `0846edf` product candidate built successfully. Its focused
+  `hidhide_doctor_domain_tests` run passed in 10.85 seconds. The resulting
+  staged package passed five repeated `--scan-smoke` runs after six successful
+  build-output smoke runs; all 1,387 staged files matched its component manifest
+  by path, byte count, and SHA-256.
+- The complete configured suite then passed 17/17 from the build directory
+  configured against this worktree; its independently repeated domain-test leg
+  passed in 6.56 seconds and the native-QML layout test passed in 16.25 seconds.
+- The owner exported one real Safe-to-Share bundle from that staged interactive
+  process. The five expected artifacts parsed and were nonempty/NUL-free; the
+  report redaction manifest recorded 12 included, 714 redacted, and 2 excluded
+  entries, while the scoped local-identifier check found no current user or
+  host/profile/temp/app-data path. This is one narrow owner-machine result.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
@@ -195,7 +242,7 @@ negative product claim, nor a substituted real-machine result.
 
 | Required category | Current evidence / status |
 |---|---|
-| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. The owner-reviewed product implementation is `6734b773a5f2a70764ef029b705b804625cea154`; qualification-evidence baseline `7ee23194e18e8bbd80ce143e11052800669ce19c` adds coverage and records only. |
+| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. Earlier owner review used `6734b773a5f2a70764ef029b705b804625cea154` and records baseline `7ee23194e18e8bbd80ce143e11052800669ce19c`; the current product candidate is the crash-fix and bundle-folder commit `0846edfc73b282660fcf2d410d9523d5e0545cb1`. |
 | 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Deterministic updater fixtures roll back interrupted/invalid replacement and preserve external configuration; real installed-product update atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
@@ -205,12 +252,12 @@ negative product claim, nor a substituted real-machine result.
 | 18–22. R1–R5 qualification | R1–R3 remain LabQualified; R4 is unavailable without an approved newer package; R5 is unavailable without an independently verified rollback package. No FieldQualified promotion occurred. |
 | 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. The new deterministic corpus covers handoff, journals, helper frames, package metadata, and reports. A complete hostile-input audit remains Not qualified. |
 | 24. Fuzz results | Seeded `0x5AFEF00D`, 64-input-per-surface deterministic campaign passed without crash, hang, or malformed-input acceptance. Sustained fuzzing and resource-pressure fuzzing remain Not qualified. |
-| 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. Native owner Safe to Share privacy review remains open. |
+| 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and records automatic network upload as not performed. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. On the current `0846edf` stage, the owner also exported a Safe-to-Share child bundle with the five expected artifacts, valid JSON, no empty/NUL file, 12 included/714 redacted/2 excluded entries, and no matches for the scoped current user/host/profile/temp/app-data identifiers. This narrowly qualifies that real artifact; it is not a universal privacy or external-delivery audit. |
 | 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
 | 27–28. Performance and CPU contention | Exact-stage process baselines are recorded (464–476 ms startup smoke; 260–359 ms read-only process-launch-to-report; one 286,765,056-byte idle working-set sample). User-visible latency, controlled CPU contention, and resource-pressure qualification remain Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
-| 33–34. RC artifact and manifest | Immutable current-head local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-7ee2319-stage`; 1,387 component-manifest entries and SHA-256 `826D6FF92E6CE9C96784E61D0BB631C5226E7D70436922B4C09A3A7BE8AF6A99`. Every staged runtime file matched the owner-reviewed `6734b77` stage by path, byte count, and SHA-256; only generated manifest-record metadata differs. This is not a public release artifact. |
+| 33–34. RC artifact and manifest | Local crash-fix candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; 1,387 component-manifest entries and component-manifest SHA-256 `81F3CAEF21504C5456405281BD603B62947690994A86AA38E9DF358F103B590E`. Every staged file matched that manifest by path, byte count, and SHA-256; `HidHide Doctor.exe` SHA-256 is `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`. It is not a public release artifact and fresh current-head CI remains required. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, contention, installer/update/uninstall, full manual regression, and external testing remain release blockers. Components are `NotSigned`. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
