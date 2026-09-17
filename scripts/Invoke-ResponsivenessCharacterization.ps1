@@ -39,6 +39,12 @@ param(
     [ValidateSet('current', 'gui', 'render', 'gui-render', 'process-above-normal')]
     [string]$SchedulingPolicy = 'current',
 
+    # Phase 4 qualification may exercise the production-safe automatic
+    # controller or one explicit development override. This is process-local
+    # test setup, never a user-facing setting.
+    [ValidateSet('auto', 'normal', 'pressure', 'severe')]
+    [string]$ContentionLevel = 'auto',
+
     [ValidateRange(0, 30)]
     [int]$WarmupSeconds = 2,
 
@@ -210,6 +216,7 @@ $priorEnvironment = @{
     HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY
     HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION = $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION
     HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS = $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS
+    HOTAS_CONTENTION_LEVEL = $env:HOTAS_CONTENTION_LEVEL
 }
 
 try {
@@ -220,6 +227,7 @@ try {
     $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $SchedulingPolicy
     $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION = '1'
     $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS = "$NativeQualificationTortureSeconds"
+    $env:HOTAS_CONTENTION_LEVEL = $ContentionLevel
 
     $before = Get-LoadSample
     $ambientCpuAlreadyAtOrAboveTarget = $cpuTargetPercent -gt 0 -and $null -ne $before.cpuPercent `
@@ -282,6 +290,7 @@ try {
         requestedGeneratorCpuPercent = $generatorCpuTargetPercent
         requestedCpuWorkerCount = if ($CpuWorkerCount -ge 0) { $CpuWorkerCount } else { $null }
         requestedSchedulingPolicy = $SchedulingPolicy
+        requestedContentionLevel = $ContentionLevel
         nativeQualificationTortureSeconds = $NativeQualificationTortureSeconds
         workloadTimedOutBeforeStressDeadline = $workloadTimedOut
         workloadExitCode = $workloadExitCode
