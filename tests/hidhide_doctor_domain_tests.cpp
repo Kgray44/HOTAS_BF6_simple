@@ -160,6 +160,7 @@ private slots:
     void phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider();
     void phaseThreeRollbackAndRestartReconciliationAreStrictlyGuarded();
     void phaseThreeJournalDetectsCorruption();
+    void phaseThreeUnavailableJournalFailsSafelyBeforeMutation();
     void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
     void phaseFiveBoundedProtocolJournalReportAndPackageFuzz();
     void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
@@ -777,6 +778,31 @@ void HidHideDoctorDomainTests::phaseThreeJournalDetectsCorruption()
     QVERIFY(reason.contains(QStringLiteral("malformed")));
 }
 
+void HidHideDoctorDomainTests::phaseThreeUnavailableJournalFailsSafelyBeforeMutation()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    const DiagnosticRunOutcome outcome = DoctorDiagnosticEngine().run(provider);
+    const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+    QCOMPARE(proposal.status, RepairProposalStatus::AvailableForOwnerLab);
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString blockedRoot = temporary.filePath(QStringLiteral("journal-root-is-a-file"));
+    QFile blocker(blockedRoot);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QCOMPARE(blocker.write("not a directory"), qint64(15));
+    blocker.close();
+
+    RepairJournalStore journal(blockedRoot);
+    const RepairExecutionResult dryRun = RepairTransactionCoordinator().dryRun(
+        proposal, outcome.snapshot.environment, outcome.session.id(), journal,
+        RepairTransactionId(QStringLiteral("REPAIR-TX-JOURNAL-UNAVAILABLE-001")));
+    QCOMPARE(dryRun.transaction.state, RepairTransactionState::FailedSafely);
+    QVERIFY(!dryRun.mutated);
+    QVERIFY(dryRun.detail.contains(QStringLiteral("journal directory"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(journal.journalPath(dryRun.transaction.id)));
+}
+
 void HidHideDoctorDomainTests::phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged()
 {
     QStandardPaths::setTestModeEnabled(true);
@@ -1071,6 +1097,23 @@ void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReport
     QVERIFY2(report.isFile(), qPrintable(model.reportStatus()));
     QVERIFY(report.size() > 0);
     QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(report.absoluteFilePath())));
+
+    const QString blockedParentPath = directory.filePath(QStringLiteral("report-parent-is-a-file"));
+    QFile blockedParent(blockedParentPath);
+    QVERIFY(blockedParent.open(QIODevice::WriteOnly));
+    QCOMPARE(blockedParent.write("not a directory"), qint64(15));
+    blockedParent.close();
+    const QString blockedReport = QDir(blockedParentPath).filePath(QStringLiteral("report.md"));
+    DoctorReportRequest blockedRequest;
+    blockedRequest.scope = QStringLiteral("Entire Session");
+    blockedRequest.detail = DoctorReportDetail::Detailed;
+    blockedRequest.privacy = DoctorReportPrivacy::SafeToShare;
+    const DoctorReportDocument blockedDocument = DoctorReportComposer::compose(
+        outcome.session, QStringLiteral("test-build"), blockedRequest);
+    QString blockedError;
+    QVERIFY(!DoctorReportComposer::write(blockedDocument, blockedReport, DoctorReportFormat::Markdown, &blockedError));
+    QVERIFY(!blockedError.isEmpty());
+    QVERIFY(!QFileInfo::exists(blockedReport));
 
     const QString bundleParentPath = directory.filePath(QStringLiteral("bundle-parent"));
     QVERIFY(QDir().mkpath(bundleParentPath));
