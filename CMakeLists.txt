@@ -69,6 +69,8 @@ set(HOTAS_MAPPER_SOURCES
     src/config_persistence_coordinator.cpp
     src/responsiveness_probe.h
     src/responsiveness_probe.cpp
+    src/interactive_scheduling_policy.h
+    src/interactive_scheduling_policy.cpp
     src/native_qualification_driver.h
     src/native_qualification_driver.cpp
     src/controller_manager.h
@@ -497,6 +499,8 @@ if (BUILD_TESTING)
         tests/responsiveness_probe_tests.cpp
         src/responsiveness_probe.h
         src/responsiveness_probe.cpp
+        src/interactive_scheduling_policy.h
+        src/interactive_scheduling_policy.cpp
     )
     target_link_libraries(responsiveness_probe_tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
     target_include_directories(responsiveness_probe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

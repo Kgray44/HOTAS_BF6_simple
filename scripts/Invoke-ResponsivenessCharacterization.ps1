@@ -19,6 +19,26 @@ param(
     [ValidateRange(1, 64)]
     [int]$MaximumCpuWorkers = 8,
 
+    # Phase 3 uses the established bounded workload while calibrating around
+    # the scheduler cliff. A supplied value overrides the scenario default;
+    # the captured load record remains authoritative.
+    [ValidateRange(-1, 100)]
+    [int]$CpuTargetPercent = -1,
+
+    # A host may expose logical processors whose sustained PowerShell-worker
+    # utilization differs from a one-worker-per-logical-CPU estimate. Phase 3
+    # may supply a bounded explicit count and still reports the sampled load.
+    [ValidateRange(-1, 64)]
+    [int]$CpuWorkerCount = -1,
+
+    [switch]$WithDisk,
+
+    [ValidateSet('current', 'gui', 'render', 'gui-render', 'process-above-normal')]
+    [string]$SchedulingPolicy = 'current',
+
+    [ValidateRange(0, 30)]
+    [int]$WarmupSeconds = 2,
+
     [string]$EvidenceDirectory = (Join-Path $env:TEMP 'HOTAS-BF6-responsiveness-evidence')
 )
 
@@ -109,17 +129,22 @@ $scenarioTargets = @{
     Disk = 0
     Combined = 92
 }
-$cpuTargetPercent = [int]$scenarioTargets[$Scenario]
+$cpuTargetPercent = if ($CpuTargetPercent -ge 0) { $CpuTargetPercent } else { [int]$scenarioTargets[$Scenario] }
 $logicalProcessors = [Environment]::ProcessorCount
-$workerCount = if ($cpuTargetPercent -gt 0) {
+$workerCount = if ($CpuWorkerCount -ge 0) {
+    $CpuWorkerCount
+} elseif ($cpuTargetPercent -gt 0) {
     [Math]::Min($MaximumCpuWorkers,
         [Math]::Max(1, [Math]::Ceiling($logicalProcessors * $cpuTargetPercent / 100.0)))
 } else { 0 }
-$usesDisk = $Scenario -in @('Disk', 'Combined')
+$usesDisk = $WithDisk -or $Scenario -in @('Disk', 'Combined')
 $stressRoot = Join-Path $env:TEMP ("HOTAS-BF6-responsiveness-{0}" -f $PID)
 $probeReport = Join-Path $EvidenceDirectory ("{0}-probe.json" -f $Scenario.ToLowerInvariant())
 $loadEvidence = Join-Path $EvidenceDirectory ("{0}-load.json" -f $Scenario.ToLowerInvariant())
-$deadlineUtc = [DateTime]::UtcNow.AddSeconds($DurationSeconds)
+# Keep stress active for the declared workload interval after warmup. This
+# avoids falsely treating a slow native run as loaded after its workers have
+# already expired.
+$deadlineUtc = [DateTime]::UtcNow.AddSeconds($DurationSeconds + $WarmupSeconds)
 $jobs = @()
 
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
@@ -128,6 +153,7 @@ $priorEnvironment = @{
     HOTAS_RESPONSIVENESS_PROBE_OUTPUT = $env:HOTAS_RESPONSIVENESS_PROBE_OUTPUT
     HOTAS_RESPONSIVENESS_SCENARIO = $env:HOTAS_RESPONSIVENESS_SCENARIO
     HOTAS_RESPONSIVENESS_LOAD_EVIDENCE = $env:HOTAS_RESPONSIVENESS_LOAD_EVIDENCE
+    HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY
 }
 
 try {
@@ -135,6 +161,7 @@ try {
     $env:HOTAS_RESPONSIVENESS_PROBE_OUTPUT = $probeReport
     $env:HOTAS_RESPONSIVENESS_SCENARIO = $Scenario
     $env:HOTAS_RESPONSIVENESS_LOAD_EVIDENCE = $loadEvidence
+    $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $SchedulingPolicy
 
     $before = Get-LoadSample
     $ambientCpuAlreadyAtOrAboveTarget = $cpuTargetPercent -gt 0 -and $null -ne $before.cpuPercent `
@@ -147,13 +174,28 @@ try {
     }
     if ($workerCount -gt 0) { $jobs += Start-CpuWorkers -WorkerCount $workerCount -DeadlineUtc $deadlineUtc }
     if ($usesDisk) { $jobs += Start-DiskWorker -StressDirectory $stressRoot -Megabytes $DiskMiB -DeadlineUtc $deadlineUtc }
-    Start-Sleep -Seconds 2
+    if ($WarmupSeconds -gt 0) { Start-Sleep -Seconds $WarmupSeconds }
     $underLoad = Get-LoadSample
 
     # A Windows GUI subsystem executable does not reliably populate
     # $LASTEXITCODE when invoked with the call operator. Start-Process gives
     # the harness an explicit, per-process exit code for the native app.
-    $workloadProcess = Start-Process -FilePath $WorkloadExecutable -ArgumentList $WorkloadArguments -PassThru -Wait
+    $startWorkload = @{ FilePath = $WorkloadExecutable; PassThru = $true; Wait = $true }
+    # Some supported PowerShell hosts reject an explicitly supplied empty
+    # ArgumentList collection. Omit it for the normal no-argument native run.
+    if ($WorkloadArguments.Count -gt 0) { $startWorkload.ArgumentList = $WorkloadArguments }
+    $startWorkload.Wait = $false
+    $workloadProcess = Start-Process @startWorkload
+    # A single warmup sample is not enough to describe a long native run on a
+    # busy host. Five-second process-lifetime samples are intentionally low
+    # rate and capture the actual CPU range without adding load to the app.
+    $duringWorkload = @()
+    while (-not $workloadProcess.HasExited) {
+        Start-Sleep -Seconds 5
+        $workloadProcess.Refresh()
+        if (-not $workloadProcess.HasExited) { $duringWorkload += Get-LoadSample }
+    }
+    $workloadProcess.WaitForExit()
     $workloadExitCode = $workloadProcess.ExitCode
     $afterWorkload = Get-LoadSample
     if ($workloadExitCode -ne 0) { throw "Workload exited with code $workloadExitCode." }
@@ -162,8 +204,11 @@ try {
         schemaVersion = 1
         scenario = $Scenario
         durationSeconds = $DurationSeconds
+        warmupSeconds = $WarmupSeconds
         boundedDiskMiB = if ($usesDisk) { $DiskMiB } else { 0 }
         requestedCpuPercent = $cpuTargetPercent
+        requestedCpuWorkerCount = if ($CpuWorkerCount -ge 0) { $CpuWorkerCount } else { $null }
+        requestedSchedulingPolicy = $SchedulingPolicy
         cpuWorkerCount = $workerCount
         maximumCpuWorkers = $MaximumCpuWorkers
         ambientCpuAlreadyAtOrAboveRequestedTarget = $ambientCpuAlreadyAtOrAboveTarget
@@ -173,6 +218,17 @@ try {
         probeReport = $probeReport
         before = $before
         underLoad = $underLoad
+        duringWorkload = $duringWorkload
+        observedCpuPercent = if ($duringWorkload.Count) {
+            $values = @($duringWorkload | Where-Object { $null -ne $_.cpuPercent } | ForEach-Object { [double]$_.cpuPercent })
+            if ($values.Count) {
+                [ordered]@{
+                    minimum = [Math]::Round(($values | Measure-Object -Minimum).Minimum, 1)
+                    average = [Math]::Round(($values | Measure-Object -Average).Average, 1)
+                    maximum = [Math]::Round(($values | Measure-Object -Maximum).Maximum, 1)
+                }
+            } else { $null }
+        } else { $null }
         afterWorkload = $afterWorkload
         cleanup = 'stress jobs stopped and the task-owned temporary disk file was removed in finally'
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $loadEvidence -Encoding utf8

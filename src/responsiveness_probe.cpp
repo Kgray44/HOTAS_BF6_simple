@@ -1,5 +1,7 @@
 #include "responsiveness_probe.h"
 
+#include "interactive_scheduling_policy.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -291,6 +293,10 @@ void ResponsivenessProbe::recordEventLoopHeartbeat()
     const qint64 nowNs = monotonicNowNs();
     const double intervalMs = millisecondsBetween(m_lastHeartbeatNs, nowNs);
     const double delayMs = std::max(0.0, intervalMs - kExpectedHeartbeatMs);
+    // This is qualification-only when the native scheduler observer is
+    // installed. It samples cumulative thread time once per existing GUI
+    // heartbeat; it never runs from MappingWorker or the render hot path.
+    InteractiveSchedulingPolicy::recordGuiHeartbeat(delayMs);
     QMutexLocker locker(&m_mutex);
     m_lastHeartbeatNs = nowNs;
     m_eventLoopDelays.add(delayMs);
@@ -417,6 +423,7 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
         {u"externalLoadEvidence"_qs,
          qEnvironmentVariable("HOTAS_RESPONSIVENESS_LOAD_EVIDENCE", "not-provided")},
     });
+    report.insert(u"schedulerEvidence"_qs, InteractiveSchedulingPolicy::evidence());
 
     QMutexLocker locker(&m_mutex);
     QJsonObject eventLoop = summarizeSamples(m_eventLoopDelays);

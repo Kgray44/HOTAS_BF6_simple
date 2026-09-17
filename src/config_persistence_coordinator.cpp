@@ -1,5 +1,7 @@
 #include "config_persistence_coordinator.h"
 
+#include "interactive_scheduling_policy.h"
+
 #include <QElapsedTimer>
 
 #include <algorithm>
@@ -63,6 +65,9 @@ ConfigPersistenceCoordinator::~ConfigPersistenceCoordinator()
 
 void ConfigPersistenceCoordinator::runWorker(const std::shared_ptr<SharedState> &state)
 {
+    // One qualification-time observation at worker entry; never a write-path
+    // probe and never reached from MappingWorker.
+    InteractiveSchedulingPolicy::recordCurrentThread("persistence");
     for (;;) {
         Pending current;
         bool telemetryEnabled = false;
