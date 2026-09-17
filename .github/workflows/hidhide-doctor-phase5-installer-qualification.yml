@@ -1,6 +1,9 @@
 name: HidHide Doctor Phase 5 Installer Qualification
 
 on:
+  pull_request:
+    branches:
+      - codex/hidhide-doctor-phase4-deep-recovery
   workflow_dispatch:
 
 permissions:
