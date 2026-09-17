@@ -311,6 +311,10 @@ path has not run for this unsigned candidate.
   rejected by the typed helper protocol. A fresh full 18-test CTest run passed
   after adding those vectors; this is test-only helper-security evidence, not
   authorization for a mutable repair.
+- After the requested native display review, the owner reported that everything
+  looked good. No scale-factor list, page-by-page notes, keyboard-only
+  traversal, accessibility-name/role capture, or screen-reader result was
+  retained, so this is recorded as a narrow owner visual check only.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
