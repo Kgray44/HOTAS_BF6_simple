@@ -208,7 +208,10 @@ plus a SHA-256 checksum. Doctor/helper now carry dedicated version resources.
 The immutable R2 staged `2.6.2` candidate has 1,390 manifest entries. All four
 packaged executables (mapper, launcher, Doctor, and helper) reported
 `NotSigned`; no signing certificate was available or invented. Helper protocol
-is v2 and integration protocol is v1.
+is v2 and integration protocol is v1. When Artifact Signing is explicitly
+configured, the release workflow submits and verifies all four staged
+executables rather than signing only the mapper and launcher; that conditional
+path has not run for this unsigned candidate.
 
 ## Qualification evidence
 
@@ -281,6 +284,18 @@ is v2 and integration protocol is v1.
   and three scan smokes per synthetic CPU level had medians of 1327.669 ms idle,
   1388.527 ms moderate, and 1682.934 ms heavy. This is process-level evidence,
   not first-visible or owner interaction latency.
+- The installer acceptance contract now treats mapper, Doctor, and helper as
+  one candidate component set: every resulting candidate clean/upgrade/recovery
+  installation must contain the Doctor and helper, and each invokes standalone
+  Doctor `--startup-smoke`. The historical v2.5.0 pre-upgrade fixture is
+  explicitly allowed to lack the later Doctor components, but the candidate
+  replacement is not. The isolated uninstall smoke also asserts all four
+  shipped executables are removed. The current host intentionally did not run
+  that script, which is restricted to a GitHub Actions Windows runner.
+- A fresh sequential CTest run after that contract change passed all 18
+  registered tests in 247.97 seconds with `--timeout 180`; the strengthened
+  release-contract test passed and the longest `app_qml_startup_tests` leg
+  completed in 155.29 seconds. This is local automated evidence only.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
@@ -317,8 +332,8 @@ negative product claim, nor a substituted real-machine result.
 | 27–28. Performance and CPU contention | R2 exact-stage process data: three startup smokes median 506.794 ms (468.240–527.912); three headless report serializations median 310.325 ms (256.774–323.025); three scans per level exited 0 at idle median 1327.669 ms, moderate synthetic CPU median 1388.527 ms, and heavy synthetic CPU median 1682.934 ms (heavy maximum 1713.139 ms). A five-second protected interactive-idle observation was 0.000% CPU across 16 logical processors, 163,209,216 B working set, and 149,696,512 B private memory. First-visible and native-interaction latency plus low-resource/write-failure qualification remain Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
-| 32. Installer/update/uninstall | Final stage packaging and standalone startup/scan/headless-report smoke passed. The installer compiler is unavailable on this host, and the governed install/upgrade/uninstall acceptance script deliberately refuses to run outside an isolated GitHub Actions Windows runner. Installed-product update atomicity, recovery, and uninstall are therefore Not qualified locally. |
+| 32. Installer/update/uninstall | Final stage packaging and standalone startup/scan/headless-report smoke passed. The installer compiler is unavailable on this host, and the governed install/upgrade/uninstall acceptance script deliberately refuses to run outside an isolated GitHub Actions Windows runner. Its acceptance contract now requires the Doctor and helper in every installed package, smoke-tests the standalone Doctor after each clean/upgrade/recovery installation, and asserts the uninstaller removes mapper, launcher, Doctor, and helper. This is source-contract coverage only; installed-product update atomicity, recovery, and uninstall remain Not qualified locally until that isolated workflow runs. |
 | 33–34. RC artifact and manifest | Immutable R2 final stage `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R2`: 1,390 component-manifest entries, manifest SHA-256 `B895516AA73B9CF32F2354960294FBA62A3BAC4228F3C86E681308DFB8785753`, zero path/size/hash mismatches, and stage `--startup-smoke`, `--scan-smoke`, headless report, and special-path contract each exited 0. `HidHide Doctor.exe` SHA-256 is `894576B68B78293B0BA1C7D95EBB4253E45515638730272CCA6AFD1BEB6D6E85`; mapper, launcher, Doctor, and helper each report `NotSigned`. Documentation Check `35257325562` and HOTAS BF6 CI `35257325468` both reached terminal `SUCCESS` on product/evidence head `4e72f37`. This is not a public release artifact. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, user-visible/low-resource qualification, installed-product update/uninstall, full manual regression, and external testing remain release blockers. Process-level CPU contention is locally evidenced but is not a substitute for those user-visible or resource-pressure gates. Components are `NotSigned`. |
-| 36a. Final local CTest rerun | A fresh R2-source sequential CTest run passed all 18 registered tests in 210.85 seconds with a 180-second CTest timeout bound. The Doctor-focused path contract passed; `app_backend_startup_tests` passed in 12.64 seconds; `app_qml_startup_tests` passed in 126.34 seconds; and the theme test completed the suite. The startup-test binary no longer starts the real mapper, which removes the observed post-assertion shutdown hang without changing production startup. This remains automated/offscreen evidence; the live mapper and Doctor were not touched. |
+| 36a. Final local CTest rerun | A fresh installer-contract-source sequential CTest run passed all 18 registered tests in 247.97 seconds with a 180-second CTest timeout bound. The Doctor-focused path contract and strengthened release-contract test passed; `app_qml_startup_tests` passed in 155.29 seconds; and the theme test completed the suite. The startup-test binary no longer starts the real mapper, which removes the observed post-assertion shutdown hang without changing production startup. This remains automated/offscreen evidence; the live mapper and Doctor were not touched. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |

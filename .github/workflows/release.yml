@@ -199,6 +199,8 @@ jobs:
           files: |
             ${{ github.workspace }}\release\stage\HOTAS BF6.exe
             ${{ github.workspace }}\release\stage\HOTAS BF6 Launcher.exe
+            ${{ github.workspace }}\release\stage\HidHide Doctor.exe
+            ${{ github.workspace }}\release\stage\HidHideDoctorRepair.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -211,7 +213,9 @@ jobs:
         run: |
           .\scripts\verify-authenticode.ps1 -Path @(
             "$PWD\release\stage\HOTAS BF6.exe",
-            "$PWD\release\stage\HOTAS BF6 Launcher.exe"
+            "$PWD\release\stage\HOTAS BF6 Launcher.exe",
+            "$PWD\release\stage\HidHide Doctor.exe",
+            "$PWD\release\stage\HidHideDoctorRepair.exe"
           )
 
       - name: Install pinned Inno Setup 6.7.1 on CI
@@ -231,7 +235,7 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP 'hotas-bf6-installer-smoke'
           $install = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$target`"") -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Installer smoke install failed: $($install.ExitCode)" }
-          foreach ($file in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'VERSION')) {
+          foreach ($file in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'HidHide Doctor.exe', 'HidHideDoctorRepair.exe', 'VERSION')) {
             if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
               throw "Installer smoke test is missing $file"
             }
@@ -240,6 +244,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Installer smoke test is missing uninstaller.' }
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Installer smoke uninstall failed: $($uninstall.ExitCode)" }
+          foreach ($file in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'HidHide Doctor.exe', 'HidHideDoctorRepair.exe')) {
+            if (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf) {
+              throw "Installer smoke uninstall left $file behind"
+            }
+          }
 
       - name: Validate clean install, upgrade, and recovery startup
         shell: pwsh
