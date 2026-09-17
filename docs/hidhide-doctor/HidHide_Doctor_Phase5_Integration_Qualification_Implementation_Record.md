@@ -5,7 +5,9 @@
 - Accepted Phase 4 SHA: `03c7efdf52c69e9edb78747e38780360b5969cde`.
 - Phase 5 branch: `codex/hidhide-doctor-phase5-integration-qualification`.
 - Worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase5-integration-qualification`.
-- Final SHA: recorded on the submitted Phase 5 candidate PR.
+- Current accepted product-candidate SHA: `6734b773a5f2a70764ef029b705b804625cea154`.
+- PR #68's current-head Documentation Check and HOTAS BF6 CI both reached
+  terminal `SUCCESS` for that SHA.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -80,6 +82,14 @@ contained zero NUL bytes while retaining the full `1.5.230.0` client and
 `1.4.181.0` driver versions. This was diagnostic observation only; it invoked
 no repair or elevation.
 
+The bounded deterministic parser campaign uses seed `0x5AFEF00D` and 64
+malformed inputs each for launch/result handoff, repair journals, helper IPC
+frames, package metadata, and Safe-to-Share report/evidence composition. The
+campaign asserts rejection (where input is untrusted), valid bounded JSON for
+reports, no NUL bytes, and no test hang. It runs only against temporary
+fixture/test data; it cannot invoke a mutable provider, helper execution, or
+live HidHide operation.
+
 The Command Center no longer continuously binds persisted pane fractions back
 into a live `SplitView`. Saved fractions are restored once, a user drag owns
 the geometry until release, and the released geometry alone is persisted. A
@@ -129,6 +139,8 @@ Helper protocol is v2 and integration protocol is v1.
   retained the complete 1.5.230.0 client / 1.4.181.0 driver version strings.
 - The final configured CTest suite passed 17/17 after the report-text
   correction.
+- The current `hidhide_doctor_domain_tests` suite passed in 24.41 seconds with
+  the bounded deterministic handoff/journal/helper/package/report corpus.
 - A staged owner-machine read-only scan exited 0 with 238 checks, 3 findings,
   and 2 diagnoses. It retained the known 1.5.230.0 client / 1.4.181.0 driver
   mismatch, pending-restart evidence, and degraded HID enumeration as separate
@@ -167,17 +179,17 @@ negative product claim, nor a substituted real-machine result.
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Updater atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
 | 13–15. Clean, healthy, partial HidHide | Deterministic diagnostic fixtures only; clean/healthy/partial real or VM environments are Not qualified. |
-| 16. Owner machine | Read-only staged scan executed: Windows build 26200 x64, 238 checks, 3 findings, 2 diagnoses; version mismatch, restart evidence, and HID enumeration finding remained separate. |
+| 16. Owner machine | Exact staged candidate `C:\hotas-builds\hidhide-doctor-phase5-rc-6734b77-stage` completed a read-only scan: Windows build 26200 x64, 238 checks, 4 findings, 3 diagnoses, zero NUL bytes, and full 1.5.230.0 client / 1.4.181.0 driver version strings. Version mismatch, restart, HID enumeration, and stale-configuration evidence remained separate. |
 | 17. External tester campaign | A safe-to-share diagnostic bundle and tester guide are provided; an external tester has not yet run the candidate. |
 | 18–22. R1–R5 qualification | R1–R3 remain LabQualified; R4 is unavailable without an approved newer package; R5 is unavailable without an independently verified rollback package. No FieldQualified promotion occurred. |
-| 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. A complete hostile-input audit remains Not qualified. |
-| 24. Fuzz results | Targeted malformed context/report/fixture coverage exists; sustained fuzzing is Not qualified. |
+| 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. The new deterministic corpus covers handoff, journals, helper frames, package metadata, and reports. A complete hostile-input audit remains Not qualified. |
+| 24. Fuzz results | Seeded `0x5AFEF00D`, 64-input-per-surface deterministic campaign passed without crash, hang, or malformed-input acceptance. Sustained fuzzing and resource-pressure fuzzing remain Not qualified. |
 | 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and has no upload path. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. Native owner Safe to Share privacy review remains open. |
 | 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
 | 27–28. Performance and CPU contention | No measured release budgets or contention campaign was run; Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
-| 33–34. RC artifact and manifest | Local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-single-instance-stage`; 1,387 manifest entries and matching SHA-256 checksum. This is not a public release artifact. |
+| 33–34. RC artifact and manifest | Exact local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-6734b77-stage`; 1,387 manifest entries and matching SHA-256 `E5EF328048C4EAEC828BDFD8FE118855AF2E0E746D1F76996226C48F6B573290`. This is not a public release artifact. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, contention, installer/update/uninstall, full manual regression, and external testing remain release blockers. Components are `NotSigned`. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
