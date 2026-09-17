@@ -38,6 +38,10 @@ Page {
     property bool flightDeckMode: false
     property var flightDeckReadiness: null
     property string flightDeckDevicesContext: ""
+    // A durable AppIssue payload is the Flight Deck handoff contract. It is
+    // presentation state only; the Devices page re-resolves its stable ID
+    // before selecting any existing editor context.
+    property var flightDeckIssueTarget: ({})
     // Flight Deck deep links carry only presentation selection. They never
     // activate a profile, execute Automation, or change mapper configuration.
     property string flightDeckProfileContext: ""
@@ -1561,6 +1565,44 @@ Page {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2
                 }
+                onNavigateToIssue: function(issue) {
+                    const issueId = String(issue && issue.id || "")
+                    const issues = backend.setupTruthSnapshot.issues || []
+                    let current = null
+                    for (let index = 0; index < issues.length; ++index) {
+                        if (String(issues[index].id || "") === issueId) {
+                            current = issues[index]
+                            break
+                        }
+                    }
+                    if (!current) {
+                        root.flightDeckIssueTarget = { id: issueId, stale: true,
+                            message: "This setup item changed before it could be opened. Review the current setup details." }
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    const target = current.navigationTarget || ({})
+                    const destination = target.page === undefined ? 3 : Number(target.page)
+                    if (destination === 10) {
+                        root.flightDeckIssueTarget = current
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    const type = String(target.objectType || "")
+                    const objectId = String(target.objectId || "")
+                    if (type.length && objectId.length
+                            && !backend.focusIssueTarget(type, objectId)) {
+                        root.flightDeckIssueTarget = { id: issueId, stale: true,
+                            message: "The exact setup target is no longer available. Review the current setup details." }
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    root.currentPage = destination
+                    root.menuOpen = false
+                }
             }
         }
         Loader {
@@ -2036,6 +2078,7 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 requestedContext: root.flightDeckDevicesContext
+                requestedIssueTarget: root.flightDeckIssueTarget
                 notificationCenter: root.notificationCenter
                 onNavigateToPage: function(page) { root.currentPage = page }
                 onRequestProfileWorkflow: function(rigId, mode) {

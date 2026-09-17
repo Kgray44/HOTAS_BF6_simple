@@ -1980,6 +1980,14 @@ void AppBackend::setVirtualAxisAvailabilityForTest(bool available)
     emit stateChanged();
 }
 
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::setVjoyReadyForTest(bool ready)
+{
+    m_worker.runtimeForTest().vjoyReady = ready;
+    emit stateChanged();
+}
+#endif
+
 QVariantList AppBackend::runtimeAxisRoutesForTest() const
 {
     QVariantList routes;
@@ -2881,6 +2889,7 @@ bool AppBackend::configureMultiControllerRigFixtureForTest()
     discovered.hidInstanceId = optional.hidInstanceId;
     discovered.hidContainerId = optional.hidContainerId;
     discovered.axes = optional.axes;
+    discovered.axisDescriptors = optional.axisDescriptors;
     discovered.axisCount = optional.axisCount;
     discovered.buttonCount = optional.buttonCount;
     discovered.povCount = optional.povCount;
@@ -2924,19 +2933,62 @@ bool AppBackend::setEffectiveProfileOverrideForTest(const QString &profileId, in
     return true;
 }
 
+bool AppBackend::setReadOnlyPhysicalInputAxisSlotsForTest(const QString &recordId,
+                                                          const QList<int> &axisSlots)
+{
+    const QString targetId = recordId.trimmed();
+    auto saved = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&targetId](const SavedControllerRecord &candidate) {
+            return candidate.id == targetId;
+        });
+    if (saved == m_configuration.savedControllers.end()) return false;
+    const QString directInputId = saved->lastDirectInputId;
+    auto discovered = std::find_if(m_discoveredControllers.begin(), m_discoveredControllers.end(),
+        [&directInputId](const DiscoveredController &candidate) {
+            return candidate.directInputId == directInputId;
+        });
+    if (discovered == m_discoveredControllers.end()) return false;
+
+    // The empty descriptors exercise the persisted legacy shape. Axis slots,
+    // rather than an ordinal count, are still exact controller capability
+    // evidence and must remain canonical in every presentation.
+    saved->axes.fill(false);
+    saved->axisDescriptors.fill({});
+    for (const int slot : axisSlots) {
+        if (slot < 0 || slot >= kPhysicalAxisCount) return false;
+        saved->axes[static_cast<size_t>(slot)] = true;
+    }
+    saved->axisCount = static_cast<int>(std::count(saved->axes.cbegin(), saved->axes.cend(), true));
+    discovered->axes = saved->axes;
+    discovered->axisDescriptors = saved->axisDescriptors;
+    discovered->axisCount = saved->axisCount;
+
+    // Keep these sparse slots intentionally disabled and unmapped. Input
+    // inspection observes the raw member telemetry; it must not depend on a
+    // mapper route to display an exact physical capability.
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, targetId)) {
+            for (int slot = 0; slot < kPhysicalAxisCount; ++slot) {
+                mapping->axes[static_cast<size_t>(slot)].target = VirtualAxis::Disabled;
+            }
+        }
+    }
+    return true;
+}
+
 bool AppBackend::publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
                                                              float axisValue, bool buttonPressed,
-                                                             int povValue)
+                                                             int povValue, int axisSlot)
 {
     const int memberIndex = activeRigMemberIndexForRecord(recordId.trimmed());
-    if (memberIndex < 0) return false;
+    if (memberIndex < 0 || axisSlot < 0 || axisSlot >= kPhysicalAxisCount) return false;
     AtomicRuntimeState &runtime = m_worker.runtimeForTest();
     AtomicAdaptiveTelemetry &source = memberIndex == 0
         ? static_cast<AtomicAdaptiveTelemetry &>(runtime)
         : runtime.deviceRigMemberAdaptive[static_cast<size_t>(memberIndex)];
     source.physicalConnected = true;
-    source.raw[0] = axisValue;
-    source.normalized[0] = axisValue;
+    source.raw[static_cast<size_t>(axisSlot)] = axisValue;
+    source.normalized[static_cast<size_t>(axisSlot)] = axisValue;
     if (memberIndex == 0) {
         runtime.physicalConnected = true;
         runtime.physicalButtonPressed[0] = buttonPressed;
@@ -6535,6 +6587,10 @@ bool AppBackend::setDeviceRigMemberRequired(const QString &rigId, const QString 
     member->required = required;
     m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
     persistAndApply();
+    // Required/optional membership changes the current Setup Health issue
+    // target. Refresh its frozen projection with the same transaction so a
+    // review action cannot carry a stale member classification.
+    captureSetupTruthSnapshot();
     emit deviceRigsChanged();
     return true;
 }
@@ -6993,6 +7049,7 @@ bool AppBackend::focusIssueTarget(const QString &objectType, const QString &obje
     const QString type = objectType.trimmed();
     const QString id = objectId.trimmed();
     if (type == u"deviceRig"_qs) return setEditingDeviceContext(id, {});
+    if (type == u"profile"_qs) return selectProfileForEditing(id);
     if (id.isEmpty()) return false;
 
     // Signal Flow uses durable identities in the same AppIssue contract as
@@ -8622,22 +8679,78 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
     const auto addIssue = [&](const QString &code, const QString &subsystem, SetupTruthStatus status,
                               const QString &title, const QString &detail, bool automatic,
                               bool elevated, const QString &action, const QVariantMap &evidence = {}) {
-        const QString id = code + u":"_qs + QString::number(issues.size() + 1);
         const QString recordId = evidence.value(u"recordId"_qs).toString();
         const QString layoutId = evidence.value(u"layoutId"_qs).toString();
-        const QString affectedId = !recordId.isEmpty() ? recordId : layoutId;
-        issues.append(QVariantMap{{u"id"_qs, id}, {u"code"_qs, code}, {u"subsystem"_qs, subsystem},
-            {u"severity"_qs, statusValue(status)}, {u"title"_qs, title}, {u"explanation"_qs, detail},
-            {u"repairable"_qs, automatic}, {u"automatic"_qs, automatic},
-            {u"requiresElevation"_qs, elevated}, {u"proposedRepair"_qs, action},
-            {u"requiresReconnect"_qs, code == u"HidHideMismatch"_qs},
-            {u"risk"_qs, elevated ? u"Scoped driver configuration with mandatory read-back."_qs
-                                     : u"No driver configuration is required."_qs},
-            {u"manualFallback"_qs, automatic ? u"Review diagnostics if the scoped repair cannot complete."_qs
-                                                 : u"Review technical diagnostics, then run another read-only check."_qs},
-            {u"navigationTarget"_qs, subsystem}, {u"affectedObjectIds"_qs, QStringList{affectedId}},
-            {u"evidence"_qs, evidence}});
-        if (automatic) repairPlan.append(QVariantMap{{u"id"_qs, id}, {u"subsystem"_qs, subsystem},
+        const QString routeId = evidence.value(u"routeId"_qs).toString();
+        const QString profileId = evidence.value(u"profileId"_qs).toString();
+        const QString rigId = evidence.value(u"rigId"_qs,
+            evidence.value(u"setupTargetRigId"_qs)).toString();
+        QString affectedType;
+        QString affectedId;
+        if (!recordId.isEmpty()) {
+            affectedType = u"physicalDevice"_qs;
+            affectedId = recordId;
+        } else if (!layoutId.isEmpty()) {
+            affectedType = u"virtualOutput"_qs;
+            affectedId = layoutId;
+        } else if (!routeId.isEmpty()) {
+            affectedType = u"signalFlowRoute"_qs;
+            affectedId = routeId;
+        } else if (!profileId.isEmpty()) {
+            affectedType = u"profile"_qs;
+            affectedId = profileId;
+        } else if (!rigId.isEmpty()) {
+            affectedType = u"deviceRig"_qs;
+            affectedId = rigId;
+        }
+        AppIssue issue;
+        issue.id = code + u":"_qs + QString::number(issues.size() + 1);
+        issue.code = code;
+        issue.category = subsystem;
+        issue.severity = statusValue(status);
+        issue.scopeType = u"setupTruth"_qs;
+        issue.scopeId = rigId;
+        issue.affectedObjectType = affectedType;
+        issue.affectedObjectId = affectedId;
+        if (!affectedId.isEmpty()) issue.affectedObjectIds = {affectedId};
+        issue.title = title;
+        issue.explanation = detail;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = u"REVIEW DETAILS"_qs;
+        issue.alternativeActions = {u"view-all-details"_qs};
+        issue.automaticallyFixable = automatic;
+        issue.requiresLiveHardware = false;
+        issue.priority = issues.size();
+        issue.technicalDetails = evidence.value(u"technicalDetails"_qs).toString();
+        issue.navigationTarget = issueNavigationTarget(code, affectedType, affectedId);
+        // These section keys are authored by the typed producer, not inferred
+        // from translated QML copy. They retain a truthful section when an
+        // inspection issue has no durable controller/output identity.
+        if (subsystem == u"Device isolation"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"isolation"_qs);
+        } else if (subsystem == u"Virtual output"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"virtual-output"_qs);
+        } else if (subsystem == u"Controller verification"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"verification"_qs);
+        }
+        QVariantMap projection = issue.toVariantMap();
+        projection.insert(u"subsystem"_qs, subsystem);
+        projection.insert(u"repairable"_qs, automatic);
+        projection.insert(u"automatic"_qs, automatic);
+        projection.insert(u"requiresElevation"_qs, elevated);
+        projection.insert(u"proposedRepair"_qs, action);
+        projection.insert(u"requiresReconnect"_qs, code == u"HidHideMismatch"_qs);
+        projection.insert(u"risk"_qs, elevated ? u"Scoped driver configuration with mandatory read-back."_qs
+                                                : u"No driver configuration is required."_qs);
+        projection.insert(u"manualFallback"_qs, automatic
+            ? u"Review diagnostics if the scoped repair cannot complete."_qs
+            : u"Review technical diagnostics, then run another read-only check."_qs);
+        projection.insert(u"evidence"_qs, evidence);
+        issues.append(std::move(projection));
+        if (automatic) repairPlan.append(QVariantMap{{u"id"_qs, issue.id}, {u"subsystem"_qs, subsystem},
             {u"title"_qs, action}, {u"requiresElevation"_qs, elevated}, {u"status"_qs, u"WAITING"_qs}});
     };
 
@@ -10300,6 +10413,25 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
     QVariantList axes = m_readOnlyPhysicalInputTestProbeAxes;
     QVariantList buttons = m_readOnlyPhysicalInputTestProbeButtons;
     QVariantList povs = m_readOnlyPhysicalInputTestProbePovs;
+    // A controller's DirectInput axis slots are sparse: Rz is slot 5 and
+    // Slider1 is slot 7. Never turn a count into slots [0, count); use the
+    // exact discovered inventory when it is available, otherwise retain the
+    // verified record's canonical slot evidence. Legacy records without
+    // descriptors still have their `axes` bitmap; a descriptor being absent
+    // does not make an ordinal slot real.
+    std::array<bool, kPhysicalAxisCount> axisPresence{};
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    bool hasExactAxisEvidence = false;
+    const auto useAxisEvidence = [&axisPresence, &axisDescriptors, &hasExactAxisEvidence](
+                                     const std::array<bool, kPhysicalAxisCount> &presence,
+                                     const std::array<NativeAxisDescriptor, kPhysicalAxisCount> &descriptors) {
+        if (!std::any_of(presence.cbegin(), presence.cend(), [](bool present) { return present; })) return;
+        axisPresence = presence;
+        axisDescriptors = descriptors;
+        hasExactAxisEvidence = true;
+    };
+    if (discoveredConnected) useAxisEvidence(discovered->axes, discovered->axisDescriptors);
+    if (!hasExactAxisEvidence && record) useAxisEvidence(record->axes, record->axisDescriptors);
     if (activeRigSession) {
         const AtomicAdaptiveTelemetry &source = memberIndex == 0
             ? static_cast<const AtomicAdaptiveTelemetry &>(runtime)
@@ -10307,20 +10439,22 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
         axes.clear();
         buttons.clear();
         povs.clear();
-        const int axisLimit = std::min(m_readOnlyPhysicalInputTestAxisCount, kPhysicalAxisCount);
-        for (int axis = 0; axis < axisLimit; ++axis) {
-            const NativeAxisDescriptor descriptor = record
-                ? record->axisDescriptors[static_cast<size_t>(axis)] : NativeAxisDescriptor{};
-            // Older verified records predate explicit axis descriptors.  Their
-            // saved physical count still identifies real axes; show that
-            // exact count with an ordinal label rather than hiding live
-            // evidence or substituting another controller's labels.
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            if (!axisPresence[static_cast<size_t>(axis)]) continue;
+            const NativeAxisDescriptor descriptor = axisDescriptors[static_cast<size_t>(axis)];
             const QString label = descriptor.present
                 ? physicalAxisDisplayLabel(descriptor, static_cast<PhysicalAxis>(axis))
-                : QString(u"Axis %1"_qs).arg(axis + 1);
-            axes.append(QVariantMap{{u"index"_qs, axis},
+                : physicalAxisLabel(static_cast<PhysicalAxis>(axis));
+            QVariantMap entry{{u"index"_qs, axis},
                 {u"label"_qs, label},
-                {u"value"_qs, source.raw[static_cast<size_t>(axis)].load(std::memory_order_relaxed)}});
+                {u"value"_qs, source.raw[static_cast<size_t>(axis)].load(std::memory_order_relaxed)},
+                {u"rangeKnown"_qs, descriptor.present}};
+            if (descriptor.present) {
+                entry.insert(u"nativeMinimum"_qs, descriptor.nativeMinimum);
+                entry.insert(u"nativeMaximum"_qs, descriptor.nativeMaximum);
+                entry.insert(u"relative"_qs, descriptor.relative);
+            }
+            axes.append(std::move(entry));
         }
         const int buttonLimit = std::min(m_readOnlyPhysicalInputTestButtonCount, kMaximumPhysicalButtons);
         for (int button = 0; button < buttonLimit; ++button) {
@@ -10365,13 +10499,17 @@ QVariantMap AppBackend::readOnlyPhysicalInputTest() const
             ? u"Listening to this exact active Device Rig member. Move a control or press a button; mapping and output stay unchanged."_qs
             : u"Sampling this exact controller through input-only DirectInput. Move a control or press a button; mapping and output stay unchanged."_qs;
     }
+    const bool reportAvailable = activeRigSession ? memberConnected : m_readOnlyPhysicalInputTestProbeAcquired;
+    const bool reportFresh = reportAvailable && (activeRigSession
+        ? sequence >= m_readOnlyPhysicalInputTestBaseline
+        : m_readOnlyPhysicalInputTestProbeAttempted);
     return {{u"active"_qs, m_readOnlyPhysicalInputTestActive},
             {u"available"_qs, available}, {u"connected"_qs, connected},
+            {u"reportAvailable"_qs, reportAvailable}, {u"reportFresh"_qs, reportFresh},
             {u"inputDetected"_qs, detected}, {u"state"_qs, state},
             {u"title"_qs, m_readOnlyPhysicalInputTestName}, {u"message"_qs, message},
-            {u"axisCount"_qs, m_readOnlyPhysicalInputTestAxisCount},
-            {u"buttonCount"_qs, m_readOnlyPhysicalInputTestButtonCount},
-            {u"povCount"_qs, m_readOnlyPhysicalInputTestPovCount},
+            {u"axisCount"_qs, axes.size()}, {u"buttonCount"_qs, buttons.size()},
+            {u"povCount"_qs, povs.size()},
             {u"session"_qs, activeRigSession ? u"active-rig-member"_qs : u"input-only-directinput"_qs},
             {u"sessionId"_qs, QVariant::fromValue(m_readOnlyPhysicalInputTestSessionId)},
             {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
@@ -10457,10 +10595,17 @@ void AppBackend::acceptReadOnlyPhysicalInputProbe(quint64 sessionId,
     QVariantList povs;
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
         if (!probe.axes[static_cast<size_t>(axis)]) continue;
-        axes.append(QVariantMap{{u"index"_qs, axis},
-            {u"label"_qs, physicalAxisDisplayLabel(probe.axisDescriptors[static_cast<size_t>(axis)],
-                                                       static_cast<PhysicalAxis>(axis))},
-            {u"value"_qs, probe.normalizedAxes[static_cast<size_t>(axis)]}});
+        const NativeAxisDescriptor descriptor = probe.axisDescriptors[static_cast<size_t>(axis)];
+        QVariantMap entry{{u"index"_qs, axis},
+            {u"label"_qs, physicalAxisDisplayLabel(descriptor, static_cast<PhysicalAxis>(axis))},
+            {u"value"_qs, probe.normalizedAxes[static_cast<size_t>(axis)]},
+            {u"rangeKnown"_qs, descriptor.present}};
+        if (descriptor.present) {
+            entry.insert(u"nativeMinimum"_qs, descriptor.nativeMinimum);
+            entry.insert(u"nativeMaximum"_qs, descriptor.nativeMaximum);
+            entry.insert(u"relative"_qs, descriptor.relative);
+        }
+        axes.append(std::move(entry));
     }
     for (int button = 0; button < probe.buttonCount; ++button) {
         buttons.append(QVariantMap{{u"index"_qs, button + 1},

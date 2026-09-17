@@ -979,8 +979,32 @@ bool verifyMultiControllerMemberIsolation()
     // blocker; restoring Optional returns the existing Rig to Ready without
     // requiring a new global setup pass.
     if (!backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), true)
-        || rigState().value(QStringLiteral("complete")).toBool()
-        || !backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), false)
+        || rigState().value(QStringLiteral("complete")).toBool()) {
+        std::fprintf(stderr, "optional member readiness was not isolated from the required Rig state\n");
+        return false;
+    }
+    QVariantMap exactOptionalIssue;
+    for (const QVariant &entry : backend->setupTruthSnapshot().value(QStringLiteral("issues")).toList()) {
+        const QVariantMap issue = entry.toMap();
+        if (issue.value(QStringLiteral("code")).toString() == QStringLiteral("PhysicalDeviceUnverified")
+            && issue.value(QStringLiteral("affectedObjectId")).toString() == QLatin1String(kOptionalRecordId)) {
+            exactOptionalIssue = issue;
+            break;
+        }
+    }
+    const QVariantMap exactOptionalTarget = exactOptionalIssue.value(QStringLiteral("navigationTarget")).toMap();
+    if (exactOptionalIssue.isEmpty()
+        || exactOptionalIssue.value(QStringLiteral("affectedObjectType")).toString()
+            != QStringLiteral("physicalDevice")
+        || exactOptionalTarget.value(QStringLiteral("page")).toInt() != 10
+        || exactOptionalTarget.value(QStringLiteral("objectType")).toString()
+            != QStringLiteral("physicalDevice")
+        || exactOptionalTarget.value(QStringLiteral("objectId")).toString()
+            != QLatin1String(kOptionalRecordId)) {
+        std::fprintf(stderr, "setup truth did not publish the exact structured optional-controller review target\n");
+        return false;
+    }
+    if (!backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), false)
         || !rigState().value(QStringLiteral("complete")).toBool()) {
         std::fprintf(stderr, "optional member readiness was not isolated from the required Rig state\n");
         return false;
@@ -1330,7 +1354,9 @@ bool verifyReadOnlyPhysicalInputTest()
     constexpr auto kRecordId = "multi-controller-xbox";
     auto backend = std::make_unique<hotas::AppBackend>();
     if (!backend->configureMultiControllerRigFixtureForTest()
-        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.25F, false, -1)) {
+        || !backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {0, 1, 5})
+        || !backend->selectControllerForEditing(QLatin1String(kRecordId))
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.25F, false, -1, 5)) {
         std::fprintf(stderr, "read-only input fixture could not be configured\n");
         return false;
     }
@@ -1343,13 +1369,28 @@ bool verifyReadOnlyPhysicalInputTest()
 
     const QVariantMap result = backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId));
     const QVariantMap test = backend->readOnlyPhysicalInputTest();
+    const QVariantList initialAxes = test.value(QStringLiteral("axes")).toList();
+    const bool hasXyRz = initialAxes.size() == 3
+        && initialAxes.at(0).toMap().value(QStringLiteral("index")).toInt() == 0
+        && initialAxes.at(0).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("X Axis")
+        && initialAxes.at(1).toMap().value(QStringLiteral("index")).toInt() == 1
+        && initialAxes.at(1).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Y Axis")
+        && initialAxes.at(2).toMap().value(QStringLiteral("index")).toInt() == 5
+        && initialAxes.at(2).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Z Rotation")
+        && std::abs(initialAxes.at(2).toMap().value(QStringLiteral("value")).toDouble() + 0.25) < 0.001;
+    const QVariantList axisConfiguration = backend->axisConfiguration();
+    const bool rzIsDisabledAndUnmapped = axisConfiguration.size() > 5
+        && axisConfiguration.at(5).toMap().value(QStringLiteral("available")).toBool()
+        && axisConfiguration.at(5).toMap().value(QStringLiteral("target")).toString() == QStringLiteral("Disabled");
     if (!result.value(QStringLiteral("success")).toBool()
         || !test.value(QStringLiteral("active")).toBool()
         || test.value(QStringLiteral("session")).toString() != QStringLiteral("active-rig-member")
         || !test.value(QStringLiteral("available")).toBool()
         || test.value(QStringLiteral("recordId")).toString() != QLatin1String(kRecordId)
         || test.value(QStringLiteral("axisCount")).toInt() <= 0
-        || test.value(QStringLiteral("axes")).toList().isEmpty()
+        || !test.value(QStringLiteral("reportAvailable")).toBool()
+        || !test.value(QStringLiteral("reportFresh")).toBool()
+        || !hasXyRz || !rzIsDisabledAndUnmapped
         || test.value(QStringLiteral("state")).toString().isEmpty()
         || backend->activeProfileId() != activeProfileBefore
         || backend->selectedProfileId() != selectedProfileBefore
@@ -1359,7 +1400,7 @@ bool verifyReadOnlyPhysicalInputTest()
         || backend->mappingRequested() != mappingRequestedBefore) {
         std::fprintf(stderr,
                      "read-only input evidence failed: success=%d active=%d session=%s available=%d record=%s "
-                     "axisCount=%d axes=%lld state=%s profileStable=%d selectedStable=%d rigStable=%d "
+                     "axisCount=%d axes=%lld sparseEvidence=%d disabledRz=%d state=%s profileStable=%d selectedStable=%d rigStable=%d "
                      "editingStable=%d outputStable=%d mappingStable=%d\n",
                      result.value(QStringLiteral("success")).toBool(),
                      test.value(QStringLiteral("active")).toBool(),
@@ -1368,6 +1409,7 @@ bool verifyReadOnlyPhysicalInputTest()
                      test.value(QStringLiteral("recordId")).toString().toUtf8().constData(),
                      test.value(QStringLiteral("axisCount")).toInt(),
                      static_cast<long long>(test.value(QStringLiteral("axes")).toList().size()),
+                     hasXyRz, rzIsDisabledAndUnmapped,
                      test.value(QStringLiteral("state")).toString().toUtf8().constData(),
                      backend->activeProfileId() == activeProfileBefore,
                      backend->selectedProfileId() == selectedProfileBefore,
@@ -1388,10 +1430,17 @@ bool verifyReadOnlyPhysicalInputTest()
     }
     const QVariantMap afterOtherController = backend->readOnlyPhysicalInputTest();
     const QVariantList otherAxes = afterOtherController.value(QStringLiteral("axes")).toList();
-    const double optionalAxisBefore = otherAxes.isEmpty() ? 99.0
-        : otherAxes.front().toMap().value(QStringLiteral("value")).toDouble();
+    const auto axisValueForSlot = [&otherAxes](int slot) {
+        for (const QVariant &entry : otherAxes) {
+            const QVariantMap axis = entry.toMap();
+            if (axis.value(QStringLiteral("index")).toInt() == slot)
+                return axis.value(QStringLiteral("value")).toDouble();
+        }
+        return 99.0;
+    };
+    const double optionalRzBefore = axisValueForSlot(5);
     if (afterOtherController.value(QStringLiteral("inputDetected")).toBool()
-        || std::abs(optionalAxisBefore + 0.25) > 0.001
+        || std::abs(optionalRzBefore + 0.25) > 0.001
         || afterOtherController.value(QStringLiteral("buttons")).toList().isEmpty()
         || afterOtherController.value(QStringLiteral("buttons")).toList().front().toMap()
                .value(QStringLiteral("pressed")).toBool()) {
@@ -1416,6 +1465,39 @@ bool verifyReadOnlyPhysicalInputTest()
         return false;
     }
 
+    backend->stopReadOnlyPhysicalInputTest();
+    // Sparse controllers may expose only Rz or only Slider1. Neither case
+    // may be compacted into X, and disabled/unmapped input remains visible
+    // because this test reads the exact member telemetry rather than routes.
+    if (!backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {5})
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), 0.60F, false, -1, 5)
+        || !backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId)).value(QStringLiteral("success")).toBool()) {
+        std::fprintf(stderr, "Rz-only read-only input fixture could not start\n");
+        return false;
+    }
+    const QVariantList rzOnlyAxes = backend->readOnlyPhysicalInputTest().value(QStringLiteral("axes")).toList();
+    if (rzOnlyAxes.size() != 1
+        || rzOnlyAxes.front().toMap().value(QStringLiteral("index")).toInt() != 5
+        || rzOnlyAxes.front().toMap().value(QStringLiteral("label")).toString() != QStringLiteral("Z Rotation")
+        || std::abs(rzOnlyAxes.front().toMap().value(QStringLiteral("value")).toDouble() - 0.60) > 0.001) {
+        std::fprintf(stderr, "Rz-only input was compacted, relabeled, or lost its canonical value\n");
+        return false;
+    }
+    backend->stopReadOnlyPhysicalInputTest();
+    if (!backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {7})
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.40F, false, -1, 7)
+        || !backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId)).value(QStringLiteral("success")).toBool()) {
+        std::fprintf(stderr, "Slider1-only read-only input fixture could not start\n");
+        return false;
+    }
+    const QVariantList sliderOnlyAxes = backend->readOnlyPhysicalInputTest().value(QStringLiteral("axes")).toList();
+    if (sliderOnlyAxes.size() != 1
+        || sliderOnlyAxes.front().toMap().value(QStringLiteral("index")).toInt() != 7
+        || sliderOnlyAxes.front().toMap().value(QStringLiteral("label")).toString() != QStringLiteral("Slider 1")
+        || std::abs(sliderOnlyAxes.front().toMap().value(QStringLiteral("value")).toDouble() + 0.40) > 0.001) {
+        std::fprintf(stderr, "Slider1-only input was compacted, relabeled, or lost its canonical value\n");
+        return false;
+    }
     backend->stopReadOnlyPhysicalInputTest();
     if (backend->readOnlyPhysicalInputTest().value(QStringLiteral("active")).toBool()) {
         std::fprintf(stderr, "read-only input test did not clear its transient observation state\n");

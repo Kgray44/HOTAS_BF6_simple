@@ -11,6 +11,7 @@ Flickable {
     property var readinessModel
     signal navigateToPage(int page)
     signal navigateToDevices(string context)
+    signal navigateToIssue(var issue)
 
     readonly property bool wide: width >= 900
     readonly property var readiness: readinessModel ? readinessModel.readiness : ({})
@@ -29,14 +30,6 @@ Flickable {
     function editSetupContext() {
         const rigId = String(setupTruth.setupTargetRigId || backend.activeDeviceRigId || "")
         return rigId.length ? "rig:" + rigId : "controllers"
-    }
-
-    function contextForIssue(issue) {
-        const subsystem = String(issue && issue.subsystem || "").toLowerCase()
-        if (subsystem.indexOf("isolation") >= 0 || subsystem.indexOf("hidhide") >= 0) return "isolation"
-        if (subsystem.indexOf("output") >= 0 || subsystem.indexOf("vjoy") >= 0) return "virtual-output"
-        if (subsystem.indexOf("verification") >= 0 || subsystem.indexOf("check") >= 0) return "verification"
-        return "controllers"
     }
 
     function setupGroup(id) {
@@ -66,10 +59,36 @@ Flickable {
     readonly property var setupIsolation: setupGroup("isolation")
     property bool connectionEvidenceExpanded: false
     property bool additionalAttentionExpanded: false
+    property string issueHandoffMessage: ""
 
-    function prioritizedIssue() {
+    function currentIssueById(issueId) {
         const issues = setupTruth.issues || []
-        return issues.length ? issues[0] : ({})
+        for (let index = 0; index < issues.length; ++index) {
+            if (String(issues[index].id || "") === String(issueId || ""))
+                return issues[index]
+        }
+        return null
+    }
+
+    function reviewIssue(issue) {
+        const issueId = String(issue && issue.id || "")
+        const current = currentIssueById(issueId)
+        if (!current) {
+            issueHandoffMessage = "This setup item changed before it could be opened. Review the current setup details."
+            return
+        }
+        issueHandoffMessage = ""
+        navigateToIssue(current)
+    }
+
+    function attentionFallbackTitle() {
+        return setupTruth.fresh ? "No current setup issue" : "Setup inspection pending"
+    }
+
+    function attentionFallbackExplanation() {
+        return setupTruth.fresh
+            ? "The latest setup inspection did not report an item requiring review."
+            : "Setup Health has not completed a current inspection. Run a check before relying on readiness."
     }
 
     function hidhideTone() {
@@ -330,8 +349,13 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Button {
+                        objectName: "flightDeckMappingToggle"
                         text: backend.mappingRequested ? "STOP MAPPING" : "START MAPPING"
-                        enabled: String(backend.activeDeviceRigId || "").length > 0 && backend.vjoyReady
+                        // Once Mapping has been requested, Stop must remain
+                        // available even if vJoy disappears. Stopping only
+                        // clears the request; it never reacquires or repairs.
+                        enabled: backend.mappingRequested
+                            || (String(backend.activeDeviceRigId || "").length > 0 && backend.vjoyReady)
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
                         onClicked: backend.toggleMapping()
@@ -352,7 +376,8 @@ Flickable {
                 anchors.fill: parent
                 anchors.margins: parent.contentPadding
                 spacing: deck.space8
-                readonly property var issue: root.prioritizedIssue()
+                readonly property var issue: (root.setupTruth.issues || []).length
+                    ? root.setupTruth.issues[0] : ({})
                 RowLayout {
                     Layout.fillWidth: true
                     ColumnLayout {
@@ -360,22 +385,25 @@ Flickable {
                         spacing: deck.space4
                         Text { text: "ATTENTION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                         Text {
-                            text: attentionContent.issue.title || "No setup blocker"
+                            text: attentionContent.issue.title || root.attentionFallbackTitle()
                             color: attentionContent.issue.title ? deck.statusColor(root.setupTone(attentionContent.issue.severity || "attention")) : deck.healthy
                             font.family: deck.displayFont; font.pixelSize: deck.scale(16); font.bold: true
                             Layout.fillWidth: true; elide: Text.ElideRight
                         }
                         Text {
-                            text: attentionContent.issue.explanation || "Current setup is calm. Optional checks remain available below."
+                            text: root.issueHandoffMessage.length
+                                ? root.issueHandoffMessage
+                                : (attentionContent.issue.explanation || root.attentionFallbackExplanation())
                             color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap
                         }
                     }
                     Button {
+                        objectName: "flightDeckPrioritizedIssueReview"
                         visible: !!attentionContent.issue.title
-                        text: "OPEN NEXT STEP"
+                        text: "REVIEW DETAILS"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: root.navigateToDevices(root.contextForIssue(attentionContent.issue))
+                        onClicked: root.reviewIssue(attentionContent.issue)
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
@@ -418,7 +446,7 @@ Flickable {
                         spacing: deck.space4
                         Text { text: "CONNECTION & EVIDENCE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                         Text { text: String(setupPhysical.status || "CHECKING") + " input · " + String(setupOutput.status || "CHECKING") + " output · " + String(setupIsolation.status || "CHECKING") + " isolation"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(14); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: "Compact status is shown first; expanded evidence is the same frozen Setup Health snapshot used by Devices."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                        Text { text: "Check controller connections and review anything that needs attention."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     }
                     Button {
                         text: root.connectionEvidenceExpanded ? "HIDE EVIDENCE" : "SHOW EVIDENCE"

@@ -11,6 +11,12 @@ Flickable {
 
     property var readinessModel
     property string requestedContext: ""
+    // Structured Overview handoff. The issue is re-resolved against the
+    // frozen current snapshot before this page changes an editor selection.
+    property var requestedIssueTarget: ({})
+    // Presentation-only fixture used by the QML lifecycle test. Production
+    // always reads the backend's exact read-only observation projection.
+    property var readOnlyPhysicalInputTestPresentationOverride: null
     // The startup test may render controller-card arrangements without
     // touching AppBackend, device discovery, or persisted configuration.
     // Production never assigns this and always consumes backend.controllers.
@@ -24,6 +30,7 @@ Flickable {
     // currently inspected ID and transient acknowledgement state; every
     // create/edit/activate operation below is routed through AppBackend.
     property string selectedRigId: ""
+    property string handledIssueId: ""
     property var actionFeedback: ({})
     property var hidhideRepairPlan: ({})
     property bool outputCreationForNewRig: false
@@ -520,6 +527,57 @@ Flickable {
         });
     }
 
+    function currentSetupIssue(issueId) {
+        const issues = setupTruth.issues || []
+        for (let index = 0; index < issues.length; ++index) {
+            if (String(issues[index].id || "") === String(issueId || ""))
+                return issues[index]
+        }
+        return null
+    }
+
+    function revealIssueTarget() {
+        const requested = requestedIssueTarget || ({})
+        const issueId = String(requested.id || "")
+        if (!issueId || handledIssueId === issueId) return
+        handledIssueId = issueId
+        if (requested.stale) {
+            showActionFeedback({ success: false, title: "Setup item changed",
+                message: String(requested.message || "This setup item is no longer available. Review the current setup details.") },
+                "Setup item changed", "Review the current setup details.")
+            return
+        }
+        const current = currentSetupIssue(issueId)
+        if (!current) {
+            showActionFeedback({ success: false, title: "Setup item changed",
+                message: "This setup item changed before it could be opened. Review the current setup details." },
+                "Setup item changed", "Review the current setup details.")
+            return
+        }
+        const target = current.navigationTarget || ({})
+        const type = String(target.objectType || "")
+        const objectId = String(target.objectId || "")
+        if (type.length && objectId.length && !backend.focusIssueTarget(type, objectId)) {
+            showActionFeedback({ success: false, title: "Setup target is no longer available",
+                message: "The exact target was removed or changed. Review the current setup details." },
+                "Setup target is no longer available", "Review the current setup details.")
+            return
+        }
+        const section = String(target.section || "")
+        let destination = null
+        if (section === "isolation") destination = isolationSection
+        else if (section === "virtual-output" || type === "virtualOutput") {
+            virtualDetailsOpen = true
+            destination = virtualOutputSection
+        } else if (section === "verification") destination = verificationSection
+        else if (type === "deviceRig") {
+            selectedRigId = String(objectId || backend.editingDeviceRigId || "")
+            destination = rigsSection
+        } else destination = controllersSection
+        if (destination)
+            contentY = Math.max(0, Math.min(contentHeight - height, destination.y - deck.space8))
+    }
+
     Connections {
         target: backend
         function onControllersChanged() { Qt.callLater(root.settleControllerVerificationFeedback); }
@@ -643,7 +701,14 @@ Flickable {
     }
 
     onRequestedContextChanged: Qt.callLater(revealContext)
-    Component.onCompleted: Qt.callLater(revealContext)
+    onRequestedIssueTargetChanged: {
+        handledIssueId = ""
+        Qt.callLater(revealIssueTarget)
+    }
+    Component.onCompleted: {
+        Qt.callLater(revealContext)
+        Qt.callLater(revealIssueTarget)
+    }
     onRigItemsChanged: normalizeRigSelection()
 
     Connections {
@@ -1725,7 +1790,19 @@ Flickable {
         tone: String(test.state || "").indexOf("unavailable") >= 0 || String(test.state || "") === "offline"
             ? "attention" : "informational"
         preferredWidth: 560
-        readonly property var test: backend.readOnlyPhysicalInputTest || ({})
+        readonly property var test: root.readOnlyPhysicalInputTestPresentationOverride == null
+            ? (backend.readOnlyPhysicalInputTest || ({}))
+            : root.readOnlyPhysicalInputTestPresentationOverride
+        readonly property bool hasCurrentReport: Boolean(test.reportAvailable) && Boolean(test.reportFresh)
+        property bool technicalDetailsExpanded: false
+        function povDisplay(value) {
+            const raw = Number(value)
+            if (raw === -1) return "CENTER"
+            if (!isFinite(raw) || Math.floor(raw) !== raw || raw < 0 || raw >= 36000)
+                return "NO DIRECTION"
+            const degrees = raw / 100
+            return (degrees % 1 === 0 ? String(degrees) : degrees.toFixed(2)) + "°"
+        }
         onClosed: backend.stopReadOnlyPhysicalInputTest()
         contentItem: ColumnLayout {
             width: readOnlyPhysicalInputTestDialog.availableWidth
@@ -1767,15 +1844,56 @@ Flickable {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
-            Text {
-                text: "SESSION · " + String(readOnlyPhysicalInputTestDialog.test.session || "not started")
-                    + "  ·  generation " + String(readOnlyPhysicalInputTestDialog.test.configurationGeneration || 0)
-                    + "  ·  exact DirectInput ID " + String(readOnlyPhysicalInputTestDialog.test.directInputId || "unavailable")
-                color: deck.textMuted
-                font.family: deck.telemetryFont
-                font.pixelSize: 8
+            Button {
+                objectName: "flightDeckInputTestTechnicalDetailsToggle"
+                text: readOnlyPhysicalInputTestDialog.technicalDetailsExpanded ? "HIDE TECHNICAL DETAILS" : "SHOW TECHNICAL DETAILS"
+                focusPolicy: Qt.StrongFocus
+                implicitHeight: deck.compactControlHeight
+                onClicked: readOnlyPhysicalInputTestDialog.technicalDetailsExpanded = !readOnlyPhysicalInputTestDialog.technicalDetailsExpanded
+                background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+            }
+            ColumnLayout {
+                visible: readOnlyPhysicalInputTestDialog.technicalDetailsExpanded
                 Layout.fillWidth: true
-                wrapMode: Text.WrapAnywhere
+                spacing: deck.space4
+                Text {
+                    text: "SESSION · " + String(readOnlyPhysicalInputTestDialog.test.session || "not started")
+                        + "  ·  generation " + String(readOnlyPhysicalInputTestDialog.test.configurationGeneration || 0)
+                        + "  ·  exact DirectInput ID " + String(readOnlyPhysicalInputTestDialog.test.directInputId || "unavailable")
+                    color: deck.textMuted
+                    font.family: deck.telemetryFont
+                    font.pixelSize: 8
+                    Layout.fillWidth: true
+                    wrapMode: Text.WrapAnywhere
+                }
+                Repeater {
+                    model: readOnlyPhysicalInputTestDialog.test.axes || []
+                    delegate: Text {
+                        required property var modelData
+                        text: String(modelData.label || "Axis") + " · canonical slot "
+                            + String(modelData.index) + (modelData.rangeKnown
+                                ? " · native range " + String(modelData.nativeMinimum) + " to "
+                                    + String(modelData.nativeMaximum) : " · native range not reported")
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 8
+                        Layout.fillWidth: true
+                        wrapMode: Text.WrapAnywhere
+                    }
+                }
+                Repeater {
+                    model: readOnlyPhysicalInputTestDialog.test.povs || []
+                    delegate: Text {
+                        required property var modelData
+                        text: "POV " + String(modelData.index || 0) + " · raw DirectInput value " + String(modelData.value)
+                        color: deck.textMuted
+                        font.family: deck.telemetryFont
+                        font.pixelSize: 8
+                        Layout.fillWidth: true
+                        wrapMode: Text.WrapAnywhere
+                    }
+                }
             }
             ScrollView {
                 Layout.fillWidth: true
@@ -1809,6 +1927,13 @@ Flickable {
                             }
                         }
                     }
+                    Text {
+                        objectName: "flightDeckInputTestAxesEmpty"
+                        visible: readOnlyPhysicalInputTestDialog.hasCurrentReport
+                            && (readOnlyPhysicalInputTestDialog.test.axes || []).length === 0
+                        text: "No axis controls were reported by this controller."
+                        color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
                     Text { text: "BUTTONS · CURRENT STATE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                     Flow {
                         Layout.fillWidth: true
@@ -1826,6 +1951,13 @@ Flickable {
                             }
                         }
                     }
+                    Text {
+                        objectName: "flightDeckInputTestButtonsEmpty"
+                        visible: readOnlyPhysicalInputTestDialog.hasCurrentReport
+                            && (readOnlyPhysicalInputTestDialog.test.buttons || []).length === 0
+                        text: "No buttons were reported by this controller."
+                        color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
                     Text { text: "POV · CURRENT STATE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                     Flow {
                         Layout.fillWidth: true
@@ -1839,12 +1971,20 @@ Flickable {
                                 radius: deck.radiusControl
                                 color: deck.secondarySurface
                                 border.color: deck.border
-                                Text { id: povState; anchors.centerIn: parent; text: "POV " + String(modelData.index || 0) + " · " + (Number(modelData.value) < 0 ? "CENTER" : String(modelData.value) + "°"); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                                Text { id: povState; anchors.centerIn: parent; text: "POV " + String(modelData.index || 0) + " · " + readOnlyPhysicalInputTestDialog.povDisplay(modelData.value); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                             }
                         }
                     }
                     Text {
-                        visible: (readOnlyPhysicalInputTestDialog.test.axes || []).length === 0
+                        objectName: "flightDeckInputTestPovsEmpty"
+                        visible: readOnlyPhysicalInputTestDialog.hasCurrentReport
+                            && (readOnlyPhysicalInputTestDialog.test.povs || []).length === 0
+                        text: "No POV hats were reported by this controller."
+                        color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        objectName: "flightDeckInputTestNoReport"
+                        visible: !readOnlyPhysicalInputTestDialog.hasCurrentReport
                         text: "No exact state report is available yet. The message above states the specific DirectInput result and next action."
                         color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap
                     }
@@ -1852,7 +1992,7 @@ Flickable {
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
             Text {
-                text: "READ-ONLY · This checks only already available physical input. It does not verify, select, activate, change a driver, or send mapped output."
+                text: "Move a control to see its input. This test does not change your mappings or send controls to the virtual controller."
                 color: deck.textMuted
                 font.family: deck.telemetryFont
                 font.pixelSize: 9

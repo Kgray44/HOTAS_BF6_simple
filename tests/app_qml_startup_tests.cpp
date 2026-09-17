@@ -3568,6 +3568,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             QStringLiteral("PARTIALLY READY"), QStringLiteral("attention"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck readiness states are not classified consistently"));
     }
+    // Losing vJoy after Mapping was requested must not strand the user with
+    // no Stop control. This seam changes only the published readiness bit;
+    // clicking Stop must clear the request without reacquiring or repairing
+    // virtual output. With no request, the invalid output still cannot start.
+    auto *mappingToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckMappingToggle"));
+    backend.setMappingActive(false);
+    backend.setVjoyReadyForTest(false);
+    settlePresentation();
+    const bool invalidOutputCannotStart = mappingToggle && !mappingToggle->property("enabled").toBool();
+    backend.setMappingActive(true);
+    settlePresentation();
+    const bool stopRemainsAvailable = mappingToggle && mappingToggle->property("enabled").toBool()
+        && mappingToggle->property("text").toString() == QStringLiteral("STOP MAPPING");
+    const bool stopClicked = stopRemainsAvailable
+        && clickFlightDeckSettingsItem(window, window->contentItem(), mappingToggle);
+    settlePresentation();
+    if (!invalidOutputCannotStart || !stopClicked || backend.mappingRequested() || backend.vjoyReady()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck did not retain a safe Stop Mapping action after simulated vJoy loss"));
+    }
     const QVariantMap multipleInput = readinessValue(
         QStringLiteral("inputFor({physicalConnected:true, connectedControllerCount:3, deviceName:'Long controller name'})")).toMap();
     const QVariantMap noProfile = readinessValue(
@@ -3601,6 +3622,60 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || devices->property("requestedContext").toString() != QStringLiteral("controllers")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input recovery did not load native Devices in controller context"));
     }
+    // Inspector presentation is driven by the same status/freshness contract
+    // as the backend projection. A valid buttons-only or POV-only report is
+    // not an unavailable report, and DirectInput POV values are hundredths of
+    // a degree rather than literal degree values.
+    QObject *inputInspector = devices->findChild<QObject *>(
+        QStringLiteral("flightDeckReadOnlyPhysicalInputTestDialog"));
+    if (!inputInspector) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector dialog did not load"));
+    }
+    QVariantMap buttonsOnlyReport{{QStringLiteral("reportAvailable"), true},
+        {QStringLiteral("reportFresh"), true}, {QStringLiteral("available"), true},
+        {QStringLiteral("state"), QStringLiteral("listening")},
+        {QStringLiteral("message"), QStringLiteral("Move a control to see its input.")},
+        {QStringLiteral("buttons"), QVariantList{QVariantMap{{QStringLiteral("index"), 1},
+            {QStringLiteral("pressed"), true}}}}, {QStringLiteral("axes"), QVariantList{}},
+        {QStringLiteral("povs"), QVariantList{}}};
+    if (!devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", buttonsOnlyReport)
+        || !QMetaObject::invokeMethod(inputInspector, "open")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector could not open its status fixture"));
+    }
+    settlePresentation();
+    QObject *axesEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestAxesEmpty"));
+    QObject *povsEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestPovsEmpty"));
+    QObject *noReport = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestNoReport"));
+    QQmlExpression povLabels(qmlContext(inputInspector), inputInspector,
+        QStringLiteral("[-1, 0, 4500, 9000, 18000, 27000, 36000, -2].map(povDisplay).join('|')"));
+    const QString renderedPovLabels = povLabels.evaluate().toString();
+    if (povLabels.hasError() || !axesEmpty || !povsEmpty || !noReport
+        || !axesEmpty->property("visible").toBool() || !povsEmpty->property("visible").toBool()
+        || noReport->property("visible").toBool()
+        || renderedPovLabels != QStringLiteral("CENTER|0°|45°|90°|180°|270°|NO DIRECTION|NO DIRECTION")) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector did not preserve report availability or DirectInput POV units"));
+    }
+    QVariantMap povOnlyReport = buttonsOnlyReport;
+    povOnlyReport.insert(QStringLiteral("buttons"), QVariantList{});
+    povOnlyReport.insert(QStringLiteral("povs"), QVariantList{QVariantMap{{QStringLiteral("index"), 1},
+        {QStringLiteral("value"), 9000}}});
+    if (!devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", povOnlyReport)) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector could not present a POV-only report"));
+    }
+    settlePresentation();
+    QObject *buttonsEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestButtonsEmpty"));
+    if (!buttonsEmpty || !buttonsEmpty->property("visible").toBool()
+        || noReport->property("visible").toBool()) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector treated a valid POV-only report as unavailable"));
+    }
+    QMetaObject::invokeMethod(inputInspector, "close");
+    devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+    settlePresentation();
     const auto deviceValue = [&](const QString &expression) {
         QQmlExpression call(qmlContext(devices), devices, expression);
         const QVariant value = call.evaluate();

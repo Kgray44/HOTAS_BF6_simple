@@ -15,6 +15,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QList>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QObject>
@@ -336,6 +337,9 @@ public:
     // without requiring real controllers or driver installation state.
     void setSetupAssistantFactsForTest(const QVariantMap &facts);
 #ifdef HOTAS_STARTUP_TESTING
+    // Models a lost/restored virtual-output readiness bit without invoking a
+    // device acquisition or repair path.
+    void setVjoyReadyForTest(bool ready);
     // Bounded startup-test presentation fixture. It neither enumerates
     // hardware nor reaches the DirectInput-to-vJoy report path.
     void setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
@@ -374,6 +378,11 @@ public:
     // unverified. These seams exercise member-scoped UI/control-plane truth
     // without enumerating the owner's DirectInput devices.
     bool configureMultiControllerRigFixtureForTest();
+    // Replaces only one fixture member's capability evidence with canonical
+    // DirectInput slots. This is deliberately test-only: production derives
+    // the same evidence from the saved/discovered controller records.
+    bool setReadOnlyPhysicalInputAxisSlotsForTest(const QString &recordId,
+                                                  const QList<int> &axisSlots);
     bool setEffectiveProfileOverrideForTest(const QString &profileId, int physicalButton = 1);
     // Publishes one exact member's fixed runtime snapshot for the independent
     // input-inspection contract. It cannot select a Rig, start mapping, or
@@ -381,7 +390,7 @@ public:
     // another member's controls.
     bool publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
                                                      float axisValue, bool buttonPressed,
-                                                     int povValue);
+                                                     int povValue, int axisSlot = 0);
     bool commitExactControllerVerificationForTest(const QString &recordId);
     bool disconnectFixtureControllerForTest(const QString &recordId);
     QString hidHideHealthContextKeyForTest() const;
