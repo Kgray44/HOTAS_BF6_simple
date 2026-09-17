@@ -3593,9 +3593,37 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && !contextStrip->property("runtimeOverride").toBool();
     contextStrip->setProperty("presentationOverride", QVariant{});
     settlePresentation();
+    // Pointer coverage for the Pass B entry route: Overview requests the one
+    // shell-owned assistant, which records guidance without changing active
+    // Rig/Profile/mapping state. The backend coordinator itself has a focused
+    // persistence/staleness fixture in app_backend_startup_tests.
+    auto *guidedSetup = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckOverviewGuidedSetup"));
+    const QString activeProfileBeforeSetup = backend.activeProfileId();
+    const QString activeRigBeforeSetup = backend.activeDeviceRigId();
+    const bool mappingRequestedBeforeSetup = backend.mappingRequested();
+    const bool guidedSetupPointer = guidedSetup
+        && clickFlightDeckSettingsItem(window, window->contentItem(), guidedSetup);
+    settlePresentation();
+    QObject *guidedSetupDialog = window->findChild<QObject *>(
+        QStringLiteral("flightDeckSetupAssistant"));
+    const bool guidedSetupOpened = guidedSetupPointer && guidedSetupDialog
+        && guidedSetupDialog->property("visible").toBool() && backend.hasSetupAssistantTask()
+        && backend.activeProfileId() == activeProfileBeforeSetup
+        && backend.activeDeviceRigId() == activeRigBeforeSetup
+        && backend.mappingRequested() == mappingRequestedBeforeSetup;
+    if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
+    backend.dismissSetupAssistantTask();
+    settlePresentation();
+    const auto *returnToSetup = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextReturnToSetup"));
+    const bool returnControlCleared = !returnToSetup || !returnToSetup->isVisible();
     if (!defaultContextCompact || !readableDuplicateContext || !rawIdentityDisclosedOnly
         || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
+    }
+    if (!guidedSetupOpened || !returnControlCleared) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck guided setup entry did not open or retain its no-activation boundary"));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
         ? QStringLiteral("Light") : QStringLiteral("Dark");

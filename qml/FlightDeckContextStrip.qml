@@ -13,6 +13,9 @@ Rectangle {
     // the canonical backend properties below; this does not issue a command.
     property var presentationOverride: null
     property bool technicalDetailsVisible: false
+    // The task journal itself lives in AppBackend. This compact affordance
+    // only returns to that explicit setup task; it is never an activation.
+    signal returnToSetupRequested()
 
     function contextValue(name, fallback) {
         if (presentationOverride === null || presentationOverride === undefined)
@@ -142,6 +145,33 @@ Rectangle {
                 width: Math.min(implicitWidth, tokens.scale(240))
                 elide: Text.ElideRight
                 Accessible.name: text
+            }
+        }
+
+        Button {
+            id: returnToSetup
+            objectName: "flightDeckContextReturnToSetup"
+            visible: Boolean(backendObject.hasSetupAssistantTask)
+            text: "RETURN TO SETUP"
+            implicitHeight: tokens.compactControlHeight
+            leftPadding: tokens.space8
+            rightPadding: tokens.space8
+            font.family: tokens.bodyFont
+            font.pixelSize: tokens.bodySmall
+            Accessible.name: "Return to saved setup"
+            onClicked: root.returnToSetupRequested()
+            contentItem: Text {
+                text: returnToSetup.text
+                color: tokens.textSecondary
+                font: returnToSetup.font
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                radius: tokens.radiusControl
+                color: returnToSetup.hovered ? tokens.elevatedSurface : "transparent"
+                border.width: 1
+                border.color: tokens.border
             }
         }
 

@@ -42,6 +42,7 @@ Flickable {
     // The shell routes this presentation request to the one canonical
     // Profile Library/create dialog. It carries no runtime activation.
     signal requestProfileWorkflow(string rigId, string mode)
+    signal requestSetupAssistant(string intent, var context)
 
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
@@ -1068,6 +1069,13 @@ Flickable {
                 enabled: root.controllerItems.length > 0
                 onClicked: createRigDialog.open()
             }
+            RigButton {
+                objectName: "flightDeckDevicesGuidedSetup"
+                text: "GUIDED SETUP"
+                onClicked: root.requestSetupAssistant("first-controller", {
+                    controllerRecordId: String(backend.activeControllerRecordId || "")
+                })
+            }
         }
         Text {
             text: "Group the physical controllers and Virtual Outputs a Profile needs. Viewing a Rig never activates it."
@@ -1094,6 +1102,7 @@ Flickable {
                     Layout.fillWidth: true
                     RigButton { text: "SCAN FOR DEVICES"; subdued: true; onClicked: backend.refreshControllers() }
                     RigButton { text: "+ CREATE RIG"; enabled: root.controllerItems.length > 0; onClicked: createRigDialog.open() }
+                    RigButton { objectName: "flightDeckDevicesEmptyGuidedSetup"; text: "GUIDED SETUP"; onClicked: root.requestSetupAssistant("first-controller", {}) }
                     Item { Layout.fillWidth: true }
                 }
             }

@@ -12,6 +12,7 @@ Flickable {
     signal navigateToPage(int page)
     signal navigateToDevices(string context)
     signal navigateToIssue(var issue)
+    signal requestSetupAssistant(string intent, var context)
 
     readonly property bool wide: width >= 900
     readonly property var readiness: readinessModel ? readinessModel.readiness : ({})
@@ -347,6 +348,18 @@ Flickable {
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
+                    Button {
+                        objectName: "flightDeckOverviewGuidedSetup"
+                        text: "GUIDED SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.requestSetupAssistant("independent", {
+                            controllerRecordId: String(backend.activeControllerRecordId || ""),
+                            rigId: String(backend.activeDeviceRigId || "")
+                        })
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
                     Item { Layout.fillWidth: true }
                     Button {
                         objectName: "flightDeckMappingToggle"
@@ -406,6 +419,20 @@ Flickable {
                         onClicked: root.reviewIssue(attentionContent.issue)
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        objectName: "flightDeckPrioritizedIssueGuidedSetup"
+                        visible: !!attentionContent.issue.title
+                        text: "GUIDED SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.requestSetupAssistant("issue", {
+                            issueId: String(attentionContent.issue.id || ""),
+                            rigId: String(backend.activeDeviceRigId || ""),
+                            controllerRecordId: String(backend.activeControllerRecordId || "")
+                        })
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
                 Button {

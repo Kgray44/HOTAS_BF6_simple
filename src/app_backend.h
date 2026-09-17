@@ -188,6 +188,11 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantMap readOnlyPhysicalInputTest READ readOnlyPhysicalInputTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
     Q_PROPERTY(QString setupAssistantScopeId READ setupAssistantScopeId NOTIFY stateChanged)
+    // Pass B keeps one small user-scoped task journal. It contains intent,
+    // references, decisions, and operation results only; canonical mappings,
+    // repair commands, and driver authority remain in their existing owners.
+    Q_PROPERTY(QVariantMap setupAssistantTask READ setupAssistantTask NOTIFY setupAssistantTaskChanged)
+    Q_PROPERTY(bool hasSetupAssistantTask READ hasSetupAssistantTask NOTIFY setupAssistantTaskChanged)
     // App Health reuses the Setup Assistant issue contract for every normal
     // surface.  It updates only with control-plane stateChanged, never the
     // high-frequency telemetry signals.
@@ -405,6 +410,7 @@ public:
     bool configureStaleWaitingForUserFixtureForTest();
     bool applyAutomaticProfileActivationForTest(const QString &profileId);
     void setActivationFaultInjectionsForTest(const QStringList &stages);
+    void clearSetupAssistantTaskForTest();
 #endif
     QVariantList buttons() const;
     QVariantList buttonTelemetry() const;
@@ -499,6 +505,8 @@ public:
     QVariantMap readOnlyPhysicalInputTest() const;
     QString setupAssistantScopeType() const;
     QString setupAssistantScopeId() const;
+    QVariantMap setupAssistantTask() const;
+    bool hasSetupAssistantTask() const;
     QVariantList appIssues() const;
     QVariantMap appHealthSummary() const;
     QVariantList controllerReadinessProposedChanges() const;
@@ -885,6 +893,28 @@ public:
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
+    // The reusable Pass B coordinator delegates actual state changes to the
+    // existing Rig/Profile/activation/readiness APIs. Next/Back only changes
+    // this bounded journal; named commit calls are the explicit boundaries.
+    Q_INVOKABLE QVariantMap beginSetupAssistantTask(const QString &intent,
+                                                    const QVariantMap &context = {});
+    Q_INVOKABLE QVariantMap resumeSetupAssistantTask();
+    Q_INVOKABLE QVariantMap replaceUncommittedSetupAssistantTask(const QString &intent,
+                                                                 const QVariantMap &context = {});
+    Q_INVOKABLE QVariantMap updateSetupAssistantTask(const QVariantMap &changes);
+    Q_INVOKABLE QVariantMap commitSetupAssistantRigAndProfile(const QString &rigName,
+                                                              const QString &profileName,
+                                                              const QString &controllerRecordId,
+                                                              const QString &outputLayoutId,
+                                                              const QString &categoryId,
+                                                              const QString &copyProfileId = {});
+    Q_INVOKABLE QVariantMap commitSetupAssistantSharedMember(const QString &rigId,
+                                                             const QString &controllerRecordId,
+                                                             bool required);
+    Q_INVOKABLE QVariantMap prepareSetupAssistantEditor(int page);
+    Q_INVOKABLE QVariantMap useSetupAssistantTask();
+    Q_INVOKABLE QVariantMap saveSetupAssistantForLater();
+    Q_INVOKABLE QVariantMap dismissSetupAssistantTask();
     // This is deliberately separate from the guided setup test: it only
     // observes the mapper's current physical-input evidence for one saved
     // controller and never changes configuration, acquisition, or output.
@@ -1032,6 +1062,7 @@ public:
 
 signals:
     void stateChanged();
+    void setupAssistantTaskChanged();
     void selectedProfileChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
@@ -1299,6 +1330,12 @@ private:
                                              const QString &scopeId) const;
     QVariantList setupAssistantIssuesForScope(const QString &scopeType,
                                               const QString &scopeId) const;
+    void loadSetupAssistantTask();
+    void persistSetupAssistantTask();
+    void publishSetupAssistantTask();
+    QVariantMap reconcileSetupAssistantTask(bool persistChanges);
+    QStringList setupTaskAffectedProfileNames(const QString &rigId) const;
+    bool setupTaskCanCommit(QString *reason) const;
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
     bool rememberCurrentController(const QString &expectedRecordId = {},
@@ -1535,6 +1572,7 @@ private:
     // distinct result so the assistant does not send the user through an
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
+    QVariantMap m_setupAssistantTask;
     // Per-record card state is deliberately separate from the global Setup
     // Health session. It lets a multi-controller Rig report the exact target
     // being verified without projecting a generic CHECKING state.

@@ -1,4 +1,4 @@
-# Pass A usability implementation record
+# Pass A and Pass B usability implementation record
 
 ## Boundary and comparison baseline
 
@@ -6,7 +6,7 @@
 - Candidate: `codex/usability-setup-guidance` in `C:\Users\kkids\Documents\HOTAS_BF6-usability-setup-guidance`.
 - Comparison baseline: accepted `origin/main` at `bdedc52848ec18ddc4f6a387776526dcde1c7ce5` (`v2.6.6`). This candidate was reconciled with that baseline by merge commit `ffd87a4`.
 - Reconciliation conflicts: `qml/FlightDeckOverview.qml`, `qml/Standard.qml`, and `tests/app_qml_startup_tests.cpp`. The resolutions retained accepted v2.6.6 theme/pointer behavior and this pass's non-activating editor selection. No unresolved ownership conflict remains.
-- Scope: Pass A only. No Pass B/C work, main merge, release/tag, installer change, physical driver change, or machine-wide configuration change is authorized or performed.
+- Scope: completed Pass A presentation corrections plus the directed Pass B setup-journey candidate. No Pass C, main merge, release/tag, installer change, physical driver change, owner-data reset, or machine-wide configuration change is authorized or performed.
 
 ## Ownership retained and extended
 
@@ -85,6 +85,16 @@
 - `FlightDeckContextStrip.qml` now keeps editing/active/effective profile distinctions, an optional active-rig summary, and labeled Details access in a compact wrapping toolbar. The full active-rig/viewed-controller/output scope, contextual help, and canonical identifiers live in an Escape-closeable, focus-restoring Details popover rather than permanent header rows. This is passive presentation only.
 - Rig Details' stationary footer now uses the qualified Qt 6.7 per-corner `Rectangle` properties: a straight body/footer seam, rounded lower fill, and the shared dialog's single outer perimeter. No action target, activation behavior, or scroll budget changed.
 - The focused `app_qml_startup_tests` Flight Deck path passed in 53.48 seconds after the corrections. It covers the compact default strip, duplicate/effective/missing-profile context, pointer-opened Details and focus return, all supported type sizes, Dark/Light dialogs, expanded member content, and lower footer corner geometry. This remains automated structural evidence; native typography and owner review are separate.
+
+## Pass B setup journey candidate (2026-09-17)
+
+- Foundation B is the distinct local Pass A checkpoint `27efc111a8882dfd76e9e18e78ee6370f1b0141b` (`Polish final Pass A context and dialog shell`), whose parent is preserved candidate `bf4bed1`. The Pass B work starts after that checkpoint and does not reopen its approved presentation direction.
+- `FlightDeckSetupAssistant.qml` is the single Flight Deck dialog host. It presents the four conceptual stages **Controllers**, **How you'll use them**, **Prepare connection**, and **Configure / test** using the existing theme and dialog shell. Overview, Devices (including an empty/new-device route), Profiles, a prioritized setup issue, and the compact conditional **Return to setup** context action all route to that host.
+- `AppBackend` persists only a bounded, versioned setup-task journal in `QSettings`: intent, stable object IDs, stage, selected output/category, and operation references. It stores no mapping data, repair command, driver consent, or replacement runtime. A corrupt record is discarded as guidance; stale IDs become an explicit review requirement; one saved task may be resumed, and a replacement is permitted only before any committed operation reference exists.
+- Next/back and saved choices are non-mutating. The named commit paths delegate to the established Device Rig/Profile/member APIs, keep a partial Rig commit visible if Profile creation cannot complete, show existing Profile impact before shared membership is added, and do not activate mapping. The final **Use this setup** action alone delegates to the existing resolver-backed activation transaction; it does not claim physical input, game visibility, or hardware qualification.
+- Opening Axes or Buttons selects the exact Profile/Rig/device editor context only. Returning to the host retains the task journal; it does not create a second header or a second setup/repair authority. Connection evidence is rendered through the existing scoped Setup Health service and `ControllerReadinessPanel`.
+- Release build targets `HOTASMapper`, `app_qml_startup_tests`, and `mapping_hot_path_benchmark` completed successfully. The focused `setup-task-coordinator` backend fixture passed, as did the dedicated native/offscreen `app_qml_startup_tests` run (174.25 seconds), `ui_release_contract_tests` (0.16 seconds), and `mapping_hot_path_benchmark` (7.98 seconds). The final registered Release CTest run passed **15/15** in 221.04 seconds; its native QML path passed in 168.25 seconds and its hot-path benchmark passed in 7.94 seconds.
+- Those checks prove the bounded coordinator, Flight Deck entry interaction, generated QML, existing control-plane contracts, and unchanged synthetic mapper benchmark path. They do not claim physical-controller qualification, native typography/pointer review on the owner display, game visibility, signed release status, or owner acceptance.
 
 ## Matched synthetic mapper benchmark
 

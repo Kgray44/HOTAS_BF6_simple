@@ -1506,11 +1506,105 @@ bool verifyReadOnlyPhysicalInputTest()
     return true;
 }
 
+bool verifyPersistentSetupAssistantCoordinator()
+{
+    constexpr auto kControllerId = "activation-transaction-controller";
+    constexpr auto kOutputId = "activation-transaction-output";
+    const QString expectedRigName = QStringLiteral("Pass B Coordinator Rig");
+    const QString expectedProfileName = QStringLiteral("Pass B Coordinator Profile");
+    QString createdProfileId;
+    QString createdRigId;
+    QString activeProfileBefore;
+    QString activeRigBefore;
+    bool mappingRequestedBefore = false;
+
+    {
+        auto backend = std::make_unique<hotas::AppBackend>();
+        backend->clearSetupAssistantTaskForTest();
+        if (!backend->configureSetupTruthReadyToActivateFixtureForTest()) {
+            std::fprintf(stderr, "setup coordinator fixture could not be configured\n");
+            return false;
+        }
+        activeProfileBefore = backend->activeProfileId();
+        activeRigBefore = backend->activeDeviceRigId();
+        mappingRequestedBefore = backend->mappingRequested();
+        const QString categoryId = backend->profileDetail(activeProfileBefore)
+            .value(QStringLiteral("categoryId")).toString();
+        const QVariantMap started = backend->beginSetupAssistantTask(
+            QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"),
+                                               QLatin1String(kControllerId)}});
+        if (!started.value(QStringLiteral("success")).toBool() || !backend->hasSetupAssistantTask()
+            || backend->setupAssistantTask().value(QStringLiteral("stage")).toString()
+                != QStringLiteral("controllers")
+            || backend->activeProfileId() != activeProfileBefore
+            || backend->activeDeviceRigId() != activeRigBefore
+            || backend->mappingRequested() != mappingRequestedBefore) {
+            std::fprintf(stderr, "setup task start changed canonical activation state\n");
+            return false;
+        }
+        const QVariantMap savedChoice = backend->updateSetupAssistantTask({
+            {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
+            {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
+            {QStringLiteral("categoryId"), categoryId},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        if (!savedChoice.value(QStringLiteral("success")).toBool()) {
+            std::fprintf(stderr, "setup task choices were not retained\n");
+            return false;
+        }
+        const QVariantMap committed = backend->commitSetupAssistantRigAndProfile(
+            expectedRigName, expectedProfileName, QLatin1String(kControllerId),
+            QLatin1String(kOutputId), categoryId);
+        if (!committed.value(QStringLiteral("success")).toBool()
+            || backend->activeProfileId() != activeProfileBefore
+            || backend->activeDeviceRigId() != activeRigBefore
+            || backend->mappingRequested() != mappingRequestedBefore) {
+            std::fprintf(stderr, "setup task commit activated a Rig, Profile, or mapping unexpectedly\n");
+            return false;
+        }
+        const QVariantMap task = backend->setupAssistantTask();
+        createdProfileId = task.value(QStringLiteral("profileId")).toString();
+        createdRigId = task.value(QStringLiteral("rigId")).toString();
+        if (createdProfileId.isEmpty() || createdRigId.isEmpty()
+            || task.value(QStringLiteral("stage")).toString() != QStringLiteral("connection")
+            || task.value(QStringLiteral("operationRefs")).toList().size() != 2
+            || backend->profileDetail(createdProfileId).value(QStringLiteral("deviceRigId")).toString()
+                != createdRigId) {
+            std::fprintf(stderr, "setup task did not journal its explicit Rig/Profile commit\n");
+            return false;
+        }
+        const QVariantMap competing = backend->beginSetupAssistantTask(QStringLiteral("first-controller"));
+        if (!competing.value(QStringLiteral("requiresChoice")).toBool()
+            || competing.value(QStringLiteral("canReplace")).toBool()
+            || !backend->saveSetupAssistantForLater().value(QStringLiteral("success")).toBool()) {
+            std::fprintf(stderr, "setup task did not protect committed work from implicit replacement\n");
+            return false;
+        }
+    }
+
+    // The task journal survives a backend restart, but only as guidance. A
+    // stale reference becomes a review requirement rather than a command.
+    auto restored = std::make_unique<hotas::AppBackend>();
+    if (!restored->hasSetupAssistantTask()
+        || restored->setupAssistantTask().value(QStringLiteral("rigId")).toString() != createdRigId
+        || !restored->resumeSetupAssistantTask().value(QStringLiteral("success")).toBool()
+        || !restored->deleteProfile(createdProfileId)
+        || !restored->resumeSetupAssistantTask().value(QStringLiteral("success")).toBool()
+        || !restored->setupAssistantTask().value(QStringLiteral("revalidationRequired")).toBool()
+        || !restored->setupAssistantTask().value(QStringLiteral("invalidatedStages")).toStringList()
+                .contains(QStringLiteral("configure"))) {
+        std::fprintf(stderr, "setup task persistence or stale-reference protection failed\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 24> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 23> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 24> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1534,6 +1628,7 @@ const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
         {QStringLiteral("read-only-input"), verifyReadOnlyPhysicalInputTest},
+        {QStringLiteral("setup-task-coordinator"), verifyPersistentSetupAssistantCoordinator},
     }};
     return fixtures;
 }
