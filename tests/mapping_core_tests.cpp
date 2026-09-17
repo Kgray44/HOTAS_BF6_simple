@@ -5,6 +5,7 @@
 #include "automation_engine.h"
 #include "button_mapping.h"
 #include "config_store.h"
+#include "config_persistence_coordinator.h"
 #include "controller_manager.h"
 #include "direct_input_axis.h"
 #include "device_rig.h"
@@ -24,6 +25,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <array>
@@ -855,6 +857,7 @@ private slots:
     void inputLearningSelectsAReleasedThenPressedButton();
     void signalFlowSourceLearningSelectsOneDeliberateEndpoint();
     void configurationRoundTrips();
+    void asynchronousPersistenceFlushRoundTripsThroughConfigStore();
     void signalFlowIdentityMigrationRoundTripAndLifecycle();
     void signalFlowTopologySupportsFanOutAndExplicitMixers();
     void signalFlowDigitalAndNativePovFanOutCompileToFixedTables();
@@ -3877,6 +3880,25 @@ void MappingCoreTests::configurationRoundTrips()
     QCOMPARE(restored.calibrationHistory.front().calibratedAxisCount, 4);
     QCOMPARE(restored.calibrationHistory.front().calibration[2].center, 0.1F);
     QCOMPARE(activeProfile(restored).buttons[3].target, 4);
+}
+
+void MappingCoreTests::asynchronousPersistenceFlushRoundTripsThroughConfigStore()
+{
+    // This test uses QStandardPaths test mode before it first asks ConfigStore
+    // for a path, so the real operator configuration is never touched.
+    QStandardPaths::setTestModeEnabled(true);
+    MapperConfiguration expected = defaultConfiguration();
+    expected.selectedAxisIndex = 2;
+    expected.automaticGameDetection = !expected.automaticGameDetection;
+
+    ConfigPersistenceCoordinator coordinator(
+        [](const MapperConfiguration &snapshot) { return ConfigStore::saveDetailed(snapshot); });
+    const auto result = coordinator.requestAndFlush(expected, 3000);
+    QVERIFY2(result.durable(), "the ConfigStore-backed persistence generation must become durable");
+    const MapperConfiguration restored = ConfigStore::load();
+    QCOMPARE(restored.selectedAxisIndex, expected.selectedAxisIndex);
+    QCOMPARE(restored.automaticGameDetection, expected.automaticGameDetection);
+    QVERIFY(coordinator.stop(1000));
 }
 
 void MappingCoreTests::signalFlowIdentityMigrationRoundTripAndLifecycle()

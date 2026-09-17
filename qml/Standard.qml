@@ -20,6 +20,9 @@ Page {
     // Page property. Keeping this explicit makes the shared Curve Editor use
     // the same live token object as the shell.
     readonly property var themeTokens: theme
+    // Keep the disabled probe out of loader lifecycle callbacks. The binding
+    // resolves once with this page host and does not install sampling state.
+    readonly property bool responsivenessProbeActive: backend.responsivenessProbeEnabled()
 
     property int currentPage: 8
     property bool setupAssistantReturnAfterCalibration: false
@@ -121,6 +124,17 @@ Page {
         return null
     }
     function loadedPage(page) { return pageItem(page) !== null }
+    // Sparse Phase 0 markers only. They are no-ops unless the explicit native
+    // responsiveness probe is enabled, and page 11 (Signal Flow) is never
+    // sent to this campaign's measurement path.
+    function reportResponsivenessLoader(page, pageName, loader) {
+        if (page === 11 || !root.responsivenessProbeActive)
+            return
+        if (loader.active)
+            backend.responsivenessNavigationLoaderActivated(page, pageName)
+        if (loader.status === Loader.Ready && loader.item)
+            backend.responsivenessNavigationObjectReady(page, pageName)
+    }
     function navigateToIssue(target) {
         const destination = target && target.page !== undefined ? Number(target.page) : 3
         if (target && backend && target.objectType !== undefined && target.objectId !== undefined)
@@ -1540,6 +1554,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 8
             sourceComponent: root.flightDeckMode ? flightDeckOverviewComponent : standardOverviewComponent
+            onActiveChanged: root.reportResponsivenessLoader(8, "Overview", overviewPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(8, "Overview", overviewPageLoader)
         }
         Component {
             id: standardOverviewComponent
@@ -1563,6 +1579,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 4
             sourceComponent: root.flightDeckMode ? flightDeckSettingsComponent : standardSettingsComponent
+            onActiveChanged: root.reportResponsivenessLoader(4, "Settings", settingsPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(4, "Settings", settingsPageLoader)
         }
         Component {
             id: standardSettingsComponent
@@ -1603,6 +1621,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 5
             sourceComponent: root.flightDeckMode ? flightDeckProfilesComponent : standardProfileLibraryComponent
+            onActiveChanged: root.reportResponsivenessLoader(5, "Profiles", profileLibraryLoader)
+            onStatusChanged: root.reportResponsivenessLoader(5, "Profiles", profileLibraryLoader)
         }
         Component {
             id: standardProfileLibraryComponent
@@ -1655,6 +1675,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 0
             sourceComponent: root.flightDeckMode ? flightDeckAxesComponent : standardAxesComponent
+            onActiveChanged: root.reportResponsivenessLoader(0, "Axes", axesPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(0, "Axes", axesPageLoader)
         }
         Component {
             id: standardAxesComponent
@@ -1932,6 +1954,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 1
             sourceComponent: root.flightDeckMode ? flightDeckButtonsComponent : standardButtonsComponent
+            onActiveChanged: root.reportResponsivenessLoader(1, "Buttons", buttonsPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(1, "Buttons", buttonsPageLoader)
         }
         Component {
             id: standardButtonsComponent
@@ -2023,6 +2047,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 2
             sourceComponent: root.flightDeckMode ? flightDeckDevicesComponent : calibrationPageComponent
+            onActiveChanged: root.reportResponsivenessLoader(2, "Devices", calibrationPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(2, "Devices", calibrationPageLoader)
         }
         Component {
             id: flightDeckDevicesComponent
@@ -2166,6 +2192,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 3
             sourceComponent: root.flightDeckMode ? flightDeckDiagnosticsComponent : standardDiagnosticsComponent
+            onActiveChanged: root.reportResponsivenessLoader(3, "Diagnostics", diagnosticsPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(3, "Diagnostics", diagnosticsPageLoader)
         }
         Component {
             id: standardDiagnosticsComponent
@@ -2525,6 +2553,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 6
             sourceComponent: root.flightDeckMode ? flightDeckCurveEditorComponent : legacyCurveEditorComponent
+            onActiveChanged: root.reportResponsivenessLoader(6, "Curve editor", curveEditorLoader)
+            onStatusChanged: root.reportResponsivenessLoader(6, "Curve editor", curveEditorLoader)
         }
         Component {
             id: flightDeckCurveEditorComponent
@@ -2563,6 +2593,8 @@ Page {
                         }
                     } }
             }
+            onActiveChanged: root.reportResponsivenessLoader(7, "Automation", automationPageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(7, "Automation", automationPageLoader)
         }
         Loader {
             id: signalFlowPageLoader
@@ -2596,6 +2628,8 @@ Page {
             anchors.fill: parent
             active: root.currentPage === 9
             sourceComponent: root.flightDeckMode ? flightDeckAdaptiveResponseComponent : standardAdaptiveResponseComponent
+            onActiveChanged: root.reportResponsivenessLoader(9, "Adaptive Response", adaptiveResponsePageLoader)
+            onStatusChanged: root.reportResponsivenessLoader(9, "Adaptive Response", adaptiveResponsePageLoader)
         }
         Component {
             id: flightDeckAdaptiveResponseComponent

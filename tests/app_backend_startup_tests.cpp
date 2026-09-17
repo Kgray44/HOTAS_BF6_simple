@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "contention_resilience_controller.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -1456,8 +1457,46 @@ int main(int argc, char *argv[])
             && backend.presentationSnapshotIntervalMs() == 33
             && backend.controllerDiscoveryIntervalMs() == 2500;
 
+        // Drive the published controller test seam instead of manufacturing
+        // host load. Normal, Pressure, and Severe may change presentation
+        // cadence, but mapping intent must remain independent throughout.
+        auto *contention = backend.contentionResilienceController();
+        const bool mappingBeforeContention = backend.mappingRequested();
+        qint64 contentionNowMs = 10'000;
+        for (int sample = 0; contention && sample < 10; ++sample) {
+            contention->observeForTest(75, 60, contentionNowMs);
+            contentionNowMs += 750;
+        }
+        const bool normalCadence = contention
+            && backend.presentationSnapshotIntervalMs() == 33
+            && backend.controllerDiscoveryIntervalMs() == 2500;
+        if (contention) {
+            contention->observeForTest(91, 60, contentionNowMs);
+            contentionNowMs += 750;
+            contention->observeForTest(92, 60, contentionNowMs);
+            contentionNowMs += 750;
+        }
+        const bool pressureCadence = contention
+            && backend.presentationSnapshotIntervalMs() == 50
+            && backend.controllerDiscoveryIntervalMs() == 5000;
+        if (contention) {
+            contention->observeForTest(98, 60, contentionNowMs);
+            contentionNowMs += 750;
+        }
+        const bool severeCadence = contention
+            && backend.presentationSnapshotIntervalMs() == 83
+            && backend.controllerDiscoveryIntervalMs() == 10000;
+        for (int sample = 0; contention && sample < 10; ++sample) {
+            contention->observeForTest(75, 60, contentionNowMs);
+            contentionNowMs += 750;
+        }
+        const bool contentionCadence = normalCadence && pressureCadence && severeCadence
+            && backend.presentationSnapshotIntervalMs() == 33
+            && backend.controllerDiscoveryIntervalMs() == 2500
+            && backend.mappingRequested() == mappingBeforeContention;
+
         lifecycleWindow->showMinimized();
-        QTimer::singleShot(0, &application, [&, lifecycleWindow, visibleLifecycle] {
+        QTimer::singleShot(0, &application, [&, lifecycleWindow, visibleLifecycle, contentionCadence] {
             const bool minimizedLifecycle = backend.presentationState() == QStringLiteral("Minimized")
                 && backend.presentationSnapshotActive()
                 && backend.presentationSnapshotIntervalMs() == 250
@@ -1465,7 +1504,7 @@ int main(int argc, char *argv[])
             const bool mappingWasRequested = backend.mappingRequested();
             backend.hideToTray();
             QTimer::singleShot(50, &application, [&, lifecycleWindow, visibleLifecycle,
-                                                    minimizedLifecycle, mappingWasRequested] {
+                                                    contentionCadence, minimizedLifecycle, mappingWasRequested] {
                 backend.resetUiPerformanceCounters();
                 const QVariantList controllerModel = backend.controllers();
                 const QVariantList profiles = backend.profiles();
@@ -1474,7 +1513,7 @@ int main(int argc, char *argv[])
                 Q_UNUSED(profiles);
                 Q_UNUSED(categories);
                 QTimer::singleShot(450, &application, [&, lifecycleWindow, visibleLifecycle,
-                                                        minimizedLifecycle, mappingWasRequested] {
+                                                        contentionCadence, minimizedLifecycle, mappingWasRequested] {
                     const QVariantMap trayCounters = backend.uiPerformanceCounters();
                     const bool trayLifecycle = backend.presentationState() == QStringLiteral("TrayHidden")
                         && !backend.presentationSnapshotActive()
@@ -1491,7 +1530,7 @@ int main(int argc, char *argv[])
 
                     backend.restoreFromTray();
                     QTimer::singleShot(150, &application, [&, lifecycleWindow, visibleLifecycle,
-                                                          minimizedLifecycle, trayLifecycle, mappingWasRequested] {
+                                                          contentionCadence, minimizedLifecycle, trayLifecycle, mappingWasRequested] {
                         const QVariantMap restoredCounters = backend.uiPerformanceCounters();
                         const bool restoredLifecycle = backend.presentationState() == QStringLiteral("Visible")
                             && backend.presentationSnapshotActive()
@@ -1506,12 +1545,13 @@ int main(int argc, char *argv[])
                         const bool gameDetectionRunsWhenEnabled = backend.gameDetectionTimerActive();
                         delete lifecycleWindow;
 
-                        if (!(visibleLifecycle && minimizedLifecycle && trayLifecycle
+                        if (!(visibleLifecycle && contentionCadence && minimizedLifecycle && trayLifecycle
                               && restoredLifecycle && gameDetectionStopsWhenDisabled
                               && gameDetectionRunsWhenEnabled)) {
                             std::fprintf(stderr,
-                                "presentation_lifecycle_visible=%d minimized=%d tray=%d restored=%d game_disabled=%d game_enabled=%d\n",
-                                visibleLifecycle ? 1 : 0, minimizedLifecycle ? 1 : 0,
+                                "presentation_lifecycle_visible=%d contention=%d minimized=%d tray=%d restored=%d game_disabled=%d game_enabled=%d\n",
+                                visibleLifecycle ? 1 : 0, contentionCadence ? 1 : 0,
+                                minimizedLifecycle ? 1 : 0,
                                 trayLifecycle ? 1 : 0, restoredLifecycle ? 1 : 0,
                                 gameDetectionStopsWhenDisabled ? 1 : 0,
                                 gameDetectionRunsWhenEnabled ? 1 : 0);

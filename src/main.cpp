@@ -1,6 +1,10 @@
 #include "app_backend.h"
+#include "contention_resilience_controller.h"
 #include "crash_diagnostics.h"
 #include "hotas_build_version.h"
+#include "interactive_scheduling_policy.h"
+#include "native_qualification_driver.h"
+#include "responsiveness_probe.h"
 #include "setup_repair_helper.h"
 #include "theme_manager.h"
 
@@ -14,6 +18,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -55,12 +60,13 @@ int main(int argc, char *argv[])
         return *repairExit;
     }
     const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
+    const bool nativeQualification = hotas::NativeQualificationDriver::requested();
     // Manual qualification needs the real interactive QML surface without
     // attaching to the owner's active mapper or persisted settings.  This is
     // intentionally distinct from startup smoke: it isolates QSettings and
     // asks AppBackend to keep its smoke-safe hardware boundary, but still
     // enters the normal event loop for native pointer review.
-    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation");
+    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation") || nativeQualification;
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
     if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established
@@ -68,10 +74,19 @@ int main(int argc, char *argv[])
         // ordinary smoke argument so it can verify the seeded migration.
         QStandardPaths::setTestModeEnabled(true);
     }
+    if (nativeQualification) {
+        // Explicit, process-local qualification: retain the real native
+        // window/render path while leaving owner configuration and external
+        // setup inspection alone.
+        qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
+        qputenv("HOTAS_RESPONSIVENESS_INTERACTION_SOURCE", "native-window-synthetic");
+    }
     // AppBackend owns a QSystemTrayIcon context QMenu. QMenu is a Qt Widgets
     // class, so the shipped application must use QApplication rather than
     // QGuiApplication whenever tray support is available.
     QApplication application(argc, argv);
+    if (nativeQualification) hotas::InteractiveSchedulingPolicy::installForQualification(&application);
+    else hotas::InteractiveSchedulingPolicy::installProduction(&application);
     // Flight Deck also contains regular Qt Quick Text items, which resolve
     // from QApplication's default rather than a Controls font inheritance
     // chain.  Pin the supported Windows UI face before any QML loads.
@@ -97,8 +112,9 @@ int main(int argc, char *argv[])
         std::abort();
 #endif
     });
-    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
-        [] { hotas::CrashDiagnostics::markCleanShutdown(); });
+    // The Phase 0 probe is opt-in and all of its samples remain in memory
+    // until this one bounded shutdown export.
+    hotas::ResponsivenessProbe::installIfEnabled(&application);
     // Development/test-only fatal-path exercise. It is not presented in QML
     // or Settings and never runs unless a caller supplies the explicit flag.
     if (hasArgument(argc, argv, "--crash-reporter-test")) {
@@ -112,9 +128,19 @@ int main(int argc, char *argv[])
     }
 
     hotas::AppBackend backend;
+    // Connection order is intentional: shutdown waits only for the latest
+    // asynchronous configuration generation before the final probe export.
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [&backend] { backend.flushPersistenceForShutdown(); });
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [] { hotas::CrashDiagnostics::markCleanShutdown(); });
+    QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
+        [] { hotas::ResponsivenessProbe::exportActive(); });
     hotas::ThemeManager themeManager;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("contentionResilience"),
+                                             backend.contentionResilienceController());
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
     QObject::connect(&engine, &QQmlEngine::warnings, &application,
         [](const QList<QQmlError> &warnings) {
@@ -128,11 +154,18 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return -1;
     if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
         backend.attachMainWindow(window);
+        if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+            hotas::InteractiveSchedulingPolicy::attachWindow(quickWindow);
+        }
+        if (nativeQualification) {
+            auto *driver = new hotas::NativeQualificationDriver(&application);
+            driver->start(&application, &backend, &themeManager, qobject_cast<QQuickWindow *>(window));
+        }
     }
     // A normal interactive launch must offer recovery after an abnormal exit.
     // The explicit startup-smoke route instead needs to initialize and close
     // deterministically in an off-screen package/upgrade acceptance run.
-    if (!startupSmoke && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
+    if (!startupSmoke && !nativeQualification && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
         QTimer::singleShot(0, &application, [] {
             QMessageBox recovery;
             recovery.setWindowTitle(QStringLiteral("HOTAS BF6 recovery"));
