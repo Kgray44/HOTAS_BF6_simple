@@ -93,6 +93,134 @@ const ScrollPage *scrollPageForId(int pageId)
     return it == kScrollPages.cend() ? nullptr : &*it;
 }
 
+QVariantMap representativeAxis(int index, const QString &label, const QString &target,
+                               double input, bool oneSided = false)
+{
+    return {{QStringLiteral("index"), index},
+            {QStringLiteral("key"), QStringLiteral("axis-%1").arg(index)},
+            {QStringLiteral("label"), label},
+            {QStringLiteral("hardwareLabel"), QStringLiteral("Axis %1").arg(index)},
+            {QStringLiteral("detail"), QStringLiteral("DirectInput axis %1").arg(index)},
+            {QStringLiteral("deviceName"), QStringLiteral("VKB Gunfighter IV / STECS")},
+            {QStringLiteral("available"), true}, {QStringLiteral("fixed"), false},
+            {QStringLiteral("activity"), QStringLiteral("active")},
+            {QStringLiteral("calibrated"), input}, {QStringLiteral("transformed"), input},
+            {QStringLiteral("virtualValue"), input}, {QStringLiteral("target"), target},
+            {QStringLiteral("virtualRouted"), true}, {QStringLiteral("virtualValid"), true},
+            {QStringLiteral("targetAvailable"), true}, {QStringLiteral("outputAlias"), QString{}},
+            {QStringLiteral("rangeMode"), oneSided ? QStringLiteral("oneSided") : QStringLiteral("centered")},
+            {QStringLiteral("rangeModeLabel"), oneSided ? QStringLiteral("One-Sided (0 to 100)")
+                                                         : QStringLiteral("Centered (-100 to +100)")},
+            {QStringLiteral("unipolar"), oneSided}, {QStringLiteral("inverted"), index == 1},
+            {QStringLiteral("deadzone"), index == 1 ? 0.08 : 0.02},
+            {QStringLiteral("hysteresis"), 0.0},
+            {QStringLiteral("outputMinimum"), oneSided ? 0.0 : -1.0},
+            {QStringLiteral("outputMaximum"), 1.0},
+            {QStringLiteral("curveSummary"), index == 2 ? QStringLiteral("S-Curve · 50%")
+                                                         : QStringLiteral("Linear · 0%")},
+            {QStringLiteral("customName"), QString{}}};
+}
+
+QVariantList representativeAxesFixture()
+{
+    return {representativeAxis(0, QStringLiteral("Roll"), QStringLiteral("X"), -0.43),
+            representativeAxis(1, QStringLiteral("Pitch"), QStringLiteral("Y"), 0.24),
+            representativeAxis(2, QStringLiteral("Throttle"), QStringLiteral("Z"), 0.72, true),
+            representativeAxis(3, QStringLiteral("Brake"), QStringLiteral("Rx"), -0.12),
+            representativeAxis(4, QStringLiteral("Trim"), QStringLiteral("Ry"), 0.31),
+            representativeAxis(5, QStringLiteral("Yaw"), QStringLiteral("Rz"), 0.08),
+            representativeAxis(6, QStringLiteral("Left Brake"), QStringLiteral("Slider 0"), 0.56, true),
+            representativeAxis(7, QStringLiteral("Right Brake"), QStringLiteral("Slider 1"), 0.48, true)};
+}
+
+QVariantMap representativeButton(int index)
+{
+    const QString label = index == 1 ? QStringLiteral("Trigger")
+        : index == 2 ? QStringLiteral("Precision modifier")
+        : index == 4 ? QStringLiteral("Mapping switch")
+        : QStringLiteral("Button %1").arg(index);
+    const int target = index <= 16 ? index : 0;
+    const QVariantList sources = target > 0 ? QVariantList{QVariantMap{
+        {QStringLiteral("controllerRecordId"), QStringLiteral("phase7-fixture-controller")},
+        {QStringLiteral("physicalButton"), index},
+        {QStringLiteral("deviceName"), QStringLiteral("VKB Gunfighter IV")},
+        {QStringLiteral("physicalLabel"), label},
+        {QStringLiteral("label"), QStringLiteral("VKB Gunfighter IV · %1").arg(label)}}} : QVariantList{};
+    return {{QStringLiteral("index"), index}, {QStringLiteral("label"), label},
+            {QStringLiteral("hardwareLabel"), QStringLiteral("Button %1").arg(index)},
+            {QStringLiteral("customName"), index <= 4 ? label : QString{}},
+            {QStringLiteral("pressed"), index == 1}, {QStringLiteral("target"), target},
+            {QStringLiteral("targetLabel"), target > 0 ? QStringLiteral("vJoy Button %1").arg(target)
+                                                        : QStringLiteral("Disabled")},
+            {QStringLiteral("sources"), sources}, {QStringLiteral("sourceCount"), sources.size()},
+            {QStringLiteral("sourceSummary"), sources.isEmpty() ? QStringLiteral("No physical input assigned")
+                                                                  : sources.front().toMap().value(QStringLiteral("label")).toString()},
+            {QStringLiteral("virtualPressed"), index == 1},
+            {QStringLiteral("profileControlEnabled"), index == 2},
+            {QStringLiteral("profileControlTargetId"), index == 2 ? QStringLiteral("phase7-profile") : QString{}},
+            {QStringLiteral("profileControlTargetName"), index == 2 ? QStringLiteral("BF6 Helicopter Precision") : QString{}},
+            {QStringLiteral("profileControlTargetAvailable"), index == 2},
+            {QStringLiteral("profileControlMode"), index == 2 ? QStringLiteral("Toggle") : QString{}},
+            {QStringLiteral("profileControlActive"), false},
+            {QStringLiteral("mappingControl"), index == 4 ? QStringLiteral("Toggle Mapping") : QStringLiteral("None")},
+            {QStringLiteral("mappingControlKey"), index == 4 ? QStringLiteral("toggleMapping") : QStringLiteral("none")}};
+}
+
+QVariantList representativeButtonsFixture()
+{
+    QVariantList buttons;
+    buttons.reserve(32);
+    for (int index = 1; index <= 32; ++index) buttons.append(representativeButton(index));
+    return buttons;
+}
+
+QVariantList representativePovsFixture()
+{
+    return {QVariantMap{{QStringLiteral("index"), 1}, {QStringLiteral("centered"), false},
+                        {QStringLiteral("direction"), QStringLiteral("Up")}, {QStringLiteral("angle"), 0},
+                        {QStringLiteral("nativeEnabled"), false}, {QStringLiteral("nativeTargetKey"), QString{}},
+                        {QStringLiteral("nativeTargetLabel"), QStringLiteral("Off")},
+                        {QStringLiteral("nativeAvailable"), true}, {QStringLiteral("nativeStatus"), QStringLiteral("OFF")}}};
+}
+
+QVariantList representativePovInputsFixture()
+{
+    const QStringList directions{QStringLiteral("Up"), QStringLiteral("Up-Right"), QStringLiteral("Right"),
+                                 QStringLiteral("Down-Right"), QStringLiteral("Down"), QStringLiteral("Down-Left"),
+                                 QStringLiteral("Left"), QStringLiteral("Up-Left")};
+    QVariantList inputs;
+    inputs.reserve(directions.size());
+    for (int index = 0; index < directions.size(); ++index) {
+        inputs.append(QVariantMap{{QStringLiteral("hat"), 1}, {QStringLiteral("direction"), index},
+                                  {QStringLiteral("label"), directions.at(index)}, {QStringLiteral("active"), index == 0},
+                                  {QStringLiteral("target"), index == 0 ? 17 : 0},
+                                  {QStringLiteral("targetLabel"), index == 0 ? QStringLiteral("vJoy Button 17") : QStringLiteral("Disabled")},
+                                  {QStringLiteral("virtualPressed"), index == 0}, {QStringLiteral("profileControlEnabled"), false},
+                                  {QStringLiteral("profileControlTargetId"), QString{}}, {QStringLiteral("profileControlTargetName"), QString{}},
+                                  {QStringLiteral("profileControlTargetAvailable"), false}, {QStringLiteral("profileControlMode"), QString{}},
+                                  {QStringLiteral("profileControlActive"), false}});
+    }
+    return inputs;
+}
+
+QVariantList representativeAutomationFixture()
+{
+    QVariantList rules;
+    rules.reserve(12);
+    for (int index = 1; index <= 12; ++index) {
+        rules.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("phase7-automation-%1").arg(index)},
+                                 {QStringLiteral("name"), index == 1 ? QStringLiteral("Precision hold")
+                                                                       : QStringLiteral("Flight helper %1").arg(index)},
+                                 {QStringLiteral("enabled"), index % 3 != 0}, {QStringLiteral("active"), index == 1},
+                                 {QStringLiteral("health"), 0}, {QStringLiteral("priority"), 100 - index},
+                                 {QStringLiteral("conditionSummary"), QStringLiteral("Button %1 is pressed").arg(index)},
+                                 {QStringLiteral("actionSummary"), QStringLiteral("Tap vJoy Button %1").arg(index)},
+                                 {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 11}, {QStringLiteral("button"), index}}}},
+                                 {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 10}, {QStringLiteral("virtualButton"), index}}}}});
+    }
+    return rules;
+}
+
 QString qualificationSummaryPath()
 {
     const QString configured = qEnvironmentVariable("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_OUTPUT").trimmed();
@@ -249,6 +377,7 @@ void NativeQualificationDriver::runScrollStep()
     if (!m_scrollSessionActive && m_scrollEvent == 0) {
         navigate(page.page, QString::fromLatin1(page.name));
         m_scrollEvent = -1;
+        m_scrollFixtureSettled = false;
         QTimer::singleShot(140, this, [this] { runScrollStep(); });
         return;
     }
@@ -262,8 +391,17 @@ void NativeQualificationDriver::runScrollStep()
         QTimer::singleShot(80, this, [this] { runScrollStep(); });
         return;
     }
+    if (!m_scrollFixtureSettled) {
+        m_scrollFixtureSettled = true;
+        if (installRepresentativeScrollFixture(page.page, viewport)) {
+            // Presentation overrides rebuild the existing page model. Settle
+            // that normal QML layout before asking whether content scrolls.
+            QTimer::singleShot(60, this, [this] { runScrollStep(); });
+            return;
+        }
+    }
     const qreal maximumContentY = std::max<qreal>(0.0, viewport->property("contentHeight").toReal()
-                                                         - viewport->height());
+                                                          - viewport->height());
     if (maximumContentY <= 0.5) {
         if (auto *probe = ResponsivenessProbe::active()) {
             probe->recordNotScrollable(QString::fromLatin1(page.name),
@@ -308,6 +446,47 @@ void NativeQualificationDriver::runScrollStep()
                                 .arg(QString::fromLatin1(page.name), QString::fromLatin1(pattern.name)));
     ++m_scrollEvent;
     QTimer::singleShot(pattern.intervalMs, this, [this] { runScrollStep(); });
+}
+
+bool NativeQualificationDriver::installRepresentativeScrollFixture(int page, QQuickItem *viewport)
+{
+    if (!viewport) return false;
+    QVariantMap record;
+    bool installed = false;
+    if (page == 0) {
+        const QVariantList axes = representativeAxesFixture();
+        installed = viewport->setProperty("axisPresentationOverride", axes)
+            && viewport->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV / STECS"));
+        record = {{QStringLiteral("kind"), QStringLiteral("isolated-axis-presentation")},
+                  {QStringLiteral("axisCount"), axes.size()},
+                  {QStringLiteral("description"), QStringLiteral("8 populated axes with mappings and response summaries")}};
+    } else if (page == 1) {
+        const QVariantList buttons = representativeButtonsFixture();
+        installed = viewport->setProperty("buttonPresentationOverride", buttons)
+            && viewport->setProperty("povPresentationOverride", representativePovsFixture())
+            && viewport->setProperty("povInputsPresentationOverride", representativePovInputsFixture())
+            && viewport->setProperty("inputDeviceNameOverride", QStringLiteral("VKB Gunfighter IV"));
+        record = {{QStringLiteral("kind"), QStringLiteral("isolated-button-presentation")},
+                  {QStringLiteral("buttonCount"), buttons.size()}, {QStringLiteral("povCount"), 1},
+                  {QStringLiteral("description"), QStringLiteral("32 buttons with mapped actions and one POV")}};
+    } else if (page == 7) {
+        const QVariantList rules = representativeAutomationFixture();
+        installed = viewport->setProperty("automationPresentationOverride", rules)
+            && viewport->setProperty("filterMode", QStringLiteral("all"))
+            && viewport->setProperty("searchText", QString{});
+        record = {{QStringLiteral("kind"), QStringLiteral("isolated-automation-presentation")},
+                  {QStringLiteral("ruleCount"), rules.size()},
+                  {QStringLiteral("description"), QStringLiteral("12 plausible automation rules")}};
+    } else {
+        return false;
+    }
+    if (!installed) {
+        fail(QStringLiteral("representative fixture could not be installed for %1")
+                 .arg(QString::fromLatin1(scrollPageForId(page)->name)));
+        return false;
+    }
+    m_scrollFixtureSummary.insert(QString::fromLatin1(scrollPageForId(page)->name), record);
+    return true;
 }
 
 void NativeQualificationDriver::sampleScrollPosition(const QString &surfaceId)
@@ -743,6 +922,8 @@ void NativeQualificationDriver::writeSummary()
                        {QStringLiteral("controllers"), QJsonArray::fromVariantList(m_controllerSummary)},
                        {QStringLiteral("profilesConstruction"),
                         QJsonArray::fromVariantList(m_profilesConstructionSamples)},
+                       {QStringLiteral("scrollFixtures"),
+                        QJsonObject::fromVariantMap(m_scrollFixtureSummary)},
                        {QStringLiteral("childControlWheelTests"),
                         QJsonArray::fromVariantList(m_childControlWheelTests)},
                        {QStringLiteral("contentionResilience"),
