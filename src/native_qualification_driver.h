@@ -47,6 +47,7 @@ private:
     void collectReadOnlyDeviceEvidence();
     void startTortureLoop();
     void runTortureStep();
+    void captureProfilesConstruction();
     void finish();
 
     QObject *surface() const;
@@ -83,6 +84,7 @@ private:
     QElapsedTimer m_tortureElapsed;
     QVariantList m_controllerSummary;
     QVariantMap m_vjoySummary;
+    QVariantList m_profilesConstructionSamples;
     double m_controllerEnumerationMs = 0.0;
 };
 
