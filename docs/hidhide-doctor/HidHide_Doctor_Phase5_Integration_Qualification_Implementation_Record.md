@@ -63,8 +63,10 @@ The Qt Quick file and folder dialogs now hand their selected `QUrl` values to
 typed model invokables. Local-path conversion occurs only in C++, not through
 a JavaScript URL method; a non-local URL reports a visible safe failure. The
 domain contract asserts both dialog handoffs, rejects the former invalid QML
-conversion, and exercises the same `file:///` local URL type through a real
-export.
+conversion, asserts the visible `Exporting…` and completion-status bindings,
+and exercises the same `file:///` local URL type through a real export. The
+configured 17-test CTest suite passed again after this correction. That does
+not substitute for the pending owner desktop export/reopen retest.
 
 The Command Center no longer continuously binds persisted pane fractions back
 into a live `SplitView`. Saved fractions are restored once, a user drag owns
