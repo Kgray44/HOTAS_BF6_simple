@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.6**
+**Current version: v2.6.7**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.7 — Whole-app responsiveness (owner-acceptance candidate)
+
+Integrates the seven-phase responsiveness campaign onto the V2.6.6 baseline, preserving the bounded DirectInput-to-vJoy mapping path and existing device, axis, and Virtual Output contracts.
+
+- Ordinary configuration persistence is coalesced and performed asynchronously; current state wins while transactional and shutdown paths retain explicit bounded handling.
+- Presentation work has explicit interactive scheduling and contention-aware Normal, Pressure, and Severe policies that degrade decoration and background refresh before interaction; MappingWorker ownership remains unchanged.
+- Flight Deck Profiles uses flattened, recycled rows and lazy construction; controlled native interaction qualification covers navigation, scrolling, keyboard editing, slider activity, persistence bursts, responsive layout, and read-only DirectInput/vJoy inspection.
+- This is the intended V2.6.7 responsiveness release candidate. Automated qualification is recorded, but owner physical HOTAS, pedal, vJoy, HidHide, Battlefield 6, and full visual acceptance remain pending. No tag, public artifact, updater publication, or protected-main merge is implied.
 
 ## v2.6.6 — Polish, editable Virtual Outputs, and axis acquisition evidence
 
