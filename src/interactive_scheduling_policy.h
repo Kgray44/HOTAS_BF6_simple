@@ -9,9 +9,9 @@ class QQuickWindow;
 
 namespace hotas {
 
-// A deliberately small Windows-only scheduler experiment and observer. It is
-// created only by native responsiveness qualification, so normal launches and
-// the DirectInput -> MappingWorker -> vJoy report path have no added work.
+// A deliberately small Windows-only interactive scheduler policy. Production
+// applies the selected GUI boost; native qualification additionally captures
+// evidence. Neither mode changes the MappingWorker scheduling contract.
 class InteractiveSchedulingPolicy final : public QObject {
     Q_OBJECT
 
@@ -24,6 +24,7 @@ public:
         ProcessAboveNormal,
     };
 
+    static void installProduction(QObject *parent);
     static void installForQualification(QObject *parent);
     static InteractiveSchedulingPolicy *active();
     static void attachWindow(QQuickWindow *window);
@@ -38,7 +39,7 @@ public:
     struct State;
 
 private:
-    explicit InteractiveSchedulingPolicy(QObject *parent);
+    explicit InteractiveSchedulingPolicy(QObject *parent, Mode mode, bool captureEvidence);
 
     void applyGuiThreadPolicy();
     void applyRenderThreadPolicy();
@@ -48,6 +49,7 @@ private:
     QJsonObject evidenceImpl() const;
 
     Mode m_mode = Mode::Current;
+    bool m_captureEvidence = false;
     std::unique_ptr<State> m_state;
 };
 

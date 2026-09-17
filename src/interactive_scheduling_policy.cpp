@@ -136,9 +136,10 @@ InteractiveSchedulingPolicy::State::CpuTimes delta(
 } // namespace
 #endif
 
-InteractiveSchedulingPolicy::InteractiveSchedulingPolicy(QObject *parent)
+InteractiveSchedulingPolicy::InteractiveSchedulingPolicy(QObject *parent, Mode mode, bool captureEvidence)
     : QObject(parent)
-    , m_mode(modeFromEnvironment())
+    , m_mode(mode)
+    , m_captureEvidence(captureEvidence)
     , m_state(std::make_unique<State>())
 {
 #ifdef Q_OS_WIN
@@ -160,10 +161,23 @@ InteractiveSchedulingPolicy::~InteractiveSchedulingPolicy()
                                             std::memory_order_acquire);
 }
 
+void InteractiveSchedulingPolicy::installProduction(QObject *parent)
+{
+    if (g_activePolicy.load(std::memory_order_acquire)) return;
+    auto *policy = new InteractiveSchedulingPolicy(parent, Mode::Gui, false);
+    InteractiveSchedulingPolicy *expected = nullptr;
+    if (!g_activePolicy.compare_exchange_strong(expected, policy, std::memory_order_release,
+                                                std::memory_order_acquire)) {
+        delete policy;
+        return;
+    }
+    policy->applyGuiThreadPolicy();
+}
+
 void InteractiveSchedulingPolicy::installForQualification(QObject *parent)
 {
     if (g_activePolicy.load(std::memory_order_acquire)) return;
-    auto *policy = new InteractiveSchedulingPolicy(parent);
+    auto *policy = new InteractiveSchedulingPolicy(parent, modeFromEnvironment(), true);
     InteractiveSchedulingPolicy *expected = nullptr;
     if (!g_activePolicy.compare_exchange_strong(expected, policy, std::memory_order_release,
                                                 std::memory_order_acquire)) {
@@ -186,17 +200,19 @@ void InteractiveSchedulingPolicy::attachWindow(QQuickWindow *window)
 void InteractiveSchedulingPolicy::recordCurrentThread(const char *role)
 {
     if (!role) return;
-    if (auto *policy = active()) policy->recordCurrentThreadImpl(QString::fromLatin1(role));
+    if (auto *policy = active(); policy && policy->m_captureEvidence)
+        policy->recordCurrentThreadImpl(QString::fromLatin1(role));
 }
 
 void InteractiveSchedulingPolicy::recordGuiHeartbeat(double wallStallMs)
 {
-    if (auto *policy = active()) policy->recordGuiHeartbeatImpl(wallStallMs);
+    if (auto *policy = active(); policy && policy->m_captureEvidence)
+        policy->recordGuiHeartbeatImpl(wallStallMs);
 }
 
 QJsonObject InteractiveSchedulingPolicy::evidence()
 {
-    if (auto *policy = active()) return policy->evidenceImpl();
+    if (auto *policy = active(); policy && policy->m_captureEvidence) return policy->evidenceImpl();
     return QJsonObject{{QStringLiteral("enabled"), false},
                        {QStringLiteral("reason"), QStringLiteral("scheduler qualification was not requested")}};
 }
@@ -246,7 +262,7 @@ void InteractiveSchedulingPolicy::applyRenderThreadPolicy()
 
 void InteractiveSchedulingPolicy::attach(QQuickWindow *window)
 {
-    if (!window) return;
+    if (!window || !m_captureEvidence) return;
     connect(window, &QQuickWindow::sceneGraphInitialized, this,
             [this] { applyRenderThreadPolicy(); }, Qt::DirectConnection);
 }

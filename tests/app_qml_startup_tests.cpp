@@ -1,6 +1,7 @@
 #include "app_backend.h"
 #include "axis_transform.h"
 #include "config_store.h"
+#include "interactive_scheduling_policy.h"
 #include "responsiveness_probe.h"
 #include "response_curve.h"
 #include "theme_manager.h"
@@ -8152,6 +8153,9 @@ int main(int argc, char *argv[])
     // of probing the owner's HidHide/vJoy installation.
     qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
     QApplication application(argc, argv);
+    // This fixture constructs the application directly rather than calling
+    // main(), so mirror the shipped Windows interactive scheduler policy.
+    hotas::InteractiveSchedulingPolicy::installProduction(&application);
     application.setOrganizationName(QStringLiteral("HOTAS Mapper"));
     application.setOrganizationDomain(QStringLiteral("local.hotasmapper"));
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));

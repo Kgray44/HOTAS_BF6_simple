@@ -10,7 +10,10 @@ param(
 
     [string[]]$WorkloadArguments = @(),
 
-    [ValidateRange(8, 120)]
+    # Near-saturation native qualification can legitimately take longer than
+    # the action program itself because queued GUI work must drain.  Keep the
+    # stress deadline bounded, but allow it to cover that delayed completion.
+    [ValidateRange(8, 720)]
     [int]$DurationSeconds = 30,
 
     [ValidateRange(32, 512)]
@@ -39,6 +42,9 @@ param(
     [ValidateRange(0, 30)]
     [int]$WarmupSeconds = 2,
 
+    [ValidateRange(0, 180)]
+    [int]$NativeQualificationTortureSeconds = 10,
+
     [string]$EvidenceDirectory = (Join-Path $env:TEMP 'HOTAS-BF6-responsiveness-evidence')
 )
 
@@ -59,21 +65,64 @@ function Get-LoadSample {
 }
 
 function Start-CpuWorkers {
-    param([int]$WorkerCount, [DateTime]$DeadlineUtc)
-    $jobs = @()
-    for ($worker = 0; $worker -lt $WorkerCount; ++$worker) {
-        $jobs += Start-Job -ScriptBlock {
-            param([DateTime]$Deadline)
-            $accumulator = 0.0
-            while ([DateTime]::UtcNow -lt $Deadline) {
-                for ($index = 1; $index -le 250000; ++$index) {
-                    $accumulator += [Math]::Sqrt($index) * 0.000001
+    param([int]$WorkerCount, [int]$TargetPercent, [DateTime]$DeadlineUtc)
+    # Starting one out-of-process PowerShell job per CPU worker can starve the
+    # harness before it ever launches the native executable.  Keep the same
+    # bounded number of runnable CPU threads in one task-owned helper process
+    # instead.  This is a load generator, not application code.
+    $source = @'
+using System;
+using System.Threading;
+
+public static class HotasResponsivenessCpuLoad
+{
+    public static void Run(int workerCount, int targetPercent, long deadlineUtcTicks)
+    {
+        var deadline = new DateTime(deadlineUtcTicks, DateTimeKind.Utc);
+        var workers = new Thread[workerCount];
+        var activeCoreUnits = workerCount * targetPercent / 100.0;
+        var fullyBusyWorkers = (int)Math.Floor(activeCoreUnits);
+        var fractionalWorkerPercent = (int)Math.Round((activeCoreUnits - fullyBusyWorkers) * 100.0);
+        for (var worker = 0; worker < workerCount; ++worker)
+        {
+            var workerPercent = worker < fullyBusyWorkers ? 100 :
+                worker == fullyBusyWorkers ? fractionalWorkerPercent : 0;
+            workers[worker] = new Thread(() =>
+            {
+                double accumulator = 0.0;
+                while (DateTime.UtcNow < deadline)
+                {
+                    var cycleStart = Environment.TickCount;
+                    var busyUntil = cycleStart + workerPercent;
+                    var cycleEnd = cycleStart + 100;
+                    while (Environment.TickCount < busyUntil && DateTime.UtcNow < deadline)
+                    {
+                        for (var index = 1; index <= 250000; ++index)
+                            accumulator += Math.Sqrt(index) * 0.000001;
+                    }
+                    while (Environment.TickCount < cycleEnd && DateTime.UtcNow < deadline)
+                        Thread.Sleep(1);
                 }
-            }
-            $accumulator | Out-Null
-        } -ArgumentList $DeadlineUtc
+                GC.KeepAlive(accumulator);
+            });
+            workers[worker].IsBackground = true;
+            workers[worker].Start();
+        }
+        foreach (var worker in workers)
+            worker.Join();
     }
-    return $jobs
+}
+'@
+    $command = @"
+Add-Type -TypeDefinition @'
+$source
+'@
+[HotasResponsivenessCpuLoad]::Run($WorkerCount, $TargetPercent, $($DeadlineUtc.Ticks))
+"@
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    return Start-Process -FilePath powershell.exe `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) `
+        -PassThru -WindowStyle Hidden
 }
 
 function Start-DiskWorker {
@@ -137,6 +186,8 @@ $workerCount = if ($CpuWorkerCount -ge 0) {
     [Math]::Min($MaximumCpuWorkers,
         [Math]::Max(1, [Math]::Ceiling($logicalProcessors * $cpuTargetPercent / 100.0)))
 } else { 0 }
+$cpuThreadCount = [Math]::Min($workerCount, $logicalProcessors)
+$generatorCpuTargetPercent = 0
 $usesDisk = $WithDisk -or $Scenario -in @('Disk', 'Combined')
 $stressRoot = Join-Path $env:TEMP ("HOTAS-BF6-responsiveness-{0}" -f $PID)
 $probeReport = Join-Path $EvidenceDirectory ("{0}-probe.json" -f $Scenario.ToLowerInvariant())
@@ -146,6 +197,9 @@ $loadEvidence = Join-Path $EvidenceDirectory ("{0}-load.json" -f $Scenario.ToLow
 # already expired.
 $deadlineUtc = [DateTime]::UtcNow.AddSeconds($DurationSeconds + $WarmupSeconds)
 $jobs = @()
+$cpuStressProcess = $null
+$workloadProcess = $null
+$workloadTimedOut = $false
 
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 $priorEnvironment = @{
@@ -154,6 +208,8 @@ $priorEnvironment = @{
     HOTAS_RESPONSIVENESS_SCENARIO = $env:HOTAS_RESPONSIVENESS_SCENARIO
     HOTAS_RESPONSIVENESS_LOAD_EVIDENCE = $env:HOTAS_RESPONSIVENESS_LOAD_EVIDENCE
     HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY
+    HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION = $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION
+    HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS = $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS
 }
 
 try {
@@ -162,6 +218,8 @@ try {
     $env:HOTAS_RESPONSIVENESS_SCENARIO = $Scenario
     $env:HOTAS_RESPONSIVENESS_LOAD_EVIDENCE = $loadEvidence
     $env:HOTAS_RESPONSIVENESS_SCHEDULING_POLICY = $SchedulingPolicy
+    $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION = '1'
+    $env:HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION_TORTURE_SECONDS = "$NativeQualificationTortureSeconds"
 
     $before = Get-LoadSample
     $ambientCpuAlreadyAtOrAboveTarget = $cpuTargetPercent -gt 0 -and $null -ne $before.cpuPercent `
@@ -171,8 +229,16 @@ try {
         # experiment. The result remains valuable, but the load file makes
         # clear that CPU contention was ambient rather than calibrated here.
         $workerCount = 0
+        $cpuThreadCount = 0
+    } elseif ($cpuTargetPercent -gt 0 -and $null -ne $before.cpuPercent) {
+        # The workload target describes total machine CPU, not CPU in addition
+        # to an active desktop.  Generate only the measured headroom; final
+        # five-second samples remain the acceptance record.
+        $generatorCpuTargetPercent = [Math]::Max(0, $cpuTargetPercent - [int][Math]::Round($before.cpuPercent))
     }
-    if ($workerCount -gt 0) { $jobs += Start-CpuWorkers -WorkerCount $workerCount -DeadlineUtc $deadlineUtc }
+    if ($cpuThreadCount -gt 0) {
+        $cpuStressProcess = Start-CpuWorkers -WorkerCount $cpuThreadCount -TargetPercent $generatorCpuTargetPercent -DeadlineUtc $deadlineUtc
+    }
     if ($usesDisk) { $jobs += Start-DiskWorker -StressDirectory $stressRoot -Megabytes $DiskMiB -DeadlineUtc $deadlineUtc }
     if ($WarmupSeconds -gt 0) { Start-Sleep -Seconds $WarmupSeconds }
     $underLoad = Get-LoadSample
@@ -191,6 +257,13 @@ try {
     # rate and capture the actual CPU range without adding load to the app.
     $duringWorkload = @()
     while (-not $workloadProcess.HasExited) {
+        if ([DateTime]::UtcNow -ge $deadlineUtc) {
+            # A report after the load generator expires would be an unloaded
+            # tail, not a scheduler qualification result.
+            $workloadTimedOut = $true
+            Stop-Process -Id $workloadProcess.Id -Force -ErrorAction SilentlyContinue
+            break
+        }
         Start-Sleep -Seconds 5
         $workloadProcess.Refresh()
         if (-not $workloadProcess.HasExited) { $duringWorkload += Get-LoadSample }
@@ -198,7 +271,6 @@ try {
     $workloadProcess.WaitForExit()
     $workloadExitCode = $workloadProcess.ExitCode
     $afterWorkload = Get-LoadSample
-    if ($workloadExitCode -ne 0) { throw "Workload exited with code $workloadExitCode." }
 
     [ordered]@{
         schemaVersion = 1
@@ -207,9 +279,14 @@ try {
         warmupSeconds = $WarmupSeconds
         boundedDiskMiB = if ($usesDisk) { $DiskMiB } else { 0 }
         requestedCpuPercent = $cpuTargetPercent
+        requestedGeneratorCpuPercent = $generatorCpuTargetPercent
         requestedCpuWorkerCount = if ($CpuWorkerCount -ge 0) { $CpuWorkerCount } else { $null }
         requestedSchedulingPolicy = $SchedulingPolicy
+        nativeQualificationTortureSeconds = $NativeQualificationTortureSeconds
+        workloadTimedOutBeforeStressDeadline = $workloadTimedOut
+        workloadExitCode = $workloadExitCode
         cpuWorkerCount = $workerCount
+        cpuWorkerThreadCount = $cpuThreadCount
         maximumCpuWorkers = $MaximumCpuWorkers
         ambientCpuAlreadyAtOrAboveRequestedTarget = $ambientCpuAlreadyAtOrAboveTarget
         logicalProcessors = $logicalProcessors
@@ -233,7 +310,19 @@ try {
         cleanup = 'stress jobs stopped and the task-owned temporary disk file was removed in finally'
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $loadEvidence -Encoding utf8
     Get-Content -Raw -LiteralPath $loadEvidence
+    if ($workloadTimedOut) {
+        throw "Workload did not complete before the bounded stress deadline."
+    }
+    if ($workloadExitCode -ne 0) { throw "Workload exited with code $workloadExitCode." }
 } finally {
+    if ($workloadProcess -and -not $workloadProcess.HasExited) {
+        Stop-Process -Id $workloadProcess.Id -Force -ErrorAction SilentlyContinue
+        $workloadProcess.WaitForExit()
+    }
+    if ($cpuStressProcess -and -not $cpuStressProcess.HasExited) {
+        Stop-Process -Id $cpuStressProcess.Id -Force -ErrorAction SilentlyContinue
+        $cpuStressProcess.WaitForExit()
+    }
     foreach ($job in @($jobs)) {
         if ($job) {
             Stop-Job -Job $job -ErrorAction SilentlyContinue

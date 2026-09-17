@@ -21,6 +21,9 @@ param(
     [ValidateRange(1, 64)]
     [int]$MaximumCpuWorkers = 16,
 
+    [ValidateSet('current', 'gui', 'render', 'gui-render', 'process-above-normal')]
+    [string]$SchedulingPolicy = 'current',
+
     [Parameter(Mandatory)]
     [string]$EvidenceDirectory
 )
@@ -57,6 +60,7 @@ try {
         -DurationSeconds $DurationSeconds `
         -DiskMiB $DiskMiB `
         -MaximumCpuWorkers $MaximumCpuWorkers `
+        -SchedulingPolicy $SchedulingPolicy `
         -EvidenceDirectory $evidenceDirectory
 } finally {
     if ($mappingJob) {
@@ -74,6 +78,7 @@ try {
         scenario = $Scenario
         mode = 'scheduler-contention-surrogate'
         qualification = 'native UI process plus synthetic mapping benchmark; not physical mapping proof'
+        requestedSchedulingPolicy = $SchedulingPolicy
         mappingBenchmark = (Resolve-Path -LiteralPath $MappingBenchmarkExecutable).Path
         mappingBenchmarkRuns = $mappingRuns
         mappingBenchmarkLog = $mappingLog

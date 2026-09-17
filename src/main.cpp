@@ -85,6 +85,7 @@ int main(int argc, char *argv[])
     // QGuiApplication whenever tray support is available.
     QApplication application(argc, argv);
     if (nativeQualification) hotas::InteractiveSchedulingPolicy::installForQualification(&application);
+    else hotas::InteractiveSchedulingPolicy::installProduction(&application);
     // Flight Deck also contains regular Qt Quick Text items, which resolve
     // from QApplication's default rather than a Controls font inheritance
     // chain.  Pin the supported Windows UI face before any QML loads.
