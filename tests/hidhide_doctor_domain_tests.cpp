@@ -1070,6 +1070,23 @@ void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReport
     QVERIFY2(report.isFile(), qPrintable(model.reportStatus()));
     QVERIFY(report.size() > 0);
     QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(report.absoluteFilePath())));
+
+    const QString bundleParentPath = directory.filePath(QStringLiteral("bundle-parent"));
+    QVERIFY(QDir().mkpath(bundleParentPath));
+    model.exportDiagnosticBundle(bundleParentPath, QStringLiteral("Safe to Share"));
+    QTRY_VERIFY_WITH_TIMEOUT(!model.reportBusy(), 10000);
+    const QFileInfoList childDirectories = QDir(bundleParentPath).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot,
+                                                                                 QDir::Name);
+    QCOMPARE(childDirectories.size(), 1);
+    const QFileInfo bundleDirectory = childDirectories.first();
+    QVERIFY(bundleDirectory.fileName().startsWith(QStringLiteral("HidHideDoctor-Diagnostic-Bundle-")));
+    QVERIFY(!QFile::exists(QDir(bundleParentPath).filePath(QStringLiteral("report.md"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("report.md"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("report.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("timeline.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("evidence.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("manifest.json"))));
+    QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(bundleDirectory.absoluteFilePath())));
 }
 
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()

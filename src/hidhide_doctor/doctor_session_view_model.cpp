@@ -1,6 +1,7 @@
 #include "doctor_session_view_model.h"
 #include "doctor_report_composer.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonObject>
@@ -36,6 +37,25 @@ struct ExportWriteResult final {
 QString presentationKey(const QString &suffix)
 {
     return QStringLiteral("hidhideDoctorPhase2/") + suffix;
+}
+
+QString createDiagnosticBundleDirectory(const QString &parentPath, QString *error)
+{
+    const QString absoluteParent = QFileInfo(parentPath).absoluteFilePath();
+    QDir parent(absoluteParent);
+    if (!parent.exists() && !QDir().mkpath(absoluteParent)) {
+        if (error) *error = QStringLiteral("Could not create the selected diagnostic-bundle destination folder.");
+        return {};
+    }
+    parent.setPath(absoluteParent);
+    const QString stem = QStringLiteral("HidHideDoctor-Diagnostic-Bundle-%1")
+        .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmsszzz'Z'")));
+    for (int sequence = 1; sequence <= 100; ++sequence) {
+        const QString name = sequence == 1 ? stem : QStringLiteral("%1-%2").arg(stem).arg(sequence);
+        if (parent.mkdir(name)) return parent.filePath(name);
+    }
+    if (error) *error = QStringLiteral("Could not reserve a new diagnostic bundle folder in the selected destination.");
+    return {};
 }
 
 QVariantList defaultBottomDockFractions()
@@ -788,7 +808,14 @@ void DoctorSessionViewModel::exportDiagnosticBundleUrl(const QUrl &directoryUrl,
 
 void DoctorSessionViewModel::exportDiagnosticBundle(const QString &directory, const QString &privacy)
 {
-    beginAsynchronousExport(directory, QStringLiteral("Entire Session"), QStringLiteral("Forensic / Everything"),
+    QString error;
+    const QString bundleDirectory = createDiagnosticBundleDirectory(directory, &error);
+    if (bundleDirectory.isEmpty()) {
+        m_reportStatus = QStringLiteral("Export failed safely: %1").arg(error);
+        emit presentationChanged();
+        return;
+    }
+    beginAsynchronousExport(bundleDirectory, QStringLiteral("Entire Session"), QStringLiteral("Forensic / Everything"),
                             QStringLiteral("Diagnostic Bundle"), privacy);
 }
 

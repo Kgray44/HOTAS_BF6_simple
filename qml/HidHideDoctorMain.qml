@@ -43,7 +43,7 @@ ApplicationWindow {
 
     FolderDialog {
         id: exportBundleFolder
-        title: "Choose an empty-or-new HidHide Doctor diagnostic bundle folder"
+        title: "Choose a destination folder for the HidHide Doctor diagnostic bundle"
         onAccepted: doctorSession.exportDiagnosticBundleUrl(selectedFolder, exportSurface.privacy)
     }
 
@@ -170,7 +170,7 @@ ApplicationWindow {
             Label { visible: doctorSession.reportStatus.length > 0; text: doctorSession.reportStatus; color: Theme.information; font.family: Theme.ui; font.pixelSize: root.textPx(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout { Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                Doctor.DoctorButton { text: doctorSession.reportBusy ? "Exporting…" : exportSurface.format === "Diagnostic Bundle" ? "Choose bundle folder" : "Choose report file"; tone: "primary"; enabled: !doctorSession.reportBusy; onClicked: { if (exportSurface.format === "Diagnostic Bundle") exportBundleFolder.open(); else exportReportFile.open() } }
+                Doctor.DoctorButton { text: doctorSession.reportBusy ? "Exporting…" : exportSurface.format === "Diagnostic Bundle" ? "Choose bundle destination" : "Choose report file"; tone: "primary"; enabled: !doctorSession.reportBusy; onClicked: { if (exportSurface.format === "Diagnostic Bundle") exportBundleFolder.open(); else exportReportFile.open() } }
             }
         }
     }
