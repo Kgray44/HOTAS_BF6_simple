@@ -2754,9 +2754,18 @@ bool clickPresentationChoice(QQuickWindow *window, QQuickItem *settings, QQuickI
         settlePresentation();
         const QPoint selectorPoint = viewportPoint(selector, settings,
             QPointF(selector->width() * 0.5, selector->height() * 0.5));
+        // Scrolling changes the selector's native hit-test position on the
+        // next polish/render turn.  Keep the physical click route, but settle
+        // that turn before pressing so the popup is not asked to open from a
+        // stale coordinate.
+        window->contentItem()->forceActiveFocus(Qt::MouseFocusReason);
+        QTest::mouseMove(window, selectorPoint);
+        QTest::qWait(50);
+        settlePresentation();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
         QTest::qWait(8);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, selectorPoint);
+        QTest::qWait(32);
         settlePresentation();
         auto *popup = selector->findChild<QObject *>(selector->objectName()
             + QStringLiteral("Popup"));
@@ -3874,8 +3883,26 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     for (const int page : {8, 2, 0, 1, 6, 5, 9, 7, 3, 4}) {
         auto *nav = findVisualItemByObjectName(window->contentItem(),
             QStringLiteral("flightDeckNav_%1").arg(page));
-        if (!nav) return failPresentationLifecycleTest(QStringLiteral("Flight Deck route %1 has no nav item")
-            .arg(page));
+        auto *navigationViewport = findVisualItemByObjectName(window->contentItem(),
+            QStringLiteral("flightDeckNavigationViewport"));
+        if (!nav || !navigationViewport) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck route %1 has no navigable rail item").arg(page));
+        }
+        // The selected Diagnostics row can scroll the rail far enough that
+        // Settings is clipped below its Flickable viewport.  Establish the
+        // same visible presentation state a user would have before sending
+        // the existing native pointer click; otherwise an off-viewport click
+        // is a harness race, not a navigation result.
+        const qreal rowY = nav->mapToItem(navigationViewport, QPointF{}).y();
+        const qreal maximumContentY = std::max<qreal>(0.0,
+            navigationViewport->property("contentHeight").toReal() - navigationViewport->height());
+        const qreal desiredContentY = std::clamp(
+            navigationViewport->property("contentY").toReal() + rowY
+                - (navigationViewport->height() - nav->height()) / 2.0,
+            0.0, maximumContentY);
+        navigationViewport->setProperty("contentY", desiredContentY);
+        settlePresentation();
         const QPoint clickPoint = nav->mapToScene(QPointF(nav->width() * 0.5,
             nav->height() * 0.5)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, clickPoint);

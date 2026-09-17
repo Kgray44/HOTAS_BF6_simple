@@ -778,7 +778,12 @@ Flickable {
             return false;
         const top = item.mapToItem(root.contentItem, 0, 0).y;
         const maximum = Math.max(0, root.contentHeight - root.height);
-        root.contentY = Math.max(0, Math.min(maximum, top - deck.space16));
+        let targetY = top - deck.space16;
+        // Keep the preferred top inset unless it would clip a section that
+        // otherwise fits entirely in the compact viewport.
+        if (item.height <= root.height)
+            targetY = Math.max(targetY, top + item.height - root.height);
+        root.contentY = Math.max(0, Math.min(maximum, targetY));
         refreshViewportActivity();
         return true;
     }

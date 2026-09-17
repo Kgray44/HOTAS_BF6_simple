@@ -616,14 +616,17 @@ Flickable {
         }
         markConstruction("componentCompleted");
         Qt.callLater(function() {
+            // This page can unload before the deferred presentation turn.
+            if (!root)
+                return;
             const requestStartedAt = Date.now();
-            consumeProfileCreationRequest();
-            if (constructionQualificationEnabled) {
-                const next = Object.assign({}, constructionMetrics);
+            root.consumeProfileCreationRequest();
+            if (root.constructionQualificationEnabled) {
+                const next = Object.assign({}, root.constructionMetrics);
                 next.consumeProfileCreationRequestMs = Date.now() - requestStartedAt;
-                constructionMetrics = next;
+                root.constructionMetrics = next;
             }
-            markConstruction("layoutStabilized");
+            root.markConstruction("layoutStabilized");
         });
     }
     Component.onDestruction: capturePresentationState()
@@ -1092,7 +1095,10 @@ Flickable {
         property var profile: ({})
         readonly property bool selectedForEditing: root.view === "profile" && String(root.selectedProfileId) === String(profile.id || "")
         objectName: "flightDeckProfileCard_" + String(profile.id || "")
-        width: root.width >= 1160 ? (profileFlow.width - deck.space12) / 2 : profileFlow.width
+        // Runtime delegates are children of the library Flow; using that
+        // parent preserves a valid width binding after recycling.
+        readonly property real flowWidth: parent ? parent.width : root.width
+        width: root.width >= 1160 ? (flowWidth - deck.space12) / 2 : flowWidth
         implicitHeight: profileContent.implicitHeight + contentPadding * 2
         color: profile.active ? deck.selected : selectedForEditing ? deck.secondarySurface : deck.elevatedSurface
         border.color: profile.active ? deck.accent : selectedForEditing ? deck.focus : deck.border
