@@ -61,6 +61,12 @@ Flickable {
     property bool responseLabNearViewport: false
     property bool responseMonitorVisible: false
     property bool responseMonitorPinned: false
+    // The controller changes presentation cadence only. Its absence keeps
+    // isolated component fixtures on the established Normal values.
+    readonly property var contention: typeof contentionResilience !== "undefined" ? contentionResilience : null
+    readonly property int resilienceLiveGraphIntervalMs: contention ? contention.liveGraphIntervalMs : 33
+    readonly property bool decorativeMotionAllowed: contention ? contention.decorativeMotionAllowed : true
+    readonly property real nonessentialAnimationScale: contention ? contention.nonessentialAnimationScale : 1.0
     // Presentation-only fixture seam. It never changes the backend context,
     // configuration, predictor, simulator, or controller connection state.
     property var presentationOverride: null
@@ -772,7 +778,12 @@ Flickable {
             return false;
         const top = item.mapToItem(root.contentItem, 0, 0).y;
         const maximum = Math.max(0, root.contentHeight - root.height);
-        root.contentY = Math.max(0, Math.min(maximum, top - deck.space16));
+        let targetY = top - deck.space16;
+        // Keep the preferred top inset unless it would clip a section that
+        // otherwise fits entirely in the compact viewport.
+        if (item.height <= root.height)
+            targetY = Math.max(targetY, top + item.height - root.height);
+        root.contentY = Math.max(0, Math.min(maximum, targetY));
         refreshViewportActivity();
         return true;
     }
@@ -1069,14 +1080,17 @@ Flickable {
         // so a live trace scrolls smoothly without putting work on the mapper.
         // Live data must not depend on a section-near-viewport heuristic: a
         // visible Live Controller page always coalesces the newest snapshot.
-        interval: 33
+        interval: root.resilienceLiveGraphIntervalMs
         repeat: true
         triggeredOnStart: true
         running: root.visible && root.responseLabSource === "live" && !root.historyPaused
-        onTriggered: root.refreshHistory(false)
+        onTriggered: {
+            if (root.contention) root.contention.recordLiveGraphRefresh()
+            root.refreshHistory(false)
+        }
     }
     Timer {
-        interval: 33
+        interval: root.resilienceLiveGraphIntervalMs
         repeat: true
         running: root.visible && root.responseLabSource === "live" && root.liveReplaying && root.historySampleCount > 0
         onTriggered: {
@@ -1090,20 +1104,20 @@ Flickable {
         }
     }
     Timer {
-        interval: 33
+        interval: root.resilienceLiveGraphIntervalMs
         repeat: true
         triggeredOnStart: true
         running: root.visible && root.responseLabSource === "interactive" && root.responseLabNearViewport && !root.simulatorPaused && !root.simulatorReplaying
         onTriggered: root.sampleSimulator()
     }
     Timer {
-        interval: 33
+        interval: root.resilienceLiveGraphIntervalMs
         repeat: true
         running: root.visible && root.responseLabSource === "interactive" && root.responseLabNearViewport && root.simulatorReplaying && !root.simulatorPaused
         onTriggered: root.updateReplayPresentation()
     }
     Timer {
-        interval: 33
+        interval: root.resilienceLiveGraphIntervalMs
         repeat: true
         triggeredOnStart: true
         running: root.visible && root.responseLabSource === "interactive" && root.responseLabNearViewport && !root.simulatorReplaying
@@ -1259,8 +1273,9 @@ Flickable {
                 anchors.verticalCenter: parent.verticalCenter
                 color: control.checked ? deck.primarySurface : deck.textMuted
                 Behavior on x {
+                    enabled: root.decorativeMotionAllowed
                     NumberAnimation {
-                        duration: 120
+                        duration: Math.round(120 * root.nonessentialAnimationScale)
                     }
                 }
             }

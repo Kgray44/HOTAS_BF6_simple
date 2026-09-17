@@ -23,6 +23,10 @@ Item {
     // Supplied by Main's app-level overlay.  Standard's page host receives
     // the same object so a Devices action has one presentation owner.
     property var notificationCenter: null
+    // This binding is evaluated with the shell rather than on every loader
+    // lifecycle callback. When the opt-in probe is absent, callbacks have no
+    // backend crossing or probe work.
+    readonly property bool responsivenessProbeActive: backend.responsivenessProbeEnabled()
     // Holds only the transient Signal Flow viewport/selection while one of
     // Flight Deck's authoritative focused editors is shown.
     property var signalFlowPresentationState: ({})
@@ -80,6 +84,10 @@ Item {
         id: readinessModel
     }
     onCurrentPageChanged: {
+        // Signal Flow is intentionally excluded from this campaign. Its
+        // navigation path remains untouched and contributes no Phase 0 data.
+        if (currentPage !== 11 && root.responsivenessProbeActive)
+            backend.responsivenessNavigationRequested(currentPage, pageTitle(currentPage));
         standardPageHost.currentPage = currentPage === 7 || currentPage === 11 ? -1 : currentPage;
         if (currentPage === 1 && flightDeckButtonContext > 0)
             buttonContextTimer.restart();
@@ -395,6 +403,14 @@ Item {
                         visible: active
                         enabled: active
                         source: Qt.resolvedUrl("FlightDeckAutomation.qml")
+                        onActiveChanged: {
+                            if (active && root.responsivenessProbeActive)
+                                backend.responsivenessNavigationLoaderActivated(7, "Automation")
+                        }
+                        onStatusChanged: {
+                            if (status === Loader.Ready && item && root.responsivenessProbeActive)
+                                backend.responsivenessNavigationObjectReady(7, "Automation")
+                        }
                         onLoaded: {
                             item.presentationState = root.flightDeckAutomationPresentationState;
                             item.restorePresentationState();

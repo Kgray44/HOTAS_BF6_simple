@@ -1,4 +1,6 @@
 #include "mapping_worker.h"
+
+#include "interactive_scheduling_policy.h"
 #include "crash_diagnostics.h"
 #include "direct_input_axis.h"
 #include "device_rig.h"
@@ -1305,6 +1307,9 @@ void MappingWorker::setVjoyOwnershipEvidence(const VJoyOwnershipEvidence &eviden
 
 void MappingWorker::run()
 {
+    // Captured once at worker startup only when a qualification observer is
+    // active. No report-path work is added.
+    InteractiveSchedulingPolicy::recordCurrentThread("mapping");
     LPDIRECTINPUT8W directInput = nullptr;
     const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
         IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);

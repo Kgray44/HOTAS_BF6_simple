@@ -39,6 +39,8 @@ class QSystemTrayIcon;
 namespace hotas {
 
 struct PortableConfigurationBundle;
+class ContentionResilienceController;
+class ConfigPersistenceCoordinator;
 
 class AppBackend final : public QObject {
     Q_OBJECT
@@ -287,6 +289,14 @@ class AppBackend final : public QObject {
 public:
     explicit AppBackend(QObject *parent = nullptr);
     ~AppBackend() override;
+
+    // Presentation and background-control cadence authority. Its policy is
+    // intentionally absent from MappingWorker and all report-path types.
+    ContentionResilienceController *contentionResilienceController() const;
+
+    // Called before responsiveness evidence is exported. This is the one
+    // bounded shutdown durability barrier; normal UI edits never wait here.
+    void flushPersistenceForShutdown();
 
     QVariantList axisConfiguration() const;
     QVariantList axisTelemetry() const;
@@ -564,6 +574,14 @@ public:
     // Production returns an empty map and keeps the presentation path clean.
     Q_INVOKABLE QVariantMap uiPerformanceCounters() const;
     Q_INVOKABLE void resetUiPerformanceCounters();
+    // Phase 0 native responsiveness probe. QML emits only sparse navigation
+    // lifecycle markers; the probe itself remains absent unless explicitly
+    // enabled through HOTAS_RESPONSIVENESS_PROBE=1.
+    Q_INVOKABLE bool responsivenessProbeEnabled() const;
+    Q_INVOKABLE void responsivenessNavigationRequested(int page, const QString &pageName);
+    Q_INVOKABLE void responsivenessNavigationLoaderActivated(int page, const QString &pageName);
+    Q_INVOKABLE void responsivenessNavigationObjectReady(int page, const QString &pageName);
+    Q_INVOKABLE QString exportResponsivenessProbe(const QString &path = QString());
 
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
@@ -1040,7 +1058,6 @@ private:
         Minimized,
         TrayHidden,
     };
-    enum class PresentationQosState { Normal, Loaded, SeverelyLoaded };
 
     enum class InputLearningKind { None, Axis, Button, Pov, SignalFlowSource };
     enum class InputLearningPhase { Idle, Arming, Waiting, Ambiguous, Conflict, Assigned };
@@ -1182,6 +1199,9 @@ private:
     // MappingWorker release/reacquire an active vJoy device behind the
     // owner's back.  Setup Health performs the explicit hand-off later.
     bool persistVirtualOutputDescriptorEdit();
+    bool requestConfigurationPersistence();
+    bool persistConfigurationTransaction(const MapperConfiguration &configuration, int timeoutMs = 2500);
+    void recordPersistenceProbeTelemetry();
     // A focused edit to the owner of a shared Signal Flow conditioner remains
     // one configuration edit for every linked channel. A member edit is left
     // independent so reconciliation can surface it as an explicit split.
@@ -1217,6 +1237,10 @@ private:
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
+    void applyContentionPolicy();
+    int scaledBackgroundInterval(int baseIntervalMs) const;
+    int visibleButtonTelemetryIntervalMs() const;
+    int adaptiveResponseHistoryIntervalMs() const;
     void applyControllerInventory(QList<DiscoveredController> latestInventory);
     void reconcileDeviceRigInventory();
     void startRunningApplicationSnapshot(bool resolvePaths);
@@ -1243,8 +1267,6 @@ private:
     bool consumeActivationFaultForTest(const QString &stage);
     void updatePresentationLifecycle();
     void setPresentationLifecycle(PresentationLifecycleState state);
-    void updatePresentationQos(qint64 lateByMs);
-    void applyPresentationQosIntervals();
     void releasePresentationResources();
     void restorePresentationResources();
     bool rebuildControllerUiModel();
@@ -1445,6 +1467,7 @@ private:
     };
 
     MapperConfiguration m_configuration;
+    std::unique_ptr<ConfigPersistenceCoordinator> m_persistence;
     // Session-only editor context. It is intentionally outside
     // MapperConfiguration so persisting an edit never converts selection into
     // a runtime activation request.
@@ -1455,6 +1478,7 @@ private:
     QString m_signalFlowFocusObjectId;
     bool m_signalFlowCommandInFlight = false;
     MappingWorker m_worker;
+    std::unique_ptr<ContentionResilienceController> m_contentionResilience;
     // Canonical GUI-side desired Mapping state. It is updated synchronously
     // for every user click and reconciled from worker-side Automation changes.
     bool m_mappingDesired = false;
@@ -1568,10 +1592,6 @@ private:
     bool m_controllerInventoryInitialized = false;
     QPointer<QWindow> m_mainWindow;
     PresentationLifecycleState m_presentationLifecycle = PresentationLifecycleState::Visible;
-    PresentationQosState m_presentationQos = PresentationQosState::Normal;
-    QElapsedTimer m_presentationTickClock;
-    int m_presentationQosStableTicks = 0;
-    int m_presentationDroppedFrameCount = 0;
     bool m_trayHidden = false;
     QSystemTrayIcon *m_trayIcon = nullptr;
     QMenu *m_trayMenu = nullptr;

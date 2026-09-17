@@ -6,15 +6,23 @@
 #include "adaptive_response.h"
 #include "button_mapping.h"
 #include "profile_portability.h"
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+#include "responsiveness_probe.h"
+#endif
 #include "response_curve.h"
 #include "signal_flow_model.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+#include <QCoreApplication>
+#include <QThread>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -2381,10 +2389,41 @@ MapperConfiguration ConfigStore::load()
 
 bool ConfigStore::save(const MapperConfiguration &configuration)
 {
+#ifdef HOTAS_ENABLE_RESPONSIVENESS_PROBE
+    // Keep the disabled path byte-for-byte equivalent in behavior: no clock,
+    // allocation, logging, or filesystem work is added unless the explicit
+    // Phase 0 probe is active.
+    auto *probe = ResponsivenessProbe::active();
+    if (probe) {
+        const qint64 startedNs = ResponsivenessProbe::monotonicNowNs();
+        const SaveResult result = saveDetailed(configuration);
+        const qint64 finishedNs = ResponsivenessProbe::monotonicNowNs();
+        const auto *application = QCoreApplication::instance();
+        const bool guiThread = application && QThread::currentThread() == application->thread();
+        probe->recordConfigSave(startedNs, finishedNs, result.serializationNs, result.setValueNs,
+                                result.syncNs, result.success, guiThread);
+        return result.success;
+    }
+#endif
     QSettings stored(settingsFilePath(), QSettings::IniFormat);
     stored.setValue(QLatin1String(kConfigKey), QJsonDocument(toJson(configuration)).toJson(QJsonDocument::Compact));
     stored.sync();
     return stored.status() == QSettings::NoError;
+}
+
+ConfigStore::SaveResult ConfigStore::saveDetailed(const MapperConfiguration &configuration)
+{
+    QSettings stored(settingsFilePath(), QSettings::IniFormat);
+    QElapsedTimer timer;
+    timer.start();
+    const QByteArray serialized = QJsonDocument(toJson(configuration)).toJson(QJsonDocument::Compact);
+    const qint64 serializationNs = timer.nsecsElapsed();
+    stored.setValue(QLatin1String(kConfigKey), serialized);
+    const qint64 setValueNs = timer.nsecsElapsed();
+    stored.sync();
+    const qint64 syncNs = timer.nsecsElapsed();
+    return {stored.status() == QSettings::NoError, serializationNs,
+            setValueNs - serializationNs, syncNs - setValueNs};
 }
 
 QJsonObject ConfigStore::toJson(const MapperConfiguration &input)
