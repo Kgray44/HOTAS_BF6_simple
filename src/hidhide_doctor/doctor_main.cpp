@@ -41,7 +41,10 @@ bool hasArgument(int argc, char *argv[], const char *argument)
 QString argumentValue(int argc, char *argv[], const char *argument)
 {
     for (int index = 1; index + 1 < argc; ++index) {
-        if (std::strcmp(argv[index], argument) == 0) return QString::fromLocal8Bit(argv[index + 1]);
+        // QCoreApplication preserves the native Windows command line as
+        // Unicode.  Decoding argv through the local ANSI code page corrupts
+        // valid report destinations such as a non-ASCII Downloads folder.
+        if (std::strcmp(argv[index], argument) == 0) return QCoreApplication::arguments().value(index + 1);
     }
     return {};
 }

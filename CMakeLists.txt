@@ -442,6 +442,19 @@ if (BUILD_TESTING)
     target_link_libraries(hidhide_doctor_deep_repair_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
     add_test(NAME hidhide_doctor_deep_repair_tests COMMAND hidhide_doctor_deep_repair_tests)
     add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
+    if (WIN32)
+        find_program(HOTAS_PWSH_EXECUTABLE NAMES pwsh.exe pwsh)
+        if (HOTAS_PWSH_EXECUTABLE)
+            add_test(NAME hidhide_doctor_path_boundary_contract
+                COMMAND "${HOTAS_PWSH_EXECUTABLE}" -NoProfile -File
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-hidhide-doctor-path-boundaries.ps1"
+                    -StageDir "$<TARGET_FILE_DIR:HidHideDoctor>"
+                    -ArtifactRoot "${CMAKE_CURRENT_BINARY_DIR}/hidhide-doctor-path-boundary-contract")
+            set_tests_properties(hidhide_doctor_path_boundary_contract PROPERTIES TIMEOUT 120)
+        else()
+            message(WARNING "pwsh was not found; HidHide Doctor path-boundary contract is unavailable.")
+        endif()
+    endif()
     qt_add_executable(hidhide_doctor_layout_tests
         tests/hidhide_doctor_layout_tests.cpp
     )
