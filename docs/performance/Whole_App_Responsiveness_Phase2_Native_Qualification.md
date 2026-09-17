@@ -1,195 +1,141 @@
-# Whole-App Responsiveness Phase 2 - Native and Physical Qualification
+# Whole-App Responsiveness Phase 2 — Native Qualification
 
-**Status:** partial autonomous qualification. This is not a release and is **not
-Phase 2 completion**: native pointer/keyboard/wheel evidence, live mapping, and
-physical controller-to-vJoy evidence require an owner-run capture on this host.
+**Status:** **AUTOMATED QUALIFICATION COMPLETE — OWNER ACCEPTANCE DEFERRED.**
 
-**Phase 0 head:** `f137c5405698989b6cb664aa039a8d4b9486026b`
-**Phase 1 implementation base:** `4325fdac929f0a59fb5769b3c43a2e709937ef66`
-**Phase 2 initial evidence commit:** `0e466250bd6e19f6c1397feed02aeed3c74032d9`
-**`origin/main` observed before Phase 2:** `5d5df526d93cccbef4b9e72068c6929ea7f11f7c`
-**Phase 2 worktree:** `C:\Users\kkids\Documents\HOTAS_BF6-responsiveness-phase2`
-**Phase 2 Release build:** `C:\hotas-builds\responsiveness-phase2`
+This is an unversioned responsiveness-campaign record, not a product release.
+It does not authorize a merge, tag, installer, updater, version change, or
+Phase 3 remediation. Signal Flow was excluded from the driver and results.
 
-This branch begins exactly at the verified Phase 1 head. Its only committed
-candidate change is this evidence report. It makes no version, schema,
-installer, updater, tag, release, protected-main, mapping-policy, scheduling,
-or Signal Flow change.
+## Provenance and boundaries
 
-## Scope and hard exclusions
-
-The Phase 0 ten-page scope remains Overview, Devices, Axes, Buttons, Curve,
-Profiles, Adaptive Response, Automation, Diagnostics, and Settings. Signal
-Flow was not opened, requested, navigated, measured, profiled, or changed.
-Its QML was compiled incidentally by the monolithic application target only.
-
-The DirectInput -> MappingWorker -> vJoy report loop remains allocation-free
-and has no Phase 2 instrumentation. The existing synthetic mapper benchmark
-and existing runtime telemetry remain the measurement boundaries. Source
-inspection confirms that `mapping_hot_path_benchmark` links only the mapping
-core sources and Qt Core; it contains neither `ConfigPersistenceCoordinator`
-nor `ResponsivenessProbe`.
-
-## Environment
-
-| Item | Observed value |
+| Item | Value |
 | --- | --- |
-| OS | Windows 11 Home, 10.0.26200, 64-bit |
-| CPU | AMD Ryzen AI 7 350 with Radeon 860M, 8 cores / 16 logical processors |
-| Memory | 33,413,779,456 bytes reported by Windows |
-| Toolchain | MSVC 19.44.35228.0 via Visual Studio 2022 Build Tools 17.14.39 |
-| Qt | 6.8.3, `msvc2022_64` |
-| Physical-controller indication | One present HID-compliant game controller (`VID_06A3`, no unique serial recorded) |
-| Virtual-output indication | `vJoy Driver` and `vJoy Device` present and OK |
-| HidHide state | Not queried; no Phase 2 repair or configuration action occurred |
+| Phase 0 characterization | `f137c5405698989b6cb664aa039a8d4b9486026b` |
+| Phase 1 base | `4325fdac929f0a59fb5769b3c43a2e709937ef66` |
+| Phase 2 native-driver implementation | `1fd8b616ccc05cc9b2f166f1503bb0621ed53ad5` |
+| Branch / PR | `codex/whole-app-responsiveness-phase2` / draft PR #72 |
+| Release build / evidence root | `C:\\hotas-builds\\responsiveness-phase2` / `evidence-phase2` |
 
-Presence is not proof of a mapped controller, an active profile, vJoy writes,
-or end-to-end latency.
+The opt-in driver launches the real Release executable and attaches only after
+the root `QQuickWindow` exists. Its mode is `native-window-synthetic`: it uses
+Qt native-window mouse, wheel, key, and resize delivery rather than an
+offscreen QML fixture. Qualification mode isolates test configuration and
+suppresses external setup inspection; it neither starts nor controls the
+owner's mapper process.
 
-## Phase 1 integrity baseline
+The driver makes two cycles through Overview, Devices, Axes, Buttons, Curve
+Editor, Profiles, Adaptive Response, Automation, Diagnostics, and Settings.
+It deliberately never routes to Signal Flow. It performs 72 wheel events
+(Settings light, Axes medium, Adaptive Response heavy), panel interaction, 100
+native slider pointer interactions, six native key events in Profile search,
+and window sizes 900x650, 1320x840, and 1600x1000. The safe persistence path
+uses an isolated profile; 100 explicit persistence-boundary updates accompany
+the slider workload. It is accurate to call the pointer events native QML
+interaction and the writes isolated profile persistence; this is not an owner
+configuration edit.
 
-The Phase 2 Release configuration enabled tests and the existing performance
-benchmark. The first build invocation omitted the Visual C++ developer
-environment and therefore could not locate standard headers; it was not a
-source failure. The corrected Build Tools invocation passed the focused suite:
+## Automated native matrix
 
-| Check | Result |
+All five runs completed with driver failure count zero, 100 slider events, 100
+isolated persistence operations, and no ordinary matrix wheel event over one
+second. Percentiles are milliseconds. Input is application input-to-next-frame
+instrumentation, not physical-display scanout.
+
+| Scenario | CPU % | Disk MB/s | Input p50 / p95 / p99 / max | Input >1 s |
+| --- | ---: | ---: | ---: | ---: |
+| Idle | 12 | 4.7 | 78.4 / 569.2 / 902.4 / 902.5 | 0 |
+| Heavy CPU | 99 | 0.7 | 95.1 / 587.7 / 920.9 / 937.1 | 0 |
+| Disk | 9 | 138.5 | 77.9 / 567.8 / 901.0 / 901.2 | 0 |
+| Combined CPU + disk | 100 | 61.6 | 68.3 / 620.9 / 954.4 / 2677.7 | 5 |
+| Near-saturation CPU | 100 | 0 | 73.7 / 613.1 / 946.9 / 2517.3 | 15 |
+
+The normal workload's wheel maxima were 902.5 ms (Idle), 921.3 ms (Heavy
+CPU), 901.2 ms (Disk), 954.5 ms (Combined), and 947.0 ms (near saturation):
+none crossed one second. Page-navigation maxima nevertheless show contention
+is significant: Profiles 2677.5 ms, Adaptive Response 422.4 ms, Settings
+228.4 ms, Devices 172.8 ms, Axes 147.7 ms. These are measurements, not an
+owner observation of feel.
+
+## Event loop, frames, and persistence
+
+| Scenario | Loop p99 / max / >1 s | Frame p99 / max | Persistence requests / writes / durable |
+| --- | --- | --- | --- |
+| Idle | 72.6 / 480.0 / 0 | 447.7 / 1032.3 | 201 / 201 / 201 |
+| Heavy CPU | 158.5 / 918.6 / 0 | 514.0 / 1316.5 | 201 / 191 / 201 |
+| Disk | 86.4 / 753.6 / 0 | 472.9 / 1421.2 | 201 / 197 / 201 |
+| Combined | 911.1 / 9742.5 / 6 | 2092.0 / 9756.9 | 201 / 188 / 201 |
+| Near-saturation | 290.1 / 8983.8 / 6 | 2427.2 / 8997.8 | 201 / 201 / 201 |
+
+Every matrix run recorded zero persistence failures and eventual durable catch
+up. The worker may complete fewer intermediate writes than requests because
+the existing coordinator coalesces generations; durability reached 201 in each
+case. This confirms the native isolated workload does not restore synchronous
+ordinary GUI persistence, but does not prove an owner's production profile.
+
+## P0 reproduction and classification
+
+A separate 90-second Combined native torture run completed cleanly: CPU 100%,
+disk 77.9 MB/s, 166 actions, driver failures zero, and 100 native slider / 100
+isolated persistence actions. It reproduced the reported failure class:
+
+| Metric | Result |
+| --- | ---: |
+| Input p99 / max / >1 s / >5 s | 3894.4 / 9315.0 / 80 / 45 |
+| Event-loop p99 / max / >1 s / >5 s | 3969.5 / 14156.3 / 19 / 12 |
+| Frame p99 / max / >5 s | 4994.9 / 14158.9 / 12 |
+| Major stalls | 64 |
+
+The top event-loop/frame stalls occurred while Profiles was active; a worst
+mouse press was 9315 ms on Adaptive Response. This is a **P0 scheduling-
+starvation finding** under saturation, not a claim of a specific GUI-thread
+blocker. No product behavior was changed in this evidence phase.
+
+## Mapping evidence and physical limit
+
+The controlled mapping A/B and existing hotpath benchmark evidence remains
+allocation-free with no measured material regression from the Phase 2 driver:
+the driver is opt-in and outside the DirectInput → MappingWorker → vJoy
+per-report path. A scheduler surrogate ran the existing mapping benchmark
+during native Idle, Heavy CPU, and Combined qualification. Under Combined load
+it observed input p99/max 7591.5/12288.7 ms and loop p99/max 362.6/18363.6 ms;
+that strengthens the scheduling hypothesis but does **not** establish that the
+live MappingWorker caused the native stalls.
+
+Read-only discovery saw a physical HID candidate at the PnP layer and a vJoy
+DirectInput device. The vJoy ownership query reported device 1 busy by another
+process; no acquire, reconfiguration, or mapper control was attempted. A human
+physical HOTAS-to-vJoy run, mapping-off/on comparison with the actual owner
+mapper, and owner-observed scroll/control feel therefore remain unqualified.
+
+## Verdicts and Phase 3 recommendation
+
+| Subsystem / question | Verdict |
 | --- | --- |
-| `mapping_core_tests` | PASS, 28.96 s in the final focused run |
-| `config_persistence_coordinator_tests` | PASS, 0.14 s |
-| `responsiveness_probe_disabled` | PASS, 0.05 s |
-| `responsiveness_probe_aggregation` | PASS, 0.04 s |
-| `app_qml_startup_tests` with `HOTAS_QML_LIVE_TELEMETRY_ONLY=1` | PASS, 12.57 s |
+| Real native-window automated interaction | Qualified |
+| Idle, CPU, disk, combined, near-saturation characterization | Qualified |
+| Native safe persistence and eventual durability | Qualified |
+| Signal Flow exclusion | Qualified |
+| Multi-second ordinary interaction under severe load | Issue reproduced (P0) |
+| Root cause within GUI vs scheduler vs live mapper | Inconclusive; scheduler starvation is the leading evidence |
+| Physical HOTAS → MappingWorker → vJoy under contention | Owner acceptance deferred |
+| Owner-perceived smoothness and usability | Owner acceptance deferred |
 
-The full native `HOTASMapper` Release target also built and deployed its Qt
-runtime successfully. Final all-target build remains pending the owner-native
-qualification rather than being repeated before it.
+**Phase 3 candidate:** scheduler/QoS and GUI-starvation investigation. First
+reproduce below full saturation with the actual mapper on/off, correlate ready-
+to-run GUI work with worker activity, and preserve the allocation-free mapping
+hot path. Do not change worker priority, persistence architecture, loader
+architecture, or Signal Flow until that evidence exists.
 
-## Controlled interleaved mapping A/B
+## Completion checks
 
-`A` is the Phase 0 source head in a fresh external Release build.
-`B` is the Phase 1/2 head in the prescribed Phase 2 Release build. Both used
-the same Qt 6.8.3, MSVC 19.44, Release settings, benchmark command, host
-session, and PATH. Order was `A1, B1, A2, B2, A3, B3`, not batched by side.
-Raw verbose CTest output is retained outside the repository at
-`C:\hotas-builds\responsiveness-phase2\evidence-phase2\mapping-ab`.
+The final Release all-target build passed. Focused regressions passed:
+`mapping_core_tests`, `config_persistence_coordinator_tests`,
+`responsiveness_probe_disabled`, `responsiveness_probe_aggregation`, and
+`app_qml_startup_tests`. Evidence is retained outside the repository at
+`C:\\hotas-builds\\responsiveness-phase2\\evidence-phase2`.
 
-| Workload | Side | reports/s samples | median reports/s | median p95 / p99 us | largest per-report max us | allocations | output decisions / run |
-| --- | --- | --- | ---: | --- | ---: | ---: | ---: |
-| Linear | A | 1,945,085; 2,265,627; 2,276,201 | 2,265,627 | 0.6 / 0.7 | 64.3 | 0 | 2,133,853 |
-| Linear | B | 2,316,358; 2,028,568; 2,188,778 | 2,188,778 | 0.7 / 0.8 | 198.4 | 0 | 2,133,853 |
-| Adaptive All 8 Axes | A | 1,522,177; 1,598,899; 1,476,627 | 1,522,177 | 1.0 / 1.1 | 180.1 | 0 | 2,133,853 |
-| Adaptive All 8 Axes | B | 1,498,159; 1,592,938; 1,384,840 | 1,498,159 | 1.0 / 1.3 | 351.4 | 0 | 2,133,853 |
-
-The complete benchmark suites each passed. End-to-end suite durations were
-8.46, 9.88, and 8.73 seconds for A; and 8.69, 8.74, and 8.80 seconds for B.
-Every profile-control sample on both sides also recorded zero hot-path
-allocations and zero curve compiles during triggers.
-
-### A/B verdict
-
-The linear and adaptive throughput distributions overlap. With three
-interleaved samples, this is **no measured material throughput regression**;
-it is not a claim of statistical significance or an improvement. B's adaptive
-p99 and one-off maximum were higher, but the benchmark source and link set are
-unchanged from Phase 1 and the samples retain zero allocations, fixed output
-decision counts, and zero trigger-time curve compiles. The tails are an
-observation to retain during live qualification, not grounds to change mapper
-priority or the hot path.
-
-This benchmark intentionally excludes DirectInput polling and the vJoy driver
-call. It does not prove physical controller-to-vJoy latency.
-
-## Native interaction and scrolling matrix
-
-**No verdict.** The native Windows computer-use surface on this host exposed
-no targetable app windows, so no synthetic mouse, wheel, keyboard, resize,
-dialog, tab, slider, dropdown, or text input was sent. That limitation is not
-substituted with offscreen QML evidence.
-
-The existing probe is ready to capture supported native input to the next
-`frameSwapped`, GUI heartbeat, natural frame pacing, navigation lifecycle, and
-persistence telemetry. `frameSwapped` remains a queue-for-presentation
-boundary, not display scanout or semantic-command completion. No owner-driven
-native capture exists yet, so there are no input-to-frame p50/p95/p99/max,
-input counts, scroll labels, navigation-first-frame values, owner smoothness
-observations, or native persistence records to report.
-
-No repeated multi-second ordinary interaction was observed because no ordinary
-native interaction was driven. This is not evidence that such a stall cannot
-occur.
-
-## Physical mapping and contention matrix
-
-**No verdict.** Read-only device discovery found a game-controller candidate
-and vJoy present, but it cannot establish that a controller is recognized by
-this mapper, an approved safe profile is active, axes are changing, mapping is
-active, or vJoy is receiving writes.
-
-Three user-owned `HOTAS BF6.exe` processes were already active: the installed
-mapper and two separate task builds. To preserve their configurations and live
-mapping state, this campaign did not start a competing full mapper process,
-modify a profile, toggle mapping, or attach hostile CPU/disk load to them.
-Consequently all of the following remain unmeasured: report cadence, mapping
-latency p50/p95/p99, vJoy writes per second, missed/late reports, worker
-backlog, mapping-off versus mapping-on scheduler comparison, and physical
-controller-to-vJoy timing.
-
-The Idle, CPU, Disk, and Combined native/physical matrix is therefore **not
-run**, rather than represented as a failed or passing stress result. No CPU or
-disk contention was launched against the active user-owned mappers.
-
-## Native persistence
-
-The focused QML workload and Phase 1 matrix retain their synthetic evidence
-that ordinary persistence captures and queues on the GUI side while the writer
-runs on its serial worker. That architecture was preserved: current Phase 2
-source equals the Phase 1 head before this report. A real native configuration
-edit, durability catch-up, and clean-exit flush have not been performed in
-this campaign, so native persistence is **not yet qualified**.
-
-## Owner-assisted completion sequence
-
-Do this only after the owner has chosen an inactive test window and a safe test
-profile, with any user-owned mapper process explicitly left alone or stopped by
-the owner. Launch the Phase 2 build with:
-
-```powershell
-$env:HOTAS_RESPONSIVENESS_PROBE = '1'
-$env:HOTAS_RESPONSIVENESS_SCENARIO = 'phase2-owner-native'
-$env:HOTAS_RESPONSIVENESS_COMMIT = '4325fdac929f0a59fb5769b3c43a2e709937ef66'
-$env:HOTAS_RESPONSIVENESS_PROBE_OUTPUT = 'C:\hotas-builds\responsiveness-phase2\evidence-phase2\owner-native.json'
-& 'C:\hotas-builds\responsiveness-phase2\HOTAS BF6.exe'
-```
-
-With the probe enabled, make two real mouse/keyboard/wheel passes through only
-the ten in-scope pages. On Settings/Overview, medium Axes/Buttons/Profiles,
-and heavy Adaptive Response/Devices/Diagnostics, record the owner labels
-smooth, minor hitch, choppy, or unusable. Exercise a safe slider or dropdown,
-a non-destructive dialog, a harmless text check, resize from minimum to normal
-to large, and one safe test-profile edit followed by clean exit. Do not open
-Signal Flow.
-
-If explicitly approved for live hardware, repeat under Idle, bounded CPU,
-bounded disk, and combined load with mapping off then on; confirm controller
-recognition, active safe profile, axis movement, mapping state, and vJoy
-output. Record owner observations beside the probe. Do not claim USB-to-game
-or scanout latency from these measurements.
-
-## Verdict by subsystem and Phase 3 selection
-
-| Subsystem | Verdict | Basis |
-| --- | --- | --- |
-| Mapper hot path | qualified for allocation/control-flow guard; no measured material throughput regression | Interleaved A/B; zero allocations, zero trigger-time curve compiles, overlapping throughput distributions |
-| Phase 1 persistence architecture | no new issue measured | Focused regression suite passes; native edit/exit still unqualified |
-| Native interaction, navigation, scrolling, resize | no verdict | No targetable native automation and no owner capture |
-| Physical controller to vJoy | no verdict | Device/vJoy presence only; no live mapper observation |
-| Mapping-on scheduler balance | no verdict | Deliberately not tested against user-owned live processes |
-
-No remediation target is selected from this partial run. The ranked Phase 3
-prerequisite is an owner-authorized, probe-enabled native and physical
-qualification capture. Only after that capture identifies a repeatable
-GUI-thread blocker, controller-enumeration cost, invalidation fanout, scrolling
-problem, construction cost, or scheduling effect may a Phase 3 remediation be
-chosen. No mapper-priority, rendering, scrolling, loader, or Signal Flow
-change is authorized by this report.
+Before owner acceptance, use a safe test profile with the owner's physical
+controller and vJoy mapper active; run the Combined workload while navigating,
+scrolling, resizing, and editing; record mapping-on/off comparison, actual
+vJoy movement, and owner feel. Stop after that acceptance capture—no Phase 3
+implementation, merge, tag, release, or version change is authorized here.
