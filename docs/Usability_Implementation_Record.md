@@ -67,6 +67,7 @@
 - Local focused results: `HOTAS_STARTUP_FOCUSED_TEST=multi-controller` and `HOTAS_STARTUP_FOCUSED_TEST=read-only-input` both passed under the CTest-equivalent offscreen/plugin environment.
 - `ui_release_contract_tests` also passed with the Qt runtime environment. Its first direct invocation exited before the test body because the Qt runtime path was absent; that runner setup result is not recorded as a contract-test failure.
 - Local QML limit: the single Flight Deck visual/lifecycle path was launched after the successful QML compile but stayed idle without a terminal result and was ended. This is **NO NEW LOCAL QML VERDICT**, not a pass or product-failure claim. It is separate from the older 15-test no-verdict above. The prior head's GitHub CI remains historical evidence only; a new head requires a new CI result.
+- New-head CI: commit `0940adc9c86f71438a07438298af7f04e98befab` passed GitHub **HOTAS BF6 CI** run `35184815806` and its paired **Documentation Check** run `35184815810` on 2026-09-17. The CI completed qualified-Qt QML lint, Release configuration, compilation of the mapper and all tests, and its mapping/automation/launcher/readiness/benchmark suite. This CI result covers the corrected source; it does not convert either local QML no-verdict into a local pass or prove native visual review, physical hardware, or driver behavior.
 
 ## Matched synthetic mapper benchmark
 
