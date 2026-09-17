@@ -10,6 +10,10 @@ namespace hotas {
 // one shared control-plane/runtime helper so enumeration order can never
 // decide which DIJOYSTATE2 field backs a physical axis.
 int physicalAxisIndexForDirectInputOffset(DWORD offset);
+// Some legacy DirectInput drivers expose a valid axis GUID but report a
+// DIJOYSTATE2 offset for another slot. Prefer the object identity when it is
+// one of the fixed standard axes; retain the raw offset as native evidence.
+int physicalAxisIndexForDirectInputObject(const DIDEVICEOBJECTINSTANCEW &instance);
 LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis);
 LONG directInputAxisValueAtOffset(const DIJOYSTATE2 &state, DWORD offset);
 float normalizeDirectInputAxisValue(LONG value, const NativeAxisDescriptor &descriptor);

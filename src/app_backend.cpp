@@ -131,6 +131,48 @@ bool sameControllerInventory(const QList<DiscoveredController> &left,
     });
 }
 
+// A saved controller from a build that classified axes by DIJOYSTATE2 offset
+// can retain a native descriptor in the wrong canonical slot.  Inventory is
+// read-only and keyed to the exact DirectInput controller, so prefer its
+// current object identity for presentation.  The stale slot is deliberately
+// hidden while connected rather than showing one static "Z Rotation" card
+// and a second live one for the same native object.
+struct AxisPresentationDescriptor {
+    NativeAxisDescriptor descriptor;
+    bool discovered = false;
+    bool configuredAvailable = false;
+};
+
+AxisPresentationDescriptor axisPresentationDescriptor(const SavedControllerRecord *record,
+                                                       const DiscoveredController *observed,
+                                                       int axis)
+{
+    AxisPresentationDescriptor result;
+    if (!record || axis < 0 || axis >= kPhysicalAxisCount) return result;
+    const size_t index = static_cast<size_t>(axis);
+    const NativeAxisDescriptor &saved = record->axisDescriptors[index];
+    const NativeAxisDescriptor *current = observed ? &observed->axisDescriptors[index] : nullptr;
+    bool displacedSavedObject = false;
+    if (current && saved.present && !current->present && !saved.directInputGuid.isEmpty()) {
+        for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+            if (candidate == axis) continue;
+            const NativeAxisDescriptor &candidateDescriptor = observed->axisDescriptors[
+                static_cast<size_t>(candidate)];
+            if (candidateDescriptor.present
+                && candidateDescriptor.directInputGuid.compare(saved.directInputGuid,
+                                                                Qt::CaseInsensitive) == 0) {
+                displacedSavedObject = true;
+                break;
+            }
+        }
+    }
+    result.descriptor = current && current->present ? *current : saved;
+    result.discovered = current ? current->present : saved.present;
+    result.configuredAvailable = !displacedSavedObject
+        && (record->axes[index] || (observed && observed->axes[index]));
+    return result;
+}
+
 QString automationProfileName(const MapperConfiguration &configuration, const QString &id)
 {
     if (findProfile(configuration, id)) return categoryProfileLabel(configuration, id);
@@ -812,16 +854,18 @@ QVariantList AppBackend::axisConfiguration() const
         && (sourceMemberIndex < 0 || runtime.deviceRigMemberPhysicalConnected[
             static_cast<size_t>(sourceMemberIndex)].load());
     const QString sourceName = sourceRecord ? sourceRecord->displayName : u"All Devices"_qs;
-    const bool sourceConnected = sourceRecord
-        && discoveredController(sourceRecord->lastDirectInputId);
+    const DiscoveredController *observedController = sourceRecord
+        ? discoveredController(sourceRecord->lastDirectInputId) : nullptr;
+    const bool sourceConnected = observedController != nullptr;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
         const AxisMapping &mapping = axes[index];
         QVariantMap item;
         item.insert(u"index"_qs, index);
         item.insert(u"key"_qs, physicalAxisKey(axis));
-        const NativeAxisDescriptor descriptor = sourceRecord
-            ? sourceRecord->axisDescriptors[static_cast<size_t>(index)] : NativeAxisDescriptor{};
+        const AxisPresentationDescriptor presentation = axisPresentationDescriptor(
+            sourceRecord, observedController, index);
+        const NativeAxisDescriptor descriptor = presentation.descriptor;
         const QString hardwareLabel = physicalAxisDisplayLabel(descriptor, axis);
         const QString customLabel = mapping.customName.trimmed();
         item.insert(u"label"_qs, customLabel.isEmpty() ? hardwareLabel : customLabel);
@@ -830,7 +874,7 @@ QVariantList AppBackend::axisConfiguration() const
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"nativeIdentity"_qs, physicalAxisKey(axis).toUpper());
         item.insert(u"nativeObjectName"_qs, descriptor.nativeName);
-        item.insert(u"axisDiscovered"_qs, descriptor.present);
+        item.insert(u"axisDiscovered"_qs, presentation.discovered);
         item.insert(u"nativeType"_qs, descriptor.relative ? u"Relative axis"_qs : u"Absolute axis"_qs);
         item.insert(u"directInputGuid"_qs, descriptor.directInputGuid);
         item.insert(u"directInputType"_qs, QString(u"0x%1"_qs)
@@ -874,8 +918,10 @@ QVariantList AppBackend::axisConfiguration() const
         item.insert(u"sourceDevice"_qs, sourceName);
         item.insert(u"sourceConnected"_qs, sourceConnected);
         item.insert(u"specificSource"_qs, sourceRecord != nullptr);
-        item.insert(u"available"_qs, editorPhysicalAxisAvailable(index));
-        item.insert(u"liveAvailable"_qs, exactLiveSource && editorPhysicalAxisAvailable(index));
+        const bool runtimeAvailable = exactLiveSource && acquisitionMethod >= 0;
+        const bool available = presentation.configuredAvailable || runtimeAvailable;
+        item.insert(u"available"_qs, available);
+        item.insert(u"liveAvailable"_qs, exactLiveSource && available);
         const PhysicalAxisActivity activity = sourceRecord
             ? sourceRecord->axisActivity[static_cast<size_t>(index)]
             : PhysicalAxisActivity::Unknown;
@@ -965,16 +1011,18 @@ QVariantList AppBackend::axes() const
         && (sourceMemberIndex < 0 || runtime.deviceRigMemberPhysicalConnected[
             static_cast<size_t>(sourceMemberIndex)].load());
     const QString sourceName = sourceRecord ? sourceRecord->displayName : u"All Devices"_qs;
-    const bool sourceConnected = sourceRecord
-        && discoveredController(sourceRecord->lastDirectInputId);
+    const DiscoveredController *observedController = sourceRecord
+        ? discoveredController(sourceRecord->lastDirectInputId) : nullptr;
+    const bool sourceConnected = observedController != nullptr;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
         const AxisMapping &mapping = axes[index];
         QVariantMap item;
         item.insert(u"index"_qs, index);
         item.insert(u"key"_qs, physicalAxisKey(axis));
-        const NativeAxisDescriptor descriptor = sourceRecord
-            ? sourceRecord->axisDescriptors[static_cast<size_t>(index)] : NativeAxisDescriptor{};
+        const AxisPresentationDescriptor presentation = axisPresentationDescriptor(
+            sourceRecord, observedController, index);
+        const NativeAxisDescriptor descriptor = presentation.descriptor;
         const QString hardwareLabel = physicalAxisDisplayLabel(descriptor, axis);
         const QString customLabel = mapping.customName.trimmed();
         item.insert(u"label"_qs, customLabel.isEmpty() ? hardwareLabel : customLabel);
@@ -983,7 +1031,7 @@ QVariantList AppBackend::axes() const
         item.insert(u"detail"_qs, physicalAxisDetail(axis));
         item.insert(u"nativeIdentity"_qs, physicalAxisKey(axis).toUpper());
         item.insert(u"nativeObjectName"_qs, descriptor.nativeName);
-        item.insert(u"axisDiscovered"_qs, descriptor.present);
+        item.insert(u"axisDiscovered"_qs, presentation.discovered);
         item.insert(u"nativeType"_qs, descriptor.relative ? u"Relative axis"_qs : u"Absolute axis"_qs);
         item.insert(u"directInputGuid"_qs, descriptor.directInputGuid);
         item.insert(u"directInputType"_qs, QString(u"0x%1"_qs)
@@ -1027,8 +1075,10 @@ QVariantList AppBackend::axes() const
         item.insert(u"sourceDevice"_qs, sourceName);
         item.insert(u"sourceConnected"_qs, sourceConnected);
         item.insert(u"specificSource"_qs, sourceRecord != nullptr);
-        item.insert(u"available"_qs, editorPhysicalAxisAvailable(index));
-        item.insert(u"liveAvailable"_qs, exactLiveSource && editorPhysicalAxisAvailable(index));
+        const bool runtimeAvailable = exactLiveSource && acquisitionMethod >= 0;
+        const bool available = presentation.configuredAvailable || runtimeAvailable;
+        item.insert(u"available"_qs, available);
+        item.insert(u"liveAvailable"_qs, exactLiveSource && available);
         const PhysicalAxisActivity activity = sourceRecord
             ? sourceRecord->axisActivity[static_cast<size_t>(index)]
             : PhysicalAxisActivity::Unknown;
