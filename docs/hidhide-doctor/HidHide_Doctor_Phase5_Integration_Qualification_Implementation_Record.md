@@ -305,6 +305,12 @@ path has not run for this unsigned candidate.
   registered tests in 247.97 seconds with `--timeout 180`; the strengthened
   release-contract test passed and the longest `app_qml_startup_tests` leg
   completed in 155.29 seconds. This is local automated evidence only.
+- The deep-helper regression now also re-seals and injects forbidden
+  `command`, argument, executable, service, filter, registry-path, cache-path,
+  and RunOnce-like package fields, plus a mismatched one-time nonce. Each is
+  rejected by the typed helper protocol. A fresh full 18-test CTest run passed
+  after adding those vectors; this is test-only helper-security evidence, not
+  authorization for a mutable repair.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
