@@ -1,3 +1,5 @@
+#include "contention_resilience_controller.h"
+
 #include <QFile>
 #include <QtTest>
 
@@ -209,20 +211,39 @@ void UiReleaseContractTests::presentationLifecycleSleepsOnlyTheGuiControlPlane()
     const QString header = sourceFile(QStringLiteral("src/app_backend.h"));
     const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
     const QString worker = sourceFile(QStringLiteral("src/mapping_worker.cpp"));
+    const QString controller = sourceFile(QStringLiteral("src/contention_resilience_controller.cpp"));
+    using Controller = hotas::ContentionResilienceController;
+
+    // The presentation controller is the cadence authority. Verify its actual
+    // policies rather than pinning a Flight Deck timer to the former literal.
+    const Controller::Policy normal = Controller::policyForLevel(Controller::Level::Normal);
+    const Controller::Policy pressure = Controller::policyForLevel(Controller::Level::Pressure);
+    const Controller::Policy severe = Controller::policyForLevel(Controller::Level::Severe);
+    QCOMPARE(normal.telemetryIntervalMs, 33);
+    QCOMPARE(normal.liveGraphIntervalMs, 33);
+    QVERIFY(pressure.telemetryIntervalMs > normal.telemetryIntervalMs);
+    QVERIFY(pressure.liveGraphIntervalMs > normal.liveGraphIntervalMs);
+    QVERIFY(severe.telemetryIntervalMs > pressure.telemetryIntervalMs);
+    QVERIFY(severe.liveGraphIntervalMs > pressure.liveGraphIntervalMs);
+    QVERIFY(pressure.backgroundPollMultiplier > normal.backgroundPollMultiplier);
+    QVERIFY(severe.backgroundPollMultiplier > pressure.backgroundPollMultiplier);
+    QVERIFY(!severe.decorativeMotionAllowed);
 
     QVERIFY(header.contains(QStringLiteral("presentationState READ presentationState NOTIFY presentationStateChanged")));
     QVERIFY(header.contains(QStringLiteral("enum class PresentationLifecycleState")));
     QVERIFY(header.contains(QStringLiteral("Q_INVOKABLE void restoreFromTray()")));
-    QVERIFY(backend.contains(QStringLiteral("kVisibleSnapshotIntervalMs = 33")));
     QVERIFY(backend.contains(QStringLiteral("kMinimizedSnapshotIntervalMs = 250")));
     QVERIFY(backend.contains(QStringLiteral("kVisibleNumericTelemetryIntervalMs = 100")));
     QVERIFY(backend.contains(QStringLiteral("kTrayHiddenControllerDiscoveryIntervalMs = 7500")));
     QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.stop();")));
-    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kMinimizedSnapshotIntervalMs);")));
-    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(kVisibleSnapshotIntervalMs);")));
+    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(m_contentionResilience->telemetryIntervalMs());")));
+    QVERIFY(backend.contains(QStringLiteral("m_snapshotTimer.start(scaledBackgroundInterval(kMinimizedSnapshotIntervalMs));")));
+    QVERIFY(backend.contains(QStringLiteral("m_controllerDiscoveryTimer.start(scaledBackgroundInterval(kTrayHiddenControllerDiscoveryIntervalMs));")));
+    QVERIFY(backend.contains(QStringLiteral("connect(m_contentionResilience.get(), &ContentionResilienceController::policyChanged,")));
+    QVERIFY(controller.contains(QStringLiteral("Policy ContentionResilienceController::policyForLevel")));
     QVERIFY(backend.contains(QStringLiteral("quickWindow->releaseResources();")));
     QVERIFY(backend.contains(QStringLiteral("quickWindow->setPersistentSceneGraph(false);")));
-    QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.start(kVisibleGameDetectionIntervalMs);")));
+    QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.start(scaledBackgroundInterval(kVisibleGameDetectionIntervalMs));")));
     QVERIFY(backend.contains(QStringLiteral("m_gameDetectionTimer.stop();")));
     for (const QString &page : {sourceFile(QStringLiteral("qml/Standard.qml")),
                                 sourceFile(QStringLiteral("qml/Legacy.qml"))}) {
@@ -246,6 +267,7 @@ void UiReleaseContractTests::presentationLifecycleSleepsOnlyTheGuiControlPlane()
     QVERIFY(automation.contains(QStringLiteral("draft: editing ? clone(draft)")));
     QVERIFY(!worker.contains(QStringLiteral("presentationState")));
     QVERIFY(!worker.contains(QStringLiteral("presentationLifecycle")));
+    QVERIFY(!worker.contains(QStringLiteral("ContentionResilienceController")));
 }
 
 void UiReleaseContractTests::curveEditorUsesSelectedAxisTelemetryAndExplicitPaintContracts()
@@ -643,7 +665,10 @@ void UiReleaseContractTests::adaptiveResponseVisualizerKeepsPredictorAndSimulato
     // display cadence; it must not repeatedly rescale a growing sample list.
     QVERIFY(flightDeckAdaptive.contains(QStringLiteral("property double historyNewestElapsedMs")));
     QVERIFY(flightDeckAdaptive.contains(QStringLiteral("elapsedMs - timelineStartMs")));
-    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("interval: 33")));
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral(
+        "readonly property int resilienceLiveGraphIntervalMs: contention ? contention.liveGraphIntervalMs : 33")));
+    QCOMPARE(flightDeckAdaptive.count(QStringLiteral("interval: root.resilienceLiveGraphIntervalMs")), 5);
+    QVERIFY(flightDeckAdaptive.contains(QStringLiteral("if (root.contention) root.contention.recordLiveGraphRefresh()")));
     QVERIFY(flightDeckAdaptive.contains(QStringLiteral("root.responseLabSource === \"live\" && !root.historyPaused")));
     QVERIFY(backend.contains(QStringLiteral("{u\"newestElapsedMs\"_qs, newestMs}")));
 }

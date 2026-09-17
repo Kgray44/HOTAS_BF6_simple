@@ -1,90 +1,96 @@
-# Whole-App Responsiveness — Phase 7: Controlled Qualification
+# Whole-App Responsiveness — Phase 7: Controlled Qualification Closeout
 
-## Verdict and scope
+## Automated campaign decision
 
-Phase 7 closes the two evidence gaps left by Phase 6: the hostile runs now hold a documented total-host CPU band, and the scroll matrix uses representative Axes, Buttons, and Automation presentation fixtures. The harness objective passed in both hostile cases. The CPU-only run averaged 92.6% and the CPU-plus-disk run averaged 92.9% over explicit five-second stability windows; both meet the declared 88–97% acceptance envelope for at least 80% of those windows.
+**COMPLETE for the authorized automated scope.** The two Phase 6 release-contract debts are resolved against the real Phase 4 architecture; the bounded QML lifecycle executable passes and now fails cleanly with progress if it regresses; and the startup heartbeat is classified as startup readiness rather than a runtime stall. The completed native qualification evidence remains valid: these closeout changes alter only qualification/reporting and test harnesses, not the product scroll policy, mapping worker, DirectInput, vJoy, persistence design, or contention thresholds.
 
-This is not a whole-app smoothness pass. Each hostile run also recorded one startup event-loop heartbeat above one second (1,305.25 ms CPU-only and 1,092.92 ms CPU-plus-disk). Those records began at the probe start and have no page attribution, but they occurred while the app was launched under the controlled load and must remain an open finding. The per-session scroll matrix completed, and every representative fixture session moved content, but neither result substitutes for native physical-pointer/touchpad review or owner acceptance.
+This is not physical HOTAS, native physical-pointer/touchpad, accessibility, typography, or owner-acceptance proof. Those owner-review tasks remain explicitly deferred.
 
-Phase 7 changes qualification infrastructure only. It does not modify QML scroll policy, Flickable physics, bounds behavior, mapping, vJoy, DirectInput, persistence design, contention thresholds, product versioning, installers, updaters, tags, releases, `main`, or Phase 6's draft PR.
-
-## Provenance
+## Provenance and boundaries
 
 | Item | Value |
 | --- | --- |
 | Candidate branch | `codex/whole-app-responsiveness-phase7` |
 | Exact Phase 6 parent | `a920c1fbe3c71212b720952d701dc894b4cd6604` |
-| Phase 6 PR | #77, draft and unmerged; base remains Phase 5 `3409670d30a5b217e329f75a18a285af98da675a` |
+| Existing Phase 6 draft PR | #77; remains draft and unmerged |
 | Worktree | `C:\\Users\\kkids\\Documents\\HOTAS_BF6-responsiveness-phase7` |
 | Build directory | `C:\\hotas-builds\\responsiveness-phase7` |
 | Evidence root | `C:\\hotas-builds\\responsiveness-phase7\\evidence-phase7` |
 | Product QML files changed | none |
+| Product mapping/persistence policy changed | none |
 
-The native driver stays inside the established whole-app page list. No out-of-scope page was navigated, measured, or modified by this phase.
+The Phase 7 branch preserves commit `9b791e3`. This closeout adds only source-contract/test coverage, bounded test-lifecycle diagnostics, and probe reporting boundaries. It does not rebase onto `main`, merge, tag, release, or change a version. The explicitly excluded Signal Flow surface was not navigated, profiled, benchmarked, or modified.
 
-## Controlled-host-load method
+## Controlled-host-load evidence retained
 
-The PowerShell harness replaces the old five-second `Win32_Processor`/WMI CPU observation with the lightweight `GetSystemTimes` total-host calculation already appropriate for the Phase 4 controller. CPU control and samples occur every 1,000 ms. Disk counters are observed only for the disk scenario, at harness sampling cadence; they are not in the CPU control loop.
-
-One hidden task-owned helper process hosts a bounded pool of 15 managed worker threads. A four-byte named in-memory duty channel lets the parent make small closed-loop adjustments without spawning per-core PowerShell processes or writing a duty log on every turn. The threads use staggered 100 ms duty windows. The optional disk case is one bounded 128 MiB task-owned disk job. Both helpers have the same finite deadline as the workload and are stopped in the harness `finally` block.
-
-The JSON retains every raw one-second host reading and every applied duty change. Qualification uses overlapping five-second means derived from those raw samples: this measures sustained host pressure while making the raw 76.9–100% / 78.7–100% scheduler variation visible. A run is stable only if its window mean stays in the requested 90–95% band and at least 80% of windows are in the predeclared 88–97% envelope.
+The original Phase 7 PowerShell harness uses `GetSystemTimes` total-host CPU sampling every second, a task-owned pool of 15 managed worker threads with a bounded named-memory duty channel, and an optional bounded 128 MiB disk job. It retains every one-second raw observation and uses overlapping five-second means for the acceptance decision.
 
 | Host-load run | Worker threads | Five-second windows | Min / mean / max | In 90–95% target | In 88–97% envelope | Longest continuous envelope interval | Stable |
 | --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
 | CPU 90–95 | 15 | 146 | 87.2 / 92.6 / 99.2% | 74.7% | 93.8% | 46 s | yes |
 | CPU 90–95 + 128 MiB disk | 15 | 147 | 87.5 / 92.9 / 97.3% | 80.3% | 98.0% | 92 s | yes |
 
-The first hostile run had 150 raw steady readings (76.9 / 92.5 / 100%) and the combined run had 151 (78.7 / 92.9 / 100%). These are retained in `cpuControlSamples` and `cpuLoadQualification.rawControlSamples`; the windowed result is not a replacement for raw data.
+The raw samples remain visible rather than replaced by windowed means: CPU-only was 150 samples at 76.9 / 92.5 / 100%, and CPU-plus-disk was 151 at 78.7 / 92.9 / 100%. No CPU or CPU-plus-disk matrix was repeated during closeout.
 
-## Representative isolated fixtures
+## Representative fixtures and native-window result retained
 
-The opt-in native driver now installs presentation-only fixture data after navigating to a page and before assessing scrollability. It does not call mapping/configuration APIs to create these data. The native summary records the fixture inventory, so the evidence distinguishes a populated view from an empty default installation.
+The isolated native driver populated presentation-only fixtures before scroll assessment: eight mapped axes, 32 mapped buttons plus one POV, and 12 automation rules. Across idle, CPU-only, and CPU-plus-disk runs, all 92 sessions were scrollable, with zero fixture-driver failures and zero non-scrollable Axes/Buttons/Automation records. The fixtures are not physical-device evidence.
 
-| Page | Isolated presentation fixture | Result in each accepted run |
-| --- | --- | --- |
-| Axes | 8 populated axes with mappings and response summaries | 8 scrollable sessions: normal and compact × slow/normal/rapid/reverse |
-| Buttons | 32 mapped buttons and one POV | 8 scrollable sessions: normal and compact × slow/normal/rapid/reverse |
-| Automation | 12 plausible automation rules | 8 scrollable sessions: normal and compact × slow/normal/rapid/reverse |
-
-All three runs had 92 total scroll sessions, 92 scrollable sessions, zero fixture-driver failures, and zero non-scrollable Axes/Buttons/Automation records. The fixtures exist only inside the isolated native qualification process; they do not establish physical device inventory or controller behavior.
-
-## Native-window results
-
-The matrix retains Phase 6's definitions: slow (5 events at 100 ms), normal (10 at 35 ms), rapid (16 at 16 ms), and reverse (16 at 16 ms with a halfway direction change). The sources are Qt Test window-system wheel-angle-delta events routed to a real `QQuickWindow`, not physical pointer or touchpad input.
-
-| Run | Exit / timeout | Worst scroll movement p95 | Worst wheel-to-frame p95 | Worst active-scroll frame p95 | Largest active-scroll frame | Input / frame / event-loop samples over 1 s |
+| Run | Exit / timeout | Worst movement p95 | Worst wheel-to-frame p95 | Worst active-scroll frame p95 | Largest active-scroll frame | Input / frame / heartbeat samples over 1 s |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | Idle representative matrix | 0 / no | 60.00 ms | 61.08 ms | 19.75 ms | 103.46 ms | 0 / 0 / 0 |
-| Controlled CPU 90–95 | 0 / no | 43.52 ms | 46.61 ms | 29.83 ms | 101.74 ms | 0 / 0 / 1 |
-| Controlled CPU 90–95 + disk | 0 / no | 43.46 ms | 47.34 ms | 30.79 ms | 101.34 ms | 0 / 0 / 1 |
+| Controlled CPU 90–95 | 0 / no | 43.52 ms | 46.61 ms | 29.83 ms | 101.74 ms | 0 / 0 / 1 startup record |
+| Controlled CPU 90–95 + disk | 0 / no | 43.46 ms | 47.34 ms | 30.79 ms | 101.34 ms | 0 / 0 / 1 startup record |
 
-The two over-one-second event-loop records are startup heartbeat delays at `startedSinceStartMs: 0`; their native summaries otherwise have no failures. The hostile cases finished all 92 sessions despite those startup records. They are an evidence-backed remaining concern, not a basis for a scroll-policy rewrite or a claim that the entire app is smooth under pressure.
+The retained >1 s records are 1,305.25 ms under CPU-only and 1,092.92 ms under CPU-plus-disk. Both were attributed to the probe start (`startedSinceStartMs: 0`) with no page. They are retained as startup-readiness cost; they are not discarded or relabeled as a passing runtime measurement.
 
-## Preserved boundaries
+## Release-contract debt resolution
 
-- The Phase 6 scroll instrumentation, patterns, window profiles, movement definitions, and existing page policies are preserved.
-- No shared scroll component, wheel handler, `StopAtBounds` choice, velocity/deceleration setting, or nested-control behavior changed.
-- The Phase 4 automatic contention policy was observed, not retuned. Both hostile runs transitioned to `severe`; presentation degrades before interaction and the mapping path remains outside this work.
-- Existing Phase 5 Profiles virtualization is untouched.
-- The native runs are synthetic and isolated. They are not physical HOTAS, physical mouse/touchpad, native typography, accessibility, or owner-acceptance evidence.
+`ui_release_contract_tests` had exactly two stale assertions, both asserting pre-Phase-4 literals rather than the implemented architecture.
+
+| Stale assertion | Actual contract now tested | Resolution |
+| --- | --- | --- |
+| Minimized snapshot timer starts directly at `kMinimizedSnapshotIntervalMs` | `AppBackend` routes visible telemetry through the controller and uses `scaledBackgroundInterval(...)` for minimized/tray polling; Normal / Pressure / Severe are 33 / 50 / 83 ms with background multipliers 1 / 2 / 4 | Accepted Phase 4 background-work degradation; test now asserts that controller-owned contract |
+| Flight Deck live graph contains `interval: 33` | The visualizer reads `contentionResilience.liveGraphIntervalMs`, and all five graph timers use that presentation-only interval | Accepted Phase 4 dynamic presentation cadence; test now asserts binding, all five timers, and refresh accounting |
+
+The repaired release contract also asserts that presentation lifecycle ownership does not enter `MappingWorker`. The Phase 4 controller remains control-plane-only: it degrades presentation before interaction and does not retune the mapping hot path.
+
+## Bounded QML lifecycle diagnosis
+
+The previous `app_qml_startup_tests --isolated-presentation` invocation had a test-harness defect: CTest supplied the argument, but the executable did not consume it and silently fell through to its broad default matrix. The prior stopped process therefore did **not** establish a product shutdown hang or a terminal QML verdict.
+
+The argument now activates the existing isolated ten-page navigation workload. It runs two passes over Overview, Devices, Axes, Buttons, Curve Editor, Profiles, Adaptive Response, Automation, Diagnostics, and Settings; all 20 cases passed in the terminal run. It leaves the excluded surface out of scope. The test has both a 75-second CTest timeout and a 60-second test-only watchdog. On timeout the watchdog writes elapsed time, the active or last-completed stage, and active asynchronous-operation count, then exits with code 124. It is intentionally incapable of becoming an anonymous indefinite process.
+
+Terminal evidence: `app_qml_startup_tests --isolated-presentation` passed in 1.49 s (and 1.14 s with verbose probe capture). The verbose run showed all 20 navigation cases passing and a final `isolated presentation complete` marker.
+
+## Startup-readiness boundary
+
+The probe formerly started its 16 ms heartbeat before synchronous root construction. Its first timer delivery therefore measured probe start through construction/initial presentation and emitted a runtime-style major event at time zero. That is the exact mechanism behind the retained >1 s records.
+
+The probe now reports `startupReadiness` separately:
+
+1. probe start to `QQuickWindow` ready;
+2. window ready to first `frameSwapped` presentation;
+3. first heartbeat timing and whether it preceded first presentation;
+4. the first post-presentation heartbeat, which establishes the steady-state 16 ms heartbeat baseline.
+
+Only heartbeats after that baseline contribute to `eventLoop` runtime samples and scheduler observation. The startup cost remains in the exported report.
+
+In the bounded post-fix capture, window ready was 291.56 ms after probe start; the first heartbeat was 291.60 ms and preceded first presentation; first presentation arrived at 312.43 ms; and the runtime baseline armed at 312.80 ms with a 21.20 ms interval. The post-presentation runtime sample set had 25 samples, p95 32.86 ms, maximum 36.78 ms, and no major stalls. This is a classifier-validation capture, not a replacement hostile-load run.
 
 ## Verification
 
 | Check | Result |
 | --- | --- |
-| PowerShell parser for `Invoke-ResponsivenessCharacterization.ps1` | passed |
-| Release build: `HOTASMapper` and `responsiveness_probe_tests` | passed; subsequent build reported `ninja: no work to do` |
-| `responsiveness_probe_disabled` and `responsiveness_probe_aggregation` | 2 / 2 passed |
-| Mapping hot-path benchmark | 3 completed runs; each exited 0 and preserves the benchmark's zero-allocation assertions |
-| Idle native qualification | exit 0; no timeout; no driver failures; all representative fixture sessions scrollable |
-| Controlled CPU native qualification | exit 0; no timeout; stable-host-load criterion met; no driver failures |
-| Controlled CPU-plus-disk native qualification | exit 0; no timeout; stable-host-load criterion met; no driver failures |
-| `ui_release_contract_tests` | exits 2 directly and via CTest in this clean build; no Phase 7 source touches its covered areas, so this is not claimed as a Phase 7 regression verdict |
-| `app_qml_startup_tests --isolated-presentation` | did not terminate during the observed local run and was stopped only after verifying its executable and CTest parent; **NO NEW LOCAL QML VERDICT** |
+| Release build of changed targets | passed; only existing Qt QTP0004 author warnings |
+| `ui_release_contract_tests` | passed via CTest, 0.08 s |
+| `responsiveness_probe_aggregation` | passed via CTest, 0.06 s; validates startup-readiness export and baseline separation |
+| `app_backend_startup_tests` | passed via CTest, 14.84 s; validates Normal / Pressure / Severe presentation cadence and recovery without changing mapping request truth |
+| `app_qml_startup_tests --isolated-presentation` | passed via CTest, 1.49 s; bounded 20-case isolated route, watchdog retained |
+| Probe classifier capture | passed; first heartbeat before first presentation, then separate runtime baseline |
+| Mapping hot-path benchmark | one fresh completed sanity run; every mapping/profile-control/automation line reported `hot_path_allocations=0` |
+| Persistence | remains valid from retained qualification and startup lifecycle coverage; no persistence redesign or repeated hostile persistence matrix |
 
-The no-terminal-result QML run is not reported as a pass or a product failure. It does not alter the completed native-window qualification results.
+## Deferred owner work
 
-## Follow-up boundary
-
-Do not use this phase as authorization to retune product rendering, rewrite scroll behavior, or alter the mapping/persistence hot paths. The next decision, if desired, is a narrowly scoped investigation of the reproducible startup heartbeat stalls under controlled load, followed by separate native physical-pointer/touchpad and owner review. Those are not completed here.
+The automated campaign does not authorize native physical mouse/touchpad review, real HOTAS/vJoy/HidHide qualification, accessibility review, typography review, or owner acceptance. Those items remain **DEFERRED TO OWNER**. There is no merge, version bump, tag, release, or protected-main claim in this phase.

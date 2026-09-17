@@ -146,6 +146,12 @@ int main(int argc, char *argv[])
     for (const double delay : {0.0, 5.0, 17.0, 34.0, 51.0, 101.0, 251.0, 501.0, 1001.0, 5001.0, 20000.0}) {
         probe->recordEventLoopDelayForTest(delay);
     }
+    probe->recordStartupWindowReadyForTest();
+    probe->recordFirstPresentedFrameForTest();
+    // The first post-presentation heartbeat establishes the runtime baseline;
+    // only a subsequent heartbeat may enter steady-state event-loop samples.
+    probe->recordEventLoopHeartbeatForTest();
+    probe->recordEventLoopHeartbeatForTest();
     probe->beginScrollSession(QStringLiteral("Settings"), QStringLiteral("flightDeckSettings"),
                               QStringLiteral("normal"), QStringLiteral("normal-1320x840"),
                               QStringLiteral("Normal"), 0.0);
@@ -160,12 +166,21 @@ int main(int argc, char *argv[])
     if (!reportFile.open(QIODevice::ReadOnly)) return fail("probe report could not be opened");
     const QJsonDocument document = QJsonDocument::fromJson(reportFile.readAll());
     const QJsonObject eventLoop = document.object().value(QStringLiteral("eventLoop")).toObject();
-    if (eventLoop.value(QStringLiteral("sampleCount")).toInt() != 11
-        || eventLoop.value(QStringLiteral("p50Ms")).toDouble() != 101.0
+    if (eventLoop.value(QStringLiteral("sampleCount")).toInt() != 12
+        || eventLoop.value(QStringLiteral("p50Ms")).toDouble() != 51.0
         || eventLoop.value(QStringLiteral("p95Ms")).toDouble() != 20000.0
         || eventLoop.value(QStringLiteral("maximumMs")).toDouble() != 20000.0
         || eventLoop.value(QStringLiteral("over5000Ms")).toInt() != 2) {
         return fail("probe percentile or threshold aggregation was incorrect");
+    }
+    const QJsonObject startupReadiness = document.object()
+        .value(QStringLiteral("startupReadiness")).toObject();
+    if (startupReadiness.value(QStringLiteral("windowReadySinceProbeStartMs")).isNull()
+        || startupReadiness.value(QStringLiteral("firstPresentedFrameSinceProbeStartMs")).isNull()
+        || startupReadiness.value(QStringLiteral("steadyStateHeartbeatArmedSinceProbeStartMs")).isNull()
+        || startupReadiness.value(QStringLiteral("firstHeartbeatBeforeFirstPresentedFrame")).toBool()
+        || !startupReadiness.contains(QStringLiteral("windowReadyToFirstPresentedFrameMs"))) {
+        return fail("probe did not report separate startup-readiness boundaries");
     }
     const QJsonArray scrollSessions = document.object().value(QStringLiteral("scrollSessions")).toArray();
     if (scrollSessions.size() != 1) return fail("probe did not export one bounded scroll session");

@@ -42,9 +42,15 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdlib>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 using namespace Qt::StringLiterals;
@@ -69,6 +75,74 @@ bool failPresentationLifecycleTest(const QString &message)
     std::fputc('\n', stderr);
     qCritical().noquote() << QStringLiteral("Presentation lifecycle test failed: %1").arg(message);
     return false;
+}
+
+class IsolatedPresentationWatchdog final {
+public:
+    explicit IsolatedPresentationWatchdog(int timeoutMs)
+        : m_timeoutMs(timeoutMs)
+        , m_startedAt(std::chrono::steady_clock::now())
+        , m_thread([this] {
+            std::unique_lock lock(m_mutex);
+            if (m_finished.wait_for(lock, std::chrono::milliseconds(m_timeoutMs),
+                                    [this] { return m_complete; })) {
+                return;
+            }
+            const QByteArray stage = m_stage.toUtf8();
+            const int activeAsyncOperations = m_activeAsyncOperations;
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_startedAt).count();
+            lock.unlock();
+            std::fprintf(stderr,
+                "app_qml_lifecycle_watchdog timeoutMs=%d elapsedMs=%lld lastCompletedOrActiveStage=%s activeAsyncOperations=%d\\n",
+                m_timeoutMs, static_cast<long long>(elapsedMs), stage.constData(), activeAsyncOperations);
+            std::fflush(stderr);
+            std::_Exit(124);
+        })
+    {
+        mark(QStringLiteral("isolated-presentation startup"));
+    }
+
+    ~IsolatedPresentationWatchdog()
+    {
+        {
+            std::scoped_lock lock(m_mutex);
+            m_complete = true;
+        }
+        m_finished.notify_one();
+        m_thread.join();
+    }
+
+    void mark(const QString &stage, int activeAsyncOperations = 0)
+    {
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - m_startedAt).count();
+        {
+            std::scoped_lock lock(m_mutex);
+            m_stage = stage;
+            m_activeAsyncOperations = activeAsyncOperations;
+        }
+        std::fprintf(stderr, "app_qml_lifecycle_progress elapsedMs=%lld stage=%s activeAsyncOperations=%d\\n",
+            static_cast<long long>(elapsedMs), stage.toUtf8().constData(), activeAsyncOperations);
+        std::fflush(stderr);
+    }
+
+private:
+    int m_timeoutMs;
+    std::chrono::steady_clock::time_point m_startedAt;
+    std::mutex m_mutex;
+    std::condition_variable m_finished;
+    QString m_stage;
+    int m_activeAsyncOperations = 0;
+    bool m_complete = false;
+    std::thread m_thread;
+};
+
+int isolatedPresentationWatchdogMs()
+{
+    bool valid = false;
+    const int configured = qEnvironmentVariableIntValue("HOTAS_QML_LIFECYCLE_WATCHDOG_MS", &valid);
+    return valid && configured >= 1'000 ? configured : 60'000;
 }
 
 void settlePresentation()
@@ -8309,6 +8383,22 @@ int main(int argc, char *argv[])
     // Conventional lifecycle coverage must not be redirected by a persisted
     // Flight Deck selection from a preceding focused fixture.
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
+    const bool isolatedPresentation = QCoreApplication::arguments().contains(
+        QStringLiteral("--isolated-presentation"));
+    // CTest owns this bounded route. It exercises the existing ten-page
+    // Phase 0 navigation workload, which deliberately does not select Signal
+    // Flow, rather than silently falling through to the broad visual matrix.
+    std::unique_ptr<IsolatedPresentationWatchdog> isolatedPresentationWatchdog;
+    if (isolatedPresentation) {
+        isolatedPresentationWatchdog = std::make_unique<IsolatedPresentationWatchdog>(
+            isolatedPresentationWatchdogMs());
+    }
+    const auto markIsolatedPresentation = [&isolatedPresentationWatchdog](const QString &stage,
+                                                                            int activeAsyncOperations = 0) {
+        if (isolatedPresentationWatchdog) {
+            isolatedPresentationWatchdog->mark(stage, activeAsyncOperations);
+        }
+    };
     // A focused geometry pass can run with Main.qml's explicit hidden
     // presentation argument. It verifies the Flight Deck choice safe-area
     // contract without raising or focusing a window on the owner's desktop.
@@ -8329,8 +8419,8 @@ int main(int argc, char *argv[])
     // The Phase 0 path has its own ten-page workload and never selects
     // Signal Flow. It remains an isolated QML regression, not a claim about
     // a native owner pointer pass under system contention.
-    const bool wholeAppResponsivenessNavigationOnly = qEnvironmentVariableIsSet(
-        "HOTAS_QML_WHOLE_APP_RESPONSIVENESS_ONLY");
+    const bool wholeAppResponsivenessNavigationOnly = isolatedPresentation
+        || qEnvironmentVariableIsSet("HOTAS_QML_WHOLE_APP_RESPONSIVENESS_ONLY");
     // The sidebar activation path is intentionally runnable on its own. It
     // provides a short native-QML regression for committed activation truth,
     // independent of the much broader visual-review matrix.
@@ -8391,10 +8481,13 @@ int main(int argc, char *argv[])
         return performanceSafe ? 0 : 1;
     }
     if (wholeAppResponsivenessNavigationOnly) {
+        markIsolatedPresentation(QStringLiteral("whole-app navigation workload"), 1);
         backend.setVirtualAxisAvailabilityForTest(true);
         const bool safe = verifyWholeAppResponsivenessNavigation(
             backend, themeManager, QStringLiteral("Dark"));
+        markIsolatedPresentation(QStringLiteral("persistence shutdown flush"));
         backend.flushPersistenceForShutdown();
+        markIsolatedPresentation(QStringLiteral("responsiveness report export"));
         const QString reportPath = backend.exportResponsivenessProbe();
         if (backend.responsivenessProbeEnabled() && reportPath.isEmpty()) {
             return failPresentationLifecycleTest(
@@ -8403,6 +8496,7 @@ int main(int argc, char *argv[])
         if (!reportPath.isEmpty()) {
             std::fprintf(stderr, "whole_app_responsiveness_report=%s\n", reportPath.toUtf8().constData());
         }
+        markIsolatedPresentation(QStringLiteral("isolated presentation complete"));
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return safe ? 0 : 1;
     }
