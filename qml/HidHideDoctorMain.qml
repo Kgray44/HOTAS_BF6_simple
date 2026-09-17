@@ -621,7 +621,9 @@ ApplicationWindow {
                         }
                         Label { text: "BACKUP  " + repairPlanColumn.plan.backup + "\nROLLBACK  " + repairPlanColumn.plan.rollback + "\nADMINISTRATOR ACCESS  " + repairPlanColumn.plan.elevation + "\nRESTART  " + repairPlanColumn.plan.restart + "\nCONTINUATION  " + repairPlanColumn.plan.continuation + "\nUSER ACTION  " + repairPlanColumn.plan.userAction; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: 9; lineHeight: 1.18; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         Rectangle {
-                            visible: repairPlanColumn.plan.package && repairPlanColumn.plan.package !== "Not applicable"
+                            visible: typeof repairPlanColumn.plan.package === "string"
+                                && repairPlanColumn.plan.package.length > 0
+                                && repairPlanColumn.plan.package !== "Not applicable"
                             Layout.fillWidth: true
                             implicitHeight: packagePlanText.implicitHeight + 12
                             color: Theme.inset

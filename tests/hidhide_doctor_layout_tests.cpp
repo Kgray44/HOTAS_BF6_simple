@@ -264,6 +264,27 @@ void HidHideDoctorLayoutTests::keyboardActivationUsesTheCustomPresentationAndPan
     QVERIFY(model.commandCenter());
     QVERIFY(item(window, "commandWorkspace"));
 
+    QTest::keyClick(window, Qt::Key_Tab, Qt::ShiftModifier);
+    QTest::keyClick(window, Qt::Key_Return);
+    QTest::qWait(120);
+    QObject *focused = QGuiApplication::focusObject();
+    const QString focusDescription = focused
+        ? QStringLiteral("%1 objectName=%2 text=%3").arg(QString::fromLatin1(focused->metaObject()->className()),
+              focused->objectName(), focused->property("text").toString())
+        : QStringLiteral("no focused object");
+    QVERIFY2(!model.commandCenter(), qPrintable(focusDescription));
+    QVERIFY(item(window, "focusWorkspace"));
+
+    model.setCommandCenter(true);
+    model.setMaximizedPane(QStringLiteral("findings"));
+    QTest::qWait(120);
+    QVERIFY(item(window, "commandFindingsPane"));
+    QVERIFY(!item(window, "commandPlanPane")->isVisible());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTest::qWait(120);
+    QCOMPARE(model.maximizedPane(), QString());
+    QVERIFY(item(window, "commandPlanPane")->isVisible());
+
 }
 
 void HidHideDoctorLayoutTests::persistedSplitModeAndResetLayoutSurviveTheTortureSequence()
