@@ -25,6 +25,17 @@
   of the mapper, launcher, and all tests, and the mapped automation, launcher
   readiness, and benchmark test gate all passed. A later PR head still requires
   its own terminal CI result.
+- Current product-fix source SHA: `aba8d2358a5899648be7f1b1b7346648a3159163`.
+  It preserves native Windows Unicode command-line arguments when Doctor reads
+  a report destination, instead of decoding `argv` through the local ANSI code
+  page. The resulting immutable candidate is
+  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2`. It has 1,387 component-manifest
+  entries, component-manifest SHA-256
+  `34A2A1BD50409BCB8D4F81FF5EDFF6249D916B0E42C03074EF2B896AC37C13CC`, and
+  `HidHide Doctor.exe` SHA-256
+  `6E45DE692B327470EDBF81D5691758E773D68057757DB929CB62E68D9AF9DC1D`.
+  Every staged entry was rechecked by path, byte count, and SHA-256. This newer
+  source head likewise requires its own terminal CI result.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -227,6 +238,20 @@ Helper protocol is v2 and integration protocol is v1.
   report redaction manifest recorded 12 included, 714 redacted, and 2 excluded
   entries, while the scoped local-identifier check found no current user or
   host/profile/temp/app-data path. This is one narrow owner-machine result.
+- The final-source focused Doctor CTest set passed 5/5: domain, deep repair,
+  standalone startup, path-boundary contract, and layout. The new contract
+  starts the Doctor directly with `ProcessStartInfo.ArgumentList`: a Unicode
+  report destination containing spaces, ampersand, percent, semicolon, and
+  apostrophe created valid JSON with exit 0; a regular-file parent exited 3 and
+  created no report. No shell interpreted either destination.
+- The immutable final stage passed manifest verification (1,387/1,387 entries),
+  `--startup-smoke`, `--scan-smoke`, and headless report creation, all exit 0.
+  Its final-stage process campaign completed 27 runs with no failure or timeout:
+  9 startup smokes had a 553.435 ms median (515.728–595.093 ms), 9 headless
+  report serializations had a 295.748 ms median (280.710–383.385 ms), and three
+  scan smokes per synthetic CPU level had medians of 1388.309 ms idle,
+  1478.011 ms moderate, and 1733.912 ms heavy. This is process-level evidence,
+  not first-visible or owner interaction latency.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
@@ -248,23 +273,23 @@ negative product claim, nor a substituted real-machine result.
 
 | Required category | Current evidence / status |
 |---|---|
-| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. Earlier owner review used `6734b773a5f2a70764ef029b705b804625cea154` and records baseline `7ee23194e18e8bbd80ce143e11052800669ce19c`; the current product candidate is the crash-fix and bundle-folder commit `0846edfc73b282660fcf2d410d9523d5e0545cb1`. The accepted documentation head is `193349a9e752435d90b8cb119a788c126c0211ce`, whose terminal PR checks were `verify` 35234040985 and `validate` 35234041079. |
+| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. Earlier owner review used `6734b773a5f2a70764ef029b705b804625cea154` and records baseline `7ee23194e18e8bbd80ce143e11052800669ce19c`. The current product candidate is the Unicode report-destination fix `aba8d2358a5899648be7f1b1b7346648a3159163`, staged at `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2`; its source head requires terminal CI. |
 | 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Deterministic updater fixtures roll back interrupted/invalid replacement and preserve external configuration; real installed-product update atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
 | 13–15. Clean, healthy, partial HidHide | Deterministic diagnostic fixtures only; clean/healthy/partial real or VM environments are Not qualified. |
 | 16. Owner machine | Exact staged candidate `C:\hotas-builds\hidhide-doctor-phase5-rc-6734b77-stage` completed a read-only scan: Windows build 26200 x64, 238 checks, 4 findings, 3 diagnoses, zero NUL bytes, and full 1.5.230.0 client / 1.4.181.0 driver version strings. Version mismatch, restart, HID enumeration, and stale-configuration evidence remained separate. |
-| 17. External tester campaign | The verified standalone kit is `C:\hotas-builds\HidHideDoctor-Phase5-ExternalQualification-Kit-2.6.2-RC3`, with 1,392 receipt-manifest entries and kit-manifest SHA-256 `AA280CEC80DBF295C2F0D265BFBB840832112415C864F006832ABD344404274E`. It contains the self-contained candidate, user/tester guide, owner worksheet, external matrix, candidate receipt, and receipt instructions. An external tester has not yet run it. |
+| 17. External tester campaign | The verified standalone final kit is `C:\hotas-builds\HidHideDoctor-Phase5-ExternalQualification-Kit-2.6.2-Final`, with 1,392 receipt-manifest entries and kit-manifest SHA-256 `932BE13709F56A432A08FFFBE17B505E063C98BC26D31F247F0ED1CEAD619C58`. Its candidate receipt agrees with final-stage manifest SHA-256 `34A2A1BD50409BCB8D4F81FF5EDFF6249D916B0E42C03074EF2B896AC37C13CC`, declares `repairAuthorized: false`, and includes the self-contained candidate, user/tester guide, owner worksheet, external matrix, candidate receipt, and receipt instructions. An external tester has not yet run it. |
 | 18–22. R1–R5 qualification | R1–R3 remain LabQualified; R4 is unavailable without an approved newer package; R5 is unavailable without an independently verified rollback package. No FieldQualified promotion occurred. |
-| 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. The new deterministic corpus covers handoff, journals, helper frames, package metadata, and reports. A complete hostile-input audit remains Not qualified. |
+| 23. Security audit | Bounded typed context/result storage rejects malformed, oversized, reused, and unsupported inputs; helper protocol safety remains covered by deterministic tests. The new deterministic corpus covers handoff, journals, helper frames, package metadata, and reports. The final stage also passes the direct no-shell Unicode/metacharacter report-destination contract. A complete hostile-input audit remains Not qualified. |
 | 24. Fuzz results | Seeded `0x5AFEF00D`, 64-input-per-surface deterministic campaign passed without crash, hang, or malformed-input acceptance. Sustained fuzzing and resource-pressure fuzzing remain Not qualified. |
 | 25. Privacy/export audit | Default Safe to Share output redacts non-exportable evidence, records included/redacted/excluded items, writes atomically with 8 MiB per-file bounds, and records automatic network upload as not performed. The owner successfully exported, reopened, and visually accepted a Local / Unredacted Downloads report; a corrected staged read-only report has zero NUL bytes. On the current `0846edf` stage, the owner also exported a Safe-to-Share child bundle with the five expected artifacts, valid JSON, no empty/NUL file, 12 included/714 redacted/2 excluded entries, and no matches for the scoped current user/host/profile/temp/app-data identifiers. This narrowly qualifies that real artifact; it is not a universal privacy or external-delivery audit. |
 | 26. DPI/accessibility | Native-QML fixture coverage includes density and layout behavior; real Windows DPI, screen-reader, and owner visual review are Not qualified. |
-| 27–28. Performance and CPU contention | Exact-stage process data: 15 startup-smokes median 511.855 ms (462.328–574.361); 15 headless report serializations median 297.279 ms (265.116–403.066); five scans per level exited 0 at idle median 1451.325 ms, moderate synthetic CPU median 1375.562 ms, and heavy synthetic CPU median 1758.906 ms (heavy maximum 2108.035 ms). A 10-second interactive idle observation was 0.01% CPU across 16 logical processors, 163,299,328 B working set, and 149,700,608 B private memory. First-visible and native-interaction latency plus low-resource/write-failure qualification remain Not qualified. |
+| 27–28. Performance and CPU contention | Final-stage process data: 9 startup-smokes median 553.435 ms (515.728–595.093); 9 headless report serializations median 295.748 ms (280.710–383.385); three scans per level exited 0 at idle median 1388.309 ms, moderate synthetic CPU median 1478.011 ms, and heavy synthetic CPU median 1733.912 ms (heavy maximum 1796.992 ms). A five-second protected interactive-idle observation was 0.02% CPU across 16 logical processors, 163,213,312 B working set, and 149,762,048 B private memory. First-visible and native-interaction latency plus low-resource/write-failure qualification remain Not qualified. |
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Final stage packaging and standalone startup/scan/headless-report smoke passed. The installer compiler is unavailable on this host, and the governed install/upgrade/uninstall acceptance script deliberately refuses to run outside an isolated GitHub Actions Windows runner. Installed-product update atomicity, recovery, and uninstall are therefore Not qualified locally. |
-| 33–34. RC artifact and manifest | Immutable final stage `C:\hotas-builds\hidhide-doctor-v1-rc1-0846edf-stage`: 1,387 component-manifest entries, manifest SHA-256 `DA7866437487E31DE3C9F2576DF57F1B885C85A186E7298BDAE79B099F5606AF`, zero path/size/hash mismatches, and stage `--startup-smoke`, `--scan-smoke`, and headless report each exited 0. `HidHide Doctor.exe` SHA-256 is `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`; all four staged executables are `NotSigned`. This is not a public release artifact; a later PR head requires its own terminal CI. |
+| 33–34. RC artifact and manifest | Immutable final stage `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2`: 1,387 component-manifest entries, manifest SHA-256 `34A2A1BD50409BCB8D4F81FF5EDFF6249D916B0E42C03074EF2B896AC37C13CC`, zero path/size/hash mismatches, and stage `--startup-smoke`, `--scan-smoke`, and headless report each exited 0. `HidHide Doctor.exe` SHA-256 is `6E45DE692B327470EDBF81D5691758E773D68057757DB929CB62E68D9AF9DC1D`; mapper, launcher, Doctor, and helper each report `NotSigned`. This is not a public release artifact; the current PR head requires terminal CI. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, user-visible/low-resource qualification, installed-product update/uninstall, full manual regression, and external testing remain release blockers. Process-level CPU contention is locally evidenced but is not a substitute for those user-visible or resource-pressure gates. Components are `NotSigned`. |
-| 36a. Final local CTest rerun | A rebuilt sequential CTest rerun passed targets 1–14. `app_backend_startup_tests` then remained active for 339 seconds with no configured CTest timeout or error output, so only the agent-launched CTest parent and its test children were stopped. The live mapper and Doctor were not touched. This is **NO NEW LOCAL CTEST VERDICT**, not a product-failure verdict; the earlier 17/17 sequential result on the unchanged product head remains historical only. |
+| 36a. Final local CTest rerun | The final-source focused Doctor set passed 5/5, including the new no-shell path contract. A rebuilt sequential CTest rerun before that passed targets 1–14. `app_backend_startup_tests` then remained active for 339 seconds with no configured CTest timeout or error output, so only the agent-launched CTest parent and its test children were stopped. The live mapper and Doctor were not touched. This remains **NO NEW LOCAL FULL-CTEST VERDICT**, not a product-failure verdict; the earlier 17/17 sequential result on the unchanged pre-fix product head remains historical only. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
