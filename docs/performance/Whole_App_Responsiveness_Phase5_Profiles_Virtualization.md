@@ -102,4 +102,3 @@ The broad local app_qml_startup_tests CTest entry was started before source chan
 Phase 5 removes the measured multi-second Profiles construction bottleneck. Do not expand this branch into a general QML or scrolling rewrite. If Phase 6 is authorized, first remeasure whole-app wheel-to-frame pacing under the same load: the 1579.4 ms event-loop maximum and 1851.0 ms frame maximum are the remaining measured tail. Target a specific page loader or narrow notifier fanout only if new evidence identifies it as comparable to the resolved Profiles cost.
 
 Owner acceptance, protected-main integration, merging, versioning, tagging, and release remain explicitly deferred.
-
