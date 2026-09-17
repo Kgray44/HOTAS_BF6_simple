@@ -18,7 +18,13 @@
   `HidHide Doctor.exe` SHA-256 of
   `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`.
   Every staged file was locally checked against that manifest by path, byte
-  count, and SHA-256. Fresh current-head CI remains required.
+  count, and SHA-256. On exact PR head
+  `5ed6f17f6c83f5328db2be8bd2cf6092e0b246c0`, GitHub Actions run
+  `35231842975` reached terminal `SUCCESS`: documentation synchronization,
+  qualified Qt/toolchain setup, QML lint, Release configuration, compilation
+  of the mapper, launcher, and all tests, and the mapped automation, launcher
+  readiness, and benchmark test gate all passed. A later PR head still requires
+  its own terminal CI result.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -258,6 +264,6 @@ negative product claim, nor a substituted real-machine result.
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
-| 33–34. RC artifact and manifest | Local crash-fix candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; 1,387 component-manifest entries and component-manifest SHA-256 `81F3CAEF21504C5456405281BD603B62947690994A86AA38E9DF358F103B590E`. Every staged file matched that manifest by path, byte count, and SHA-256; `HidHide Doctor.exe` SHA-256 is `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`. It is not a public release artifact and fresh current-head CI remains required. |
+| 33–34. RC artifact and manifest | Local crash-fix candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; 1,387 component-manifest entries and component-manifest SHA-256 `81F3CAEF21504C5456405281BD603B62947690994A86AA38E9DF358F103B590E`. Every staged file matched that manifest by path, byte count, and SHA-256; `HidHide Doctor.exe` SHA-256 is `9A46EEA359F95505344E620426D39FD637AD71F7AD07B36C98ABB62CB3783DD9`. Exact PR head `5ed6f17f6c83f5328db2be8bd2cf6092e0b246c0` passed GitHub Actions run `35231842975`, including the Release build and mapped automation/launcher-readiness/benchmark gate. This is not a public release artifact; a later PR head requires its own terminal CI. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, contention, installer/update/uninstall, full manual regression, and external testing remain release blockers. Components are `NotSigned`. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
