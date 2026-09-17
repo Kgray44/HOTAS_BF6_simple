@@ -184,11 +184,19 @@ void ResponsivenessProbe::attachWindow(QQuickWindow *window)
     m_window = window;
     if (!m_window) return;
 
+    recordWindowReady(monotonicNowNs());
+
     // frameSwapped is the closest safe practical Qt Quick boundary to a
     // presented frame. The signal may be emitted from the render thread, so
     // this direct slot touches only mutex-protected probe data and never QML.
     m_frameSwappedConnection = connect(m_window, &QQuickWindow::frameSwapped, this,
         [this] { recordFrameSwapped(); }, Qt::DirectConnection);
+}
+
+void ResponsivenessProbe::recordWindowReady(qint64 nowNs)
+{
+    QMutexLocker locker(&m_mutex);
+    if (m_windowReadyNs < 0) m_windowReadyNs = nowNs;
 }
 
 void ResponsivenessProbe::recordInput(const QString &interactionClass)
@@ -402,6 +410,7 @@ void ResponsivenessProbe::recordFrameSwapped()
 {
     const qint64 nowNs = monotonicNowNs();
     QMutexLocker locker(&m_mutex);
+    if (m_firstPresentedFrameNs < 0) m_firstPresentedFrameNs = nowNs;
     if (m_lastFrameNs > 0) {
         const double intervalMs = millisecondsBetween(m_lastFrameNs, nowNs);
         m_frameIntervals.add(intervalMs);
@@ -421,23 +430,55 @@ void ResponsivenessProbe::recordEventLoopHeartbeat()
     const qint64 nowNs = monotonicNowNs();
     const double intervalMs = millisecondsBetween(m_lastHeartbeatNs, nowNs);
     const double delayMs = std::max(0.0, intervalMs - kExpectedHeartbeatMs);
-    // This is qualification-only when the native scheduler observer is
-    // installed. It samples cumulative thread time once per existing GUI
-    // heartbeat; it never runs from MappingWorker or the render hot path.
-    InteractiveSchedulingPolicy::recordGuiHeartbeat(delayMs);
     QMutexLocker locker(&m_mutex);
     m_lastHeartbeatNs = nowNs;
+    if (m_firstHeartbeatNs < 0) {
+        m_firstHeartbeatNs = nowNs;
+        m_firstHeartbeatSinceProbeStartMs = millisecondsBetween(m_startedNs, nowNs);
+        m_firstHeartbeatBeforeFirstPresentedFrame = m_firstPresentedFrameNs < 0;
+    }
+    // App construction and first presentation can run before the normal
+    // event loop settles. Keep that cost as startup-readiness evidence, but
+    // do not misclassify it as a steady-state runtime stall.
+    if (m_firstPresentedFrameNs < 0) return;
+    if (m_runtimeHeartbeatArmedNs < 0) {
+        m_runtimeHeartbeatArmedNs = nowNs;
+        m_runtimeHeartbeatBaselineMs = intervalMs;
+        return;
+    }
     m_eventLoopDelays.add(delayMs);
     if (delayMs >= kMajorStallMs) {
         addMajorEventLocked(u"event-loop-delay"_qs, m_currentPage, u"16 ms heartbeat"_qs,
                             nowNs - static_cast<qint64>(intervalMs * 1'000'000.0), delayMs);
     }
+    locker.unlock();
+    // This is qualification-only when the native scheduler observer is
+    // installed. It samples cumulative thread time once per established GUI
+    // heartbeat; it never runs from MappingWorker or the render hot path.
+    InteractiveSchedulingPolicy::recordGuiHeartbeat(delayMs);
 }
 
 void ResponsivenessProbe::recordEventLoopDelayForTest(double delayMs)
 {
     QMutexLocker locker(&m_mutex);
     m_eventLoopDelays.add(std::max(0.0, delayMs));
+}
+
+void ResponsivenessProbe::recordStartupWindowReadyForTest()
+{
+    recordWindowReady(monotonicNowNs());
+}
+
+void ResponsivenessProbe::recordFirstPresentedFrameForTest()
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_firstPresentedFrameNs < 0) m_firstPresentedFrameNs = nowNs;
+}
+
+void ResponsivenessProbe::recordEventLoopHeartbeatForTest()
+{
+    recordEventLoopHeartbeat();
 }
 
 void ResponsivenessProbe::recordConfigSave(qint64 startedNs, qint64 finishedNs, qint64 serializationNs,
@@ -556,8 +597,35 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
     QMutexLocker locker(&m_mutex);
     QJsonObject eventLoop = summarizeSamples(m_eventLoopDelays);
     eventLoop.insert(u"expectedHeartbeatIntervalMs"_qs, kExpectedHeartbeatMs);
-    eventLoop.insert(u"definition"_qs, u"observed heartbeat interval minus 16 ms"_qs);
+    eventLoop.insert(u"definition"_qs,
+                     u"post-presentation steady-state heartbeat interval minus 16 ms"_qs);
     report.insert(u"eventLoop"_qs, eventLoop);
+    const auto sinceProbeStart = [this](qint64 timestampNs) -> QJsonValue {
+        return timestampNs < 0 ? QJsonValue(QJsonValue::Null)
+                               : QJsonValue(millisecondsBetween(m_startedNs, timestampNs));
+    };
+    QJsonObject startupReadiness{
+        {u"definition"_qs,
+         u"probe start to QQuickWindow-ready, first presented frame, and first steady-state heartbeat"_qs},
+        {u"windowReadySinceProbeStartMs"_qs, sinceProbeStart(m_windowReadyNs)},
+        {u"firstPresentedFrameSinceProbeStartMs"_qs, sinceProbeStart(m_firstPresentedFrameNs)},
+        {u"firstHeartbeatSinceProbeStartMs"_qs,
+         m_firstHeartbeatNs < 0 ? QJsonValue(QJsonValue::Null)
+                                 : QJsonValue(m_firstHeartbeatSinceProbeStartMs)},
+        {u"firstHeartbeatBeforeFirstPresentedFrame"_qs,
+         m_firstHeartbeatNs < 0 ? QJsonValue(QJsonValue::Null)
+                                 : QJsonValue(m_firstHeartbeatBeforeFirstPresentedFrame)},
+        {u"steadyStateHeartbeatArmedSinceProbeStartMs"_qs,
+         sinceProbeStart(m_runtimeHeartbeatArmedNs)},
+        {u"steadyStateHeartbeatBaselineMs"_qs,
+         m_runtimeHeartbeatArmedNs < 0 ? QJsonValue(QJsonValue::Null)
+                                       : QJsonValue(m_runtimeHeartbeatBaselineMs)},
+    };
+    if (m_windowReadyNs >= 0 && m_firstPresentedFrameNs >= 0) {
+        startupReadiness.insert(u"windowReadyToFirstPresentedFrameMs"_qs,
+            millisecondsBetween(m_windowReadyNs, m_firstPresentedFrameNs));
+    }
+    report.insert(u"startupReadiness"_qs, startupReadiness);
     QJsonObject interactionLatency = summarizeSamples(m_interactionLatencies);
     interactionLatency.insert(u"source"_qs,
                               qEnvironmentVariable("HOTAS_RESPONSIVENESS_INTERACTION_SOURCE", "unspecified"));

@@ -488,8 +488,13 @@ if (BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
 
-    qt_add_executable(ui_release_contract_tests tests/ui_release_contract_tests.cpp)
+    qt_add_executable(ui_release_contract_tests
+        tests/ui_release_contract_tests.cpp
+        src/contention_resilience_controller.h
+        src/contention_resilience_controller.cpp
+    )
     target_link_libraries(ui_release_contract_tests PRIVATE Qt6::Core Qt6::Test)
+    target_include_directories(ui_release_contract_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(ui_release_contract_tests PRIVATE HOTAS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME ui_release_contract_tests COMMAND ui_release_contract_tests)
     if (WIN32)
@@ -743,7 +748,8 @@ if (BUILD_TESTING)
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH};HOTAS_QML_LIFECYCLE_WATCHDOG_MS=60000"
+            TIMEOUT 75)
     endif()
 
     qt_add_executable(theme_manager_tests

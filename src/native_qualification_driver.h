@@ -41,6 +41,7 @@ private:
     void runNavigationStep();
     void startScrollCharacterization();
     void runScrollStep();
+    bool installRepresentativeScrollFixture(int page, QQuickItem *viewport);
     void sampleScrollPosition(const QString &surfaceId);
     void finishScrollSession();
     void startControls();
@@ -76,6 +77,7 @@ private:
     int m_scrollPattern = 0;
     int m_scrollEvent = 0;
     bool m_scrollSessionActive = false;
+    bool m_scrollFixtureSettled = false;
     QPointer<QQuickItem> m_scrollViewport;
     int m_sliderBurst = 0;
     int m_resizeStep = 0;
@@ -96,6 +98,7 @@ private:
     QVariantMap m_vjoySummary;
     QVariantList m_profilesConstructionSamples;
     QVariantList m_childControlWheelTests;
+    QVariantMap m_scrollFixtureSummary;
     double m_controllerEnumerationMs = 0.0;
 };
 

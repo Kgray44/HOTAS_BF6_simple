@@ -60,6 +60,11 @@ public:
     // Narrow test seam: it verifies aggregation and bounded reporting without
     // manufacturing application input or waking a render loop.
     void recordEventLoopDelayForTest(double delayMs);
+    // Narrow startup-boundary seams: they exercise report classification
+    // without creating a native window in the Core-only aggregation test.
+    void recordStartupWindowReadyForTest();
+    void recordFirstPresentedFrameForTest();
+    void recordEventLoopHeartbeatForTest();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -155,6 +160,7 @@ private:
     void recordInput(const QString &interactionClass);
     void recordFrameSwapped();
     void recordEventLoopHeartbeat();
+    void recordWindowReady(qint64 nowNs);
     void completePendingInputsLocked(qint64 frameNs);
     void completePendingNavigationLocked(qint64 frameNs);
     void completePendingScrollFramesLocked(qint64 frameNs, double frameIntervalMs);
@@ -170,6 +176,13 @@ private:
     qint64 m_startedNs = 0;
     qint64 m_lastHeartbeatNs = 0;
     qint64 m_lastFrameNs = 0;
+    qint64 m_windowReadyNs = -1;
+    qint64 m_firstPresentedFrameNs = -1;
+    qint64 m_firstHeartbeatNs = -1;
+    qint64 m_runtimeHeartbeatArmedNs = -1;
+    double m_firstHeartbeatSinceProbeStartMs = 0.0;
+    double m_runtimeHeartbeatBaselineMs = 0.0;
+    bool m_firstHeartbeatBeforeFirstPresentedFrame = false;
     qint64 m_lastConfigSaveStartedNs = -1;
     QString m_startedAt;
     QString m_currentPage;
