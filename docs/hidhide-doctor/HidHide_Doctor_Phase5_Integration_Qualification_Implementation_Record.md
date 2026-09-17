@@ -5,9 +5,16 @@
 - Accepted Phase 4 SHA: `03c7efdf52c69e9edb78747e38780360b5969cde`.
 - Phase 5 branch: `codex/hidhide-doctor-phase5-integration-qualification`.
 - Worktree: `C:\Users\kkids\Documents\HOTAS_BF6-hidhide-doctor-phase5-integration-qualification`.
-- Current accepted product-candidate SHA: `6734b773a5f2a70764ef029b705b804625cea154`.
-- PR #68's current-head Documentation Check and HOTAS BF6 CI both reached
-  terminal `SUCCESS` for that SHA.
+- Product implementation SHA exercised in the owner review:
+  `6734b773a5f2a70764ef029b705b804625cea154`.
+- Current PR #68 evidence head: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
+  The intervening changes add deterministic qualification coverage and records;
+  the staged runtime file list (1,387 files, paths, byte counts, and SHA-256
+  values) is identical to the owner-reviewed product implementation stage.
+- The current-head Documentation Check is `SUCCESS`; the current-head HOTAS BF6
+  CI run is still in progress at the time of this record update. The earlier
+  product-implementation checks reached terminal `SUCCESS`; neither result is
+  substituted for the current-head CI result.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -188,7 +195,7 @@ negative product claim, nor a substituted real-machine result.
 
 | Required category | Current evidence / status |
 |---|---|
-| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR, whose head is the current candidate. |
+| 1–3. Phase 4 basis, Phase 5 lineage, final candidate | Phase 4 `03c7efdf52c69e9edb78747e38780360b5969cde`; Phase 5 branch/worktree above; integration baseline `560842c0afff93c9fd387c3c3d566f8e97c51b9a` is recorded on the submitted PR. The owner-reviewed product implementation is `6734b773a5f2a70764ef029b705b804625cea154`; current evidence head `7ee23194e18e8bbd80ce143e11052800669ce19c` adds qualification coverage and records only. |
 | 4–8. Architecture, launch points, context, result, independence | Devices, Flight Deck Diagnostics, and App Health invoke the paired standalone Doctor through the bounded v1 local protocol; Doctor independently observes evidence. In the fresh staged owner session, Devices launched the paired Doctor, while Diagnostics/App Health and Flight Deck Diagnostics focused that same window; the staged Doctor process count remained one. Repeated normal launches focus the same-user existing Doctor instead of creating another process. |
 | 9–11. Packaging, version compatibility, updater | Stage script requires mapper, Doctor, and helper at one `HOTAS_VERSION`, embeds component version resources, and creates a component manifest. Deterministic updater fixtures roll back interrupted/invalid replacement and preserve external configuration; real installed-product update atomicity remains Not qualified. |
 | 12. Qualification matrix | The platform, hardware, privilege, locale, display, and recipe matrix is the qualification ledger. |
@@ -204,6 +211,6 @@ negative product claim, nor a substituted real-machine result.
 | 29. Hardware diversity | Deterministic controller/provider coverage only; real hardware matrix is Not qualified. |
 | 30–31. Full HOTAS and theme regression | Configured local CTest coverage is recorded; five-theme native acceptance and the full practical manual regression matrix are Not qualified. |
 | 32. Installer/update/uninstall | Stage package and standalone startup smoke passed; install, update, and uninstall on a test machine are Not qualified. |
-| 33–34. RC artifact and manifest | Exact local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-6734b77-stage`; 1,387 manifest entries and matching SHA-256 `E5EF328048C4EAEC828BDFD8FE118855AF2E0E746D1F76996226C48F6B573290`. This is not a public release artifact. |
+| 33–34. RC artifact and manifest | Immutable current-head local candidate at `C:\hotas-builds\hidhide-doctor-phase5-rc-7ee2319-stage`; 1,387 component-manifest entries and SHA-256 `826D6FF92E6CE9C96784E61D0BB631C5226E7D70436922B4C09A3A7BE8AF6A99`. Every staged runtime file matched the owner-reviewed `6734b77` stage by path, byte count, and SHA-256; only generated manifest-record metadata differs. This is not a public release artifact. |
 | 35–36. Blockers and limitations | Cross-machine coverage, owner repair/reboot, native review beyond the exercised entry points, accessibility/DPI, contention, installer/update/uninstall, full manual regression, and external testing remain release blockers. Components are `NotSigned`. |
 | 37. Release recommendation | **NOT READY**. No merge, tag, public release, elevation, or repair authorization is implied by this record. |
