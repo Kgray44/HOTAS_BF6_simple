@@ -34,6 +34,9 @@ constexpr int kMaximumPendingInputs = 512;
 constexpr int kMaximumNavigationRecords = 256;
 constexpr int kMaximumConfigSaveRecords = 128;
 constexpr int kMaximumMajorEvents = 64;
+constexpr int kMaximumScrollSessions = 192;
+constexpr int kMaximumScrollWheelRecords = 64;
+constexpr qint64 kScrollActiveFrameWindowNs = 225'000'000;
 constexpr qint64 kBurstWindowNs = 250'000'000;
 constexpr double kMajorStallMs = 250.0;
 
@@ -241,6 +244,116 @@ void ResponsivenessProbe::recordNavigationObjectReady(int page, const QString &p
     if (record->objectReadyNs < 0) record->objectReadyNs = nowNs;
 }
 
+void ResponsivenessProbe::beginScrollSession(const QString &page, const QString &surfaceId,
+                                             const QString &pattern, const QString &windowClass,
+                                             const QString &contentionLevel, qreal initialContentY)
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_scrollSessions.size() >= kMaximumScrollSessions) {
+        ++m_droppedScrollSessions;
+        m_activeScrollSession = -1;
+        return;
+    }
+    ScrollSession session;
+    session.page = page;
+    session.surfaceId = surfaceId;
+    session.pattern = pattern;
+    session.windowClass = windowClass;
+    session.contentionLevel = contentionLevel;
+    session.initialContentY = initialContentY;
+    session.lastContentY = initialContentY;
+    session.startedNs = nowNs;
+    m_scrollSessions.append(std::move(session));
+    m_activeScrollSession = m_scrollSessions.size() - 1;
+}
+
+void ResponsivenessProbe::recordScrollWheel()
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_activeScrollSession < 0 || m_activeScrollSession >= m_scrollSessions.size()) return;
+    ScrollSession &session = m_scrollSessions[m_activeScrollSession];
+    session.lastWheelNs = nowNs;
+    ++session.wheelEvents;
+    if (session.wheels.size() >= kMaximumScrollWheelRecords) {
+        ++session.droppedWheelRecords;
+        return;
+    }
+    session.wheels.append({nowNs});
+}
+
+void ResponsivenessProbe::recordScrollWheelDisposition(bool accepted)
+{
+    QMutexLocker locker(&m_mutex);
+    if (m_activeScrollSession < 0 || m_activeScrollSession >= m_scrollSessions.size()) return;
+    ScrollSession &session = m_scrollSessions[m_activeScrollSession];
+    if (session.wheels.isEmpty()) return;
+    ScrollWheelRecord &wheel = session.wheels.last();
+    if (wheel.dispositionRecorded) return;
+    wheel.dispositionRecorded = true;
+    wheel.accepted = accepted;
+    if (accepted) ++session.acceptedWheelEvents;
+    else ++session.unacceptedWheelEvents;
+}
+
+void ResponsivenessProbe::recordScrollPosition(qreal contentY)
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_activeScrollSession < 0 || m_activeScrollSession >= m_scrollSessions.size()) return;
+    ScrollSession &session = m_scrollSessions[m_activeScrollSession];
+    if (qFuzzyCompare(session.lastContentY + 1.0, contentY + 1.0)) return;
+
+    session.totalMovement += std::abs(contentY - session.lastContentY);
+    session.lastContentY = contentY;
+    session.lastMovementNs = nowNs;
+    ++session.contentPositionChanges;
+
+    for (ScrollWheelRecord &wheel : session.wheels) {
+        if (wheel.movementNs >= 0) continue;
+        wheel.movementNs = nowNs;
+        const double movementMs = millisecondsBetween(wheel.receivedNs, nowNs);
+        session.movementLatency.add(movementMs);
+        if (session.firstWheelToVisibleMovementNs < 0)
+            session.firstWheelToVisibleMovementNs = nowNs;
+        break;
+    }
+}
+
+void ResponsivenessProbe::recordNotScrollable(const QString &page, const QString &surfaceId,
+                                              const QString &windowClass,
+                                              const QString &contentionLevel,
+                                              const QString &reason)
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_scrollSessions.size() >= kMaximumScrollSessions) {
+        ++m_droppedScrollSessions;
+        return;
+    }
+    ScrollSession session;
+    session.page = page;
+    session.surfaceId = surfaceId;
+    session.pattern = u"not-scrollable"_qs;
+    session.windowClass = windowClass;
+    session.contentionLevel = contentionLevel;
+    session.notScrollableReason = reason;
+    session.scrollable = false;
+    session.startedNs = nowNs;
+    session.finishedNs = nowNs;
+    m_scrollSessions.append(std::move(session));
+}
+
+void ResponsivenessProbe::endScrollSession()
+{
+    const qint64 nowNs = monotonicNowNs();
+    QMutexLocker locker(&m_mutex);
+    if (m_activeScrollSession < 0 || m_activeScrollSession >= m_scrollSessions.size()) return;
+    m_scrollSessions[m_activeScrollSession].finishedNs = nowNs;
+    m_activeScrollSession = -1;
+}
+
 void ResponsivenessProbe::completePendingInputsLocked(qint64 frameNs)
 {
     for (const PendingInput &input : std::as_const(m_pendingInputs)) {
@@ -271,6 +384,20 @@ void ResponsivenessProbe::completePendingNavigationLocked(qint64 frameNs)
     }
 }
 
+void ResponsivenessProbe::completePendingScrollFramesLocked(qint64 frameNs, double frameIntervalMs)
+{
+    if (m_activeScrollSession < 0 || m_activeScrollSession >= m_scrollSessions.size()) return;
+    ScrollSession &session = m_scrollSessions[m_activeScrollSession];
+    const qint64 activeSinceNs = std::max(session.lastWheelNs, session.lastMovementNs);
+    if (activeSinceNs >= 0 && frameNs - activeSinceNs <= kScrollActiveFrameWindowNs)
+        session.activeFrameIntervals.add(frameIntervalMs);
+    for (ScrollWheelRecord &wheel : session.wheels) {
+        if (wheel.movementNs < 0 || wheel.firstPresentedNs >= 0 || wheel.movementNs > frameNs) continue;
+        wheel.firstPresentedNs = frameNs;
+        session.frameLatency.add(millisecondsBetween(wheel.receivedNs, frameNs));
+    }
+}
+
 void ResponsivenessProbe::recordFrameSwapped()
 {
     const qint64 nowNs = monotonicNowNs();
@@ -278,6 +405,7 @@ void ResponsivenessProbe::recordFrameSwapped()
     if (m_lastFrameNs > 0) {
         const double intervalMs = millisecondsBetween(m_lastFrameNs, nowNs);
         m_frameIntervals.add(intervalMs);
+        completePendingScrollFramesLocked(nowNs, intervalMs);
         if (intervalMs >= kMajorStallMs) {
             addMajorEventLocked(u"frame-interval"_qs, m_currentPage, u"frameSwapped interval"_qs,
                                 m_lastFrameNs, intervalMs);
@@ -437,6 +565,50 @@ QString ResponsivenessProbe::exportReport(const QString &requestedPath)
     report.insert(u"framePacing"_qs, summarizeSamples(m_frameIntervals));
     report.insert(u"pendingInputEventsAtExport"_qs, m_pendingInputs.size());
     report.insert(u"droppedPendingInputEvents"_qs, static_cast<qint64>(m_droppedPendingInputs));
+
+    QJsonArray scrollSessions;
+    for (const ScrollSession &session : m_scrollSessions) {
+        QJsonObject entry{{u"page"_qs, session.page},
+                          {u"surfaceId"_qs, session.surfaceId},
+                          {u"pattern"_qs, session.pattern},
+                          {u"windowClass"_qs, session.windowClass},
+                          {u"contentionLevel"_qs, session.contentionLevel},
+                          {u"interactionSource"_qs, u"native-window synthetic wheel-angle-delta scroll"_qs},
+                          {u"wheelDeliveryDisposition"_qs,
+                           u"not observable through QTest window-system injection"_qs},
+                          {u"scrollable"_qs, session.scrollable},
+                          {u"wheelEvents"_qs, static_cast<qint64>(session.wheelEvents)},
+                          {u"acceptedWheelEvents"_qs, static_cast<qint64>(session.acceptedWheelEvents)},
+                          {u"unacceptedWheelEvents"_qs, static_cast<qint64>(session.unacceptedWheelEvents)},
+                          {u"droppedWheelRecords"_qs, static_cast<qint64>(session.droppedWheelRecords)},
+                          {u"contentPositionChanges"_qs, static_cast<qint64>(session.contentPositionChanges)},
+                          {u"initialContentY"_qs, session.initialContentY},
+                          {u"finalContentY"_qs, session.lastContentY},
+                          {u"totalMovement"_qs, session.totalMovement},
+                          {u"movementLatency"_qs, summarizeSamples(session.movementLatency)},
+                          {u"wheelToFrame"_qs, summarizeSamples(session.frameLatency)},
+                          {u"activeScrollFramePacing"_qs, summarizeSamples(session.activeFrameIntervals)}};
+        if (session.startedNs >= 0 && session.finishedNs >= session.startedNs) {
+            entry.insert(u"sessionDurationMs"_qs,
+                         millisecondsBetween(session.startedNs, session.finishedNs));
+        }
+        if (session.firstWheelToVisibleMovementNs >= 0 && !session.wheels.isEmpty()) {
+            entry.insert(u"firstWheelToVisibleMovementMs"_qs,
+                         millisecondsBetween(session.wheels.first().receivedNs,
+                                             session.firstWheelToVisibleMovementNs));
+        }
+        if (!session.notScrollableReason.isEmpty())
+            entry.insert(u"notScrollableReason"_qs, session.notScrollableReason);
+        entry.insert(u"unresolvedAcceptedWheelEvents"_qs,
+                     static_cast<qint64>(std::count_if(session.wheels.cbegin(), session.wheels.cend(),
+                         [](const ScrollWheelRecord &wheel) {
+                             return wheel.dispositionRecorded && wheel.accepted
+                                 && wheel.movementNs < 0;
+                         })));
+        scrollSessions.append(entry);
+    }
+    report.insert(u"scrollSessions"_qs, scrollSessions);
+    report.insert(u"droppedScrollSessions"_qs, static_cast<qint64>(m_droppedScrollSessions));
 
     QJsonArray navigation;
     for (const NavigationRecord &record : m_navigation) {

@@ -5,7 +5,9 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointF>
+#include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -39,6 +41,8 @@ private:
     void runNavigationStep();
     void startScrollCharacterization();
     void runScrollStep();
+    void sampleScrollPosition(const QString &surfaceId);
+    void finishScrollSession();
     void startControls();
     void runSliderBurst();
     void runTextControl();
@@ -48,6 +52,7 @@ private:
     void startTortureLoop();
     void runTortureStep();
     void captureProfilesConstruction();
+    void recordChildControlWheel(const QString &label, QQuickItem *control, QQuickItem *viewport);
     void finish();
 
     QObject *surface() const;
@@ -66,8 +71,12 @@ private:
     ThemeManager *m_themeManager = nullptr;
     QQuickWindow *m_window = nullptr;
     int m_navigationStep = 0;
+    int m_scrollWindow = 0;
     int m_scrollPage = 0;
+    int m_scrollPattern = 0;
     int m_scrollEvent = 0;
+    bool m_scrollSessionActive = false;
+    QPointer<QQuickItem> m_scrollViewport;
     int m_sliderBurst = 0;
     int m_resizeStep = 0;
     int m_tortureStep = 0;
@@ -82,9 +91,11 @@ private:
     QStringList m_failures;
     QList<Page> m_pages;
     QElapsedTimer m_tortureElapsed;
+    QTimer m_scrollPositionSampler;
     QVariantList m_controllerSummary;
     QVariantMap m_vjoySummary;
     QVariantList m_profilesConstructionSamples;
+    QVariantList m_childControlWheelTests;
     double m_controllerEnumerationMs = 0.0;
 };
 
