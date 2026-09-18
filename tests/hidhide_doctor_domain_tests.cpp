@@ -1,7 +1,10 @@
 #include "doctor_catalog.h"
+#include "doctor_deep_repair.h"
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_integration.h"
 #include "doctor_knowledge.h"
+#include "doctor_report_composer.h"
 #include "doctor_repair_contract.h"
 #include "doctor_repair_engine.h"
 #include "doctor_repair_helper_protocol.h"
@@ -9,9 +12,16 @@
 
 #include <QtTest>
 
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QRandomGenerator>
+#include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QUrl>
 
 #include <algorithm>
 #include <functional>
@@ -150,6 +160,14 @@ private slots:
     void phaseThreeExecutionRevalidatesAndJournalsWithoutLiveProvider();
     void phaseThreeRollbackAndRestartReconciliationAreStrictlyGuarded();
     void phaseThreeJournalDetectsCorruption();
+    void phaseThreeUnavailableJournalFailsSafelyBeforeMutation();
+    void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
+    void phaseFiveBoundedProtocolJournalReportAndPackageFuzz();
+    void phaseFiveForensicEvidenceIsStructuredLinkedAndSemanticallyRendered();
+    void phaseFiveForensicOwnerReviewFixtureCoversAllEvidenceFamilies();
+    void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
+    void phaseFiveReportExportVerifiesDestinationAndReportsPath();
+    void phaseFiveBundleExportIsTransactionalOnFailure();
 };
 
 void HidHideDoctorDomainTests::stableIdsAndSessionTransitions()
@@ -370,7 +388,7 @@ void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAnd
         DeviceClassification::PhysicalGamingInput, {QStringLiteral("SPDRP_HARDWAREID:13")}, std::nullopt}};
     SnapshotProvider provider(snapshot);
     DoctorDiagnosticEngine engine;
-    const DiagnosticRunOutcome outcome = engine.run(provider);
+    DiagnosticRunOutcome outcome = engine.run(provider);
     QCOMPARE(outcome.session.checkResults().size(), DoctorCatalog::v11DefinedCheckIds().size());
     const DoctorCheckResult *whitelist = resultFor(outcome.session, QStringLiteral("HD-API-004"));
     QVERIFY(whitelist);
@@ -425,7 +443,7 @@ void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(report, &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QCOMPARE(document.object().value(QStringLiteral("evidenceRecords")).toArray().size(), DoctorCatalog::v11DefinedCheckIds().size());
 }
 
@@ -557,7 +575,10 @@ void HidHideDoctorDomainTests::phaseTwoDiagnosisFixtureMatrixIsDeterministicAndR
             }
         }
         QVERIFY2(matched, qPrintable(fixture.name));
-        QCOMPARE(outcome.session.userAction().state, UserActionState::NothingRequired);
+        const UserActionState expectedAction = outcome.session.repairPlan().has_value() ? UserActionState::Required
+            : fixture.expectedDiagnosis.isEmpty() ? UserActionState::NothingRequired : UserActionState::Optional;
+        QCOMPARE(outcome.session.userAction().state, expectedAction);
+        QVERIFY(!outcome.session.userActionHistory().isEmpty());
         QVERIFY(!outcome.knowledgeEngineVersion.isEmpty());
     }
 }
@@ -569,7 +590,7 @@ void HidHideDoctorDomainTests::phaseTwoReportCarriesFindingsDiagnosesAndKnowledg
     DoctorDiagnosticEngine engine;
     const DiagnosticRunOutcome outcome = engine.run(provider);
     const QJsonDocument document = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QVERIFY(!document.object().value(QStringLiteral("knowledgeEngine")).toObject().value(QStringLiteral("version")).toString().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("findings")).toArray().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("diagnoses")).toArray().isEmpty());
@@ -759,6 +780,518 @@ void HidHideDoctorDomainTests::phaseThreeJournalDetectsCorruption()
     QVERIFY(reason.contains(QStringLiteral("malformed")));
 }
 
+void HidHideDoctorDomainTests::phaseThreeUnavailableJournalFailsSafelyBeforeMutation()
+{
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    const DiagnosticRunOutcome outcome = DoctorDiagnosticEngine().run(provider);
+    const RepairPlanProposal proposal = RepairPlanner().propose(outcome.session, outcome.snapshot, true);
+    QCOMPARE(proposal.status, RepairProposalStatus::AvailableForOwnerLab);
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString blockedRoot = temporary.filePath(QStringLiteral("journal-root-is-a-file"));
+    QFile blocker(blockedRoot);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QCOMPARE(blocker.write("not a directory"), qint64(15));
+    blocker.close();
+
+    RepairJournalStore journal(blockedRoot);
+    const RepairExecutionResult dryRun = RepairTransactionCoordinator().dryRun(
+        proposal, outcome.snapshot.environment, outcome.session.id(), journal,
+        RepairTransactionId(QStringLiteral("REPAIR-TX-JOURNAL-UNAVAILABLE-001")));
+    QCOMPARE(dryRun.transaction.state, RepairTransactionState::FailedSafely);
+    QVERIFY(!dryRun.mutated);
+    QVERIFY(dryRun.detail.contains(QStringLiteral("journal directory"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(journal.journalPath(dryRun.transaction.id)));
+}
+
+void HidHideDoctorDomainTests::phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    DoctorLaunchContext context;
+    context.sessionId = QStringLiteral("0123456789abcdef0123456789abcdef");
+    context.invokingVersion = QStringLiteral("2.6.5");
+    context.invokingBuildId = QStringLiteral("integration-test");
+    context.reason = QStringLiteral("devices-isolation");
+    context.expectedHotasExecutable = QStringLiteral("C:\\Program Files\\HOTAS BF6\\HOTAS BF6.exe");
+    context.profileId = QStringLiteral("profile-1");
+    context.deviceRigId = QStringLiteral("rig-1");
+    context.expectedVirtualOutput = QStringLiteral("vJoy Device 1");
+    context.isolationIntent = QStringLiteral("physical-controller isolation expected enabled");
+    context.expectedPhysicalControllerIds = {QStringLiteral("DI:stick-1"), QStringLiteral("DI:throttle-1")};
+
+    QString reason;
+    QVERIFY(writeDoctorLaunchContext(context, &reason));
+    const DoctorIntegrationReadResult accepted = consumeDoctorLaunchContext(context.sessionId);
+    QVERIFY2(accepted.accepted, qPrintable(accepted.rejection));
+    QCOMPARE(accepted.context.expectedVirtualOutput, QStringLiteral("vJoy Device 1"));
+    QCOMPARE(accepted.context.expectedPhysicalControllerIds.size(), 2);
+    QVERIFY(!consumeDoctorLaunchContext(context.sessionId).accepted); // one-time context only
+    QVERIFY(!isValidDoctorIntegrationSessionId(QStringLiteral("../../not-a-token")));
+
+    QVERIFY(writeDoctorIntegrationResult(context, QStringLiteral("Diagnosis complete"),
+                                         QStringLiteral("Read-only scan completed."), &reason));
+    QString state;
+    QString detail;
+    QVERIFY(consumeDoctorIntegrationResult(context.sessionId, &state, &detail, &reason));
+    QCOMPARE(state, QStringLiteral("Diagnosis complete"));
+    QCOMPARE(detail, QStringLiteral("Read-only scan completed."));
+
+    DoctorLaunchContext oversized = context;
+    oversized.sessionId = QStringLiteral("fedcba9876543210fedcba9876543210");
+    oversized.reason = QString(257, QLatin1Char('x'));
+    QVERIFY(!writeDoctorLaunchContext(oversized, &reason));
+}
+
+void HidHideDoctorDomainTests::phaseFiveForensicEvidenceIsStructuredLinkedAndSemanticallyRendered()
+{
+    ReadOnlyDiagnosticSnapshot snapshot = healthyFixtureSnapshot();
+    // Exercise the provider-to-evidence mapping with actual transport facts,
+    // while retaining the fixture's deterministic read-only boundary.
+    ProtocolObservation &active = snapshot.protocol[1];
+    active.endpoint = QStringLiteral("\\\\.\\HidHide");
+    active.access = QStringLiteral("GENERIC_READ; shared read/write/delete; overlapped");
+    active.api = QStringLiteral("CreateFileW + DeviceIoControl");
+    active.ioctlCode = 0x222110;
+    active.requestBytes = 0;
+    active.responseBytes = 1;
+    active.attemptCount = 1;
+    active.timeoutMs = 2500;
+    active.startedAt = QDateTime::currentDateTimeUtc().addMSecs(-1);
+    active.completedAt = QDateTime::currentDateTimeUtc();
+    active.monotonicDurationUs = 847;
+    SnapshotProvider provider(snapshot);
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+
+    int unexpectedlyShallow = 0;
+    const EvidenceRecord *activeEvidence = nullptr;
+    for (const EvidenceRecord &record : outcome.session.evidence()) {
+        if (record.fields.size() < 8 || record.monotonicDurationUs <= 0 || record.expectedState.isEmpty()
+            || record.statusReason.isEmpty())
+            ++unexpectedlyShallow;
+        if (record.checkId.value() == QStringLiteral("HD-API-002")) activeEvidence = &record;
+    }
+    QCOMPARE(unexpectedlyShallow, 0);
+    QVERIFY(activeEvidence);
+    QCOMPARE(activeEvidence->provider, QStringLiteral("HidHide control-device provider"));
+    QCOMPARE(activeEvidence->operation, QStringLiteral("GET_ACTIVE"));
+    QCOMPARE(activeEvidence->targetIdentity, QStringLiteral("\\\\.\\HidHide"));
+    QCOMPARE(activeEvidence->monotonicDurationUs, 847);
+    QVERIFY(activeEvidence->humanSummary.contains(QStringLiteral("enabled"), Qt::CaseInsensitive));
+    QVERIFY(activeEvidence->humanSummary.trimmed().compare(QStringLiteral("true"), Qt::CaseInsensitive) != 0);
+    QVERIFY(std::any_of(activeEvidence->fields.cbegin(), activeEvidence->fields.cend(), [](const EvidenceField &field) {
+        return field.label == QStringLiteral("IOCTL") && field.value == QStringLiteral("0X00222110");
+    }));
+
+    const QJsonObject serialized = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true)).object();
+    QCOMPARE(serialized.value(QStringLiteral("schemaVersion")).toInt(), 6);
+    const QJsonArray records = serialized.value(QStringLiteral("evidenceRecords")).toArray();
+    const auto iterator = std::find_if(records.cbegin(), records.cend(), [](const QJsonValue &value) {
+        return value.toObject().value(QStringLiteral("checkId")).toString() == QStringLiteral("HD-API-002");
+    });
+    QVERIFY(iterator != records.cend());
+    const QJsonObject exported = iterator->toObject();
+    QVERIFY(exported.value(QStringLiteral("fields")).toArray().size() >= 8);
+    QVERIFY(exported.value(QStringLiteral("attempts")).toArray().size() == 1);
+    const QJsonArray linkedChecks = exported.value(QStringLiteral("relationships")).toObject().value(QStringLiteral("checkIds")).toArray();
+    QVERIFY(std::any_of(linkedChecks.cbegin(), linkedChecks.cend(), [](const QJsonValue &value) {
+        return value.toString() == QStringLiteral("HD-API-002");
+    }));
+    QVERIFY(serialized.value(QStringLiteral("activityTimeline")).toArray().size() > outcome.session.checkResults().size());
+}
+
+void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvidenceFamilies()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Forensic Evidence Review"), &label));
+    DoctorDiagnosticEngine engine;
+    DiagnosticRunOutcome outcome = engine.run(provider);
+    QCOMPARE(label, QStringLiteral("Forensic Evidence Review"));
+
+    const auto evidenceFor = [&outcome](const QString &checkId) -> const EvidenceRecord * {
+        const auto iterator = std::find_if(outcome.session.evidence().cbegin(), outcome.session.evidence().cend(),
+            [&checkId](const EvidenceRecord &record) { return record.checkId.value() == checkId; });
+        return iterator == outcome.session.evidence().cend() ? nullptr : &*iterator;
+    };
+    const auto hasField = [](const EvidenceRecord *record, const QString &label) {
+        return record && std::any_of(record->fields.cbegin(), record->fields.cend(), [&label](const EvidenceField &field) {
+            return field.label == label && !field.value.isEmpty();
+        });
+    };
+
+    const EvidenceRecord *protocol = evidenceFor(QStringLiteral("HD-API-002"));
+    QVERIFY(protocol);
+    QCOMPARE(resultFor(outcome.session, QStringLiteral("HD-API-002"))->status, DoctorCheckStatus::Healthy);
+    QVERIFY(hasField(protocol, QStringLiteral("IOCTL")));
+    QVERIFY(protocol->humanSummary.contains(QStringLiteral("enabled"), Qt::CaseInsensitive));
+    const EvidenceRecord *failedProtocol = evidenceFor(QStringLiteral("HD-API-004"));
+    QVERIFY(failedProtocol);
+    QCOMPARE(resultFor(outcome.session, QStringLiteral("HD-API-004"))->status, DoctorCheckStatus::Failed);
+    QVERIFY(hasField(failedProtocol, QStringLiteral("NATIVE ERROR SYMBOL")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-INST-001")), QStringLiteral("SIGNATURE OUTCOME")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-DRV-001")), QStringLiteral("SERVICE STATE")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-DEV-001")), QStringLiteral("DEVICE PROPERTY FAILURES")));
+    const EvidenceRecord *windows = evidenceFor(QStringLiteral("HD-WIN-001"));
+    QVERIFY(windows);
+    QVERIFY(hasField(windows, QStringLiteral("EVENT LOG SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("WINDOWS ERROR REPORT SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("SETUPAPI SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("REPAIR TRANSACTION OBSERVATION")));
+    QVERIFY(std::any_of(outcome.session.diagnoses().cbegin(), outcome.session.diagnoses().cend(), [](const Diagnosis &diagnosis) {
+        return diagnosis.id.value() == QStringLiteral("HD-DIAG-RECOVERY-REQUIRED");
+    }));
+
+    DoctorSessionViewModel model(outcome.session, QStringLiteral("fixture-review"));
+    QString copied;
+    model.setCopyAction([&copied](QString value) { copied = std::move(value); });
+    model.selectEvidence(protocol->id.value());
+    model.copySelectedEvidenceMode(QStringLiteral("Summary"));
+    QVERIFY(copied.contains(QStringLiteral("HD-API-002")));
+    model.copySelectedEvidenceMode(QStringLiteral("Technical"));
+    QVERIFY(copied.contains(QStringLiteral("# TECHNICAL EVIDENCE")));
+    QVERIFY(copied.contains(QStringLiteral("IOCTL")));
+    model.copySelectedEvidenceMode(QStringLiteral("Complete"));
+    QVERIFY(copied.contains(QStringLiteral("HIDHIDE DOCTOR REPORT")));
+    model.copySelectedEvidenceMode(QStringLiteral("JSON"));
+    const QJsonObject copiedJson = QJsonDocument::fromJson(copied.toUtf8()).object();
+    QCOMPARE(copiedJson.value(QStringLiteral("checkId")).toString(), QStringLiteral("HD-API-002"));
+    QVERIFY(!copiedJson.value(QStringLiteral("fields")).toArray().isEmpty());
+}
+
+void HidHideDoctorDomainTests::phaseFiveBoundedProtocolJournalReportAndPackageFuzz()
+{
+    // Fixed seed and bounded corpus make this a reproducible parser-boundary
+    // campaign, not an attempt to simulate a machine or authorize repair.
+    constexpr quint32 kSeed = 0x5AFE'F00D;
+    constexpr int kCorpusCount = 64;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QRandomGenerator random(kSeed);
+    QStandardPaths::setTestModeEnabled(true);
+
+    const auto sessionIdFor = [=](int index) {
+        return QStringLiteral("%1").arg(static_cast<qulonglong>(kSeed) + static_cast<qulonglong>(index), 32, 16, QLatin1Char('0'));
+    };
+    const auto baseContext = [](const QString &sessionId) {
+        return QJsonObject{{QStringLiteral("schemaVersion"), kDoctorIntegrationProtocolVersion}, {QStringLiteral("sessionId"), sessionId},
+            {QStringLiteral("invokingVersion"), QStringLiteral("2.6.2")}, {QStringLiteral("invokingBuildId"), QStringLiteral("fuzz")},
+            {QStringLiteral("reason"), QStringLiteral("qualification")},
+            {QStringLiteral("expectedHotasExecutable"), QStringLiteral("C:\\Program Files\\HOTAS BF6\\HOTAS BF6.exe")},
+            {QStringLiteral("expectedPhysicalControllerIds"), QJsonArray{QStringLiteral("DI:fixture")}}};
+    };
+
+    for (int index = 0; index < kCorpusCount; ++index) {
+        const QString sessionId = sessionIdFor(index);
+        QJsonObject context = baseContext(sessionId);
+        QByteArray payload;
+        switch (index % 8) {
+        case 0: context.insert(QStringLiteral("schemaVersion"), 99); break;
+        case 1: context.insert(QStringLiteral("sessionId"), sessionIdFor(index + 1024)); break;
+        case 2: context.insert(QStringLiteral("reason"), QString(257, QLatin1Char('x'))); break;
+        case 3: context.insert(QStringLiteral("expectedHotasExecutable"), QStringLiteral("relative.exe")); break;
+        case 4: {
+            QJsonArray controllers;
+            for (int controller = 0; controller < 17; ++controller) controllers.append(QStringLiteral("DI:%1").arg(controller));
+            context.insert(QStringLiteral("expectedPhysicalControllerIds"), controllers);
+            break;
+        }
+        case 5: context.insert(QStringLiteral("reason"), QStringLiteral("NUL") + QChar::Null); break;
+        case 6: payload = QByteArrayLiteral("{not valid JSON"); break;
+        case 7: payload = QByteArray(kDoctorIntegrationMaximumBytes + 1, 'x'); break;
+        }
+        if (payload.isEmpty()) payload = QJsonDocument(context).toJson(QJsonDocument::Compact);
+        const QString path = QDir(doctorIntegrationDirectory()).filePath(QStringLiteral("context-%1.json").arg(sessionId));
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Truncate), qPrintable(path));
+        QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        file.close();
+        const DoctorIntegrationReadResult parsed = consumeDoctorLaunchContext(sessionId);
+        QVERIFY2(!parsed.accepted, qPrintable(QStringLiteral("context corpus %1 accepted: %2").arg(index).arg(parsed.rejection)));
+        QVERIFY(!QFileInfo::exists(path));
+
+        QJsonObject result{{QStringLiteral("schemaVersion"), kDoctorIntegrationProtocolVersion}, {QStringLiteral("sessionId"), sessionId},
+            {QStringLiteral("state"), QStringLiteral("Diagnosis complete")}, {QStringLiteral("detail"), QStringLiteral("read-only")}};
+        payload.clear();
+        switch (index % 8) {
+        case 0: result.insert(QStringLiteral("schemaVersion"), 99); break;
+        case 1: result.insert(QStringLiteral("sessionId"), sessionIdFor(index + 2048)); break;
+        case 2: result.insert(QStringLiteral("state"), QString(81, QLatin1Char('x'))); break;
+        case 3: result.insert(QStringLiteral("detail"), QString(1025, QLatin1Char('x'))); break;
+        case 4: result.insert(QStringLiteral("state"), QStringLiteral("NUL") + QChar::Null); break;
+        case 5: result.insert(QStringLiteral("sessionId"), QStringLiteral("not-a-session")); break;
+        case 6: payload = QByteArrayLiteral("[not valid JSON"); break;
+        case 7: payload = QByteArray(kDoctorIntegrationMaximumBytes + 1, 'x'); break;
+        }
+        if (payload.isEmpty()) payload = QJsonDocument(result).toJson(QJsonDocument::Compact);
+        const QString resultPath = QDir(doctorIntegrationDirectory()).filePath(QStringLiteral("result-%1.json").arg(sessionId));
+        file.setFileName(resultPath);
+        QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Truncate), qPrintable(resultPath));
+        QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        file.close();
+        QString state;
+        QString detail;
+        QString reason;
+        QVERIFY2(!consumeDoctorIntegrationResult(sessionId, &state, &detail, &reason), qPrintable(QStringLiteral("result corpus %1 accepted: %2").arg(index).arg(reason)));
+        QVERIFY(!QFileInfo::exists(resultPath));
+    }
+
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Missing HOTAS Exemption")));
+    const DiagnosticRunOutcome repairOutcome = DoctorDiagnosticEngine().run(provider);
+    const RepairPlanProposal proposal = RepairPlanner().propose(repairOutcome.session, repairOutcome.snapshot, true);
+    QCOMPARE(proposal.status, RepairProposalStatus::AvailableForOwnerLab);
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    RepairJournalStore journal(temporary.path());
+    const RepairTransactionId transactionId(QStringLiteral("REPAIR-TX-FUZZ-001"));
+    const RepairExecutionResult dryRun = RepairTransactionCoordinator().dryRun(proposal, repairOutcome.snapshot.environment,
+        repairOutcome.session.id(), journal, transactionId);
+    QVERIFY(dryRun.transaction.id.isValid());
+    for (int index = 0; index < kCorpusCount; ++index) {
+        QByteArray payload;
+        if (index == 0) payload = QByteArrayLiteral("{");
+        else if (index == 1) payload = QByteArrayLiteral("[]");
+        else if (index == 2) payload = QByteArrayLiteral("{\"schemaVersion\":999}");
+        else {
+            const int size = 1 + random.bounded(511);
+            payload.resize(size);
+            for (int byte = 0; byte < payload.size(); ++byte) payload[byte] = static_cast<char>(random.bounded(256));
+        }
+        QFile file(journal.journalPath(transactionId));
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        file.close();
+        QString reason;
+        QVERIFY2(!journal.load(transactionId, &reason).has_value(), qPrintable(QStringLiteral("journal corpus %1 accepted: %2").arg(index).arg(reason)));
+    }
+
+    for (int index = 0; index < kCorpusCount; ++index) {
+        QByteArray payload;
+        if (index == 0) payload = QByteArray();
+        else if (index == 1) payload = QByteArrayLiteral("[]");
+        else if (index == 2) payload = QByteArrayLiteral("{\"version\":999}");
+        else if (index == 3) payload = QByteArray(RepairHelperRequest::maximumMessageBytes + 1, 'x');
+        else {
+            const int size = 1 + random.bounded(1023);
+            payload.resize(size);
+            for (int byte = 0; byte < payload.size(); ++byte) payload[byte] = static_cast<char>(random.bounded(256));
+        }
+        QString reason;
+        QVERIFY2(!RepairHelperProtocol::parse(payload, &reason).has_value(), qPrintable(QStringLiteral("helper corpus %1 unexpectedly parsed").arg(index)));
+    }
+
+    const auto package = ApprovedPackageCatalog::find(QStringLiteral("HD-PKG-FIXTURE-OFFICIAL-1.5.230.0-X64"));
+    QVERIFY(package.has_value());
+    DoctorEnvironment packageEnvironment = fixtures::windows11X64Healthy();
+    packageEnvironment.hidhide.provider = QStringLiteral("fixture-official-nefarius");
+    packageEnvironment.capabilities.highestQualifiedRepairTier = RepairCapabilityTier::RecoverySupported;
+    for (int index = 0; index < kCorpusCount; ++index) {
+        const QString fuzz = QStringLiteral("fuzz-%1-%2").arg(index).arg(random.generate64(), 16, 16, QLatin1Char('0'));
+        const PackageValidationResult validation = ApprovedPackageCatalog::validate(*package, packageEnvironment,
+            index % 4 == 0 ? QString(64, QLatin1Char('0')) : package->expectedSha256,
+            index % 4 == 1 ? fuzz : package->signerIdentity,
+            index % 4 == 2 ? QStringLiteral("9.9.%1").arg(index) : package->version,
+            index % 4 == 3 ? CpuArchitecture::Arm64 : package->architecture,
+            QStringLiteral("https://untrusted.example/%1.msi").arg(fuzz));
+        QVERIFY2(!validation.valid, qPrintable(QStringLiteral("package corpus %1 unexpectedly accepted").arg(index)));
+    }
+
+    DoctorReportRequest reportRequest;
+    reportRequest.detail = DoctorReportDetail::Forensic;
+    reportRequest.privacy = DoctorReportPrivacy::SafeToShare;
+    DoctorDiagnosticEngine engine;
+    for (int index = 0; index < kCorpusCount; ++index) {
+        ReadOnlyDiagnosticSnapshot snapshot = healthyFixtureSnapshot();
+        const QString fuzz = QStringLiteral("fuzz-%1-").arg(index) + QChar::Null + QChar(0x03a9)
+            + QChar(static_cast<ushort>(0x20 + (index % 0x5f))) + QChar(0x03a9);
+        snapshot.environment.hidhide.clientVersion.append(fuzz);
+        snapshot.environment.hidhide.driverVersion.append(fuzz);
+        snapshot.events.append({QStringLiteral("Application"), {}, 0, {}, {}, fuzz, EvidenceSensitivity::PotentiallyIdentifying, std::nullopt});
+        SnapshotProvider snapshotProvider(snapshot);
+        const DoctorReportDocument report = DoctorReportComposer::compose(engine.run(snapshotProvider).session,
+            QStringLiteral("fuzz-build"), reportRequest);
+        QVERIFY(report.markdown.size() <= 8 * 1024 * 1024);
+        QVERIFY(report.json.size() <= 8 * 1024 * 1024);
+        QVERIFY(report.plainText.size() <= 8 * 1024 * 1024);
+        QVERIFY(!report.markdown.contains('\0'));
+        QVERIFY(!report.json.contains('\0'));
+        QVERIFY(!report.plainText.contains('\0'));
+        QJsonParseError error;
+        const QJsonDocument parsed = QJsonDocument::fromJson(report.json, &error);
+        QVERIFY2(error.error == QJsonParseError::NoError && parsed.isObject(), qPrintable(error.errorString()));
+    }
+    QVERIFY2(elapsed.elapsed() < 30000, "The bounded corpus must not hang or consume an unbounded test interval.");
+}
+
+void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBundleCapable()
+{
+    QString label;
+    ReadOnlyDiagnosticSnapshot snapshot = createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label);
+    snapshot.environment.hidhide.clientVersion.append(QChar::Null);
+    snapshot.environment.hidhide.driverVersion.append(QChar::Null);
+    FixtureDiagnosticProvider provider(std::move(snapshot));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    DoctorReportRequest request;
+    request.detail = DoctorReportDetail::Forensic;
+    request.privacy = DoctorReportPrivacy::SafeToShare;
+    const DoctorReportDocument report = DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), request);
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(report.json, &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+    QVERIFY(document.object().contains(QStringLiteral("diagnosticPlan")));
+    QVERIFY(document.object().contains(QStringLiteral("checkResults")));
+    QVERIFY(document.object().contains(QStringLiteral("userActionLedger")));
+    QVERIFY(document.object().contains(QStringLiteral("evidenceRecords")));
+    QVERIFY(document.object().contains(QStringLiteral("timingPerformance")));
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 2);
+    QVERIFY(document.object().contains(QStringLiteral("schemaCompatibility")));
+    QVERIFY(!document.object().value(QStringLiteral("redactionManifest")).toObject()
+                 .value(QStringLiteral("excluded")).toArray().isEmpty());
+    QVERIFY(report.markdown.contains("HIDHIDE DOCTOR REPORT"));
+    QVERIFY(!report.markdown.contains(QChar::Null));
+    const QJsonObject environment = document.object().value(QStringLiteral("environment")).toObject();
+    QVERIFY(!environment.value(QStringLiteral("hidhideClientVersion")).toString().contains(QChar::Null));
+    QVERIFY(!environment.value(QStringLiteral("hidhideDriverVersion")).toString().contains(QChar::Null));
+    QVERIFY(!report.redacted.isEmpty());
+    const QJsonArray forensicRecords = document.object().value(QStringLiteral("evidenceRecords")).toArray();
+    QVERIFY(!forensicRecords.isEmpty());
+    QVERIFY(forensicRecords.first().toObject().contains(QStringLiteral("fields")));
+    QVERIFY(forensicRecords.first().toObject().contains(QStringLiteral("relationships")));
+
+    DoctorReportRequest currentSteps;
+    currentSteps.scope = QStringLiteral("Current / Historical Steps");
+    currentSteps.detail = DoctorReportDetail::Detailed;
+    const QJsonObject currentStepsJson = QJsonDocument::fromJson(
+        DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), currentSteps).json).object();
+    QVERIFY(currentStepsJson.contains(QStringLiteral("checkResults")));
+    QVERIFY(currentStepsJson.contains(QStringLiteral("activityTimeline")));
+
+    DoctorReportRequest selectedEvidence;
+    selectedEvidence.scope = QStringLiteral("Selected Evidence");
+    selectedEvidence.selectedEvidenceId = outcome.session.evidence().first().id.value();
+    selectedEvidence.detail = DoctorReportDetail::Forensic;
+    const QJsonArray selectedEvidenceRecords = QJsonDocument::fromJson(
+        DoctorReportComposer::compose(outcome.session, QStringLiteral("test-build"), selectedEvidence).json)
+        .object().value(QStringLiteral("evidenceRecords")).toArray();
+    QCOMPARE(selectedEvidenceRecords.size(), 1);
+    QCOMPARE(selectedEvidenceRecords.first().toObject().value(QStringLiteral("id")).toString(), selectedEvidence.selectedEvidenceId);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QString error;
+    QVERIFY2(DoctorReportComposer::write(report, directory.filePath(QStringLiteral("bundle")), DoctorReportFormat::DiagnosticBundle, &error), qPrintable(error));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/report.md"))));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/report.json"))));
+    QVERIFY(QFile::exists(directory.filePath(QStringLiteral("bundle/manifest.json"))));
+}
+
+void HidHideDoctorDomainTests::phaseFiveReportExportVerifiesDestinationAndReportsPath()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    DiagnosticRunOutcome outcome = engine.run(provider);
+    DoctorSessionViewModel model(outcome.session, QStringLiteral("test-build"));
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString destination = directory.filePath(QStringLiteral("test-report.md"));
+
+    model.exportReportUrl(QUrl(QStringLiteral("https://example.invalid/report.md")), QStringLiteral("Entire Session"),
+                          QStringLiteral("Detailed"), QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
+    QVERIFY(!model.reportBusy());
+    QVERIFY(model.reportStatus().contains(QStringLiteral("choose a local report destination")));
+
+    QFile qml(QStringLiteral(HOTAS_DOCTOR_SOURCE_ROOT "/qml/HidHideDoctorMain.qml"));
+    QVERIFY(qml.open(QIODevice::ReadOnly));
+    const QByteArray qmlSource = qml.readAll();
+    QVERIFY(qmlSource.contains("doctorSession.exportReportUrl(selectedFile"));
+    QVERIFY(qmlSource.contains("doctorSession.exportDiagnosticBundleUrl(selectedFolder"));
+    QVERIFY(!qmlSource.contains("selectedFile.toLocalFile"));
+    QVERIFY(!qmlSource.contains("selectedFolder.toLocalFile"));
+    QVERIFY(qmlSource.contains("visible: doctorSession.reportStatus.length > 0"));
+    QVERIFY(qmlSource.contains("text: doctorSession.reportStatus"));
+    QVERIFY(qmlSource.contains("text: doctorSession.reportBusy ? \"Exporting…\""));
+
+    model.exportReportUrl(QUrl::fromLocalFile(destination), QStringLiteral("Entire Session"), QStringLiteral("Detailed"),
+                          QStringLiteral("Markdown"), QStringLiteral("Safe to Share"));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(destination), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!model.reportBusy(), 10000);
+    const QFileInfo report(destination);
+    QVERIFY2(report.isFile(), qPrintable(model.reportStatus()));
+    QVERIFY(report.size() > 0);
+    QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(report.absoluteFilePath())));
+
+    const QString blockedParentPath = directory.filePath(QStringLiteral("report-parent-is-a-file"));
+    QFile blockedParent(blockedParentPath);
+    QVERIFY(blockedParent.open(QIODevice::WriteOnly));
+    QCOMPARE(blockedParent.write("not a directory"), qint64(15));
+    blockedParent.close();
+    const QString blockedReport = QDir(blockedParentPath).filePath(QStringLiteral("report.md"));
+    DoctorReportRequest blockedRequest;
+    blockedRequest.scope = QStringLiteral("Entire Session");
+    blockedRequest.detail = DoctorReportDetail::Detailed;
+    blockedRequest.privacy = DoctorReportPrivacy::SafeToShare;
+    const DoctorReportDocument blockedDocument = DoctorReportComposer::compose(
+        outcome.session, QStringLiteral("test-build"), blockedRequest);
+    QString blockedError;
+    QVERIFY(!DoctorReportComposer::write(blockedDocument, blockedReport, DoctorReportFormat::Markdown, &blockedError));
+    QVERIFY(!blockedError.isEmpty());
+    QVERIFY(!QFileInfo::exists(blockedReport));
+
+    const QString bundleParentPath = directory.filePath(QStringLiteral("bundle-parent"));
+    QVERIFY(QDir().mkpath(bundleParentPath));
+    model.exportDiagnosticBundle(bundleParentPath, QStringLiteral("Safe to Share"));
+    QTRY_VERIFY_WITH_TIMEOUT(!model.reportBusy(), 10000);
+    const QFileInfoList childDirectories = QDir(bundleParentPath).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot,
+                                                                                 QDir::Name);
+    QCOMPARE(childDirectories.size(), 1);
+    const QFileInfo bundleDirectory = childDirectories.first();
+    QVERIFY(bundleDirectory.fileName().startsWith(QStringLiteral("HidHideDoctor-Diagnostic-Bundle-")));
+    QVERIFY(!QFile::exists(QDir(bundleParentPath).filePath(QStringLiteral("report.md"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("report.md"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("report.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("timeline.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("evidence.json"))));
+    QVERIFY(QFile::exists(QDir(bundleDirectory.absoluteFilePath()).filePath(QStringLiteral("manifest.json"))));
+    QVERIFY(model.reportStatus().contains(QDir::toNativeSeparators(bundleDirectory.absoluteFilePath())));
+}
+
+void HidHideDoctorDomainTests::phaseFiveBundleExportIsTransactionalOnFailure()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("GetWhitelist 0x57"), &label));
+    DoctorDiagnosticEngine engine;
+    const DoctorReportDocument report = DoctorReportComposer::compose(engine.run(provider).session,
+        QStringLiteral("test-build"), {});
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const QString bundle = directory.filePath(QStringLiteral("transactional-bundle"));
+    QString error;
+    QVERIFY2(DoctorReportComposer::write(report, bundle, DoctorReportFormat::DiagnosticBundle, &error), qPrintable(error));
+    QVERIFY(QFileInfo(bundle).isDir());
+    const QFileInfoList siblings = QDir(directory.path()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sibling : siblings) {
+        QVERIFY2(!sibling.fileName().contains(QStringLiteral(".partial-")), qPrintable(sibling.absoluteFilePath()));
+    }
+
+    const QString blockedParent = directory.filePath(QStringLiteral("not-a-directory"));
+    QFile blocked(blockedParent);
+    QVERIFY(blocked.open(QIODevice::WriteOnly));
+    QVERIFY(blocked.write("occupied") > 0);
+    blocked.close();
+    const QString blockedBundle = QDir(blockedParent).filePath(QStringLiteral("bundle"));
+    error.clear();
+    QVERIFY(!DoctorReportComposer::write(report, blockedBundle, DoctorReportFormat::DiagnosticBundle, &error));
+    QVERIFY(!error.isEmpty());
+    QVERIFY(!QFileInfo::exists(blockedBundle));
+    const QFileInfoList afterFailure = QDir(directory.path()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sibling : afterFailure) {
+        QVERIFY2(!sibling.fileName().contains(QStringLiteral(".partial-")), qPrintable(sibling.absoluteFilePath()));
+    }
+}
+
 void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
 {
     QFile provider(QStringLiteral(HOTAS_DOCTOR_SOURCE_ROOT "/src/hidhide_doctor/doctor_windows_provider.cpp"));
@@ -768,8 +1301,11 @@ void HidHideDoctorDomainTests::phaseOneProductionProviderHasNoMutationSurface()
         QVERIFY2(!source.contains(forbidden), forbidden.constData());
     QVERIFY(!source.contains("ShellExecute"));
     QVERIFY(!source.contains("CreateProcess"));
+    QVERIFY(source.contains("UINT valueCharacters"));
+    QVERIFY(source.contains("fromWCharArray(value, static_cast<qsizetype>(valueCharacters))"));
+    QVERIFY(source.contains("text.truncate(terminator)"));
 }
 
-QTEST_APPLESS_MAIN(HidHideDoctorDomainTests)
+QTEST_GUILESS_MAIN(HidHideDoctorDomainTests)
 
 #include "hidhide_doctor_domain_tests.moc"

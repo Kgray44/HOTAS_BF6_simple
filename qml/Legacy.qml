@@ -288,6 +288,7 @@ Page {
         objectName: "legacyAppHealthPopup"
         health: backend.appHealthSummary
         issues: backend.appIssues
+        openDoctor: function() { backend.openHidHideDoctor("app-health") }
         theme: root.adaptiveThemeTokens
         legacy: true
         onNavigationRequested: function(target) { root.navigateToIssue(target) }

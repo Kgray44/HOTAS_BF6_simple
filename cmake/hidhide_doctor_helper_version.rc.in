@@ -1,0 +1,29 @@
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @HOTAS_BF6_VERSION_COMMAS@,0
+ PRODUCTVERSION @HOTAS_BF6_VERSION_COMMAS@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Kgray44"
+            VALUE "FileDescription", "HidHide Doctor Repair — sealed plan helper"
+            VALUE "FileVersion", "@HOTAS_BF6_VERSION@"
+            VALUE "InternalName", "HidHideDoctorRepair"
+            VALUE "OriginalFilename", "HidHideDoctorRepair.exe"
+            VALUE "ProductName", "HOTAS BF6 HidHide Doctor"
+            VALUE "ProductVersion", "@HOTAS_BF6_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -58,6 +58,7 @@ public:
     void appendFinding(Finding finding);
     void appendDiagnosis(Diagnosis diagnosis);
     void appendActivity(DoctorActivityEvent event);
+    void annotateEvidenceRelationships();
     void setUserAction(UserAction action);
     void setCurrentOperation(DoctorOperation operation);
     void setEnvironment(DoctorEnvironment environment);
@@ -68,7 +69,9 @@ public:
     const QList<Finding> &findings() const;
     const QList<Diagnosis> &diagnoses() const;
     const QList<DoctorActivityEvent> &activity() const;
+    int activityEventsDropped() const;
     const UserAction &userAction() const;
+    const QList<UserActionLedgerEntry> &userActionHistory() const;
     const std::optional<DoctorOperation> &currentOperation() const;
     const std::optional<DoctorEnvironment> &environment() const;
     const QString &sessionLabel() const;
@@ -85,7 +88,9 @@ private:
     QList<Finding> m_findings;
     QList<Diagnosis> m_diagnoses;
     QList<DoctorActivityEvent> m_activity;
+    int m_activityEventsDropped = 0;
     UserAction m_userAction;
+    QList<UserActionLedgerEntry> m_userActionHistory;
     std::optional<DoctorOperation> m_currentOperation;
     std::optional<DoctorEnvironment> m_environment;
     QString m_sessionLabel;

@@ -141,6 +141,53 @@ QString displayName(DiagnosisRole role)
     return QStringLiteral("Secondary diagnosis");
 }
 
+QString displayName(EvidenceFieldCategory category)
+{
+    switch (category) {
+    case EvidenceFieldCategory::Identity: return QStringLiteral("Identity");
+    case EvidenceFieldCategory::Observation: return QStringLiteral("Observation");
+    case EvidenceFieldCategory::Target: return QStringLiteral("Target");
+    case EvidenceFieldCategory::Method: return QStringLiteral("Method");
+    case EvidenceFieldCategory::Timing: return QStringLiteral("Timing");
+    case EvidenceFieldCategory::NativeResult: return QStringLiteral("Native Result");
+    case EvidenceFieldCategory::Relationships: return QStringLiteral("Relationships");
+    case EvidenceFieldCategory::Technical: return QStringLiteral("Technical");
+    case EvidenceFieldCategory::Raw: return QStringLiteral("Raw");
+    }
+    return QStringLiteral("Observation");
+}
+
+QString displayName(DoctorActivityEventType type)
+{
+    switch (type) {
+    case DoctorActivityEventType::SessionStarted: return QStringLiteral("Session started");
+    case DoctorActivityEventType::PhaseStarted: return QStringLiteral("Phase started");
+    case DoctorActivityEventType::CheckStarted: return QStringLiteral("Check started");
+    case DoctorActivityEventType::ProbeStarted: return QStringLiteral("Probe started");
+    case DoctorActivityEventType::ProbeCompleted: return QStringLiteral("Probe completed");
+    case DoctorActivityEventType::EvidenceRecorded: return QStringLiteral("Evidence recorded");
+    case DoctorActivityEventType::CheckCompleted: return QStringLiteral("Check completed");
+    case DoctorActivityEventType::FindingCreated: return QStringLiteral("Finding created");
+    case DoctorActivityEventType::DiagnosisCreated: return QStringLiteral("Diagnosis created");
+    case DoctorActivityEventType::RepairPlanCreated: return QStringLiteral("Repair plan created");
+    case DoctorActivityEventType::UserActionRequired: return QStringLiteral("User action required");
+    case DoctorActivityEventType::UserActionCompleted: return QStringLiteral("User action completed");
+    case DoctorActivityEventType::PackageValidated: return QStringLiteral("Package validated");
+    case DoctorActivityEventType::RepairAuthorized: return QStringLiteral("Repair authorized");
+    case DoctorActivityEventType::BackupCaptured: return QStringLiteral("Backup captured");
+    case DoctorActivityEventType::MutationStarted: return QStringLiteral("Mutation started");
+    case DoctorActivityEventType::MutationCompleted: return QStringLiteral("Mutation completed");
+    case DoctorActivityEventType::VerificationStarted: return QStringLiteral("Verification started");
+    case DoctorActivityEventType::VerificationCompleted: return QStringLiteral("Verification completed");
+    case DoctorActivityEventType::RollbackStarted: return QStringLiteral("Rollback started");
+    case DoctorActivityEventType::RollbackCompleted: return QStringLiteral("Rollback completed");
+    case DoctorActivityEventType::RestartRequired: return QStringLiteral("Restart required");
+    case DoctorActivityEventType::SessionCompleted: return QStringLiteral("Session completed");
+    case DoctorActivityEventType::ActivityHistoryTruncated: return QStringLiteral("Activity history truncated");
+    }
+    return QStringLiteral("Activity event");
+}
+
 bool isTerminal(DoctorCheckStatus status)
 {
     return status != DoctorCheckStatus::Waiting && status != DoctorCheckStatus::Running;

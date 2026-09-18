@@ -232,10 +232,13 @@ QString fileVersionString(const QString &path, const wchar_t *field)
         .arg(translation->codePage, 4, 16, QLatin1Char('0'))
         .arg(QString::fromWCharArray(field));
     wchar_t *value = nullptr;
-    UINT valueBytes = 0;
-    if (!VerQueryValueW(buffer.data(), reinterpret_cast<LPCWSTR>(query.utf16()), reinterpret_cast<LPVOID *>(&value), &valueBytes)
-        || !value || valueBytes == 0) return {};
-    return QString::fromWCharArray(value, static_cast<int>(valueBytes)).trimmed();
+    UINT valueCharacters = 0;
+    if (!VerQueryValueW(buffer.data(), reinterpret_cast<LPCWSTR>(query.utf16()), reinterpret_cast<LPVOID *>(&value), &valueCharacters)
+        || !value || valueCharacters == 0) return {};
+    QString text = QString::fromWCharArray(value, static_cast<qsizetype>(valueCharacters));
+    const qsizetype terminator = text.indexOf(QChar::Null);
+    if (terminator >= 0) text.truncate(terminator);
+    return text.trimmed();
 }
 
 QString sha256(const QString &path)
@@ -394,7 +397,7 @@ DoctorEnvironment observeEnvironment(QList<PendingRestartObservation> *pendingRe
     environment.platform.nativeArchitecture = nativeArchitecture();
     environment.platform.processArchitecture = sizeof(void *) == 8 ? CpuArchitecture::X64 : CpuArchitecture::X86;
     environment.platform.doctorBinaryArchitecture = binaryArchitecture(QCoreApplication::applicationFilePath());
-    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHide Doctor Repair.exe"));
+    const QString helperPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("HidHideDoctorRepair.exe"));
     environment.platform.helperBinaryArchitecture = binaryArchitecture(helperPath);
     BOOL wow64 = FALSE;
     if (IsWow64Process(GetCurrentProcess(), &wow64)) environment.platform.wow64OrEmulated = wow64 != FALSE;
@@ -527,34 +530,67 @@ struct IoctlResult final {
     DWORD bytes = 0;
     std::optional<NativeError> error;
     qint64 durationMs = 0;
+    QDateTime startedAt;
+    QDateTime completedAt;
+    qint64 monotonicDurationUs = 0;
 };
 
 IoctlResult readOnlyIoctl(HANDLE device, DWORD operation, void *output, DWORD outputBytes)
 {
     QElapsedTimer timer;
     timer.start();
+    const QDateTime startedAt = QDateTime::currentDateTimeUtc();
+    const auto completed = [&](bool success, bool timedOut, DWORD bytes, std::optional<NativeError> error) {
+        IoctlResult result;
+        result.completed = success;
+        result.timedOut = timedOut;
+        result.bytes = bytes;
+        result.error = std::move(error);
+        result.durationMs = timer.elapsed();
+        result.startedAt = startedAt;
+        result.completedAt = QDateTime::currentDateTimeUtc();
+        result.monotonicDurationUs = timer.nsecsElapsed() / 1000;
+        return result;
+    };
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!event) return {false, false, 0, win32Error(GetLastError(), QStringLiteral("CreateEventW")), timer.elapsed()};
+    if (!event) return completed(false, false, 0, win32Error(GetLastError(), QStringLiteral("CreateEventW")));
     const auto closeEvent = qScopeGuard([&] { CloseHandle(event); });
     OVERLAPPED overlapped{};
     overlapped.hEvent = event;
     DWORD returned = 0;
     if (DeviceIoControl(device, operation, nullptr, 0, output, outputBytes, &returned, &overlapped))
-        return {true, false, returned, std::nullopt, timer.elapsed()};
+        return completed(true, false, returned, std::nullopt);
     DWORD failure = GetLastError();
     if (failure != ERROR_IO_PENDING)
-        return {false, false, returned, win32Error(failure, QStringLiteral("DeviceIoControl(GET)")), timer.elapsed()};
+        return completed(false, false, returned, win32Error(failure, QStringLiteral("DeviceIoControl(GET)")));
     const DWORD wait = WaitForSingleObject(event, kProtocolTimeoutMs);
     if (wait == WAIT_TIMEOUT) {
         CancelIoEx(device, &overlapped);
         WaitForSingleObject(event, 250);
-        return {false, true, 0, win32Error(ERROR_TIMEOUT, QStringLiteral("DeviceIoControl(GET) timeout")), timer.elapsed()};
+        return completed(false, true, 0, win32Error(ERROR_TIMEOUT, QStringLiteral("DeviceIoControl(GET) timeout")));
     }
     if (wait != WAIT_OBJECT_0)
-        return {false, false, 0, win32Error(GetLastError(), QStringLiteral("WaitForSingleObject(DeviceIoControl)")), timer.elapsed()};
+        return completed(false, false, 0, win32Error(GetLastError(), QStringLiteral("WaitForSingleObject(DeviceIoControl)")));
     if (!GetOverlappedResult(device, &overlapped, &returned, FALSE))
-        return {false, false, 0, win32Error(GetLastError(), QStringLiteral("GetOverlappedResult(DeviceIoControl)")), timer.elapsed()};
-    return {true, false, returned, std::nullopt, timer.elapsed()};
+        return completed(false, false, 0, win32Error(GetLastError(), QStringLiteral("GetOverlappedResult(DeviceIoControl)")));
+    return completed(true, false, returned, std::nullopt);
+}
+
+void populateProtocolTiming(ProtocolObservation *observation, const IoctlResult &result, DWORD code, qint64 requestBytes)
+{
+    observation->durationMs = result.durationMs;
+    observation->endpoint = QStringLiteral("HidHide control device");
+    observation->access = QStringLiteral("GENERIC_READ; shared read/write/delete; overlapped");
+    observation->api = QStringLiteral("CreateFileW + DeviceIoControl");
+    observation->ioctlCode = code;
+    observation->requestBytes = requestBytes;
+    observation->responseBytes = result.bytes;
+    observation->attemptCount = 1;
+    observation->timeoutMs = kProtocolTimeoutMs;
+    observation->startedAt = result.startedAt;
+    observation->completedAt = result.completedAt;
+    observation->monotonicDurationUs = result.monotonicDurationUs;
+    observation->nativeError = result.error;
 }
 
 ProtocolObservation boolProtocolQuery(HANDLE device, DWORD code, const QString &operation)
@@ -563,8 +599,7 @@ ProtocolObservation boolProtocolQuery(HANDLE device, DWORD code, const QString &
     const IoctlResult result = readOnlyIoctl(device, code, &value, sizeof(value));
     ProtocolObservation observation;
     observation.operation = operation;
-    observation.durationMs = result.durationMs;
-    observation.nativeError = result.error;
+    populateProtocolTiming(&observation, result, code, 0);
     if (result.timedOut) observation.status = DoctorCheckStatus::TimedOut;
     else if (!result.completed) observation.status = DoctorCheckStatus::Failed;
     else if (result.bytes != sizeof(value)) {
@@ -583,7 +618,7 @@ QList<ProtocolObservation> multiStringProtocolQuery(HANDLE device, DWORD code, c
     size.operation = operation + QStringLiteral("_SIZE");
     size.sizeNegotiation = true;
     const IoctlResult first = readOnlyIoctl(device, code, nullptr, 0);
-    size.durationMs = first.durationMs;
+    populateProtocolTiming(&size, first, code, 0);
     if (first.timedOut) {
         size.status = DoctorCheckStatus::TimedOut;
         size.nativeError = first.error;
@@ -612,8 +647,7 @@ QList<ProtocolObservation> multiStringProtocolQuery(HANDLE device, DWORD code, c
     const IoctlResult second = readOnlyIoctl(device, code, payload.data(), first.bytes);
     ProtocolObservation payloadResult;
     payloadResult.operation = operation;
-    payloadResult.durationMs = second.durationMs;
-    payloadResult.nativeError = second.error;
+    populateProtocolTiming(&payloadResult, second, code, first.bytes);
     if (second.timedOut) payloadResult.status = DoctorCheckStatus::TimedOut;
     else if (!second.completed) payloadResult.status = DoctorCheckStatus::Failed;
     else if (second.bytes > first.bytes || second.bytes % sizeof(wchar_t) != 0) {
@@ -731,14 +765,24 @@ QList<ProtocolObservation> observeProtocol(const QStringList &interfacePaths, st
     const auto close = qScopeGuard([&] { CloseHandle(device); });
     observations.append({QStringLiteral("OPEN_CONTROL"), DoctorCheckStatus::Healthy,
         QStringLiteral("%1; GENERIC_READ; shared read/write/delete; overlapped").arg(openedPath), {}, std::nullopt, 0, false});
-    observations.append(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE")));
-    if (!cancelled || !cancelled->load()) observations.append(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE_REPEAT_2")));
-    if (!cancelled || !cancelled->load()) observations.append(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE_REPEAT_3")));
-    if (!cancelled || !cancelled->load()) observations.append(boolProtocolQuery(device, kIoctlGetInverse, QStringLiteral("GET_INVERSE")));
-    if (!cancelled || !cancelled->load()) observations.append(multiStringProtocolQuery(device, kIoctlGetWhitelist, QStringLiteral("GET_WHITELIST")));
-    if (!cancelled || !cancelled->load()) observations.append(multiStringProtocolQuery(device, kIoctlGetWhitelist, QStringLiteral("GET_WHITELIST_REPEAT")));
-    if (!cancelled || !cancelled->load()) observations.append(multiStringProtocolQuery(device, kIoctlGetBlacklist, QStringLiteral("GET_BLACKLIST")));
-    if (!cancelled || !cancelled->load()) observations.append(multiStringProtocolQuery(device, kIoctlGetBlacklist, QStringLiteral("GET_BLACKLIST_REPEAT")));
+    const auto appendProbe = [&](ProtocolObservation observation) {
+        observation.endpoint = openedPath;
+        observations.append(std::move(observation));
+    };
+    const auto appendProbeSeries = [&](QList<ProtocolObservation> series) {
+        for (ProtocolObservation &observation : series) {
+            observation.endpoint = openedPath;
+            observations.append(std::move(observation));
+        }
+    };
+    appendProbe(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE")));
+    if (!cancelled || !cancelled->load()) appendProbe(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE_REPEAT_2")));
+    if (!cancelled || !cancelled->load()) appendProbe(boolProtocolQuery(device, kIoctlGetActive, QStringLiteral("GET_ACTIVE_REPEAT_3")));
+    if (!cancelled || !cancelled->load()) appendProbe(boolProtocolQuery(device, kIoctlGetInverse, QStringLiteral("GET_INVERSE")));
+    if (!cancelled || !cancelled->load()) appendProbeSeries(multiStringProtocolQuery(device, kIoctlGetWhitelist, QStringLiteral("GET_WHITELIST")));
+    if (!cancelled || !cancelled->load()) appendProbeSeries(multiStringProtocolQuery(device, kIoctlGetWhitelist, QStringLiteral("GET_WHITELIST_REPEAT")));
+    if (!cancelled || !cancelled->load()) appendProbeSeries(multiStringProtocolQuery(device, kIoctlGetBlacklist, QStringLiteral("GET_BLACKLIST")));
+    if (!cancelled || !cancelled->load()) appendProbeSeries(multiStringProtocolQuery(device, kIoctlGetBlacklist, QStringLiteral("GET_BLACKLIST_REPEAT")));
     return observations;
 }
 

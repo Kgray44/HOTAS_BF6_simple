@@ -26,7 +26,7 @@ foreach ($dependency in @($vjoy[0], $hidhide[0])) {
 $output = [System.IO.Path]::GetFullPath($OutputDir)
 if ($output -eq [System.IO.Path]::GetPathRoot($output)) { throw 'Refusing to use a filesystem root as OutputDir.' }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-foreach ($required in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'VERSION')) {
+foreach ($required in @('HOTAS BF6.exe', 'HOTAS BF6 Launcher.exe', 'HidHide Doctor.exe', 'HidHideDoctorRepair.exe', 'VERSION')) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) {
         throw "Stage directory is incomplete: $required is missing."
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -152,6 +153,10 @@ enum class NativeErrorDomain { None, Win32, NtStatus, HResult, Protocol, Process
 enum class FindingSeverity { Informational, Warning, Error, Critical };
 enum class DiagnosisConfidence { Uncertain, Moderate, High, VeryHigh, Confirmed };
 enum class UserActionState { NothingRequired, Required, Optional, Blocked };
+// A session can change the current action as evidence arrives.  The ledger
+// preserves those transitions for support reports without treating a current
+// UI label as historical truth.
+enum class UserActionLedgerState { NotRequired, Required, Waiting, Completed, Cancelled, Superseded, StillPending };
 // Phase 2 deliberately describes what could be repaired without gaining any
 // ability to perform that repair.  Keep this vocabulary distinct from the
 // diagnosis itself and from the future RepairPlan risk/qualification model.
@@ -173,6 +178,37 @@ enum class Repairability {
 enum class RepairRiskClass { R0Observe, R1Configuration, R2Component, R3Package, R4ApprovedUpgrade, R5Recovery };
 enum class RepairQualificationLevel { Experimental, LabQualified, FieldQualified, Retired };
 enum class DiagnosisRole { Primary, Secondary, Contributing };
+// Evidence fields have a stable semantic group so the Inspector and exported
+// formats can render a forensic record as labelled facts rather than a single
+// opaque block of text. Values retain their own sensitivity because one record
+// commonly contains both share-safe status and local-only target detail.
+enum class EvidenceFieldCategory { Identity, Observation, Target, Method, Timing, NativeResult, Relationships, Technical, Raw };
+enum class DoctorActivityEventType {
+    SessionStarted,
+    PhaseStarted,
+    CheckStarted,
+    ProbeStarted,
+    ProbeCompleted,
+    EvidenceRecorded,
+    CheckCompleted,
+    FindingCreated,
+    DiagnosisCreated,
+    RepairPlanCreated,
+    UserActionRequired,
+    UserActionCompleted,
+    PackageValidated,
+    RepairAuthorized,
+    BackupCaptured,
+    MutationStarted,
+    MutationCompleted,
+    VerificationStarted,
+    VerificationCompleted,
+    RollbackStarted,
+    RollbackCompleted,
+    RestartRequired,
+    SessionCompleted,
+    ActivityHistoryTruncated,
+};
 
 struct WorkWeight final {
     int units = 0;
@@ -185,6 +221,32 @@ struct NativeError final {
     QString symbolicName;
     QString message;
     bool isPresent() const { return domain != NativeErrorDomain::None; }
+};
+
+struct EvidenceField final {
+    EvidenceFieldCategory category = EvidenceFieldCategory::Observation;
+    QString label;
+    QString value;
+    EvidenceSensitivity sensitivity = EvidenceSensitivity::SafeToExport;
+    bool monospace = false;
+};
+
+// A probe can make more than one bounded native attempt (for example a
+// MULTI_SZ size request followed by its payload read). Keep those attempts
+// referentially small and structured; do not duplicate an arbitrary raw
+// provider blob into the activity timeline.
+struct EvidenceAttempt final {
+    int ordinal = 0;
+    QString operation;
+    QString target;
+    QString outcome;
+    QDateTime startedAt;
+    QDateTime completedAt;
+    qint64 monotonicDurationUs = 0;
+    qint64 timeoutMs = 0;
+    qint64 requestBytes = 0;
+    qint64 responseBytes = 0;
+    std::optional<NativeError> nativeError;
 };
 
 struct EvidenceRecord final {
@@ -201,6 +263,32 @@ struct EvidenceRecord final {
     std::optional<NativeError> nativeError;
     qint64 durationMs = 0;
     bool direct = true;
+    // Phase 5 forensic reconstruction fields. They are defaulted and appended
+    // to retain aggregate compatibility with existing Phase 0/1 fixture data.
+    QString sourceDisplayName;
+    QString provider;
+    QString subsystem;
+    QString operation;
+    QString method;
+    QString targetType;
+    QString targetIdentity;
+    QString targetDisplayName;
+    QString expectedState;
+    QString observedState;
+    QString statusReason;
+    QDateTime startedAt;
+    QDateTime completedAt;
+    qint64 monotonicDurationUs = 0;
+    qint64 timeoutMs = 0;
+    QList<EvidenceField> fields;
+    QList<EvidenceAttempt> attempts;
+    QList<EvidenceId> relatedEvidenceIds;
+    QList<DoctorCheckId> relatedCheckIds;
+    QList<FindingId> relatedFindingIds;
+    QList<DiagnosisId> relatedDiagnosisIds;
+    bool collectionTruncated = false;
+    int originalFieldCount = 0;
+    QString truncationReason;
 };
 
 // A check result is deliberately not a finding or diagnosis.  It describes
@@ -271,6 +359,18 @@ struct DoctorActivityEvent final {
     QString title;
     QString detail;
     EvidenceId evidenceId;
+    DoctorActivityEventType type = DoctorActivityEventType::CheckCompleted;
+    DoctorPhase phase = DoctorPhase::SystemEnvironment;
+    QString reason;
+    QString target;
+    QString result;
+    QString nextStep;
+    QList<EvidenceId> evidenceIds;
+    QList<FindingId> relatedFindingIds;
+    QList<DiagnosisId> relatedDiagnosisIds;
+    QDateTime startedAt;
+    QDateTime completedAt;
+    qint64 monotonicDurationUs = 0;
 };
 
 struct UserAction final {
@@ -281,6 +381,20 @@ struct UserAction final {
     QString why;
     QStringList instructions;
     QStringList availableActions;
+};
+
+struct UserActionLedgerEntry final {
+    QString actionId;
+    QString title;
+    QString explanation;
+    QDateTime firstRequiredAt;
+    QDateTime completedAt;
+    QDateTime cancelledAt;
+    UserActionLedgerState state = UserActionLedgerState::NotRequired;
+    QString reason;
+    QString associatedCheckId;
+    QString associatedDiagnosisId;
+    QString userResponse;
 };
 
 struct DoctorOperation final {
@@ -297,6 +411,8 @@ QString displayName(FindingSeverity severity);
 QString displayName(DiagnosisConfidence confidence);
 QString displayName(Repairability repairability);
 QString displayName(DiagnosisRole role);
+QString displayName(EvidenceFieldCategory category);
+QString displayName(DoctorActivityEventType type);
 bool isTerminal(DoctorCheckStatus status);
 bool isExecutionFailure(DoctorCheckStatus status);
 bool isTransitionAllowed(DoctorSessionState from, DoctorSessionState to);

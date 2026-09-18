@@ -138,19 +138,20 @@ void HidHideDoctorDeepRepairTests::deepHelperRejectsCatalogAndOperationDrift()
     RepairPlan plan = RepairPlanner().propose(outcome.session, outcome.snapshot, true).plan;
     plan.authorization = RepairAuthorization::OwnerLabAuthorized;
     plan.integrityDigest = RepairHelperContract::seal(plan);
+    const QString expectedNonce(32, QLatin1Char('B'));
     const auto rejected = [&](const std::function<void(RepairHelperRequest &)> &mutate) {
         RepairHelperRequest request;
         request.transactionId = RepairTransactionId(QStringLiteral("REPAIR-TX-DEEP-HELPER-DRIFT"));
         request.plan = plan;
         request.doctorBuildId = QStringLiteral("DEEP-TEST-BUILD");
         request.helperBuildId = QStringLiteral("DEEP-TEST-BUILD");
-        request.nonce = QString(32, QLatin1Char('B'));
+        request.nonce = expectedNonce;
         request.expiresAt = QDateTime::currentDateTimeUtc().addSecs(30);
         mutate(request);
         request.plan.integrityDigest = RepairHelperContract::seal(request.plan);
         request.requestDigest = RepairHelperProtocol::seal(request);
         QString reason;
-        return !RepairHelperProtocol::validate(request, outcome.snapshot.environment, request.doctorBuildId, request.nonce, &reason);
+        return !RepairHelperProtocol::validate(request, outcome.snapshot.environment, request.doctorBuildId, expectedNonce, &reason);
     };
     const auto replacePackageValue = [&](const QString &key, const QJsonValue &value) {
         return rejected([&](RepairHelperRequest &request) {
@@ -167,6 +168,11 @@ void HidHideDoctorDeepRepairTests::deepHelperRejectsCatalogAndOperationDrift()
     QVERIFY(replacePackageValue(QStringLiteral("path"), QStringLiteral("C:/arbitrary.exe")));
     QVERIFY(replacePackageValue(QStringLiteral("inf"), QStringLiteral("oem42.inf")));
     QVERIFY(replacePackageValue(QStringLiteral("restart"), QStringLiteral("now")));
+    for (const QString &forbiddenField : {QStringLiteral("command"), QStringLiteral("arguments"),
+             QStringLiteral("executable"), QStringLiteral("service"), QStringLiteral("filter"),
+             QStringLiteral("registryPath"), QStringLiteral("cachePath"), QStringLiteral("runOnce")}) {
+        QVERIFY2(replacePackageValue(forbiddenField, QStringLiteral("C:/arbitrary.exe")), qPrintable(forbiddenField));
+    }
     QVERIFY(rejected([](RepairHelperRequest &request) {
         request.plan.operations[2].targetIdentity = QStringLiteral("C:/arbitrary.exe");
     }));
@@ -177,6 +183,9 @@ void HidHideDoctorDeepRepairTests::deepHelperRejectsCatalogAndOperationDrift()
     }));
     QVERIFY(rejected([](RepairHelperRequest &request) {
         request.expiresAt = QDateTime::currentDateTimeUtc().addSecs(-1);
+    }));
+    QVERIFY(rejected([](RepairHelperRequest &request) {
+        request.nonce = QString(32, QLatin1Char('C'));
     }));
 }
 
@@ -246,7 +255,7 @@ void HidHideDoctorDeepRepairTests::reportContainsPhase4SchemaAndCatalog()
     DiagnosticRunOutcome outcome = runFixture(QStringLiteral("Deep Incomplete Driver Replacement"));
     const QJsonDocument report = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
     QVERIFY(report.isObject());
-    QCOMPARE(report.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(report.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QVERIFY(report.object().value(QStringLiteral("approvedPackageCatalog")).toArray().size() >= 2);
     QCOMPARE(report.object().value(QStringLiteral("repairProposal")).toObject().value(QStringLiteral("status")).toString(),
         QStringLiteral("REPAIR IDENTIFIED — NOT FIELD QUALIFIED"));

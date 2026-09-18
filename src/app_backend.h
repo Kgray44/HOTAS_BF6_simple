@@ -691,6 +691,9 @@ public:
     Q_INVOKABLE void refreshHidHideStatus();
     Q_INVOKABLE bool repairHidHideAccess();
     Q_INVOKABLE bool openHidHideConfiguration();
+    // Starts the separately shipped, non-elevated HidHide Doctor with a
+    // bounded local intent declaration. This is control-plane work only.
+    Q_INVOKABLE bool openHidHideDoctor(const QString &reason = {});
     Q_INVOKABLE void inspectControllerReadiness();
     Q_INVOKABLE void verifyHotasSetup();
     Q_INVOKABLE QVariantMap startSetupAssistantCheck();

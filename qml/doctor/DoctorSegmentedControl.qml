@@ -25,9 +25,12 @@ Item {
                 width: Math.max(56, label.implicitWidth + 20)
                 height: parent.height
                 focusPolicy: Qt.StrongFocus
+                Accessible.role: Accessible.Button
                 Accessible.name: modelData
                 Accessible.checked: root.currentValue === modelData
                 onClicked: root.activated(modelData)
+                Keys.onReturnPressed: segment.click()
+                Keys.onEnterPressed: segment.click()
                 contentItem: Label {
                     id: label
                     text: modelData

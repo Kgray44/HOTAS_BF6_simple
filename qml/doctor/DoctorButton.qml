@@ -16,8 +16,11 @@ AbstractButton {
     topPadding: 4
     bottomPadding: 4
     focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Button
     Accessible.name: accessibleName
     Accessible.description: tooltipText
+    Keys.onReturnPressed: control.click()
+    Keys.onEnterPressed: control.click()
 
     contentItem: Label {
         text: control.text

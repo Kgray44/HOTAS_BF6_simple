@@ -38,13 +38,16 @@ function Remove-InstallerTestInstallation([string] $target) {
     if ($result.ExitCode -ne 0) { throw "Test installation uninstaller failed with exit code $($result.ExitCode): $target" }
 }
 
-function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion, [switch] $AllowMissingLauncher) {
+function Assert-InstalledPackage([string] $target, [string] $expectedInstalledVersion, [switch] $AllowMissingLauncher, [switch] $AllowMissingDoctorComponents) {
     $requiredFiles = @(
-        'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Qml.dll', 'Qt6Quick.dll',
-        'Qt6QuickControls2.dll'
+        'HOTAS BF6.exe', 'VERSION', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Qml.dll',
+        'Qt6Quick.dll', 'Qt6QuickControls2.dll'
     )
     if (-not $AllowMissingLauncher) {
         $requiredFiles = @('HOTAS BF6 Launcher.exe') + $requiredFiles
+    }
+    if (-not $AllowMissingDoctorComponents) {
+        $requiredFiles = @('HidHide Doctor.exe', 'HidHideDoctorRepair.exe') + $requiredFiles
     }
     foreach ($file in $requiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $target $file) -PathType Leaf)) {
@@ -79,8 +82,11 @@ function Assert-ShortcutTarget([string] $shortcut, [string] $expectedTarget) {
     }
 }
 
-function Invoke-MapperStartupSmoke([string] $target) {
-    $mapper = Join-Path $target 'HOTAS BF6.exe'
+function Invoke-PackagedStartupSmoke([string] $target, [string] $executableName, [string] $displayName) {
+    $executable = Join-Path $target $executableName
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "Packaged $displayName is missing: $executable"
+    }
     $environmentNames = @('QT_QPA_PLATFORM', 'QT_PLUGIN_PATH', 'QML2_IMPORT_PATH', 'QML_IMPORT_PATH')
     $priorEnvironment = @{}
     foreach ($name in $environmentNames) {
@@ -91,13 +97,21 @@ function Invoke-MapperStartupSmoke([string] $target) {
         $env:QT_PLUGIN_PATH = $null
         $env:QML2_IMPORT_PATH = $null
         $env:QML_IMPORT_PATH = $null
-        $result = Start-Process -FilePath $mapper -ArgumentList '--startup-smoke' -Wait -PassThru
-        if ($result.ExitCode -ne 0) { throw "Packaged mapper startup smoke failed with exit code $($result.ExitCode)." }
+        $result = Start-Process -FilePath $executable -ArgumentList '--startup-smoke' -Wait -PassThru
+        if ($result.ExitCode -ne 0) { throw "Packaged $displayName startup smoke failed with exit code $($result.ExitCode)." }
     } finally {
         foreach ($name in $environmentNames) {
             [Environment]::SetEnvironmentVariable($name, $priorEnvironment[$name], 'Process')
         }
     }
+}
+
+function Invoke-MapperStartupSmoke([string] $target) {
+    Invoke-PackagedStartupSmoke $target 'HOTAS BF6.exe' 'mapper'
+}
+
+function Invoke-DoctorStartupSmoke([string] $target) {
+    Invoke-PackagedStartupSmoke $target 'HidHide Doctor.exe' 'HidHide Doctor'
 }
 
 function Assert-LegacyMapperStarts([string] $target) {
@@ -134,6 +148,7 @@ try {
     Invoke-Installer $candidate $cleanInstall
     Assert-InstalledPackage $cleanInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $cleanInstall
+    Invoke-DoctorStartupSmoke $cleanInstall
     & $fixture --assert-fresh-v29
     if ($LASTEXITCODE -ne 0) { throw 'Clean installation did not create the Battlefield 6 / Helicopter starter.' }
 
@@ -148,6 +163,7 @@ try {
     Invoke-Installer $candidate $upgradeInstall
     Assert-InstalledPackage $upgradeInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $upgradeInstall
+    Invoke-DoctorStartupSmoke $upgradeInstall
     & $fixture --assert-v29
     if ($LASTEXITCODE -ne 0) { throw 'v1.9.3 upgrade did not preserve and migrate the acceptance fixture.' }
 
@@ -162,6 +178,7 @@ try {
     Invoke-Installer $candidate $recoveryInstall
     Assert-InstalledPackage $recoveryInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $recoveryInstall
+    Invoke-DoctorStartupSmoke $recoveryInstall
     & $fixture --assert-v29
     if ($LASTEXITCODE -ne 0) { throw 'v2.0.1 did not preserve the affected schema-15 acceptance fixture.' }
 
@@ -173,12 +190,13 @@ try {
     Write-Host 'Installer acceptance: v2.5.0 N-1 upgrade.'
     $priorStableInstall = Join-Path $work 'v250-upgrade'
     Invoke-Installer $priorStableInstaller $priorStableInstall
-    Assert-InstalledPackage $priorStableInstall '2.5.0' -AllowMissingLauncher
+    Assert-InstalledPackage $priorStableInstall '2.5.0' -AllowMissingLauncher -AllowMissingDoctorComponents
     & $fixture --seed-v15
     if ($LASTEXITCODE -ne 0) { throw 'Could not seed the v2.5.0 upgrade fixture.' }
     Invoke-Installer $candidate $priorStableInstall
     Assert-InstalledPackage $priorStableInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $priorStableInstall
+    Invoke-DoctorStartupSmoke $priorStableInstall
     & $fixture --assert-v29
     if ($LASTEXITCODE -ne 0) { throw 'v2.5.0 -> candidate did not preserve the acceptance fixture.' }
 
@@ -196,6 +214,7 @@ try {
     if ($defaultResult.ExitCode -ne 0) { throw "Default-path installer failed with exit code $($defaultResult.ExitCode)." }
     Assert-InstalledPackage $defaultInstall $ExpectedVersion
     Invoke-MapperStartupSmoke $defaultInstall
+    Invoke-DoctorStartupSmoke $defaultInstall
     $launcher = Join-Path $defaultInstall 'HOTAS BF6 Launcher.exe'
     Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath('Programs')) 'HOTAS BF6\HOTAS BF6.lnk') $launcher
     Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath('Desktop')) 'HOTAS BF6.lnk') $launcher
