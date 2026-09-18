@@ -1,4 +1,4 @@
-# Pass A and Pass B usability implementation record
+# Pass A, Pass B, and Pass C usability implementation record
 
 ## Boundary and comparison baseline
 
@@ -6,7 +6,7 @@
 - Candidate: `codex/usability-setup-guidance` in `C:\Users\kkids\Documents\HOTAS_BF6-usability-setup-guidance`.
 - Comparison baseline: accepted `origin/main` at `bdedc52848ec18ddc4f6a387776526dcde1c7ce5` (`v2.6.6`). This candidate was reconciled with that baseline by merge commit `ffd87a4`.
 - Reconciliation conflicts: `qml/FlightDeckOverview.qml`, `qml/Standard.qml`, and `tests/app_qml_startup_tests.cpp`. The resolutions retained accepted v2.6.6 theme/pointer behavior and this pass's non-activating editor selection. No unresolved ownership conflict remains.
-- Scope: completed Pass A presentation corrections plus the directed Pass B setup-journey candidate. No Pass C, main merge, release/tag, installer change, physical driver change, owner-data reset, or machine-wide configuration change is authorized or performed.
+- Scope: accepted Pass A/Pass B corrections plus the directed Pass C presentation policy. No merge, release/tag, installer change, physical driver change, owner-data reset, or machine-wide configuration change is authorized or performed.
 
 ## Ownership retained and extended
 
@@ -116,6 +116,52 @@
 - Cached Release `app_qml_startup_tests` compiled successfully. Its focused `HOTAS_QML_FLIGHT_DECK_VISUAL_ONLY=1` route passed independently for Dark and Light. It drives the existing Step 1 keyboard and Step 2 pointer journey; clicks each checkbox's indicator and label; uses Space after keyboard focus; proves task/stage identity and draft persistence; selects/resumes a source profile; verifies disabled controls do not toggle; and checks Small/Medium/Large/Extra Large at the 900×650 app minimum with the footer contained.
 - Actual offscreen captures are retained at `C:\hotas-builds\usability-setup-guidance-pass-b-owner-review\evidence\checkbox` for Dark/Light and unchecked/checked states. They confirm the Flight Deck surfaces and vector mark in the test renderer. Offscreen font fallback means those images do not qualify native typography or owner acceptance.
 - A side-by-side Release candidate was linked from the existing cache without touching the running review executable: `C:\hotas-builds\usability-setup-guidance-pass-b-owner-review\Release\HOTAS BF6 Pass B Checkbox Review.exe` (14,498,816 bytes; SHA-256 `911161A3E7867C02D4C3BD3C61847F433588F1AA2944657BC6DE441CF2825102`). It will be launched only with `--isolated-presentation`; this is launchability/presentation evidence, not hardware, driver, mapping, or owner-acceptance proof.
+
+## Pass C guidance-level candidate (2026-09-17; unmerged)
+
+### C-01 through C-05 implementation
+
+- `ThemeManager` owns two stable presentation values, **Guided** and **Full**, separately from theme, experience, appearance, and text-size preferences. It exposes one dedicated policy notification and never reaches `AppBackend`, `persistAndApply`, activation, repair, discovery, or the mapper worker.
+- Flight Deck Settings exposes **Guidance level** with themed, keyboard-focusable Guided/Full controls and a truthful explanation: it changes help/default disclosure only, never mappings. The setting applies in place without replacing the presentation Loader.
+- A genuine empty installation offers a small themed choice. **Skip for now** persists Guided and records the onboarding version. Existing configuration, profile, setup-task, and UI markers choose the Full-compatible path without an onboarding interruption; connected-device count, empty inventory, and offline Rigs are never consulted as first-use evidence. First-use guidance also waits for crash recovery to close.
+- The shared policy keeps **unset**, **explicitly open**, and **explicitly closed** section states distinct. Full expands untouched Diagnostics, Adaptive Response, and Curve details; Guided keeps the same actions behind visible, keyboard-accessible disclosures. An explicit local choice survives restart and wins over a later level change.
+- Guidance changes preserve the current page object, task ID/stage/drafts, mapping-request state, active/editing context, and repair confirmation. The accepted rounded dialog/footer, input, selector, and checkbox implementations are reused unchanged.
+
+### C-04 capability and page coverage
+
+| Surface | Guided treatment | Full treatment | Capability boundary |
+| --- | --- | --- | --- |
+| Overview, Devices, Axes, Buttons, Profiles, Automation, Signal Flow | Existing concise task-first hierarchy remains; all existing actions and deep links remain visible. | Same destinations, ordering, editors, graph, and actions. | No duplicate page tree, identity remapping, activation, or topology change. |
+| Curve Editor | Curve details remain reachable through its existing named disclosure. | Untouched Curve details open by default. | Existing curve math, undo, snapshots, and canonical editor commands remain authoritative. |
+| Adaptive Response | Advanced tuning, traces, and Test Lab remain named disclosures. | Untouched engineering detail opens by default. | Existing context, presets, simulation, and runtime configuration are unchanged. |
+| Diagnostics | Input/output/isolation/event/technical detail is compact but explicitly reachable. | Untouched diagnostics detail opens by default. | Warnings, evidence, repair scope, and deep links remain equally truthful. |
+| Settings and dialogs | Explains what the preference changes and preserves ordinary controls. | Same Settings and dialog actions. | Theme, text size, appearance, task/repair confirmation, and canonical settings remain independent. |
+| Legacy, Standard, Top Gun, and Day Ops hosts | Inspected and intentionally unchanged where no appropriate Flight Deck disclosure exists. | Same established host behavior. | Flight Deck chrome is not forced onto another presentation. |
+
+### C-06 focused evidence
+
+- `theme_manager_tests` covers fresh Guided and Full selection, skip-to-Guided, restart persistence, invalid-value recovery, existing-user/no-hardware-safe upgrade behavior, explicit disclosure precedence across Guided/Full/restart, repeated same-level no-op, mapper-payload preservation, and write failure with no falsely changed visible selection.
+- The Release `app_qml_startup_tests` lifecycle journey drives the actual Settings controls, observes meaningful Guided/Full defaults on Diagnostics and Adaptive Response, and compares the canonical Flight Deck configuration snapshot plus setup task before/after. It also changes guidance while the accepted Step 2 assistant is open with checkbox drafts, and while the existing repair confirmation is open; task, drafts, active Rig/Profile, mapping request, and configuration stay unchanged.
+- The same journey retains the accepted pointer/keyboard Step 2, exact controller, profile-copy/required-member checkbox, task resume, repair confirmation, editor, deep-link, Dark/Light, text-size, minimum-window, and responsiveness fixtures. Its complex profile/device/Automation/Adaptive/Signal Flow fixtures remain the canonical semantic source; no guidance setter reads or writes their configuration.
+
+### C-07 qualification and T01–T22 matrix
+
+| IDs | Status on this candidate | Evidence boundary |
+| --- | --- | --- |
+| T01, T12–T14 | Covered | Existing configuration/task markers preserve upgrade and interrupted-task behavior; offscreen fixtures are not hardware proof. |
+| T02–T08, T17 | Retained and exercised by existing Rig/Profile/editor/deep-link fixtures | Canonical Rig/Profile ownership and stable IDs are unchanged by guidance. |
+| T09–T11, T16 | Retained and exercised by existing readiness/repair/read-only fixtures | No driver, UAC, or real-device claim is made from isolated runs. |
+| T15, T18 | Retained with Guided advanced disclosures and existing sparse-input/complex-profile fixtures | Guided does not remove mappings, controls, or processing. |
+| T19 | Covered directly | Both ThemeManager and production Settings changes preserve task, repair dialog, configuration, and mapping-request state. |
+| T20 | Covered by the existing Dark/Light, text-size, minimum-window, keyboard, dialog/footer, and focus fixtures | Offscreen glyph replacement remains a typography limit. |
+| T21 | Covered by the existing controlled navigation/slider workload | Final offscreen slider burst reports p95/p99 values in the final test log; it is not native-display or arbitrary-OS-starvation proof. |
+| T22 | Covered: the final cached Release test-target build completed; full CTest passed 18/18 in 74.39 seconds | The pre-existing normal-output executable was locked by its owner review process, so the product was linked as a side-by-side review executable. The existing benchmark gate passed; no new allocation claim is inferred beyond that gate. |
+
+### Evidence limits
+
+- The final focused QML journey completed with the offscreen platform and disabled external setup inspection. It proves generated QML, pointer/keyboard routing, policy behavior, and fixture invariants only.
+- Offscreen captures with replacement-box glyphs are structural evidence only. They do **not** establish native Windows typography, native pointer acceptance, physical controller acquisition, vJoy/HidHide behavior, UAC, game visibility, or owner acceptance.
+- The final owner-review candidate is staged separately from the owner’s existing review process at `C:\hotas-builds\usability-setup-guidance\Release\HOTAS BF6 Pass C Review.exe`. It must use isolated settings and a normal Windows launch; no owner configuration, mapping, driver state, or running executable is replaced.
 
 ## Matched synthetic mapper benchmark
 

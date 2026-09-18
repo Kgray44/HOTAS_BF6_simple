@@ -3003,6 +3003,73 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
             "Flight Deck Settings did not present vJoy through the active Device Rig primary output"));
     }
 
+    // Guidance changes only presentation defaults. Exercise the actual
+    // Settings controls while a real Flight Deck task fixture is still in
+    // memory, then inspect two independently loaded pages without replacing
+    // their shell or issuing a backend configuration command.
+    auto *guided = findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceGuided"));
+    auto *full = findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull"));
+    const QVariantMap guidanceConfigurationBefore = flightDeckConfigurationSnapshot(backend);
+    const QVariantMap guidanceTaskBefore = backend.setupAssistantTask();
+    const QString guidanceThemeBefore = themeManager.currentTheme();
+    const QString guidanceExperienceBefore = themeManager.currentExperience();
+    const QString guidanceAppearanceBefore = themeManager.flightDeckAppearance();
+    const QString guidanceTextSizeBefore = themeManager.textSize();
+    const bool guidedPointer = guided && clickFlightDeckSettingsItem(window, settings, guided);
+    if (themeManager.guidanceLevel() != QStringLiteral("Guided")) {
+        if (!themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck Guided preference could not be persisted"));
+        }
+        settlePresentation();
+    }
+    const bool guidedSettingsRetained = pageItem(surface, 4) == settings
+        && settings->property("guidanceSaveError").toString().isEmpty();
+    if (!selectPage(surface, 3)) return false;
+    auto *guidedDiagnostics = pageItem(surface, 3);
+    const bool guidedDefaults = guidedDiagnostics
+        && !guidedDiagnostics->property("isolationDetailsExpanded").toBool()
+        && !guidedDiagnostics->property("eventLogExpanded").toBool();
+    if (!selectPage(surface, 9)) return false;
+    auto *guidedAdaptive = pageItem(surface, 9);
+    const bool guidedAdaptiveDefaults = guidedAdaptive
+        && !guidedAdaptive->property("advancedTracesExpanded").toBool();
+    if (!selectPage(surface, 4)) return false;
+    settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    full = settings ? findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull")) : nullptr;
+    const bool fullPointer = full && clickFlightDeckSettingsItem(window, settings, full);
+    if (themeManager.guidanceLevel() != QStringLiteral("Full")) {
+        if (!themeManager.chooseGuidanceLevel(QStringLiteral("Full"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck Full preference could not be persisted"));
+        }
+        settlePresentation();
+    }
+    if (!selectPage(surface, 3)) return false;
+    auto *fullDiagnostics = pageItem(surface, 3);
+    const bool fullDefaults = fullDiagnostics
+        && fullDiagnostics->property("isolationDetailsExpanded").toBool()
+        && fullDiagnostics->property("eventLogExpanded").toBool();
+    if (!selectPage(surface, 9)) return false;
+    auto *fullAdaptive = pageItem(surface, 9);
+    const bool fullAdaptiveDefaults = fullAdaptive
+        && fullAdaptive->property("advancedTracesExpanded").toBool();
+    if (!guided || !full || !guidedPointer || !fullPointer || !guidedSettingsRetained
+        || !guidedDefaults || !guidedAdaptiveDefaults || !fullDefaults || !fullAdaptiveDefaults
+        || flightDeckConfigurationSnapshot(backend) != guidanceConfigurationBefore
+        || backend.setupAssistantTask() != guidanceTaskBefore
+        || themeManager.currentTheme() != guidanceThemeBefore
+        || themeManager.currentExperience() != guidanceExperienceBefore
+        || themeManager.flightDeckAppearance() != guidanceAppearanceBefore
+        || themeManager.textSize() != guidanceTextSizeBefore) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck guidance controls changed state beyond presentation defaults "
+            "(guidedPointer=%1 fullPointer=%2 guided=%3 guidedAdaptive=%4 full=%5 fullAdaptive=%6)")
+            .arg(guidedPointer).arg(fullPointer).arg(guidedDefaults).arg(guidedAdaptiveDefaults)
+            .arg(fullDefaults).arg(fullAdaptiveDefaults));
+    }
+    if (!selectPage(surface, 4)) return false;
+    settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    if (!settings) return failPresentationLifecycleTest(QStringLiteral("Settings did not recover after guidance coverage"));
+
     const QVariantMap configurationBeforeSwitch = flightDeckConfigurationSnapshot(backend);
     auto *standardCard = findVisualItemByObjectName(settings,
         QStringLiteral("flightDeckExperience_theme:Standard"));
@@ -3605,6 +3672,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     themeManager.setCurrentTheme(QStringLiteral("Standard"));
     themeManager.setFlightDeckAppearance(appearance);
     themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
@@ -3843,6 +3913,25 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const bool copyKeyboardSaved = copyKeyboardFocus && copyCheckbox->property("checked").toBool()
         && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
         && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    // A live guidance change must not reconstruct the assistant or discard
+    // its exact task/draft. This uses the same preference owner as Settings;
+    // no setup command, activation, repair, or mapping call is involved.
+    const QVariantMap taskBeforeGuidanceSwitch = backend.setupAssistantTask();
+    const QString rigDraftBeforeGuidanceSwitch = rigNameField ? rigNameField->property("text").toString() : QString{};
+    const QString profileDraftBeforeGuidanceSwitch = profileNameField ? profileNameField->property("text").toString() : QString{};
+    const bool guidanceFullDuringTask = themeManager.chooseGuidanceLevel(QStringLiteral("Full"));
+    settlePresentation();
+    const bool guidanceGuidedDuringTask = guidanceFullDuringTask
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
+    const bool guidanceTaskRetained = guidanceGuidedDuringTask && guidedSetupDialog
+        && guidedSetupDialog->property("visible").toBool()
+        && backend.setupAssistantTask() == taskBeforeGuidanceSwitch
+        && (!rigNameField || rigNameField->property("text").toString() == rigDraftBeforeGuidanceSwitch)
+        && (!profileNameField || profileNameField->property("text").toString() == profileDraftBeforeGuidanceSwitch)
+        && backend.activeProfileId() == activeProfileBeforeSetup
+        && backend.activeDeviceRigId() == activeRigBeforeSetup
+        && backend.mappingRequested() == mappingRequestedBeforeSetup;
     const bool copyCheckedCaptured = copyKeyboardSaved && revealSetupItem(copyCheckbox)
         && captureSetupCheckbox(QStringLiteral("checked"));
     auto *copyChoice = findVisualItemByObjectName(window->contentItem(),
@@ -3971,18 +4060,19 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
         || !readableNamePlaceholders || !copyUncheckedCaptured || !copyIndicatorSaved || !copyLabelSaved || !copyKeyboardSaved
+        || !guidanceTaskRetained
         || !copyCheckedCaptured
         || !copySourceSaved || !copyDisabledVisual || !copyDisabledSafe || !setupCheckboxGeometryStable
         || !resumedCopyDraft || !requiredIndicatorSaved || !requiredLabelSaved || !requiredKeyboardSaved
         || !requiredDisabledVisual || !requiredDisabledSafe || !setupActionReset) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Flight Deck setup journey failed (open=%1 controller=%2 next=%3 step2=%4 placeholders=%5 "
-            "copyIndicator=%6 copyLabel=%7 copyKey=%8 copySource=%9 copyDisabledVisual=%10 copyDisabledSafe=%11 "
-            "copyLayout=%12 resume=%13 requiredIndicator=%14 requiredLabel=%15 requiredKey=%16 "
-            "requiredDisabledVisual=%17 requiredDisabledSafe=%18 reset=%19)")
+            "copyIndicator=%6 copyLabel=%7 copyKey=%8 guidanceTask=%9 copySource=%10 copyDisabledVisual=%11 copyDisabledSafe=%12 "
+            "copyLayout=%13 resume=%14 requiredIndicator=%15 requiredLabel=%16 requiredKey=%17 "
+            "requiredDisabledVisual=%18 requiredDisabledSafe=%19 reset=%20)")
             .arg(guidedSetupOpened).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
             .arg(readableNamePlaceholders).arg(copyIndicatorSaved).arg(copyLabelSaved).arg(copyKeyboardSaved)
-            .arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
+            .arg(guidanceTaskRetained).arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
             .arg(resumedCopyDraft).arg(requiredIndicatorSaved).arg(requiredLabelSaved).arg(requiredKeyboardSaved)
             .arg(requiredDisabledVisual).arg(requiredDisabledSafe).arg(setupActionReset));
     }
@@ -6409,9 +6499,19 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return headingRect.left() >= inset - 0.5 && headingRect.right() <= header->width() - inset + 0.5
             && headingRect.top() >= inset - 0.5;
     };
+    const QVariantMap repairGuidanceConfigurationBefore = flightDeckConfigurationSnapshot(backend);
+    const bool repairGuidanceStable = devices && repairConfirmation
+        && QMetaObject::invokeMethod(repairConfirmation, "open")
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Full"));
+    settlePresentation();
+    const bool repairGuidanceRestored = repairGuidanceStable
+        && repairConfirmation->property("visible").toBool()
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
     if (!devices || !repairConfirmation
-        || !QMetaObject::invokeMethod(repairConfirmation, "open")
+        || !repairGuidanceRestored
         || !repairConfirmation->property("visible").toBool()
+        || flightDeckConfigurationSnapshot(backend) != repairGuidanceConfigurationBefore
         || !headingFitsDialogInset(repairHeading, repairHeader,
             repairConfirmation->property("contentPadding").toReal())
         || !captureShell(QStringLiteral("devices-repair-confirmation"))) {
@@ -6620,8 +6720,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(contextTarget ? contextTarget->x() : -1).arg(contextTarget ? contextTarget->y() : -1)
             .arg(contextTarget ? contextTarget->width() : -1).arg(contextTarget ? contextTarget->height() : -1));
     }
-    adaptiveVisual->setProperty("advancedExpanded", false);
-    adaptiveVisual->setProperty("testLabExpanded", false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
     adaptiveVisual->setProperty("responseLabSource", QStringLiteral("interactive"));
     adaptiveVisual->setProperty("contentY", 0.0);
     const auto scrollAdaptiveTo = [&](const QString &section, const QString &targetName) {
@@ -6703,7 +6803,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive static analysis state did not render")
             .arg(appearance));
     }
-    adaptiveVisual->setProperty("advancedExpanded", true);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), true);
     if (!scrollAdaptiveTo(QStringLiteral("advanced"), QStringLiteral("flightDeckAdaptiveAdvancedCard"))
         || !captureShell(QStringLiteral("adaptive-advanced"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive advanced state did not render")
@@ -6744,7 +6844,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     QTest::qWait(120);
     adaptiveVisual->setProperty("simulatorPaused", true);
-    const bool testLabPropertyWritten = adaptiveVisual->setProperty("testLabExpanded", true);
+    const bool testLabPropertyWritten = themeManager.setGuidanceSectionExpanded(
+        QStringLiteral("adaptive-test-lab"), true);
     settlePresentation();
     if (!testLabPropertyWritten || !adaptiveVisual->property("testLabExpanded").toBool()) {
         const QByteArray message = QStringLiteral("Adaptive Test Lab fixture could not expand: written=%1 value=%2\n")
@@ -6923,9 +7024,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const bool detailClicked = clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsTechnicalToggle"), QStringLiteral("advanced"));
     bool detailsOpen = diagnostics->property("technicalDetailsExpanded").toBool();
     if (!detailsOpen) {
-        QQmlExpression openTechnical(qmlContext(diagnostics), diagnostics,
-            QStringLiteral("technicalDetailsExpanded = true; technicalDetailsExpanded"));
-        detailsOpen = openTechnical.evaluate().toBool() && !openTechnical.hasError();
+        detailsOpen = themeManager.setGuidanceSectionExpanded(
+            QStringLiteral("diagnostics-technical"), true);
+        settlePresentation();
+        detailsOpen = detailsOpen && diagnostics->property("technicalDetailsExpanded").toBool();
     }
     const bool observational = backend.activeProfileId() == profileBeforeDiagnostics
         && backend.runtimeAxisRoutesForTest() == routesBeforeDiagnostics
@@ -6958,7 +7060,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     readinessModel->setProperty("presentationStateOverride", attentionFixture);
     diagnostics->setProperty("presentationOverride", diagnosticFixture);
     diagnostics->setProperty("contentY", 0.0);
-    diagnostics->setProperty("technicalDetailsExpanded", false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("diagnostics-technical"), false);
     settlePresentation();
     const bool attentionFilterClicked = clickDiagnosticsItem(
         QStringLiteral("flightDeckDiagnosticsFilterAttention"), QStringLiteral("summary"));
@@ -7014,7 +7116,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     diagnosticFixture.insert(QStringLiteral("deviceId"), QStringLiteral("DIRECTINPUT:VID_044F&PID_B68D&INSTANCE_000000000000000000000000000000000000000000000000"));
     diagnosticFixture.insert(QStringLiteral("axes"), routeFixture);
     diagnostics->setProperty("presentationOverride", diagnosticFixture);
-    diagnostics->setProperty("outputDetailsExpanded", true);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("diagnostics-output"), true);
     settlePresentation();
     if (!captureShell(QStringLiteral("diagnostics-signal-path")) || !scrollDiagnostics(QStringLiteral("systems"))
         || !captureShell(QStringLiteral("diagnostics-output-technical")) || !scrollDiagnostics(QStringLiteral("inspection"))
@@ -7075,6 +7177,9 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
     themeManager.setCurrentTheme(QStringLiteral("Standard"));
     themeManager.setFlightDeckAppearance(appearance);
     themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
 
     const int originalAxis = backend.selectedAxisIndex();
     backend.setSelectedAxis(0);

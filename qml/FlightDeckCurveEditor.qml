@@ -18,7 +18,10 @@ Flickable {
     property var comparison: backendObject ? backendObject.curveComparisonState : ({})
     property bool responseView: true
     property bool showEffective: false
-    property bool detailsExpanded: false
+    readonly property bool detailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("curve-details")
+    }
     property bool addingPoint: false
     property int selectedPoint: -1
     property var undoStack: []
@@ -44,7 +47,8 @@ Flickable {
         contentY = Number(saved.contentY || 0);
         responseView = saved.responseView === undefined ? true : !!saved.responseView;
         showEffective = !!saved.showEffective;
-        detailsExpanded = !!saved.detailsExpanded;
+        if (saved.detailsExpanded !== undefined)
+            themeManager.setGuidanceSectionExpanded("curve-details", !!saved.detailsExpanded);
     }
     function recordHistory() {
         if (!backendObject) return;
@@ -639,7 +643,7 @@ Flickable {
                         SectionLabel { caption: "OVERLAY & WORKSPACE TOOLS" }
                         Text { text: "Compare or preview a response without changing the active curve."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10) }
                     }
-                    DeckButton { text: detailsExpanded ? "HIDE DETAILS" : "CURVE DETAILS"; subdued: true; onClicked: detailsExpanded = !detailsExpanded }
+                    DeckButton { text: detailsExpanded ? "HIDE DETAILS" : "CURVE DETAILS"; subdued: true; onClicked: themeManager.setGuidanceSectionExpanded("curve-details", !detailsExpanded) }
                 }
                 GridLayout {
                     Layout.fillWidth: true
