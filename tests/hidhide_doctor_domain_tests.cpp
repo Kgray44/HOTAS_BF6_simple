@@ -163,6 +163,7 @@ private slots:
     void phaseThreeUnavailableJournalFailsSafelyBeforeMutation();
     void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
     void phaseFiveBoundedProtocolJournalReportAndPackageFuzz();
+    void phaseFiveForensicEvidenceIsStructuredLinkedAndSemanticallyRendered();
     void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
     void phaseFiveReportExportVerifiesDestinationAndReportsPath();
     void phaseFiveBundleExportIsTransactionalOnFailure();
@@ -441,7 +442,7 @@ void HidHideDoctorDomainTests::phaseOneReportRedactsSensitiveObservationValues()
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(report, &parseError);
     QCOMPARE(parseError.error, QJsonParseError::NoError);
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QCOMPARE(document.object().value(QStringLiteral("evidenceRecords")).toArray().size(), DoctorCatalog::v11DefinedCheckIds().size());
 }
 
@@ -588,7 +589,7 @@ void HidHideDoctorDomainTests::phaseTwoReportCarriesFindingsDiagnosesAndKnowledg
     DoctorDiagnosticEngine engine;
     const DiagnosticRunOutcome outcome = engine.run(provider);
     const QJsonDocument document = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
-    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QVERIFY(!document.object().value(QStringLiteral("knowledgeEngine")).toObject().value(QStringLiteral("version")).toString().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("findings")).toArray().isEmpty());
     QVERIFY(!document.object().value(QStringLiteral("diagnoses")).toArray().isEmpty());
@@ -841,6 +842,64 @@ void HidHideDoctorDomainTests::phaseFiveIntegrationContextIsBoundedOneTimeAndUnp
     QVERIFY(!writeDoctorLaunchContext(oversized, &reason));
 }
 
+void HidHideDoctorDomainTests::phaseFiveForensicEvidenceIsStructuredLinkedAndSemanticallyRendered()
+{
+    ReadOnlyDiagnosticSnapshot snapshot = healthyFixtureSnapshot();
+    // Exercise the provider-to-evidence mapping with actual transport facts,
+    // while retaining the fixture's deterministic read-only boundary.
+    ProtocolObservation &active = snapshot.protocol[1];
+    active.endpoint = QStringLiteral("\\\\.\\HidHide");
+    active.access = QStringLiteral("GENERIC_READ; shared read/write/delete; overlapped");
+    active.api = QStringLiteral("CreateFileW + DeviceIoControl");
+    active.ioctlCode = 0x222110;
+    active.requestBytes = 0;
+    active.responseBytes = 1;
+    active.attemptCount = 1;
+    active.timeoutMs = 2500;
+    active.startedAt = QDateTime::currentDateTimeUtc().addMSecs(-1);
+    active.completedAt = QDateTime::currentDateTimeUtc();
+    active.monotonicDurationUs = 847;
+    SnapshotProvider provider(snapshot);
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+
+    int unexpectedlyShallow = 0;
+    const EvidenceRecord *activeEvidence = nullptr;
+    for (const EvidenceRecord &record : outcome.session.evidence()) {
+        if (record.fields.size() < 8 || record.monotonicDurationUs <= 0 || record.expectedState.isEmpty()
+            || record.statusReason.isEmpty())
+            ++unexpectedlyShallow;
+        if (record.checkId.value() == QStringLiteral("HD-API-002")) activeEvidence = &record;
+    }
+    QCOMPARE(unexpectedlyShallow, 0);
+    QVERIFY(activeEvidence);
+    QCOMPARE(activeEvidence->provider, QStringLiteral("HidHide control-device provider"));
+    QCOMPARE(activeEvidence->operation, QStringLiteral("GET_ACTIVE"));
+    QCOMPARE(activeEvidence->targetIdentity, QStringLiteral("\\\\.\\HidHide"));
+    QCOMPARE(activeEvidence->monotonicDurationUs, 847);
+    QVERIFY(activeEvidence->humanSummary.contains(QStringLiteral("enabled"), Qt::CaseInsensitive));
+    QVERIFY(activeEvidence->humanSummary.trimmed().compare(QStringLiteral("true"), Qt::CaseInsensitive) != 0);
+    QVERIFY(std::any_of(activeEvidence->fields.cbegin(), activeEvidence->fields.cend(), [](const EvidenceField &field) {
+        return field.label == QStringLiteral("IOCTL") && field.value == QStringLiteral("0X00222110");
+    }));
+
+    const QJsonObject serialized = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true)).object();
+    QCOMPARE(serialized.value(QStringLiteral("schemaVersion")).toInt(), 6);
+    const QJsonArray records = serialized.value(QStringLiteral("evidenceRecords")).toArray();
+    const auto iterator = std::find_if(records.cbegin(), records.cend(), [](const QJsonValue &value) {
+        return value.toObject().value(QStringLiteral("checkId")).toString() == QStringLiteral("HD-API-002");
+    });
+    QVERIFY(iterator != records.cend());
+    const QJsonObject exported = iterator->toObject();
+    QVERIFY(exported.value(QStringLiteral("fields")).toArray().size() >= 8);
+    QVERIFY(exported.value(QStringLiteral("attempts")).toArray().size() == 1);
+    const QJsonArray linkedChecks = exported.value(QStringLiteral("relationships")).toObject().value(QStringLiteral("checkIds")).toArray();
+    QVERIFY(std::any_of(linkedChecks.cbegin(), linkedChecks.cend(), [](const QJsonValue &value) {
+        return value.toString() == QStringLiteral("HD-API-002");
+    }));
+    QVERIFY(serialized.value(QStringLiteral("activityTimeline")).toArray().size() > outcome.session.checkResults().size());
+}
+
 void HidHideDoctorDomainTests::phaseFiveBoundedProtocolJournalReportAndPackageFuzz()
 {
     // Fixed seed and bounded corpus make this a reproducible parser-boundary
@@ -1026,6 +1085,8 @@ void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBun
     QVERIFY(document.object().contains(QStringLiteral("userActionLedger")));
     QVERIFY(document.object().contains(QStringLiteral("evidenceRecords")));
     QVERIFY(document.object().contains(QStringLiteral("timingPerformance")));
+    QCOMPARE(document.object().value(QStringLiteral("schemaVersion")).toInt(), 2);
+    QVERIFY(document.object().contains(QStringLiteral("schemaCompatibility")));
     QVERIFY(!document.object().value(QStringLiteral("redactionManifest")).toObject()
                  .value(QStringLiteral("excluded")).toArray().isEmpty());
     QVERIFY(report.markdown.contains("HIDHIDE DOCTOR REPORT"));
@@ -1034,6 +1095,10 @@ void HidHideDoctorDomainTests::phaseFiveReportComposerIsStructuredRedactedAndBun
     QVERIFY(!environment.value(QStringLiteral("hidhideClientVersion")).toString().contains(QChar::Null));
     QVERIFY(!environment.value(QStringLiteral("hidhideDriverVersion")).toString().contains(QChar::Null));
     QVERIFY(!report.redacted.isEmpty());
+    const QJsonArray forensicRecords = document.object().value(QStringLiteral("evidenceRecords")).toArray();
+    QVERIFY(!forensicRecords.isEmpty());
+    QVERIFY(forensicRecords.first().toObject().contains(QStringLiteral("fields")));
+    QVERIFY(forensicRecords.first().toObject().contains(QStringLiteral("relationships")));
 
     DoctorReportRequest currentSteps;
     currentSteps.scope = QStringLiteral("Current / Historical Steps");

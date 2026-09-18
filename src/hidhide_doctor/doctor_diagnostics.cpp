@@ -72,6 +72,211 @@ QString redact(const QString &value, EvidenceSensitivity sensitivity, bool redac
     return QStringLiteral("[redacted]");
 }
 
+void addEvidenceField(EvidenceRecord *record, EvidenceFieldCategory category, QString label, QString value,
+                      EvidenceSensitivity sensitivity = EvidenceSensitivity::SafeToExport, bool monospace = false)
+{
+    if (value.trimmed().isEmpty()) return;
+    record->fields.append({category, std::move(label), std::move(value), sensitivity, monospace});
+}
+
+QString semanticProtocolValue(const ProtocolObservation &probe)
+{
+    const auto isTrue = [&] { return probe.value.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0; };
+    const auto isFalse = [&] { return probe.value.compare(QStringLiteral("false"), Qt::CaseInsensitive) == 0; };
+    if (probe.operation.startsWith(QStringLiteral("GET_ACTIVE")) && (isTrue() || isFalse()))
+        return isTrue() ? QStringLiteral("HidHide active state is enabled.") : QStringLiteral("HidHide active state is disabled.");
+    if (probe.operation.startsWith(QStringLiteral("GET_INVERSE")) && (isTrue() || isFalse()))
+        return isTrue() ? QStringLiteral("Inverse / whitelist mode is enabled.") : QStringLiteral("Inverse / whitelist mode is disabled.");
+    if (probe.operation == QStringLiteral("OPEN_CONTROL"))
+        return QStringLiteral("The HidHide control endpoint accepted a read-only open.");
+    if (!probe.value.isEmpty()) return probe.value;
+    return QStringLiteral("The native operation completed without a readable value.");
+}
+
+QString protocolOperationFor(const DoctorCheckId &id)
+{
+    const QString value = id.value();
+    if (value == QStringLiteral("HD-API-001")) return QStringLiteral("OPEN_CONTROL");
+    if (value == QStringLiteral("HD-API-002") || value == QStringLiteral("HD-CFG-001")) return QStringLiteral("GET_ACTIVE");
+    if (value == QStringLiteral("HD-API-003") || value == QStringLiteral("HD-CFG-002")) return QStringLiteral("GET_INVERSE");
+    if (value == QStringLiteral("HD-API-004")) return QStringLiteral("GET_WHITELIST_SIZE");
+    if (value == QStringLiteral("HD-API-005")) return QStringLiteral("GET_WHITELIST");
+    if (value == QStringLiteral("HD-API-007")) return QStringLiteral("GET_BLACKLIST_SIZE");
+    if (value == QStringLiteral("HD-API-008")) return QStringLiteral("GET_BLACKLIST");
+    return {};
+}
+
+QString enabledState(const std::optional<bool> &value, const QString &subject)
+{
+    if (!value) return QStringLiteral("%1 was not readable.").arg(subject);
+    return *value ? QStringLiteral("%1 is enabled.").arg(subject) : QStringLiteral("%1 is disabled.").arg(subject);
+}
+
+QStringList evidenceIds(const QList<EvidenceId> &ids)
+{
+    QStringList values;
+    for (const EvidenceId &id : ids) values.append(id.value());
+    return values;
+}
+
+EvidenceRecord forensicEvidence(const DoctorCheckDefinition &definition, const DoctorCheckResult &result,
+                               const ReadOnlyDiagnosticSnapshot &snapshot, EvidenceKind kind,
+                               EvidenceProvenance provenance, const QString &source, const QDateTime &startedAt,
+                               const QDateTime &completedAt, qint64 monotonicDurationUs)
+{
+    EvidenceRecord record;
+    record.checkId = result.checkId;
+    record.kind = kind;
+    record.provenance = provenance;
+    record.sensitivity = EvidenceSensitivity::RequiresRedaction;
+    record.source = source;
+    record.sourceDisplayName = provenance == EvidenceProvenance::Derived
+        ? QStringLiteral("Deterministic Doctor knowledge engine")
+        : QStringLiteral("Windows / HidHide read-only diagnostic provider");
+    record.provider = provenance == EvidenceProvenance::Derived
+        ? QStringLiteral("DoctorKnowledgeEngine") : QStringLiteral("ReadOnlyWindowsDiagnosticProvider");
+    record.subsystem = displayName(definition.phase);
+    record.operation = protocolOperationFor(definition.id);
+    record.method = provenance == EvidenceProvenance::Derived
+        ? QStringLiteral("Deterministic rule evaluation over retained evidence")
+        : QStringLiteral("Read-only Windows and HidHide observation");
+    record.targetType = QStringLiteral("Diagnostic check");
+    record.targetIdentity = result.checkId.value();
+    record.targetDisplayName = definition.title;
+    record.expectedState = DoctorCatalog::v11CheckPurpose(result.checkId);
+    record.observedState = result.summary;
+    record.statusReason = result.technicalDetails.isEmpty() ? result.summary : result.technicalDetails;
+    record.technicalDetails = result.technicalDetails;
+    record.humanSummary = result.summary;
+    record.nativeError = result.nativeError;
+    record.durationMs = result.durationMs;
+    record.startedAt = startedAt;
+    record.completedAt = completedAt;
+    record.monotonicDurationUs = monotonicDurationUs;
+    record.timeoutMs = definition.timeoutMs;
+
+    addEvidenceField(&record, EvidenceFieldCategory::Identity, QStringLiteral("CHECK"), result.checkId.value(), EvidenceSensitivity::SafeToExport, true);
+    addEvidenceField(&record, EvidenceFieldCategory::Identity, QStringLiteral("CHECK TITLE"), definition.title);
+    addEvidenceField(&record, EvidenceFieldCategory::Identity, QStringLiteral("WHAT THIS CHECK MEANS"), record.expectedState);
+    addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("STATUS"), displayName(result.status));
+    addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("STATUS RATIONALE"), record.statusReason, EvidenceSensitivity::RequiresRedaction);
+    addEvidenceField(&record, EvidenceFieldCategory::Method, QStringLiteral("PROVIDER"), record.provider, EvidenceSensitivity::SafeToExport, true);
+    addEvidenceField(&record, EvidenceFieldCategory::Method, QStringLiteral("COLLECTION METHOD"), record.method);
+    addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("STARTED (UTC)"), startedAt.toString(Qt::ISODateWithMs), EvidenceSensitivity::SafeToExport, true);
+    addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("COMPLETED (UTC)"), completedAt.toString(Qt::ISODateWithMs), EvidenceSensitivity::SafeToExport, true);
+    addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("MONOTONIC DURATION"), QStringLiteral("%1 us").arg(monotonicDurationUs), EvidenceSensitivity::SafeToExport, true);
+    addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("CHECK TIMEOUT"), QStringLiteral("%1 ms").arg(definition.timeoutMs), EvidenceSensitivity::SafeToExport, true);
+
+    const QString operation = protocolOperationFor(definition.id);
+    if (!operation.isEmpty()) {
+        if (const ProtocolObservation *probe = protocol(snapshot, operation)) {
+            record.provider = QStringLiteral("HidHide control-device provider");
+            record.operation = probe->operation;
+            record.method = probe->api.isEmpty() ? QStringLiteral("CreateFileW + DeviceIoControl read-only GET") : probe->api;
+            record.targetType = QStringLiteral("HidHide control endpoint");
+            record.targetIdentity = probe->endpoint;
+            record.targetDisplayName = probe->endpoint;
+            record.observedState = semanticProtocolValue(*probe);
+            record.statusReason = probe->nativeError ? probe->nativeError->message : record.observedState;
+            record.nativeError = probe->nativeError;
+            record.durationMs = probe->durationMs;
+            record.startedAt = probe->startedAt.isValid() ? probe->startedAt : startedAt;
+            record.completedAt = probe->completedAt.isValid() ? probe->completedAt : completedAt;
+            record.monotonicDurationUs = probe->monotonicDurationUs > 0 ? probe->monotonicDurationUs : monotonicDurationUs;
+            record.timeoutMs = probe->timeoutMs > 0 ? probe->timeoutMs : definition.timeoutMs;
+            record.humanSummary = QStringLiteral("%1 %2").arg(displayName(probe->status), record.observedState);
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("ENDPOINT"), probe->endpoint, EvidenceSensitivity::PotentiallyIdentifying, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("ACCESS"), probe->access, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Method, QStringLiteral("API"), record.method, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Method, QStringLiteral("OPERATION"), probe->operation, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Method, QStringLiteral("IOCTL"), QStringLiteral("0x%1").arg(probe->ioctlCode, 8, 16, QLatin1Char('0')).toUpper(), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("OBSERVED STATE"), record.observedState, EvidenceSensitivity::RequiresRedaction);
+            addEvidenceField(&record, EvidenceFieldCategory::Raw, QStringLiteral("RAW RETURN VALUE"), probe->value, EvidenceSensitivity::RequiresRedaction, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Raw, QStringLiteral("MULTI_SZ ENTRY COUNT"), QString::number(probe->multiStringValues.size()), EvidenceSensitivity::SafeToExport, true);
+            if (!probe->multiStringValues.isEmpty()) {
+                const int retainedEntries = std::min(3, static_cast<int>(probe->multiStringValues.size()));
+                QStringList retainedValues;
+                for (int index = 0; index < retainedEntries; ++index) retainedValues.append(probe->multiStringValues.at(index));
+                QString payloadSample = retainedValues.join(QStringLiteral(" | "));
+                if (probe->multiStringValues.size() > retainedEntries)
+                    payloadSample += QStringLiteral(" | … %1 additional entry(s) not duplicated here").arg(probe->multiStringValues.size() - retainedEntries);
+                addEvidenceField(&record, EvidenceFieldCategory::Raw, QStringLiteral("BOUNDED RESPONSE PAYLOAD SAMPLE"),
+                    payloadSample, EvidenceSensitivity::PotentiallyIdentifying, true);
+            }
+            addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("PROBE REQUEST BYTES"), QString::number(probe->requestBytes), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("PROBE RESPONSE BYTES"), QString::number(probe->responseBytes), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("PROBE ATTEMPTS"), QString::number(probe->attemptCount), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Timing, QStringLiteral("PROBE TIMEOUT"), QStringLiteral("%1 ms").arg(record.timeoutMs), EvidenceSensitivity::SafeToExport, true);
+            record.attempts.append({std::max(1, probe->attemptCount), probe->operation, probe->endpoint,
+                displayName(probe->status), record.startedAt, record.completedAt, record.monotonicDurationUs,
+                record.timeoutMs, probe->requestBytes, probe->responseBytes, probe->nativeError});
+        }
+    } else if (definition.id.value().startsWith(QStringLiteral("HD-INST-")) || definition.id.value().startsWith(QStringLiteral("HD-PKG-"))) {
+        const int present = std::count_if(snapshot.artifacts.cbegin(), snapshot.artifacts.cend(),
+            [](const FileArtifactObservation &artifact) { return artifact.exists; });
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("COMPONENT ARTIFACTS DISCOVERED"), QString::number(present), EvidenceSensitivity::SafeToExport, true);
+        if (!snapshot.artifacts.isEmpty()) {
+            const FileArtifactObservation &artifact = snapshot.artifacts.first();
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("REPRESENTATIVE ARTIFACT ROLE"), artifact.role);
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("REPRESENTATIVE ARTIFACT PATH"), artifact.path, EvidenceSensitivity::PotentiallyIdentifying, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("FILE VERSION"), artifact.fileVersion, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("SHA-256"), artifact.sha256, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::NativeResult, QStringLiteral("SIGNATURE OUTCOME"), displayName(artifact.signatureTrust));
+        }
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("DRIVER STORE PACKAGE CANDIDATES"), QString::number(snapshot.driverPackages.size()), EvidenceSensitivity::SafeToExport, true);
+    } else if (definition.id.value().startsWith(QStringLiteral("HD-DRV-"))) {
+        addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("SERVICE NAME"), snapshot.service.serviceName, EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("SERVICE STATE"), snapshot.service.currentState);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("SERVICE START TYPE"), snapshot.service.startType);
+        addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("SERVICE BINARY"), snapshot.service.binaryPath, EvidenceSensitivity::PotentiallyIdentifying, true);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("DRIVER PACKAGE CANDIDATES"), QString::number(snapshot.driverPackages.size()), EvidenceSensitivity::SafeToExport, true);
+    } else if (definition.id.value().startsWith(QStringLiteral("HD-CFG-"))) {
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("REGISTRY ACTIVE STATE"), enabledState(snapshot.registryActive, QStringLiteral("Registry active state")));
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("REGISTRY INVERSE STATE"), enabledState(snapshot.registryInverse, QStringLiteral("Registry inverse state")));
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("REGISTRY WHITELIST ENTRIES"), QString::number(snapshot.registryWhitelist.size()), EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("REGISTRY BLACKLIST ENTRIES"), QString::number(snapshot.registryBlacklist.size()), EvidenceSensitivity::SafeToExport, true);
+    } else if (definition.id.value().startsWith(QStringLiteral("HD-DEV-"))) {
+        const auto failed = std::find_if(snapshot.devices.cbegin(), snapshot.devices.cend(), [](const DeviceObservation &device) {
+            return !device.propertyFailures.isEmpty() || device.nativeError.has_value() || device.problemCode != 0;
+        });
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("RELEVANT DEVICES"), QString::number(snapshot.devices.size()), EvidenceSensitivity::SafeToExport, true);
+        if (failed != snapshot.devices.cend()) {
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("AFFECTED DEVICE"), failed->friendlyName, EvidenceSensitivity::PotentiallyIdentifying);
+            addEvidenceField(&record, EvidenceFieldCategory::Target, QStringLiteral("DEVICE INSTANCE"), failed->instanceId, EvidenceSensitivity::PotentiallyIdentifying, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("DEVICE PROBLEM CODE"), QString::number(failed->problemCode), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("DEVICE PROPERTY FAILURES"), failed->propertyFailures.join(QStringLiteral("; ")), EvidenceSensitivity::RequiresRedaction);
+        }
+    } else if (definition.id.value().startsWith(QStringLiteral("HD-WIN-"))) {
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("EVENT LOG OBSERVATIONS"), QString::number(snapshot.events.size()), EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("WINDOWS ERROR REPORT OBSERVATIONS"), QString::number(snapshot.werReports.size()), EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("SETUPAPI OBSERVATIONS"), QString::number(snapshot.setupApiEvidence.size()), EvidenceSensitivity::SafeToExport, true);
+        if (!snapshot.events.isEmpty()) {
+            const EventObservation &event = snapshot.events.first();
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("REPRESENTATIVE EVENT"),
+                QStringLiteral("%1 / %2 / %3").arg(event.channel, event.provider).arg(event.eventId), event.sensitivity, true);
+        }
+    }
+    if (record.nativeError) {
+        addEvidenceField(&record, EvidenceFieldCategory::NativeResult, QStringLiteral("NATIVE ERROR DOMAIN"), QString::number(static_cast<int>(record.nativeError->domain)), EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::NativeResult, QStringLiteral("NATIVE ERROR CODE"), QString::number(record.nativeError->code), EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::NativeResult, QStringLiteral("NATIVE ERROR SYMBOL"), record.nativeError->symbolicName, EvidenceSensitivity::SafeToExport, true);
+        addEvidenceField(&record, EvidenceFieldCategory::NativeResult, QStringLiteral("NATIVE ERROR MESSAGE"), record.nativeError->message, EvidenceSensitivity::RequiresRedaction);
+    }
+    // A canonical record may never become an unbounded payload transport.
+    // The full provider snapshot remains separately bounded; Inspector and
+    // reports receive at most these labelled facts and an explicit marker if
+    // a future source grows beyond the contract.
+    record.originalFieldCount = record.fields.size();
+    constexpr int maxEvidenceFields = 48;
+    if (record.fields.size() > maxEvidenceFields) {
+        record.fields.erase(record.fields.begin() + maxEvidenceFields, record.fields.end());
+        record.collectionTruncated = true;
+        record.truncationReason = QStringLiteral("Retained the first %1 structured fields from %2; no unbounded raw payload was copied.")
+            .arg(maxEvidenceFields).arg(record.originalFieldCount);
+    }
+    return record;
+}
+
 } // namespace
 
 DoctorCatalog DoctorDiagnosticEngine::registeredCatalog()
@@ -142,7 +347,7 @@ DoctorCheckResult DoctorDiagnosticEngine::evaluate(const DoctorCheckDefinition &
                 result.status = probe->status;
                 result.durationMs = probe->durationMs;
                 result.nativeError = probe->nativeError;
-                result.summary = probe->value.isEmpty() ? QStringLiteral("%1 completed").arg(operation) : probe->value;
+                result.summary = semanticProtocolValue(*probe);
                 result.technicalDetails = probe->nativeError ? probe->nativeError->message : QString();
                 return result;
             }
@@ -244,6 +449,37 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
     outcome.session = createPreparedSession();
     outcome.catalogCoverage = registeredCatalog().coverage();
     outcome.session.transitionTo(DoctorSessionState::Diagnosing);
+    const auto appendActivity = [&](DoctorActivityEventType type, const DoctorCheckId &checkId, DoctorPhase phase,
+                                    DoctorCheckStatus status, QString title, QString detail,
+                                    const QList<EvidenceId> &relatedEvidence = {}, QString reason = {},
+                                    QString target = {}, QString result = {}) {
+        DoctorActivityEvent event;
+        event.timestamp = QDateTime::currentDateTimeUtc();
+        event.type = type;
+        event.checkId = checkId;
+        event.phase = phase;
+        event.status = status;
+        event.title = std::move(title);
+        event.detail = std::move(detail);
+        event.reason = std::move(reason);
+        event.target = std::move(target);
+        event.result = std::move(result);
+        event.evidenceIds = relatedEvidence;
+        event.evidenceId = relatedEvidence.value(0);
+        if (event.evidenceId.isValid()) {
+            const auto evidence = std::find_if(outcome.session.evidence().cbegin(), outcome.session.evidence().cend(),
+                [&](const EvidenceRecord &record) { return record.id.value() == event.evidenceId.value(); });
+            if (evidence != outcome.session.evidence().cend()) {
+                event.startedAt = evidence->startedAt;
+                event.completedAt = evidence->completedAt;
+                event.monotonicDurationUs = evidence->monotonicDurationUs;
+            }
+        }
+        outcome.session.appendActivity(std::move(event));
+    };
+    appendActivity(DoctorActivityEventType::SessionStarted, {}, DoctorPhase::SystemEnvironment,
+        DoctorCheckStatus::Running, QStringLiteral("Read-only diagnostic session started"),
+        QStringLiteral("No HidHide or Windows configuration mutation is available to this diagnostic session."));
     if (onProgress) onProgress(outcome.session);
     outcome.snapshot = provider.observe(cancelled, [&](const DoctorCheckId &checkId, int percent) {
         const DoctorStepId stepId(QStringLiteral("STEP-") + checkId.value());
@@ -252,52 +488,64 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         if (onProgress) onProgress(outcome.session);
     });
     outcome.session.setEnvironment(outcome.snapshot.environment);
+    DoctorPhase lastPhase = DoctorPhase::ExtendedInvestigation;
     for (const DiagnosticPlanItem &item : outcome.session.plan().items()) {
         if (isPhaseTwoKnowledgeCheck(item.check.id) && !(cancelled && cancelled->load())) continue;
+        if (item.check.phase != lastPhase) {
+            appendActivity(DoctorActivityEventType::PhaseStarted, item.check.id, item.check.phase, DoctorCheckStatus::Running,
+                displayName(item.check.phase), QStringLiteral("Beginning the %1 diagnostic phase.").arg(displayName(item.check.phase)));
+            lastPhase = item.check.phase;
+        }
         if (cancelled && cancelled->load()) {
             DoctorCheckResult result;
             result.checkId = item.check.id;
             result.status = DoctorCheckStatus::Cancelled;
             result.summary = QStringLiteral("Scan cancellation requested before this check started.");
-            EvidenceRecord evidence;
-            evidence.checkId = result.checkId;
-            evidence.kind = EvidenceKind::Observation;
-            evidence.provenance = EvidenceProvenance::Direct;
-            evidence.sensitivity = EvidenceSensitivity::SafeToExport;
-            evidence.source = QStringLiteral("phase1-read-only-engine");
-            evidence.humanSummary = result.summary;
+            const QDateTime now = QDateTime::currentDateTimeUtc();
+            EvidenceRecord evidence = forensicEvidence(item.check, result, outcome.snapshot, EvidenceKind::Observation,
+                EvidenceProvenance::Direct, QStringLiteral("phase1-read-only-engine"), now, now, 0);
             outcome.session.appendEvidence(evidence);
             result.evidenceIds.append(outcome.session.evidence().back().id);
             outcome.session.appendCheckResult(result);
             outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Cancelled, QStringLiteral("Scan cancellation requested."));
-            outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
-                item.check.title, result.summary, result.evidenceIds.value(0)});
+            appendActivity(DoctorActivityEventType::EvidenceRecorded, result.checkId, item.check.phase, result.status,
+                QStringLiteral("Cancellation evidence recorded"), result.summary, result.evidenceIds);
+            appendActivity(DoctorActivityEventType::CheckCompleted, result.checkId, item.check.phase, result.status,
+                item.check.title, result.summary, result.evidenceIds);
             if (onProgress) onProgress(outcome.session);
             continue;
         }
         outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Running, QStringLiteral("Evaluating observed evidence."));
         outcome.session.setCurrentOperation({DoctorOperationId(QStringLiteral("OP-") + item.check.id.value()),
             DoctorOperationState::Running, item.check.title, 0, item.check.timeoutMs});
+        const QDateTime evaluationStartedAt = QDateTime::currentDateTimeUtc();
+        QElapsedTimer evaluationTimer;
+        evaluationTimer.start();
+        appendActivity(DoctorActivityEventType::CheckStarted, item.check.id, item.check.phase, DoctorCheckStatus::Running,
+            item.check.title, QStringLiteral("Evaluating retained read-only observation for %1.").arg(item.check.id.value()), {}, {}, item.check.title);
         if (onProgress) onProgress(outcome.session);
         DoctorCheckResult result = evaluate(item.check, outcome.snapshot);
-        EvidenceRecord evidence;
-        evidence.checkId = result.checkId;
-        evidence.kind = EvidenceKind::Observation;
-        evidence.provenance = EvidenceProvenance::Direct;
-        evidence.sensitivity = EvidenceSensitivity::RequiresRedaction;
-        evidence.source = QStringLiteral("phase1-read-only-engine");
-        evidence.humanSummary = result.summary;
-        evidence.technicalDetails = result.technicalDetails;
-        evidence.nativeError = result.nativeError;
-        evidence.durationMs = result.durationMs;
+        const QDateTime evaluationCompletedAt = QDateTime::currentDateTimeUtc();
+        const qint64 evaluationDurationUs = std::max<qint64>(1, evaluationTimer.nsecsElapsed() / 1000);
+        if (result.durationMs <= 0) result.durationMs = std::max<qint64>(1, (evaluationDurationUs + 999) / 1000);
+        EvidenceRecord evidence = forensicEvidence(item.check, result, outcome.snapshot, EvidenceKind::Observation,
+            EvidenceProvenance::Direct, QStringLiteral("phase1-read-only-engine"), evaluationStartedAt,
+            evaluationCompletedAt, evaluationDurationUs);
         outcome.session.appendEvidence(evidence);
         result.evidenceIds.append(outcome.session.evidence().back().id);
         outcome.session.appendCheckResult(result);
         outcome.session.plan().setStatus(item.stepId, result.status, result.summary);
         outcome.session.setCurrentOperation({DoctorOperationId(QStringLiteral("OP-") + item.check.id.value()),
             DoctorOperationState::Completed, item.check.title, 100, item.check.timeoutMs});
-        outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
-            item.check.title, result.summary, result.evidenceIds.value(0)});
+        if (!result.evidenceIds.isEmpty() && item.check.phase == DoctorPhase::ProtocolApiHealth) {
+            appendActivity(DoctorActivityEventType::ProbeCompleted, result.checkId, item.check.phase, result.status,
+                QStringLiteral("Native protocol observation complete"), outcome.session.evidence().back().observedState,
+                result.evidenceIds, {}, outcome.session.evidence().back().targetDisplayName, outcome.session.evidence().back().statusReason);
+        }
+        appendActivity(DoctorActivityEventType::EvidenceRecorded, result.checkId, item.check.phase, result.status,
+            QStringLiteral("Forensic evidence recorded"), outcome.session.evidence().back().humanSummary, result.evidenceIds);
+        appendActivity(DoctorActivityEventType::CheckCompleted, result.checkId, item.check.phase, result.status,
+            item.check.title, result.summary, result.evidenceIds, outcome.session.evidence().back().statusReason);
         if (onProgress) onProgress(outcome.session);
     }
     outcome.cancelled = cancelled && cancelled->load();
@@ -313,6 +561,11 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
             if (!isPhaseTwoKnowledgeCheck(item.check.id)) continue;
             outcome.session.plan().setStatus(item.stepId, DoctorCheckStatus::Running,
                 QStringLiteral("Evaluating deterministic Phase 2 knowledge rules."));
+            const QDateTime evaluationStartedAt = QDateTime::currentDateTimeUtc();
+            QElapsedTimer evaluationTimer;
+            evaluationTimer.start();
+            appendActivity(DoctorActivityEventType::CheckStarted, item.check.id, item.check.phase, DoctorCheckStatus::Running,
+                item.check.title, QStringLiteral("Evaluating deterministic retained-evidence correlations."));
             DoctorCheckResult result = analysis.catalogResults.value(item.check.id.value());
             if (!result.checkId.isValid()) {
                 result.checkId = item.check.id;
@@ -320,20 +573,31 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
                 result.summary = QStringLiteral("No specialized correlation rule was applicable to this evidence set.");
                 result.technicalDetails = QStringLiteral("%1 deterministic knowledge engine.").arg(analysis.engineVersion);
             }
-            EvidenceRecord evidence;
-            evidence.checkId = result.checkId;
-            evidence.kind = EvidenceKind::DerivedCorrelation;
-            evidence.provenance = EvidenceProvenance::Derived;
-            evidence.sensitivity = EvidenceSensitivity::RequiresRedaction;
-            evidence.source = QStringLiteral("phase2-deterministic-knowledge-engine");
-            evidence.humanSummary = result.summary;
-            evidence.technicalDetails = result.technicalDetails;
+            const QDateTime evaluationCompletedAt = QDateTime::currentDateTimeUtc();
+            const qint64 evaluationDurationUs = std::max<qint64>(1, evaluationTimer.nsecsElapsed() / 1000);
+            if (result.durationMs <= 0) result.durationMs = std::max<qint64>(1, (evaluationDurationUs + 999) / 1000);
+            EvidenceRecord evidence = forensicEvidence(item.check, result, outcome.snapshot, EvidenceKind::DerivedCorrelation,
+                EvidenceProvenance::Derived, QStringLiteral("phase2-deterministic-knowledge-engine"), evaluationStartedAt,
+                evaluationCompletedAt, evaluationDurationUs);
             outcome.session.appendEvidence(evidence);
             result.evidenceIds.append(outcome.session.evidence().back().id);
             outcome.session.appendCheckResult(result);
             outcome.session.plan().setStatus(item.stepId, result.status, result.summary);
-            outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), result.checkId, result.status,
-                item.check.title, result.summary, result.evidenceIds.value(0)});
+            appendActivity(DoctorActivityEventType::EvidenceRecorded, result.checkId, item.check.phase, result.status,
+                QStringLiteral("Derived evidence recorded"), outcome.session.evidence().back().humanSummary, result.evidenceIds);
+            appendActivity(DoctorActivityEventType::CheckCompleted, result.checkId, item.check.phase, result.status,
+                item.check.title, result.summary, result.evidenceIds, outcome.session.evidence().back().statusReason);
+        }
+        outcome.session.annotateEvidenceRelationships();
+        for (const Finding &finding : outcome.session.findings()) {
+            appendActivity(DoctorActivityEventType::FindingCreated, {}, DoctorPhase::ConsistencyAnalysis, finding.status,
+                finding.title, finding.explanation, finding.evidenceIds, finding.technicalExplanation, finding.affectedObject);
+        }
+        for (const Diagnosis &diagnosis : outcome.session.diagnoses()) {
+            appendActivity(DoctorActivityEventType::DiagnosisCreated, {}, DoctorPhase::Diagnosis,
+                diagnosis.confidence == DiagnosisConfidence::Uncertain ? DoctorCheckStatus::Inconclusive : DoctorCheckStatus::Warning,
+                diagnosis.title, diagnosis.humanExplanation, diagnosis.supportingEvidence,
+                diagnosis.technicalExplanation, diagnosis.problemFamily, displayName(diagnosis.confidence));
         }
         outcome.session.transitionTo(DoctorSessionState::DiagnosisComplete);
         // Planning is a read-only continuation of diagnosis.  Normal mode
@@ -345,8 +609,9 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
         outcome.repairPlanningReason = proposal.reason;
         if (!proposal.plan.operations.isEmpty()) {
             outcome.session.setRepairPlan(proposal.plan);
-            outcome.session.appendActivity({QDateTime::currentDateTimeUtc(), DoctorCheckId(QStringLiteral("HD-KB-005")), DoctorCheckStatus::Informational,
-                QStringLiteral("Read-only repair plan generated"), proposal.reason, {}});
+            appendActivity(DoctorActivityEventType::RepairPlanCreated, DoctorCheckId(QStringLiteral("HD-KB-005")),
+                DoctorPhase::RepairRecommendation, DoctorCheckStatus::Informational, QStringLiteral("Read-only repair plan generated"),
+                proposal.reason, {}, QStringLiteral("The plan remains LabQualified and cannot execute in normal mode."));
         }
     }
     const bool hasDiagnoses = !outcome.session.diagnoses().isEmpty();
@@ -373,8 +638,16 @@ DiagnosticRunOutcome DoctorDiagnosticEngine::run(IReadOnlyDiagnosticProvider &pr
                                                      : UserActionState::NothingRequired,
         hasDiagnoses ? FindingSeverity::Warning : FindingSeverity::Informational,
         userActionTitle, userActionDetail, {}, {}, {}});
+    appendActivity(hasPlan ? DoctorActivityEventType::UserActionRequired : DoctorActivityEventType::UserActionCompleted,
+        {}, DoctorPhase::RepairRecommendation, hasPlan ? DoctorCheckStatus::Warning : DoctorCheckStatus::Informational,
+        userActionTitle, userActionDetail);
     outcome.completedAt = QDateTime::currentDateTimeUtc();
     outcome.durationMs = timer.elapsed();
+    appendActivity(DoctorActivityEventType::SessionCompleted, {}, DoctorPhase::RepairRecommendation,
+        outcome.cancelled ? DoctorCheckStatus::Cancelled : DoctorCheckStatus::Healthy,
+        outcome.cancelled ? QStringLiteral("Read-only diagnostic session cancelled") : QStringLiteral("Read-only diagnostic session completed"),
+        outcome.cancelled ? QStringLiteral("Collected evidence is retained; no Windows or HidHide state changed.")
+            : QStringLiteral("The diagnostic session completed without mutating Windows or HidHide state."));
     return outcome;
 }
 
@@ -393,7 +666,13 @@ DoctorSession DoctorDiagnosticEngine::createPreparedSession() const
 QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &outcome, bool redactSensitive)
 {
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 5);
+    // Schema 6 adds canonical, field-level forensic records. Schema 5
+    // readers can continue using their existing summary/check fields; readers
+    // that understand 6 consume evidenceRecords.fields and relationships.
+    root.insert(QStringLiteral("schemaVersion"), 6);
+    root.insert(QStringLiteral("schemaCompatibility"), QJsonObject{{QStringLiteral("minimumReaderVersion"), 5},
+        {QStringLiteral("forensicEvidenceIntroducedIn"), 6},
+        {QStringLiteral("backwardReading"), QStringLiteral("Schema 5 readers may ignore additive forensic fields.")}});
     root.insert(QStringLiteral("sessionId"), outcome.session.id().value());
     root.insert(QStringLiteral("sessionLabel"), outcome.session.sessionLabel());
     root.insert(QStringLiteral("startedAt"), outcome.startedAt.toString(Qt::ISODateWithMs));
@@ -459,6 +738,13 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
     for (const ProtocolObservation &probe : outcome.snapshot.protocol) protocol.append(QJsonObject{
         {QStringLiteral("operation"), probe.operation}, {QStringLiteral("status"), displayName(probe.status)},
         {QStringLiteral("value"), redact(probe.value, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+        {QStringLiteral("endpoint"), redact(probe.endpoint, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+        {QStringLiteral("access"), probe.access}, {QStringLiteral("api"), probe.api},
+        {QStringLiteral("ioctl"), QStringLiteral("0x%1").arg(probe.ioctlCode, 8, 16, QLatin1Char('0')).toUpper()},
+        {QStringLiteral("requestBytes"), probe.requestBytes}, {QStringLiteral("responseBytes"), probe.responseBytes},
+        {QStringLiteral("attemptCount"), probe.attemptCount}, {QStringLiteral("timeoutMs"), probe.timeoutMs},
+        {QStringLiteral("startedAt"), probe.startedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("completedAt"), probe.completedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("monotonicDurationUs"), probe.monotonicDurationUs},
         {QStringLiteral("durationMs"), static_cast<qint64>(probe.durationMs)}, {QStringLiteral("error"), nativeErrorJson(probe.nativeError)}});
     root.insert(QStringLiteral("protocol"), protocol);
     QJsonArray devices;
@@ -495,16 +781,54 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
     root.insert(QStringLiteral("eventLogEvidence"), eventJson(outcome.snapshot.events));
     root.insert(QStringLiteral("werEvidence"), eventJson(outcome.snapshot.werReports));
     root.insert(QStringLiteral("setupApiEvidence"), eventJson(outcome.snapshot.setupApiEvidence));
+    const auto ids = [](const auto &values) {
+        QJsonArray result;
+        for (const auto &value : values) result.append(value.value());
+        return result;
+    };
+    const auto evidenceJson = [&](const EvidenceRecord &record) {
+        QJsonArray fields;
+        for (const EvidenceField &field : record.fields) fields.append(QJsonObject{
+            {QStringLiteral("group"), displayName(field.category)}, {QStringLiteral("label"), field.label},
+            {QStringLiteral("value"), redact(field.value, field.sensitivity, redactSensitive)},
+            {QStringLiteral("sensitivity"), static_cast<int>(field.sensitivity)}, {QStringLiteral("monospace"), field.monospace}});
+        QJsonArray attempts;
+        for (const EvidenceAttempt &attempt : record.attempts) attempts.append(QJsonObject{
+            {QStringLiteral("ordinal"), attempt.ordinal}, {QStringLiteral("operation"), attempt.operation},
+            {QStringLiteral("target"), redact(attempt.target, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+            {QStringLiteral("outcome"), attempt.outcome}, {QStringLiteral("startedAt"), attempt.startedAt.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("completedAt"), attempt.completedAt.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("monotonicDurationUs"), attempt.monotonicDurationUs}, {QStringLiteral("timeoutMs"), attempt.timeoutMs},
+            {QStringLiteral("requestBytes"), attempt.requestBytes}, {QStringLiteral("responseBytes"), attempt.responseBytes},
+            {QStringLiteral("error"), nativeErrorJson(attempt.nativeError)}});
+        return QJsonObject{{QStringLiteral("evidenceId"), record.id.value()}, {QStringLiteral("checkId"), record.checkId.value()},
+            {QStringLiteral("kind"), static_cast<int>(record.kind)}, {QStringLiteral("provenance"), static_cast<int>(record.provenance)},
+            {QStringLiteral("source"), record.source}, {QStringLiteral("sourceDisplayName"), record.sourceDisplayName},
+            {QStringLiteral("provider"), record.provider}, {QStringLiteral("subsystem"), record.subsystem},
+            {QStringLiteral("operation"), record.operation}, {QStringLiteral("method"), record.method},
+            {QStringLiteral("target"), QJsonObject{{QStringLiteral("type"), record.targetType},
+                {QStringLiteral("identity"), redact(record.targetIdentity, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+                {QStringLiteral("displayName"), redact(record.targetDisplayName, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)}}},
+            {QStringLiteral("expectedState"), redact(record.expectedState, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+            {QStringLiteral("observedState"), redact(record.observedState, record.sensitivity, redactSensitive)},
+            {QStringLiteral("statusReason"), redact(record.statusReason, record.sensitivity, redactSensitive)},
+            {QStringLiteral("recordedAt"), record.recordedAt.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("startedAt"), record.startedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("completedAt"), record.completedAt.toString(Qt::ISODateWithMs)},
+            {QStringLiteral("monotonicDurationUs"), record.monotonicDurationUs}, {QStringLiteral("timeoutMs"), record.timeoutMs},
+            {QStringLiteral("summary"), redact(record.humanSummary, record.sensitivity, redactSensitive)},
+            {QStringLiteral("technicalDetails"), redact(record.technicalDetails, record.sensitivity, redactSensitive)},
+            {QStringLiteral("structuredValue"), redact(record.structuredValue, record.sensitivity, redactSensitive)},
+            {QStringLiteral("durationMs"), static_cast<qint64>(record.durationMs)}, {QStringLiteral("direct"), record.direct},
+            {QStringLiteral("fields"), fields}, {QStringLiteral("attempts"), attempts},
+            {QStringLiteral("relationships"), QJsonObject{{QStringLiteral("evidenceIds"), ids(record.relatedEvidenceIds)},
+                {QStringLiteral("checkIds"), ids(record.relatedCheckIds)}, {QStringLiteral("findingIds"), ids(record.relatedFindingIds)},
+                {QStringLiteral("diagnosisIds"), ids(record.relatedDiagnosisIds)}}},
+            {QStringLiteral("collection"), QJsonObject{{QStringLiteral("truncated"), record.collectionTruncated},
+                {QStringLiteral("originalFieldCount"), record.originalFieldCount}, {QStringLiteral("truncationReason"), record.truncationReason}}},
+            {QStringLiteral("error"), nativeErrorJson(record.nativeError)}};
+    };
     QJsonArray evidence;
-    for (const EvidenceRecord &record : outcome.session.evidence()) evidence.append(QJsonObject{
-        {QStringLiteral("evidenceId"), record.id.value()}, {QStringLiteral("checkId"), record.checkId.value()},
-        {QStringLiteral("kind"), static_cast<int>(record.kind)}, {QStringLiteral("provenance"), static_cast<int>(record.provenance)},
-        {QStringLiteral("source"), record.source}, {QStringLiteral("recordedAt"), record.recordedAt.toString(Qt::ISODateWithMs)},
-        {QStringLiteral("summary"), redact(record.humanSummary, record.sensitivity, redactSensitive)},
-        {QStringLiteral("technicalDetails"), redact(record.technicalDetails, record.sensitivity, redactSensitive)},
-        {QStringLiteral("structuredValue"), redact(record.structuredValue, record.sensitivity, redactSensitive)},
-        {QStringLiteral("durationMs"), static_cast<qint64>(record.durationMs)}, {QStringLiteral("direct"), record.direct},
-        {QStringLiteral("error"), nativeErrorJson(record.nativeError)}});
+    for (const EvidenceRecord &record : outcome.session.evidence()) evidence.append(evidenceJson(record));
     root.insert(QStringLiteral("evidenceRecords"), evidence);
     QJsonArray findings;
     for (const Finding &finding : outcome.session.findings()) {
@@ -598,10 +922,19 @@ QByteArray DoctorDiagnosticEngine::serializeJson(const DiagnosticRunOutcome &out
     QJsonArray activity;
     for (const DoctorActivityEvent &event : outcome.session.activity()) activity.append(QJsonObject{
         {QStringLiteral("timestamp"), event.timestamp.toString(Qt::ISODateWithMs)}, {QStringLiteral("checkId"), event.checkId.value()},
+        {QStringLiteral("eventType"), displayName(event.type)}, {QStringLiteral("phase"), displayName(event.phase)},
         {QStringLiteral("status"), displayName(event.status)}, {QStringLiteral("title"), event.title},
         {QStringLiteral("detail"), redact(event.detail, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
-        {QStringLiteral("evidenceId"), event.evidenceId.value()}});
+        {QStringLiteral("reason"), redact(event.reason, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+        {QStringLiteral("target"), redact(event.target, EvidenceSensitivity::PotentiallyIdentifying, redactSensitive)},
+        {QStringLiteral("result"), redact(event.result, EvidenceSensitivity::RequiresRedaction, redactSensitive)},
+        {QStringLiteral("nextStep"), event.nextStep}, {QStringLiteral("startedAt"), event.startedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("completedAt"), event.completedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("monotonicDurationUs"), event.monotonicDurationUs},
+        {QStringLiteral("evidenceId"), event.evidenceId.value()}, {QStringLiteral("evidenceIds"), ids(event.evidenceIds)},
+        {QStringLiteral("findingIds"), ids(event.relatedFindingIds)}, {QStringLiteral("diagnosisIds"), ids(event.relatedDiagnosisIds)}});
     root.insert(QStringLiteral("activityTimeline"), activity);
+    root.insert(QStringLiteral("activityCollection"), QJsonObject{{QStringLiteral("retainedEvents"), outcome.session.activity().size()},
+        {QStringLiteral("droppedEvents"), outcome.session.activityEventsDropped()}, {QStringLiteral("bounded"), true}});
     root.insert(QStringLiteral("contradictions"), QJsonArray::fromStringList(outcome.snapshot.contradictions));
     root.insert(QStringLiteral("operationalLimits"), QJsonArray::fromStringList(outcome.snapshot.operationalLimits));
     return QJsonDocument(root).toJson(QJsonDocument::Indented);

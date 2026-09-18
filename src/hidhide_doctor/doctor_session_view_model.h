@@ -145,6 +145,7 @@ public:
     Q_INVOKABLE void saveBottomDockFractions(const QVariantList &fractions);
     Q_INVOKABLE void resetWorkspaceLayout();
     Q_INVOKABLE void selectEvidence(const QString &evidenceId);
+    Q_INVOKABLE void selectAdjacentEvidence(int direction);
     Q_INVOKABLE void requestCancellation();
     Q_INVOKABLE void requestRerun();
     Q_INVOKABLE void requestHelperConnectivityTest();
@@ -153,6 +154,8 @@ public:
                                        const QString &privacy = QStringLiteral("Safe to Share"));
     Q_INVOKABLE void copySelectedEvidence(const QString &format = QStringLiteral("Markdown"),
                                           const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE void copySelectedEvidenceMode(const QString &mode,
+                                              const QString &privacy = QStringLiteral("Safe to Share"));
     Q_INVOKABLE void exportReportUrl(const QUrl &fileUrl, const QString &scope, const QString &detail,
                                      const QString &format, const QString &privacy);
     Q_INVOKABLE void exportDiagnosticBundleUrl(const QUrl &directoryUrl,

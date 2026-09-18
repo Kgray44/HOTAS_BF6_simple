@@ -13,7 +13,10 @@
 namespace hotas::doctor {
 namespace {
 
-constexpr int kReportSchemaVersion = 1;
+// Version 2 is additive over the original export: forensic field groups,
+// bounded attempts, and relationship backlinks are now emitted from the same
+// canonical EvidenceRecord used by the Inspector.
+constexpr int kReportSchemaVersion = 2;
 constexpr qsizetype kMaximumReportBytes = 8 * 1024 * 1024;
 
 QString reportText(QString value)
@@ -91,6 +94,69 @@ QJsonObject errorJson(const std::optional<NativeError> &error)
     if (!error) return {};
     return {{QStringLiteral("code"), error->code}, {QStringLiteral("symbol"), error->symbolicName},
         {QStringLiteral("message"), error->message}};
+}
+
+QJsonArray checkIdsJson(const QList<DoctorCheckId> &ids)
+{
+    QJsonArray values;
+    for (const DoctorCheckId &id : ids) values.append(id.value());
+    return values;
+}
+
+QJsonArray findingIdsJson(const QList<FindingId> &ids)
+{
+    QJsonArray values;
+    for (const FindingId &id : ids) values.append(id.value());
+    return values;
+}
+
+QJsonArray diagnosisIdsJson(const QList<DiagnosisId> &ids)
+{
+    QJsonArray values;
+    for (const DiagnosisId &id : ids) values.append(id.value());
+    return values;
+}
+
+QJsonObject forensicEvidenceJson(const EvidenceRecord &record, DoctorReportPrivacy privacy,
+                                 DoctorReportDocument *document)
+{
+    QJsonArray fields;
+    for (const EvidenceField &field : record.fields) fields.append(QJsonObject{
+        {QStringLiteral("group"), displayName(field.category)}, {QStringLiteral("label"), field.label},
+        {QStringLiteral("value"), safeText(field.value, field.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("sensitivity"), static_cast<int>(field.sensitivity)}, {QStringLiteral("monospace"), field.monospace}});
+    QJsonArray attempts;
+    for (const EvidenceAttempt &attempt : record.attempts) attempts.append(QJsonObject{
+        {QStringLiteral("ordinal"), attempt.ordinal}, {QStringLiteral("operation"), attempt.operation},
+        {QStringLiteral("target"), safeText(attempt.target, EvidenceSensitivity::PotentiallyIdentifying, privacy, &document->redacted)},
+        {QStringLiteral("outcome"), attempt.outcome}, {QStringLiteral("startedAt"), attempt.startedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("completedAt"), attempt.completedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("monotonicDurationUs"), attempt.monotonicDurationUs}, {QStringLiteral("timeoutMs"), attempt.timeoutMs},
+        {QStringLiteral("requestBytes"), attempt.requestBytes}, {QStringLiteral("responseBytes"), attempt.responseBytes},
+        {QStringLiteral("nativeError"), errorJson(attempt.nativeError)}});
+    return QJsonObject{{QStringLiteral("id"), record.id.value()}, {QStringLiteral("checkId"), record.checkId.value()},
+        {QStringLiteral("source"), record.source}, {QStringLiteral("sourceDisplayName"), record.sourceDisplayName},
+        {QStringLiteral("provider"), record.provider}, {QStringLiteral("subsystem"), record.subsystem},
+        {QStringLiteral("operation"), record.operation}, {QStringLiteral("method"), record.method},
+        {QStringLiteral("target"), QJsonObject{{QStringLiteral("type"), record.targetType},
+            {QStringLiteral("identity"), safeText(record.targetIdentity, EvidenceSensitivity::PotentiallyIdentifying, privacy, &document->redacted)},
+            {QStringLiteral("displayName"), safeText(record.targetDisplayName, EvidenceSensitivity::PotentiallyIdentifying, privacy, &document->redacted)}}},
+        {QStringLiteral("expectedState"), safeText(record.expectedState, EvidenceSensitivity::RequiresRedaction, privacy, &document->redacted)},
+        {QStringLiteral("observedState"), safeText(record.observedState, record.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("statusReason"), safeText(record.statusReason, record.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("summary"), safeText(record.humanSummary, record.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("technicalDetails"), safeText(record.technicalDetails, record.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("structuredValue"), safeText(record.structuredValue, record.sensitivity, privacy, &document->redacted)},
+        {QStringLiteral("recordedAt"), record.recordedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("startedAt"), record.startedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("completedAt"), record.completedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("durationMs"), record.durationMs},
+        {QStringLiteral("monotonicDurationUs"), record.monotonicDurationUs}, {QStringLiteral("timeoutMs"), record.timeoutMs},
+        {QStringLiteral("direct"), record.direct}, {QStringLiteral("fields"), fields}, {QStringLiteral("attempts"), attempts},
+        {QStringLiteral("relationships"), QJsonObject{{QStringLiteral("evidenceIds"), identifiers(record.relatedEvidenceIds)},
+            {QStringLiteral("checkIds"), checkIdsJson(record.relatedCheckIds)}, {QStringLiteral("findingIds"), findingIdsJson(record.relatedFindingIds)},
+            {QStringLiteral("diagnosisIds"), diagnosisIdsJson(record.relatedDiagnosisIds)}}},
+        {QStringLiteral("collection"), QJsonObject{{QStringLiteral("truncated"), record.collectionTruncated},
+            {QStringLiteral("originalFieldCount"), record.originalFieldCount}, {QStringLiteral("truncationReason"), record.truncationReason}}},
+        {QStringLiteral("nativeError"), errorJson(record.nativeError)}};
 }
 
 QJsonObject environmentJson(const DoctorSession &session)
@@ -287,8 +353,16 @@ DoctorReportDocument DoctorReportComposer::compose(const DoctorSession &session,
 
     QJsonArray activity;
     for (const DoctorActivityEvent &event : session.activity()) activity.append(QJsonObject{{QStringLiteral("timestamp"), event.timestamp.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("eventType"), displayName(event.type)}, {QStringLiteral("phase"), displayName(event.phase)},
         {QStringLiteral("checkId"), event.checkId.value()}, {QStringLiteral("status"), displayName(event.status)},
-        {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail}, {QStringLiteral("evidenceId"), event.evidenceId.value()}});
+        {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), safeText(event.detail, EvidenceSensitivity::RequiresRedaction, request.privacy, &document.redacted)},
+        {QStringLiteral("reason"), safeText(event.reason, EvidenceSensitivity::RequiresRedaction, request.privacy, &document.redacted)},
+        {QStringLiteral("target"), safeText(event.target, EvidenceSensitivity::PotentiallyIdentifying, request.privacy, &document.redacted)},
+        {QStringLiteral("result"), safeText(event.result, EvidenceSensitivity::RequiresRedaction, request.privacy, &document.redacted)},
+        {QStringLiteral("nextStep"), event.nextStep}, {QStringLiteral("startedAt"), event.startedAt.toString(Qt::ISODateWithMs)},
+        {QStringLiteral("completedAt"), event.completedAt.toString(Qt::ISODateWithMs)}, {QStringLiteral("monotonicDurationUs"), event.monotonicDurationUs},
+        {QStringLiteral("evidenceId"), event.evidenceId.value()}, {QStringLiteral("evidenceIds"), identifiers(event.evidenceIds)},
+        {QStringLiteral("findingIds"), findingIdsJson(event.relatedFindingIds)}, {QStringLiteral("diagnosisIds"), diagnosisIdsJson(event.relatedDiagnosisIds)}});
     document.timelineJson = QJsonDocument(activity).toJson(QJsonDocument::Indented);
     if (request.detail != DoctorReportDetail::Summary && includes(request.scope, QStringLiteral("Activity Timeline"))) {
         root.insert(QStringLiteral("activityTimeline"), activity); document.included.append(QStringLiteral("Activity Timeline"));
@@ -301,13 +375,7 @@ DoctorReportDocument DoctorReportComposer::compose(const DoctorSession &session,
     const bool selectedEvidenceScope = request.scope.trimmed().compare(QStringLiteral("Selected Evidence"), Qt::CaseInsensitive) == 0;
     for (const EvidenceRecord &record : session.evidence()) {
         if (selectedEvidenceScope && record.id.value() != request.selectedEvidenceId) continue;
-        evidence.append(QJsonObject{{QStringLiteral("id"), record.id.value()},
-            {QStringLiteral("checkId"), record.checkId.value()}, {QStringLiteral("source"), record.source},
-            {QStringLiteral("summary"), safeText(record.humanSummary, record.sensitivity, request.privacy, &document.redacted)},
-            {QStringLiteral("technicalDetails"), safeText(record.technicalDetails, record.sensitivity, request.privacy, &document.redacted)},
-            {QStringLiteral("structuredValue"), safeText(record.structuredValue, record.sensitivity, request.privacy, &document.redacted)},
-            {QStringLiteral("durationMs"), record.durationMs}, {QStringLiteral("direct"), record.direct},
-            {QStringLiteral("nativeError"), errorJson(record.nativeError)}});
+        evidence.append(forensicEvidenceJson(record, request.privacy, &document));
     }
     document.evidenceJson = QJsonDocument(evidence).toJson(QJsonDocument::Indented);
     if (request.detail == DoctorReportDetail::Forensic && includes(request.scope, QStringLiteral("Evidence"))) {
@@ -334,6 +402,11 @@ DoctorReportDocument DoctorReportComposer::compose(const DoctorSession &session,
 
     root.insert(QStringLiteral("finalState"), QJsonObject{{QStringLiteral("state"), sessionStateName(session.state())},
         {QStringLiteral("currentUserAction"), session.userAction().title}, {QStringLiteral("repairPlanPresent"), session.repairPlan().has_value()}});
+    root.insert(QStringLiteral("activityCollection"), QJsonObject{{QStringLiteral("retainedEvents"), session.activity().size()},
+        {QStringLiteral("droppedEvents"), session.activityEventsDropped()}, {QStringLiteral("bounded"), true}});
+    root.insert(QStringLiteral("schemaCompatibility"), QJsonObject{{QStringLiteral("minimumReaderVersion"), 1},
+        {QStringLiteral("forensicEvidenceIntroducedIn"), 2},
+        {QStringLiteral("backwardReading"), QStringLiteral("Version 1 readers may ignore additive forensic fields.")}});
     root.insert(QStringLiteral("redactionManifest"), QJsonObject{{QStringLiteral("included"), QJsonArray::fromStringList(document.included)},
         {QStringLiteral("redacted"), QJsonArray::fromStringList(document.redacted)}, {QStringLiteral("excluded"), QJsonArray::fromStringList(document.excluded)}});
     document.json = QJsonDocument(root).toJson(QJsonDocument::Indented);

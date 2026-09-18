@@ -4,9 +4,12 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSet>
 #include <QTimer>
 
 #include <algorithm>
@@ -378,7 +381,13 @@ QVariantList DoctorSessionViewModel::activityRows() const
     QVariantList values;
     for (const DoctorActivityEvent &event : m_session.activity()) values.append(QVariantMap{{QStringLiteral("time"), event.timestamp.toLocalTime().toString(QStringLiteral("HH:mm:ss.zzz"))},
         {QStringLiteral("checkId"), event.checkId.value()}, {QStringLiteral("symbol"), iconFor(event.status)}, {QStringLiteral("status"), displayName(event.status).toUpper()},
-        {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail}, {QStringLiteral("tone"), toneFor(event.status)}, {QStringLiteral("evidenceId"), event.evidenceId.value()}});
+        {QStringLiteral("eventType"), displayName(event.type).toUpper()}, {QStringLiteral("phase"), displayName(event.phase)},
+        {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail}, {QStringLiteral("reason"), event.reason},
+        {QStringLiteral("target"), event.target}, {QStringLiteral("result"), event.result}, {QStringLiteral("nextStep"), event.nextStep},
+        {QStringLiteral("tone"), toneFor(event.status)}, {QStringLiteral("evidenceId"), event.evidenceId.value()},
+        {QStringLiteral("evidenceIds"), [&] { QStringList ids; for (const EvidenceId &id : event.evidenceIds) ids.append(id.value()); return ids; }()},
+        {QStringLiteral("findingIds"), [&] { QStringList ids; for (const FindingId &id : event.relatedFindingIds) ids.append(id.value()); return ids; }()},
+        {QStringLiteral("diagnosisIds"), [&] { QStringList ids; for (const DiagnosisId &id : event.relatedDiagnosisIds) ids.append(id.value()); return ids; }()}});
     return values;
 }
 
@@ -386,21 +395,65 @@ QVariantList DoctorSessionViewModel::evidenceRows() const
 {
     QVariantList values;
     for (const EvidenceRecord &evidence : m_session.evidence()) values.append(QVariantMap{{QStringLiteral("id"), evidence.id.value()}, {QStringLiteral("checkId"), evidence.checkId.value()},
-        {QStringLiteral("source"), evidence.source}, {QStringLiteral("summary"), evidence.humanSummary}, {QStringLiteral("technical"), evidence.technicalDetails},
-        {QStringLiteral("duration"), QStringLiteral("%1 ms").arg(evidence.durationMs)}, {QStringLiteral("error"), evidence.nativeError ? QStringLiteral("%1 / 0x%2").arg(evidence.nativeError->symbolicName).arg(evidence.nativeError->code, 0, 16).toUpper() : QString()},
+        {QStringLiteral("source"), evidence.sourceDisplayName.isEmpty() ? evidence.source : evidence.sourceDisplayName}, {QStringLiteral("provider"), evidence.provider},
+        {QStringLiteral("operation"), evidence.operation}, {QStringLiteral("summary"), evidence.humanSummary}, {QStringLiteral("technical"), evidence.technicalDetails},
+        {QStringLiteral("duration"), QStringLiteral("%1 us (%2 ms)").arg(evidence.monotonicDurationUs).arg(evidence.durationMs)}, {QStringLiteral("error"), evidence.nativeError ? QStringLiteral("%1 / 0x%2").arg(evidence.nativeError->symbolicName).arg(evidence.nativeError->code, 0, 16).toUpper() : QString()},
         {QStringLiteral("timestamp"), evidence.recordedAt.toLocalTime().toString(Qt::ISODateWithMs)}});
     return values;
 }
 
 QVariantMap DoctorSessionViewModel::selectedEvidence() const
 {
-    for (const EvidenceRecord &evidence : m_session.evidence()) {
+    for (int index = 0; index < m_session.evidence().size(); ++index) {
+        const EvidenceRecord &evidence = m_session.evidence().at(index);
         if (evidence.id.value() != m_selectedEvidenceId) continue;
-        return QVariantMap{{QStringLiteral("id"), evidence.id.value()}, {QStringLiteral("checkId"), evidence.checkId.value()}, {QStringLiteral("source"), evidence.source},
-            {QStringLiteral("summary"), evidence.humanSummary}, {QStringLiteral("technical"), evidence.technicalDetails}, {QStringLiteral("structured"), evidence.structuredValue},
-            {QStringLiteral("duration"), QStringLiteral("%1 ms").arg(evidence.durationMs)}, {QStringLiteral("timestamp"), evidence.recordedAt.toLocalTime().toString(Qt::ISODateWithMs)},
-            {QStringLiteral("provenance"), evidence.provenance == EvidenceProvenance::Direct ? QStringLiteral("Direct observation") : QStringLiteral("Derived correlation")},
-            {QStringLiteral("error"), evidence.nativeError ? QStringLiteral("%1 (%2 / 0x%3)").arg(evidence.nativeError->symbolicName).arg(evidence.nativeError->code).arg(evidence.nativeError->code, 0, 16).toUpper() : QStringLiteral("None")}};
+        QVariantList groups;
+        for (EvidenceFieldCategory category : {EvidenceFieldCategory::Identity, EvidenceFieldCategory::Observation,
+                 EvidenceFieldCategory::Target, EvidenceFieldCategory::Method, EvidenceFieldCategory::Timing,
+                 EvidenceFieldCategory::NativeResult, EvidenceFieldCategory::Relationships, EvidenceFieldCategory::Technical,
+                 EvidenceFieldCategory::Raw}) {
+            QVariantList fields;
+            for (const EvidenceField &field : evidence.fields) {
+                if (field.category != category) continue;
+                fields.append(QVariantMap{{QStringLiteral("label"), field.label}, {QStringLiteral("value"), field.value},
+                    {QStringLiteral("monospace"), field.monospace}, {QStringLiteral("sensitivity"), static_cast<int>(field.sensitivity)}});
+            }
+            if (!fields.isEmpty()) groups.append(QVariantMap{{QStringLiteral("name"), displayName(category).toUpper()}, {QStringLiteral("fields"), fields}});
+        }
+        const auto labels = [](const auto &ids) { QStringList values; for (const auto &id : ids) values.append(id.value()); return values; };
+        QVariantList relationshipFields;
+        const QString relatedEvidence = labels(evidence.relatedEvidenceIds).join(QStringLiteral(", "));
+        const QString relatedChecks = labels(evidence.relatedCheckIds).join(QStringLiteral(", "));
+        const QString relatedFindings = labels(evidence.relatedFindingIds).join(QStringLiteral(", "));
+        const QString relatedDiagnoses = labels(evidence.relatedDiagnosisIds).join(QStringLiteral(", "));
+        if (!relatedEvidence.isEmpty()) relationshipFields.append(QVariantMap{{QStringLiteral("label"), QStringLiteral("EVIDENCE LINKS")}, {QStringLiteral("value"), relatedEvidence}, {QStringLiteral("monospace"), true}});
+        if (!relatedChecks.isEmpty()) relationshipFields.append(QVariantMap{{QStringLiteral("label"), QStringLiteral("CHECK LINKS")}, {QStringLiteral("value"), relatedChecks}, {QStringLiteral("monospace"), true}});
+        if (!relatedFindings.isEmpty()) relationshipFields.append(QVariantMap{{QStringLiteral("label"), QStringLiteral("FINDING LINKS")}, {QStringLiteral("value"), relatedFindings}, {QStringLiteral("monospace"), true}});
+        if (!relatedDiagnoses.isEmpty()) relationshipFields.append(QVariantMap{{QStringLiteral("label"), QStringLiteral("DIAGNOSIS LINKS")}, {QStringLiteral("value"), relatedDiagnoses}, {QStringLiteral("monospace"), true}});
+        if (!relationshipFields.isEmpty()) groups.append(QVariantMap{{QStringLiteral("name"), QStringLiteral("RELATIONSHIPS")}, {QStringLiteral("fields"), relationshipFields}});
+        QVariantList attempts;
+        for (const EvidenceAttempt &attempt : evidence.attempts) attempts.append(QVariantMap{{QStringLiteral("ordinal"), attempt.ordinal},
+            {QStringLiteral("operation"), attempt.operation}, {QStringLiteral("target"), attempt.target}, {QStringLiteral("outcome"), attempt.outcome},
+            {QStringLiteral("startedAt"), attempt.startedAt.toLocalTime().toString(Qt::ISODateWithMs)},
+            {QStringLiteral("completedAt"), attempt.completedAt.toLocalTime().toString(Qt::ISODateWithMs)},
+            {QStringLiteral("duration"), QStringLiteral("%1 us").arg(attempt.monotonicDurationUs)}, {QStringLiteral("timeout"), QStringLiteral("%1 ms").arg(attempt.timeoutMs)},
+            {QStringLiteral("bytes"), QStringLiteral("%1 request / %2 response").arg(attempt.requestBytes).arg(attempt.responseBytes)},
+            {QStringLiteral("error"), attempt.nativeError ? attempt.nativeError->message : QStringLiteral("None")}});
+        return QVariantMap{{QStringLiteral("id"), evidence.id.value()}, {QStringLiteral("checkId"), evidence.checkId.value()},
+            {QStringLiteral("source"), evidence.sourceDisplayName.isEmpty() ? evidence.source : evidence.sourceDisplayName}, {QStringLiteral("provider"), evidence.provider},
+            {QStringLiteral("subsystem"), evidence.subsystem}, {QStringLiteral("operation"), evidence.operation}, {QStringLiteral("method"), evidence.method},
+            {QStringLiteral("target"), evidence.targetDisplayName}, {QStringLiteral("summary"), evidence.humanSummary}, {QStringLiteral("technical"), evidence.technicalDetails},
+            {QStringLiteral("structured"), evidence.structuredValue}, {QStringLiteral("statusReason"), evidence.statusReason},
+            {QStringLiteral("duration"), QStringLiteral("%1 us (%2 ms)").arg(evidence.monotonicDurationUs).arg(evidence.durationMs)},
+            {QStringLiteral("timestamp"), evidence.recordedAt.toLocalTime().toString(Qt::ISODateWithMs)},
+            {QStringLiteral("startedAt"), evidence.startedAt.toLocalTime().toString(Qt::ISODateWithMs)}, {QStringLiteral("completedAt"), evidence.completedAt.toLocalTime().toString(Qt::ISODateWithMs)},
+            {QStringLiteral("provenance"), evidence.provenance == EvidenceProvenance::Direct ? QStringLiteral("Direct observation") : evidence.provenance == EvidenceProvenance::Derived ? QStringLiteral("Derived correlation") : QStringLiteral("Fixture observation")},
+            {QStringLiteral("error"), evidence.nativeError ? QStringLiteral("%1 (%2 / 0x%3)").arg(evidence.nativeError->symbolicName).arg(evidence.nativeError->code).arg(evidence.nativeError->code, 0, 16).toUpper() : QStringLiteral("None")},
+            {QStringLiteral("groups"), groups}, {QStringLiteral("attempts"), attempts}, {QStringLiteral("relatedEvidenceIds"), labels(evidence.relatedEvidenceIds)},
+            {QStringLiteral("relatedCheckIds"), labels(evidence.relatedCheckIds)}, {QStringLiteral("relatedFindingIds"), labels(evidence.relatedFindingIds)},
+            {QStringLiteral("relatedDiagnosisIds"), labels(evidence.relatedDiagnosisIds)}, {QStringLiteral("hasPrevious"), index > 0},
+            {QStringLiteral("hasNext"), index + 1 < m_session.evidence().size()}, {QStringLiteral("evidenceIndex"), index + 1}, {QStringLiteral("evidenceCount"), m_session.evidence().size()},
+            {QStringLiteral("collectionTruncated"), evidence.collectionTruncated}, {QStringLiteral("truncationReason"), evidence.truncationReason}};
     }
     return {};
 }
@@ -609,6 +662,18 @@ void DoctorSessionViewModel::selectEvidence(const QString &evidenceId)
     m_selectedEvidenceId = evidenceId;
     emit sessionChanged();
 }
+
+void DoctorSessionViewModel::selectAdjacentEvidence(int direction)
+{
+    if (direction == 0 || m_session.evidence().isEmpty()) return;
+    int current = -1;
+    for (int index = 0; index < m_session.evidence().size(); ++index) {
+        if (m_session.evidence().at(index).id.value() == m_selectedEvidenceId) { current = index; break; }
+    }
+    if (current < 0) current = direction > 0 ? -1 : m_session.evidence().size();
+    const int next = std::clamp(current + (direction > 0 ? 1 : -1), 0, static_cast<int>(m_session.evidence().size()) - 1);
+    selectEvidence(m_session.evidence().at(next).id.value());
+}
 void DoctorSessionViewModel::notifySessionChanged() { emit sessionChanged(); }
 void DoctorSessionViewModel::requestCancellation() { if (m_cancellation) m_cancellation(); }
 void DoctorSessionViewModel::requestRerun() { if (m_rerun) m_rerun(); }
@@ -780,6 +845,49 @@ void DoctorSessionViewModel::copySelectedEvidence(const QString &format, const Q
         : request.format == DoctorReportFormat::PlainText ? QString::fromUtf8(report.plainText) : QString::fromUtf8(report.markdown);
     if (m_copyAction) m_copyAction(text);
     m_reportStatus = QStringLiteral("Copied selected evidence as %1.").arg(format);
+    emit presentationChanged();
+}
+
+void DoctorSessionViewModel::copySelectedEvidenceMode(const QString &mode, const QString &privacy)
+{
+    if (m_selectedEvidenceId.isEmpty()) {
+        m_reportStatus = QStringLiteral("Select evidence before copying it.");
+        emit presentationChanged();
+        return;
+    }
+    DoctorReportRequest request;
+    request.scope = QStringLiteral("Selected Evidence");
+    request.selectedEvidenceId = m_selectedEvidenceId;
+    request.detail = DoctorReportDetail::Forensic;
+    request.privacy = doctorReportPrivacyFromString(privacy);
+    const DoctorReportDocument report = DoctorReportComposer::compose(m_session, m_buildIdentity, request);
+    const QJsonObject root = QJsonDocument::fromJson(report.json).object();
+    const QJsonArray records = root.value(QStringLiteral("evidenceRecords")).toArray();
+    const QJsonObject record = records.isEmpty() ? QJsonObject{} : records.at(0).toObject();
+    const QString normalized = mode.trimmed().toCaseFolded();
+    QString text;
+    if (normalized == QStringLiteral("summary")) {
+        text = QStringLiteral("%1\n%2\n%3").arg(record.value(QStringLiteral("checkId")).toString(),
+            record.value(QStringLiteral("summary")).toString(), record.value(QStringLiteral("statusReason")).toString());
+    } else if (normalized == QStringLiteral("technical")) {
+        QStringList lines{QStringLiteral("# TECHNICAL EVIDENCE"),
+            QStringLiteral("- Check: %1").arg(record.value(QStringLiteral("checkId")).toString()),
+            QStringLiteral("- Provider: %1").arg(record.value(QStringLiteral("provider")).toString()),
+            QStringLiteral("- Operation: %1").arg(record.value(QStringLiteral("operation")).toString())};
+        const QSet<QString> technicalGroups{QStringLiteral("METHOD"), QStringLiteral("TIMING"), QStringLiteral("NATIVE RESULT"), QStringLiteral("TECHNICAL"), QStringLiteral("RAW")};
+        for (const QJsonValue &groupValue : record.value(QStringLiteral("fields")).toArray()) {
+            const QJsonObject field = groupValue.toObject();
+            if (technicalGroups.contains(field.value(QStringLiteral("group")).toString()))
+                lines.append(QStringLiteral("- %1: %2").arg(field.value(QStringLiteral("label")).toString(), field.value(QStringLiteral("value")).toString()));
+        }
+        text = lines.join(QLatin1Char('\n'));
+    } else if (normalized == QStringLiteral("json")) {
+        text = QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Indented));
+    } else {
+        text = QString::fromUtf8(report.markdown);
+    }
+    if (m_copyAction) m_copyAction(text);
+    m_reportStatus = QStringLiteral("Copied %1 evidence.").arg(normalized.isEmpty() ? QStringLiteral("complete") : normalized);
     emit presentationChanged();
 }
 

@@ -38,6 +38,10 @@ public:
     // labels.  Consumers use this lookup rather than carrying a second,
     // hand-maintained title table.
     static QString v11CheckTitle(const DoctorCheckId &id);
+    // The catalog's third column is the owner-facing reason for a check. It
+    // travels with evidence so Inspector and reports can explain intent
+    // without inventing generic prose.
+    static QString v11CheckPurpose(const DoctorCheckId &id);
     bool registerCheck(DoctorCheckDefinition definition, QString *reason = nullptr);
     bool contains(const DoctorCheckId &id) const;
     const DoctorCheckDefinition *find(const DoctorCheckId &id) const;

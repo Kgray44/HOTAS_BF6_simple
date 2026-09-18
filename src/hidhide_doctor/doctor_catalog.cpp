@@ -59,6 +59,28 @@ QString DoctorCatalog::v11CheckTitle(const DoctorCheckId &id)
     return match.hasMatch() ? match.captured(1).trimmed() : id.value();
 }
 
+QString DoctorCatalog::v11CheckPurpose(const DoctorCheckId &id)
+{
+    Q_INIT_RESOURCE(hidhide_doctor_governance_resources);
+    // A scan creates a record for every catalog check. Cache the governing
+    // third-column lookup once so rich evidence does not turn that into one
+    // resource read per check.
+    static const QHash<QString, QString> purposes = [] {
+        QHash<QString, QString> values;
+        QFile source(resourcePath());
+        if (!source.open(QIODevice::ReadOnly)) return values;
+        const QRegularExpression row(QStringLiteral("^\\s*\\|\\s*`(HD-(?:SYS|INST|PKG|DRV|API|CFG|DEV|ISO|WIN|X|KB|PORT)-[0-9]{3})`\\s*\\|\\s*[^|]+?\\s*\\|\\s*([^|]+?)\\s*\\|"),
+            QRegularExpression::MultilineOption);
+        QRegularExpressionMatchIterator matches = row.globalMatch(QString::fromUtf8(source.readAll()));
+        while (matches.hasNext()) {
+            const QRegularExpressionMatch match = matches.next();
+            values.insert(match.captured(1), match.captured(2).trimmed());
+        }
+        return values;
+    }();
+    return purposes.value(id.value(), QStringLiteral("Catalog purpose unavailable."));
+}
+
 bool DoctorCatalog::registerCheck(DoctorCheckDefinition definition, QString *reason)
 {
     if (!definition.id.isValid()) {

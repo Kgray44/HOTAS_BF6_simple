@@ -183,8 +183,64 @@ void DoctorSession::appendActivity(DoctorActivityEvent event)
     // The timeline is intentionally bounded: a long device or Event Log scan
     // must not turn UI transparency into unbounded retained UI work.
     constexpr int maxActivityEvents = 600;
-    if (m_activity.size() >= maxActivityEvents) m_activity.remove(0, m_activity.size() - maxActivityEvents + 1);
+    if (m_activity.size() >= maxActivityEvents) {
+        const bool hasTruncationMarker = !m_activity.isEmpty()
+            && m_activity.first().type == DoctorActivityEventType::ActivityHistoryTruncated;
+        const int firstRetained = hasTruncationMarker ? 1 : 0;
+        // Reserve one slot for the incoming event and, on first truncation,
+        // one additional slot for the explicit history marker.
+        const int retainedBeforeAppend = maxActivityEvents - (hasTruncationMarker ? 1 : 2);
+        const int removals = std::max(1, static_cast<int>(m_activity.size()) - retainedBeforeAppend);
+        m_activity.remove(firstRetained, removals);
+        m_activityEventsDropped += removals;
+        const QString detail = QStringLiteral("Activity history is bounded to %1 events; %2 earlier event(s) were omitted. Evidence records remain available by ID.")
+            .arg(maxActivityEvents).arg(m_activityEventsDropped);
+        if (hasTruncationMarker) {
+            m_activity.first().detail = detail;
+            m_activity.first().result = QString::number(m_activityEventsDropped);
+        } else {
+            DoctorActivityEvent marker;
+            marker.timestamp = QDateTime::currentDateTimeUtc();
+            marker.title = QStringLiteral("Activity history truncated");
+            marker.detail = detail;
+            marker.type = DoctorActivityEventType::ActivityHistoryTruncated;
+            marker.result = QString::number(m_activityEventsDropped);
+            m_activity.prepend(std::move(marker));
+        }
+    }
     m_activity.append(std::move(event));
+}
+
+void DoctorSession::annotateEvidenceRelationships()
+{
+    const auto appendUnique = [](auto &values, const auto &value) {
+        if (std::none_of(values.cbegin(), values.cend(), [&](const auto &candidate) { return candidate.value() == value.value(); }))
+            values.append(value);
+    };
+    for (EvidenceRecord &record : m_evidence) {
+        appendUnique(record.relatedCheckIds, record.checkId);
+        for (const Finding &finding : m_findings) {
+            if (std::any_of(finding.evidenceIds.cbegin(), finding.evidenceIds.cend(), [&](const EvidenceId &id) { return id.value() == record.id.value(); }))
+                appendUnique(record.relatedFindingIds, finding.id);
+        }
+        for (const Diagnosis &diagnosis : m_diagnoses) {
+            const auto refersTo = [&](const QList<EvidenceId> &ids) {
+                return std::any_of(ids.cbegin(), ids.cend(), [&](const EvidenceId &id) { return id.value() == record.id.value(); });
+            };
+            if (refersTo(diagnosis.supportingEvidence) || refersTo(diagnosis.contradictingEvidence)) {
+                appendUnique(record.relatedDiagnosisIds, diagnosis.id);
+                // A diagnosis is the narrow, canonical reason two evidence
+                // records relate. Link peers for Inspector navigation without
+                // duplicating their payloads.
+                for (const EvidenceId &peer : diagnosis.supportingEvidence) {
+                    if (peer.value() != record.id.value()) appendUnique(record.relatedEvidenceIds, peer);
+                }
+                for (const EvidenceId &peer : diagnosis.contradictingEvidence) {
+                    if (peer.value() != record.id.value()) appendUnique(record.relatedEvidenceIds, peer);
+                }
+            }
+        }
+    }
 }
 void DoctorSession::setUserAction(UserAction action)
 {
@@ -220,6 +276,7 @@ const QList<DoctorCheckResult> &DoctorSession::checkResults() const { return m_c
 const QList<Finding> &DoctorSession::findings() const { return m_findings; }
 const QList<Diagnosis> &DoctorSession::diagnoses() const { return m_diagnoses; }
 const QList<DoctorActivityEvent> &DoctorSession::activity() const { return m_activity; }
+int DoctorSession::activityEventsDropped() const { return m_activityEventsDropped; }
 const UserAction &DoctorSession::userAction() const { return m_userAction; }
 const QList<UserActionLedgerEntry> &DoctorSession::userActionHistory() const { return m_userActionHistory; }
 const std::optional<DoctorOperation> &DoctorSession::currentOperation() const { return m_currentOperation; }

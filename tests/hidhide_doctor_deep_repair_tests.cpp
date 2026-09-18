@@ -255,7 +255,7 @@ void HidHideDoctorDeepRepairTests::reportContainsPhase4SchemaAndCatalog()
     DiagnosticRunOutcome outcome = runFixture(QStringLiteral("Deep Incomplete Driver Replacement"));
     const QJsonDocument report = QJsonDocument::fromJson(DoctorDiagnosticEngine::serializeJson(outcome, true));
     QVERIFY(report.isObject());
-    QCOMPARE(report.object().value(QStringLiteral("schemaVersion")).toInt(), 5);
+    QCOMPARE(report.object().value(QStringLiteral("schemaVersion")).toInt(), 6);
     QVERIFY(report.object().value(QStringLiteral("approvedPackageCatalog")).toArray().size() >= 2);
     QCOMPARE(report.object().value(QStringLiteral("repairProposal")).toObject().value(QStringLiteral("status")).toString(),
         QStringLiteral("REPAIR IDENTIFIED — NOT FIELD QUALIFIED"));

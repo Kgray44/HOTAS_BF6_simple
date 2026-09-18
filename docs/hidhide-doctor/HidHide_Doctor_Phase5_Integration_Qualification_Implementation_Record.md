@@ -50,8 +50,16 @@
   every shipped executable. The historical v2.5.0 pre-upgrade fixture alone
   may lack the later Doctor components. On that exact head, Documentation Check
   run `35261972085` reached terminal `SUCCESS` in 10 seconds and HOTAS BF6 CI
-  run `35261971968` reached terminal `SUCCESS` in 15 min 20 s. The release-only
-  isolated installer job did not run, so no installed-product result is implied.
+  run `35261971968` reached terminal `SUCCESS` in 15 min 20 s. The later,
+  non-publishing PR-only isolated installer qualification run `35287394992`
+  reached terminal `SUCCESS` on source
+  `4e8337e6477c6941746ce5bc9bad9432227ce123`: it built and staged the candidate,
+  compiled its installer, smoke-tested clean install and uninstall component
+  removal, validated clean install, v1.9.3 migration, v2.0 recovery, v2.5 N-1
+  upgrade, default path/shortcuts, and standalone Doctor startup after every
+  candidate state, then uploaded only non-public qualification artifacts. This
+  is a narrow isolated Windows CI-runner result, not a field owner install or
+  release decision.
 - This record is evidence-only. It does not record an owner-authorized repair,
   tag, merge, or public release.
 
@@ -346,6 +354,51 @@ path has not run for this unsigned candidate.
   accessibility audit or screen-reader result. Documentation Check run
   `35271915479` and HOTAS BF6 CI run `35271915472` both reached terminal
   `SUCCESS` on source `8fb2b8731b83ea1ed8721d4231f321c5e497f8b8`.
+
+## Phase 5 forensic evidence depth addendum
+
+The follow-on evidence reconstruction keeps the accepted Inspector and
+Timeline presentation direction, but replaces the prior shallow boundary where
+rich Windows/HidHide provider snapshot data became one generic EvidenceRecord
+per check. The canonical path is now provider snapshot → `DoctorCheckResult`
+→ structured `EvidenceRecord` → `DoctorActivityEvent` → Inspector →
+report/bundle. It remains read-only and stays entirely on the Doctor control
+plane.
+
+- Every new canonical record names its check and catalog purpose, provider,
+  subsystem, status rationale, target, collection method, start/completion
+  timestamps, monotonic microsecond duration, timeout, and explicitly labelled
+  forensic fields. `GET_ACTIVE` and `GET_INVERSE` render semantic enabled or
+  disabled statements; raw boolean values remain labelled raw data, never the
+  whole owner-facing conclusion.
+- Protocol records preserve endpoint, read-only access, API, IOCTL, request
+  and response byte counts, attempt/timeout, timestamps, native code/error,
+  and a sensitivity-classified bounded payload sample. Installation/package,
+  service/driver, configuration, device, Event Log/WER/SetupAPI, and derived
+  correlation checks retain their corresponding structured facts instead of a
+  generic “no raw detail” fallback.
+- Activity is a compact lifecycle trace: session/phase/check start, protocol
+  completion, evidence recording, check completion, finding/diagnosis creation,
+  repair-plan creation, user action, and session completion. It links IDs to
+  canonical evidence rather than duplicating payload. Retention is bounded at
+  600 events with an explicit omitted-event marker.
+- The Inspector presents Identity, Observation, Target, Method, Timing, Native
+  Result, Relationships, Technical, and Raw cards; it supports previous/next
+  evidence and linked-evidence navigation. Its Safe-to-Share copy choices are
+  summary, technical fields, complete evidence, and JSON.
+- Diagnostic serialization moves from schema 5 to 6 and report/bundle schema
+  from 1 to 2. Both changes are additive and carry compatibility metadata.
+  `HidHide_Doctor_Evidence_Schema_Migration_v6.md` records the reader guidance,
+  per-field Safe-to-Share redaction, and explicit collection bounds.
+- A fresh full CTest run passed all 18 registered tests with the explicit
+  180-second bound. That includes `hidhide_doctor_domain_tests` (with a
+  zero-unexpected-shallow-record forensic coverage check),
+  `hidhide_doctor_deep_repair_tests`, and `hidhide_doctor_layout_tests`; the
+  isolated QML startup regression completed in 150.05 seconds. These are
+  automated evidence only;
+  the requested live owner acceptance across healthy, informational, warning,
+  protocol, package, service, device, Windows evidence, diagnosis, and repair
+  transaction families remains pending.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and

@@ -901,7 +901,12 @@ ApplicationWindow {
                     Eyebrow { text: "EVIDENCE INSPECTOR"; color: Theme.textSecondary }
                     Label { text: inspectorSurface.selected.checkId || "Select a finding, diagnosis, or timeline row"; color: Theme.information; font.family: Theme.mono; font.pixelSize: root.textPx(12); elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                Doctor.DoctorButton { text: "COPY"; compact: true; tooltipText: "Copy selected evidence with its full technical details"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidence() }
+                Doctor.DoctorButton { text: "PREV"; compact: true; enabled: inspectorSurface.selected.hasPrevious; tooltipText: "Open previous evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(-1) }
+                Doctor.DoctorButton { text: "NEXT"; compact: true; enabled: inspectorSurface.selected.hasNext; tooltipText: "Open next evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(1) }
+                Doctor.DoctorButton { text: "COPY SUMMARY"; compact: true; tooltipText: "Copy the redacted evidence summary"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Summary") }
+                Doctor.DoctorButton { text: "COPY TECH"; compact: true; tooltipText: "Copy redacted technical evidence fields"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Technical") }
+                Doctor.DoctorButton { text: "COPY ALL"; compact: true; tooltipText: "Copy complete redacted evidence"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Complete") }
+                Doctor.DoctorButton { text: "JSON"; compact: true; tooltipText: "Copy complete redacted evidence as JSON"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("JSON") }
                 Doctor.DoctorButton { text: "Close"; compact: true; onClicked: inspector.close() }
             }
             Doctor.DoctorDivider {}
@@ -917,10 +922,84 @@ ApplicationWindow {
                 Eyebrow { text: "NATIVE ERROR" }
                 Label { text: inspectorSurface.selected.error || "None"; color: inspectorSurface.selected.error && inspectorSurface.selected.error !== "None" ? Theme.critical : Theme.textSecondary; font.family: Theme.mono; font.pixelSize: root.textPx(10); Layout.fillWidth: true; elide: Text.ElideRight }
             }
-            Eyebrow { text: "SUMMARY" }
-            Doctor.DoctorTextArea { text: inspectorSurface.selected.summary || "No evidence is selected."; Layout.fillWidth: true; Layout.preferredHeight: 62 }
-            Eyebrow { text: "TECHNICAL DETAILS" }
-            Doctor.DoctorTextArea { text: inspectorSurface.selected.technical || inspectorSurface.selected.structured || "No additional raw detail was captured."; font.family: Theme.mono; Layout.fillWidth: true; Layout.fillHeight: true }
+            RowLayout { Layout.fillWidth: true
+                Label { text: (inspectorSurface.selected.evidenceIndex || 0) + " / " + (inspectorSurface.selected.evidenceCount || 0) + " EVIDENCE"; color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: root.textPx(10) }
+                Item { Layout.fillWidth: true }
+                Label { text: inspectorSurface.selected.collectionTruncated ? "EVIDENCE COLLECTION TRUNCATED" : "STRUCTURED FORENSIC RECORD"; color: inspectorSurface.selected.collectionTruncated ? Theme.warning : Theme.information; font.family: Theme.ui; font.pixelSize: root.textPx(10) }
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 8
+                    Repeater {
+                        model: inspectorSurface.selected.groups || []
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: fieldColumn.implicitHeight + 18
+                            color: Theme.inset
+                            border.color: Theme.separator
+                            radius: 2
+                            ColumnLayout {
+                                id: fieldColumn
+                                anchors.fill: parent
+                                anchors.margins: 9
+                                spacing: 5
+                                Eyebrow { text: modelData.name }
+                                Repeater {
+                                    model: modelData.fields
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        spacing: 12
+                                        Label { text: modelData.label; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: root.textPx(10); font.weight: Font.DemiBold; Layout.preferredWidth: Math.min(260, parent.width * 0.34); Layout.alignment: Qt.AlignTop; wrapMode: Text.WordWrap }
+                                        Label { text: modelData.value; color: Theme.textSecondary; font.family: modelData.monospace ? Theme.mono : Theme.ui; font.pixelSize: root.textPx(10); Layout.fillWidth: true; Layout.alignment: Qt.AlignTop; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        visible: inspectorSurface.selected.attempts && inspectorSurface.selected.attempts.length > 0
+                        Layout.fillWidth: true
+                        implicitHeight: attemptColumn.implicitHeight + 18
+                        color: Theme.inset
+                        border.color: Theme.separator
+                        radius: 2
+                        ColumnLayout {
+                            id: attemptColumn
+                            anchors.fill: parent
+                            anchors.margins: 9
+                            spacing: 5
+                            Eyebrow { text: "PROBE ATTEMPTS" }
+                            Repeater {
+                                model: inspectorSurface.selected.attempts || []
+                                delegate: ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    Label { text: "#" + modelData.ordinal + "  " + modelData.operation + " — " + modelData.outcome; color: Theme.textPrimary; font.family: Theme.mono; font.pixelSize: root.textPx(10); wrapMode: Text.WrapAnywhere }
+                                    Label { text: modelData.target + " · " + modelData.bytes + " · " + modelData.duration + " / " + modelData.timeout; color: Theme.textSecondary; font.family: Theme.mono; font.pixelSize: root.textPx(9); wrapMode: Text.WrapAnywhere }
+                                    Label { visible: modelData.error !== "None"; text: modelData.error; color: Theme.critical; font.family: Theme.ui; font.pixelSize: root.textPx(10); wrapMode: Text.WrapAnywhere }
+                                }
+                            }
+                        }
+                    }
+                    RowLayout {
+                        visible: inspectorSurface.selected.relatedEvidenceIds && inspectorSurface.selected.relatedEvidenceIds.length > 0
+                        Layout.fillWidth: true
+                        Eyebrow { text: "OPEN RELATED EVIDENCE" }
+                        Repeater {
+                            model: inspectorSurface.selected.relatedEvidenceIds || []
+                            delegate: Doctor.DoctorButton { required property var modelData; text: modelData; compact: true; onClicked: root.openEvidence(modelData) }
+                        }
+                    }
+                    Label { visible: !inspectorSurface.selected.id; text: "Select a finding, diagnosis, timeline entry, or evidence record to inspect its captured structured facts."; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: root.textPx(11); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+            }
         }
     }
     }
