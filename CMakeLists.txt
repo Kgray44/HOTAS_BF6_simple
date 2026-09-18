@@ -136,6 +136,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckTheme.qml
         qml/FlightDeckDialog.qml
         qml/FlightDeckDialogFooter.qml
+        qml/FlightDeckGuidanceCallout.qml
         qml/FlightDeckGuidanceOnboarding.qml
         qml/FlightDeckSetupAssistant.qml
         qml/FlightDeckInputLearningDialog.qml
@@ -658,6 +659,7 @@ if (BUILD_TESTING)
             qml/FlightDeckTheme.qml
             qml/FlightDeckDialog.qml
             qml/FlightDeckDialogFooter.qml
+            qml/FlightDeckGuidanceCallout.qml
             qml/FlightDeckGuidanceOnboarding.qml
             qml/FlightDeckSetupAssistant.qml
             qml/FlightDeckInputLearningDialog.qml

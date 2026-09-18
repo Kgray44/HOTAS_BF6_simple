@@ -3033,6 +3033,18 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     auto *guidedAdaptive = pageItem(surface, 9);
     const bool guidedAdaptiveDefaults = guidedAdaptive
         && !guidedAdaptive->property("advancedTracesExpanded").toBool();
+    if (!selectPage(surface, 8)) return false;
+    auto *guidedOverview = pageItem(surface, 8);
+    const bool guidedOverviewDefaults = guidedOverview
+        && !guidedOverview->property("connectionEvidenceExpanded").toBool()
+        && !guidedOverview->property("additionalAttentionExpanded").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedOverview), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!selectPage(surface, 2)) return false;
+    auto *guidedDevices = pageItem(surface, 2);
+    const bool guidedDeviceDefaults = guidedDevices
+        && !guidedDevices->property("virtualDetailsOpen").toBool()
+        && !guidedDevices->property("isolationDetailsOpen").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedDevices), QStringLiteral("flightDeckGuidanceCallout"));
     if (!selectPage(surface, 4)) return false;
     settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
     full = settings ? findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull")) : nullptr;
@@ -3052,8 +3064,21 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     auto *fullAdaptive = pageItem(surface, 9);
     const bool fullAdaptiveDefaults = fullAdaptive
         && fullAdaptive->property("advancedTracesExpanded").toBool();
+    if (!selectPage(surface, 8)) return false;
+    auto *fullOverview = pageItem(surface, 8);
+    const bool fullOverviewDefaults = fullOverview
+        && fullOverview->property("connectionEvidenceExpanded").toBool()
+        && fullOverview->property("additionalAttentionExpanded").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullOverview), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!selectPage(surface, 2)) return false;
+    auto *fullDevices = pageItem(surface, 2);
+    const bool fullDeviceDefaults = fullDevices
+        && fullDevices->property("virtualDetailsOpen").toBool()
+        && fullDevices->property("isolationDetailsOpen").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullDevices), QStringLiteral("flightDeckGuidanceCallout"));
     if (!guided || !full || !guidedPointer || !fullPointer || !guidedSettingsRetained
-        || !guidedDefaults || !guidedAdaptiveDefaults || !fullDefaults || !fullAdaptiveDefaults
+        || !guidedDefaults || !guidedAdaptiveDefaults || !guidedOverviewDefaults || !guidedDeviceDefaults
+        || !fullDefaults || !fullAdaptiveDefaults || !fullOverviewDefaults || !fullDeviceDefaults
         || flightDeckConfigurationSnapshot(backend) != guidanceConfigurationBefore
         || backend.setupAssistantTask() != guidanceTaskBefore
         || themeManager.currentTheme() != guidanceThemeBefore
@@ -3062,9 +3087,11 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
         || themeManager.textSize() != guidanceTextSizeBefore) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Flight Deck guidance controls changed state beyond presentation defaults "
-            "(guidedPointer=%1 fullPointer=%2 guided=%3 guidedAdaptive=%4 full=%5 fullAdaptive=%6)")
+            "(guidedPointer=%1 fullPointer=%2 guided=%3 guidedAdaptive=%4 guidedOverview=%5 guidedDevices=%6 "
+            "full=%7 fullAdaptive=%8 fullOverview=%9 fullDevices=%10)")
             .arg(guidedPointer).arg(fullPointer).arg(guidedDefaults).arg(guidedAdaptiveDefaults)
-            .arg(fullDefaults).arg(fullAdaptiveDefaults));
+            .arg(guidedOverviewDefaults).arg(guidedDeviceDefaults).arg(fullDefaults).arg(fullAdaptiveDefaults)
+            .arg(fullOverviewDefaults).arg(fullDeviceDefaults));
     }
     if (!selectPage(surface, 4)) return false;
     settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));

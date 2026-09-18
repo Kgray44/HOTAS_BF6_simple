@@ -1365,6 +1365,14 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · BUTTON OR POV ASSIGNMENT"
+            guidedText: "Choose a source, assign the intended virtual button or POV behavior, then open Configure only when you need its optional behavior controls."
+            fullTitle: "BUTTON EDITING CONTEXT"
+            fullText: "Common assignment and direct configuration remain in the existing cards."
+        }
+
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout {

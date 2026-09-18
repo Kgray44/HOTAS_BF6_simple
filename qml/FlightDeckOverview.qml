@@ -57,8 +57,16 @@ Flickable {
     readonly property var setupPhysical: setupGroup("physical")
     readonly property var setupOutput: setupGroup("vjoy")
     readonly property var setupIsolation: setupGroup("isolation")
-    property bool connectionEvidenceExpanded: false
-    property bool additionalAttentionExpanded: false
+    // Full exposes current setup context sooner; Guided keeps the same facts
+    // behind an explicit, persistent disclosure.
+    readonly property bool connectionEvidenceExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("overview-connection-evidence")
+    }
+    readonly property bool additionalAttentionExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("overview-additional-attention")
+    }
     property string issueHandoffMessage: ""
 
     function currentIssueById(issueId) {
@@ -134,6 +142,14 @@ Flickable {
         y: deck.space4
         width: Math.max(0, root.width - deck.space8)
         spacing: deck.space16
+
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · SETUP STATUS"
+            guidedText: "Start with the item marked for attention, then use the single setup action to continue without changing your mapping."
+            fullTitle: "SETUP CONTEXT"
+            fullText: "Current readiness and connection evidence are expanded below."
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -413,7 +429,7 @@ Flickable {
                     text: root.additionalAttentionExpanded ? "HIDE ADDITIONAL ITEMS" : "SHOW ADDITIONAL ITEMS · " + ((setupTruth.issues || []).length - 1)
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
-                    onClicked: root.additionalAttentionExpanded = !root.additionalAttentionExpanded
+                    onClicked: themeManager.setGuidanceSectionExpanded("overview-additional-attention", !root.additionalAttentionExpanded)
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
@@ -452,7 +468,7 @@ Flickable {
                         text: root.connectionEvidenceExpanded ? "HIDE EVIDENCE" : "SHOW EVIDENCE"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: root.connectionEvidenceExpanded = !root.connectionEvidenceExpanded
+                        onClicked: themeManager.setGuidanceSectionExpanded("overview-connection-evidence", !root.connectionEvidenceExpanded)
                         background: Rectangle {
                             radius: deck.radiusControl
                             color: parent.down ? deck.secondarySurface : "transparent"

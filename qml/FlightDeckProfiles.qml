@@ -1237,6 +1237,14 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · PROFILE LIBRARY"
+            guidedText: "Choose the profile that matches this rig and review whether it is active, automatic, or only being edited."
+            fullTitle: "PROFILE EDITING CONTEXT"
+            fullText: "Library, association, and direct-management details remain available in place."
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space8

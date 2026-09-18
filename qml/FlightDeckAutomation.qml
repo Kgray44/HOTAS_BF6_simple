@@ -619,6 +619,14 @@ Flickable {
         width: Math.max(0, root.width - deck.space48)
         spacing: deck.space16
 
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · AUTOMATION"
+            guidedText: "Review what each enabled rule does before editing it. Conditions and actions remain explicit; changing this view never changes a rule."
+            fullTitle: "AUTOMATION EDITING CONTEXT"
+            fullText: "Rule summaries and direct condition/action editing are available below."
+        }
+
         ColumnLayout {
             visible: !root.editing
             Layout.fillWidth: true

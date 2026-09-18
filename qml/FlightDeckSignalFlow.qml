@@ -1274,6 +1274,14 @@ Item {
         anchors.fill: parent
         spacing: deck.sectionGap
 
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · ROUTE MAP"
+            guidedText: "Select a route to understand its source and destination, then use the existing inspector or processor controls when you need more detail."
+            fullTitle: "ROUTE EDITING CONTEXT"
+            fullText: "Configured topology, processor controls, and route inspection are ready for direct editing."
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space12

@@ -24,8 +24,17 @@ Flickable {
     // Test-only plan data keeps dialog geometry fixtures independent from
     // driver state. Production always reads the authoritative Setup Truth plan.
     property var repairPlanPresentationFixture: null
-    property bool virtualDetailsOpen: false
-    property bool isolationDetailsOpen: false
+    // These are presentation-only policy defaults. A deep link or an
+    // explicit local toggle records a scoped choice without altering any
+    // Device Rig, output, or readiness state.
+    readonly property bool virtualDetailsOpen: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("devices-virtual-details")
+    }
+    readonly property bool isolationDetailsOpen: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("devices-isolation-details")
+    }
     // Device Rigs remain configuration-owned data.  This page keeps only the
     // currently inspected ID and transient acknowledgement state; every
     // create/edit/activate operation below is routed through AppBackend.
@@ -520,7 +529,7 @@ Flickable {
 
     function openRigOutput(outputId) {
         if (!outputId) return;
-        virtualDetailsOpen = true;
+        themeManager.setGuidanceSectionExpanded("devices-virtual-details", true);
         Qt.callLater(function() {
             contentY = Math.max(0, Math.min(contentHeight - height,
                 virtualOutputSection.y - deck.space8));
@@ -567,7 +576,7 @@ Flickable {
         let destination = null
         if (section === "isolation") destination = isolationSection
         else if (section === "virtual-output" || type === "virtualOutput") {
-            virtualDetailsOpen = true
+            themeManager.setGuidanceSectionExpanded("devices-virtual-details", true)
             destination = virtualOutputSection
         } else if (section === "verification") destination = verificationSection
         else if (type === "deviceRig") {
@@ -722,6 +731,14 @@ Flickable {
         y: deck.space4
         width: Math.max(0, root.width - deck.space8)
         spacing: deck.space16
+
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · DEVICES AND OUTPUTS"
+            guidedText: "Confirm the controller, its required or optional role, and its assigned Virtual Output before changing a Device Rig."
+            fullTitle: "DEVICE MANAGEMENT CONTEXT"
+            fullText: "Output and isolation technical details are expanded when untouched."
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -1298,7 +1315,7 @@ Flickable {
                         text: root.virtualDetailsOpen ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: root.virtualDetailsOpen = !root.virtualDetailsOpen
+                        onClicked: themeManager.setGuidanceSectionExpanded("devices-virtual-details", !root.virtualDetailsOpen)
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
@@ -1452,7 +1469,7 @@ Flickable {
                         text: root.isolationDetailsOpen ? "HIDE TECHNICAL DETAILS" : "TECHNICAL DETAILS"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: root.isolationDetailsOpen = !root.isolationDetailsOpen
+                        onClicked: themeManager.setGuidanceSectionExpanded("devices-isolation-details", !root.isolationDetailsOpen)
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }

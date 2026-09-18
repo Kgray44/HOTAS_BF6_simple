@@ -1141,6 +1141,14 @@ Flickable {
         width: root.width - deck.space24
         spacing: deck.space12
 
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · AXIS ROUTE"
+            guidedText: "Select the physical source, confirm its virtual destination, then adjust the primary response controls. Advanced tuning remains one clear disclosure away."
+            fullTitle: "AXIS EDITING CONTEXT"
+            fullText: "Source, transform, output, and available tuning are ready for direct editing."
+        }
+
         FlightDeckCard {
             tokens: deck
             contentPadding: deck.cardPadding
