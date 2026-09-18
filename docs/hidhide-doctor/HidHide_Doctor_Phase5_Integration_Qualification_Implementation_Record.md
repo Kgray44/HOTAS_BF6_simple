@@ -35,6 +35,17 @@
   The staged `Forensic Evidence Review` fixture completed headlessly with exit
   0. It remains simulated, explicitly labelled review evidence—not a repair
   action or a substitute for the required owner-machine scan.
+- Current forensic copy-fix candidate: `fb38e02`. Its full local CTest run
+  passed all 18 registered tests in 222.96 seconds with the explicit
+  180-second timeout bound. The exact staged R6 runtime is
+  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R6`; its 1,387 payload files
+  match by path, byte count, and SHA-256. Its component-manifest SHA-256 is
+  `6029E50AC9C1A31BFD4D837C5C2A901E7A8D26705CBFB4200C70EB62BBC444A5` and
+  `HidHide Doctor.exe` SHA-256 is
+  `0D5BB7B4028C1ACCCBA2FE68413790EB5A686F3DA9168F939365C911448B029C`.
+  Staged startup smoke and headless forensic-fixture verification each exited
+  0. The R6 fixture still requires its dedicated native owner review; it is
+  not a substitute for a real owner-machine read-only scan.
 - Current crash-fix and bundle-folder product candidate:
   `0846edfc73b282660fcf2d410d9523d5e0545cb1`. Its staged `2.6.2` package is
   `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; it has
