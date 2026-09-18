@@ -10,6 +10,19 @@
 - Earlier qualification-evidence baseline: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
   Those earlier checks are historical evidence only and are not substituted for
   a later PR head.
+- Current forensic-evidence candidate: `e8010fb`. Its full local CTest run at
+  `C:\hotas-builds\hidhide-doctor-phase5-addendum1` passed all 18 registered
+  tests with a 180-second CTest timeout; `app_qml_startup_tests` completed in
+  150.05 seconds. Its independently staged R4 runtime is
+  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R4`: 1,387 payload files each
+  agree by path, byte count, and SHA-256 with its component manifest. The
+  manifest SHA-256 is
+  `A0CC2F622C244FFC35E2B0152F8243AAC9E6478C467B47FC7FA180C04F141F54`;
+  `HidHide Doctor.exe` is
+  `6A9E2B4ECB43223DECF9C0D73048D16AB987A96883D3FE8CC4ABE6A118817306`.
+  Staged `--startup-smoke` and read-only `--scan-smoke` each exited 0. This
+  records local candidate provenance only; it does not qualify repair,
+  accessibility, cross-machine behavior, or release.
 - Current crash-fix and bundle-folder product candidate:
   `0846edfc73b282660fcf2d410d9523d5e0545cb1`. Its staged `2.6.2` package is
   `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; it has
