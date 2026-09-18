@@ -55,7 +55,7 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
     if ((type & DIDFT_AXIS) != 0) {
         const int enumerationIndex = objects->controller->axisCount;
         ++objects->controller->axisCount;
-        const int index = physicalAxisIndexForDirectInputOffset(instance->dwOfs);
+        const int index = physicalAxisIndexForDirectInputObject(*instance);
         if (index >= 0) {
             objects->controller->axes[static_cast<size_t>(index)] = true;
             NativeAxisDescriptor &descriptor =

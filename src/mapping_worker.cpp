@@ -252,11 +252,19 @@ bool readBufferedAxisEvents(LPDIRECTINPUTDEVICE8W device,
     if (FAILED(result) || count == 0) return false;
     bool axisEvent = false;
     for (DWORD eventIndex = 0; eventIndex < count; ++eventIndex) {
-        const int axis = physicalAxisIndexForDirectInputOffset(events[eventIndex].dwOfs);
-        if (axis < 0 || axis >= kPhysicalAxisCount || !available[static_cast<size_t>(axis)]) continue;
-        // Do not let a coincidental state-layout offset stand in for a
-        // different native object. The compiled descriptor is authoritative.
-        if (descriptors[static_cast<size_t>(axis)].directInputOffset != events[eventIndex].dwOfs) continue;
+        // Buffered data reports the raw native offset. Resolve it against the
+        // fixed compiled descriptors rather than assuming that offset names a
+        // DIJOYSTATE2 field; a device can validly identify Rz while claiming
+        // the lZ layout offset.
+        int axis = -1;
+        for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+            if (available[static_cast<size_t>(candidate)]
+                && descriptors[static_cast<size_t>(candidate)].directInputOffset == events[eventIndex].dwOfs) {
+                axis = candidate;
+                break;
+            }
+        }
+        if (axis < 0) continue;
         (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
         (*known)[static_cast<size_t>(axis)] = true;
         axisEvent = true;
@@ -720,7 +728,7 @@ BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *
     const DWORD objectType = DIDFT_GETTYPE(instance->dwType);
     if ((objectType & DIDFT_AXIS) != 0) {
         const int enumerationIndex = objects->axisCount;
-        const int index = physicalAxisIndexForDirectInputOffset(instance->dwOfs);
+        const int index = physicalAxisIndexForDirectInputObject(*instance);
         if (index >= 0) {
             (*objects->axes)[index] = true;
             if (objects->axisDescriptors) {
@@ -1171,6 +1179,128 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     result.povCount = objects.povCount;
     result.unsupportedAxisCount = objects.unsupportedAxisCount;
     result.diagnostic = u"Exact DirectInput controller acquired and returned a live state report."_qs;
+    device->Unacquire();
+    device->Release();
+    directInput->Release();
+    return result;
+}
+
+DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisition(
+    const QString &expectedDirectInputId, int durationMs)
+{
+    DirectInputAxisAcquisitionProbe result;
+    const QString expected = expectedDirectInputId.trimmed();
+    result.durationMs = std::clamp(durationMs, 1000, 30000);
+    if (expected.isEmpty()) {
+        result.diagnostic = u"No exact DirectInput controller identity was supplied."_qs;
+        return result;
+    }
+    LPDIRECTINPUT8W directInput = nullptr;
+    const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
+        IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
+    if (FAILED(initialized)) {
+        result.diagnostic = u"DirectInput initialization failed: "_qs + inputErrorMessage(initialized);
+        return result;
+    }
+    const auto selected = selectDeviceByPersistedId(directInput, expected);
+    if (!selected) {
+        // A stale persisted ID must never be redirected to another controller.
+        // List only attached physical candidates so the caller can explicitly
+        // target the actual device for a subsequent read-only capture.
+        EnumerationContext candidates;
+        directInput->EnumDevices(DI8DEVCLASS_GAMECTRL, enumDeviceCallback, &candidates,
+                                 DIEDFL_ATTACHEDONLY);
+        QStringList attachedPhysical;
+        for (const DirectInputDevice &candidate : candidates.devices) {
+            if (isVirtualControllerName(candidate.name)) continue;
+            attachedPhysical << u"%1 [%2]"_qs.arg(candidate.name, guidToString(candidate.guid));
+        }
+        directInput->Release();
+        result.diagnostic = u"The requested DirectInput controller was not visible. Attached physical controllers: "_qs
+            + (attachedPhysical.isEmpty() ? u"none"_qs : attachedPhysical.join(u"; "_qs));
+        return result;
+    }
+    LPDIRECTINPUTDEVICE8W device = nullptr;
+    HRESULT status = directInput->CreateDevice(selected->guid, &device, nullptr);
+    if (SUCCEEDED(status)) status = device->SetDataFormat(&c_dfDIJoystick2);
+    if (SUCCEEDED(status)) status = device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+    if (FAILED(status)) {
+        if (device) device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs + inputErrorMessage(status);
+        return result;
+    }
+    std::array<bool, kPhysicalAxisCount> axes{};
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    ObjectEnumerationContext objects{device, &axes, &buttons, &result.axisDescriptors, false};
+    device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+    result.bufferedConfigureResult = static_cast<qint32>(configureDirectInputBufferedEvents(device));
+    status = device->Acquire();
+    if (FAILED(status)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs + inputErrorMessage(status);
+        return result;
+    }
+    result.standardMinimum.fill(std::numeric_limits<LONG>::max());
+    result.standardMaximum.fill(std::numeric_limits<LONG>::min());
+    result.stateFieldMinimum.fill(std::numeric_limits<LONG>::max());
+    result.stateFieldMaximum.fill(std::numeric_limits<LONG>::min());
+    result.bufferedMinimum.fill(std::numeric_limits<LONG>::max());
+    result.bufferedMaximum.fill(std::numeric_limits<LONG>::min());
+    std::array<LONG, kPhysicalAxisCount> lastStandard{};
+    std::array<bool, kPhysicalAxisCount> standardKnown{};
+    std::array<LONG, kPhysicalAxisCount> lastStateField{};
+    std::array<bool, kPhysicalAxisCount> stateFieldKnown{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(result.durationMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        DIJOYSTATE2 state{};
+        status = device->Poll();
+        if (SUCCEEDED(status)) status = device->GetDeviceState(sizeof(state), &state);
+        if (SUCCEEDED(status)) {
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                result.stateFieldMinimum[static_cast<size_t>(axis)] = std::min(result.stateFieldMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.stateFieldMaximum[static_cast<size_t>(axis)] = std::max(result.stateFieldMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (stateFieldKnown[static_cast<size_t>(axis)] && lastStateField[static_cast<size_t>(axis)] != value) ++result.stateFieldChanges[static_cast<size_t>(axis)];
+                lastStateField[static_cast<size_t>(axis)] = value;
+                stateFieldKnown[static_cast<size_t>(axis)] = true;
+            }
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) if (axes[static_cast<size_t>(axis)]) {
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                result.standardMinimum[static_cast<size_t>(axis)] = std::min(result.standardMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.standardMaximum[static_cast<size_t>(axis)] = std::max(result.standardMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (standardKnown[static_cast<size_t>(axis)] && lastStandard[static_cast<size_t>(axis)] != value) ++result.standardChanges[static_cast<size_t>(axis)];
+                lastStandard[static_cast<size_t>(axis)] = value;
+                standardKnown[static_cast<size_t>(axis)] = true;
+            }
+        }
+        std::array<DIDEVICEOBJECTDATA, 32> events{};
+        DWORD count = static_cast<DWORD>(events.size());
+        const HRESULT buffered = device->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), events.data(), &count, 0);
+        result.lastBufferedReadResult = static_cast<qint32>(buffered);
+        if (SUCCEEDED(buffered)) for (DWORD event = 0; event < count; ++event) {
+            int axis = -1;
+            for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+                if (axes[static_cast<size_t>(candidate)]
+                    && result.axisDescriptors[static_cast<size_t>(candidate)].directInputOffset == events[event].dwOfs) {
+                    axis = candidate;
+                    break;
+                }
+            }
+            if (axis >= 0) {
+                const LONG value = static_cast<LONG>(events[event].dwData);
+                result.bufferedMinimum[static_cast<size_t>(axis)] = std::min(result.bufferedMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.bufferedMaximum[static_cast<size_t>(axis)] = std::max(result.bufferedMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                ++result.bufferedEvents[static_cast<size_t>(axis)];
+            }
+        }
+        QThread::msleep(4);
+    }
+    result.acquired = true;
+    result.name = selected->name;
+    result.directInputId = guidToString(selected->guid);
+    result.diagnostic = u"Read-only standard-state and buffered-object capture completed."_qs;
     device->Unacquire();
     device->Release();
     directInput->Release();
@@ -1971,7 +2101,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             if (!availableAxes[index]) continue;
             const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
-            const LONG standardValue = directInputAxisValueAtOffset(state, descriptor.directInputOffset);
+            const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(index));
             if (bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 && axisAcquisitionMethods[static_cast<size_t>(index)] == 0
                 && std::abs(normalizeDirectInputAxisValue(bufferedAxisValues[static_cast<size_t>(index)], descriptor)
@@ -2966,7 +3096,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
                 if (session.availableAxes[static_cast<size_t>(axis)]) {
                     const NativeAxisDescriptor &descriptor = session.axisDescriptors[static_cast<size_t>(axis)];
-                    const LONG standardValue = directInputAxisValueAtOffset(state, descriptor.directInputOffset);
+                    const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
                     if (session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 0
                         && std::abs(normalizeDirectInputAxisValue(
