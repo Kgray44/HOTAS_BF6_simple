@@ -164,6 +164,7 @@ private slots:
     void phaseFiveIntegrationContextIsBoundedOneTimeAndUnprivileged();
     void phaseFiveBoundedProtocolJournalReportAndPackageFuzz();
     void phaseFiveForensicEvidenceIsStructuredLinkedAndSemanticallyRendered();
+    void phaseFiveForensicOwnerReviewFixtureCoversAllEvidenceFamilies();
     void phaseFiveReportComposerIsStructuredRedactedAndBundleCapable();
     void phaseFiveReportExportVerifiesDestinationAndReportsPath();
     void phaseFiveBundleExportIsTransactionalOnFailure();
@@ -898,6 +899,48 @@ void HidHideDoctorDomainTests::phaseFiveForensicEvidenceIsStructuredLinkedAndSem
         return value.toString() == QStringLiteral("HD-API-002");
     }));
     QVERIFY(serialized.value(QStringLiteral("activityTimeline")).toArray().size() > outcome.session.checkResults().size());
+}
+
+void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvidenceFamilies()
+{
+    QString label;
+    FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Forensic Evidence Review"), &label));
+    DoctorDiagnosticEngine engine;
+    const DiagnosticRunOutcome outcome = engine.run(provider);
+    QCOMPARE(label, QStringLiteral("Forensic Evidence Review"));
+
+    const auto evidenceFor = [&outcome](const QString &checkId) -> const EvidenceRecord * {
+        const auto iterator = std::find_if(outcome.session.evidence().cbegin(), outcome.session.evidence().cend(),
+            [&checkId](const EvidenceRecord &record) { return record.checkId.value() == checkId; });
+        return iterator == outcome.session.evidence().cend() ? nullptr : &*iterator;
+    };
+    const auto hasField = [](const EvidenceRecord *record, const QString &label) {
+        return record && std::any_of(record->fields.cbegin(), record->fields.cend(), [&label](const EvidenceField &field) {
+            return field.label == label && !field.value.isEmpty();
+        });
+    };
+
+    const EvidenceRecord *protocol = evidenceFor(QStringLiteral("HD-API-002"));
+    QVERIFY(protocol);
+    QCOMPARE(resultFor(outcome.session, QStringLiteral("HD-API-002"))->status, DoctorCheckStatus::Healthy);
+    QVERIFY(hasField(protocol, QStringLiteral("IOCTL")));
+    QVERIFY(protocol->humanSummary.contains(QStringLiteral("enabled"), Qt::CaseInsensitive));
+    const EvidenceRecord *failedProtocol = evidenceFor(QStringLiteral("HD-API-004"));
+    QVERIFY(failedProtocol);
+    QCOMPARE(resultFor(outcome.session, QStringLiteral("HD-API-004"))->status, DoctorCheckStatus::Failed);
+    QVERIFY(hasField(failedProtocol, QStringLiteral("NATIVE ERROR SYMBOL")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-INST-001")), QStringLiteral("SIGNATURE OUTCOME")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-DRV-001")), QStringLiteral("SERVICE STATE")));
+    QVERIFY(hasField(evidenceFor(QStringLiteral("HD-DEV-001")), QStringLiteral("DEVICE PROPERTY FAILURES")));
+    const EvidenceRecord *windows = evidenceFor(QStringLiteral("HD-WIN-001"));
+    QVERIFY(windows);
+    QVERIFY(hasField(windows, QStringLiteral("EVENT LOG SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("WINDOWS ERROR REPORT SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("SETUPAPI SUMMARY")));
+    QVERIFY(hasField(windows, QStringLiteral("REPAIR TRANSACTION OBSERVATION")));
+    QVERIFY(std::any_of(outcome.session.diagnoses().cbegin(), outcome.session.diagnoses().cend(), [](const Diagnosis &diagnosis) {
+        return diagnosis.id.value() == QStringLiteral("HD-DIAG-RECOVERY-REQUIRED");
+    }));
 }
 
 void HidHideDoctorDomainTests::phaseFiveBoundedProtocolJournalReportAndPackageFuzz()

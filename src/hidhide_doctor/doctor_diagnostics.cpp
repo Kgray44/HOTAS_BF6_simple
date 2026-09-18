@@ -250,10 +250,33 @@ EvidenceRecord forensicEvidence(const DoctorCheckDefinition &definition, const D
         addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("EVENT LOG OBSERVATIONS"), QString::number(snapshot.events.size()), EvidenceSensitivity::SafeToExport, true);
         addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("WINDOWS ERROR REPORT OBSERVATIONS"), QString::number(snapshot.werReports.size()), EvidenceSensitivity::SafeToExport, true);
         addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("SETUPAPI OBSERVATIONS"), QString::number(snapshot.setupApiEvidence.size()), EvidenceSensitivity::SafeToExport, true);
-        if (!snapshot.events.isEmpty()) {
-            const EventObservation &event = snapshot.events.first();
-            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("REPRESENTATIVE EVENT"),
-                QStringLiteral("%1 / %2 / %3").arg(event.channel, event.provider).arg(event.eventId), event.sensitivity, true);
+        const auto addEventFields = [&record](const QString &prefix, const EventObservation &event) {
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, prefix + QStringLiteral(" CHANNEL"), event.channel, event.sensitivity, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, prefix + QStringLiteral(" PROVIDER"), event.provider, event.sensitivity, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, prefix + QStringLiteral(" EVENT ID"), QString::number(event.eventId), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, prefix + QStringLiteral(" LEVEL"), event.level, event.sensitivity);
+            addEvidenceField(&record, EvidenceFieldCategory::Timing, prefix + QStringLiteral(" TIMESTAMP (UTC)"), event.timestamp.toString(Qt::ISODateWithMs), EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, prefix + QStringLiteral(" SUMMARY"), event.summary, event.sensitivity);
+            if (event.nativeError) {
+                addEvidenceField(&record, EvidenceFieldCategory::NativeResult, prefix + QStringLiteral(" ERROR DOMAIN"),
+                    QString::number(static_cast<int>(event.nativeError->domain)), EvidenceSensitivity::SafeToExport, true);
+                addEvidenceField(&record, EvidenceFieldCategory::NativeResult, prefix + QStringLiteral(" ERROR CODE"),
+                    QString::number(event.nativeError->code), EvidenceSensitivity::SafeToExport, true);
+                addEvidenceField(&record, EvidenceFieldCategory::NativeResult, prefix + QStringLiteral(" ERROR SYMBOL"),
+                    event.nativeError->symbolicName, EvidenceSensitivity::SafeToExport, true);
+                addEvidenceField(&record, EvidenceFieldCategory::NativeResult, prefix + QStringLiteral(" ERROR MESSAGE"),
+                    event.nativeError->message, EvidenceSensitivity::RequiresRedaction);
+            }
+        };
+        if (!snapshot.events.isEmpty()) addEventFields(QStringLiteral("EVENT LOG"), snapshot.events.first());
+        if (!snapshot.werReports.isEmpty()) addEventFields(QStringLiteral("WINDOWS ERROR REPORT"), snapshot.werReports.first());
+        if (!snapshot.setupApiEvidence.isEmpty()) addEventFields(QStringLiteral("SETUPAPI"), snapshot.setupApiEvidence.first());
+        const auto repairObservation = std::find_if(snapshot.catalogObservations.cbegin(), snapshot.catalogObservations.cend(),
+            [](const CatalogObservation &observation) { return observation.checkId.contains(QStringLiteral("PHASE4")); });
+        if (repairObservation != snapshot.catalogObservations.cend()) {
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("REPAIR TRANSACTION CHECK"), repairObservation->checkId, EvidenceSensitivity::SafeToExport, true);
+            addEvidenceField(&record, EvidenceFieldCategory::Observation, QStringLiteral("REPAIR TRANSACTION OBSERVATION"), repairObservation->summary, EvidenceSensitivity::RequiresRedaction);
+            addEvidenceField(&record, EvidenceFieldCategory::Technical, QStringLiteral("REPAIR TRANSACTION DETAIL"), repairObservation->technicalDetails, EvidenceSensitivity::RequiresRedaction);
         }
     }
     if (record.nativeError) {

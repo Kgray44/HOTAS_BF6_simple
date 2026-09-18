@@ -46,6 +46,18 @@ Safe-to-Share redaction is applied per field and per attempt using the existing
 report, JSON, and diagnostic bundle all derive from the same canonical record;
 there is no separate export-only evidence reconstruction.
 
+## Owner-review fixture
+
+The explicit `Forensic Evidence Review` development fixture is labelled as
+simulated data and brings together a healthy and a failed protocol request,
+semantic Boolean state, trusted package signature, running driver service,
+device-property error, Event Log, WER, SetupAPI, a derived contradiction, and
+a recovery-transaction observation. It exists only for native Inspector review
+of the canonical pipeline; it cannot run a repair or replace owner-machine
+evidence. The domain test asserts that each family reaches a labelled evidence
+field and that the resulting recovery diagnosis is linked through canonical
+evidence rather than fixture-only UI state.
+
 ## Backward-reading guidance
 
 Support tools should treat absent forensic fields as an older shallow record,

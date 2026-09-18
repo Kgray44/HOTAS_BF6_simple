@@ -38,6 +38,7 @@ QString normalizedName(QString name)
 QStringList developmentFixtureNames()
 {
     return {QStringLiteral("Healthy System"), QStringLiteral("GetWhitelist 0x57"), QStringLiteral("Broken HID Device"),
+        QStringLiteral("Forensic Evidence Review"),
         QStringLiteral("Client Driver Mismatch"), QStringLiteral("Pending Restart"), QStringLiteral("Partial Install"),
         QStringLiteral("Contradictory Evidence"), QStringLiteral("Missing HOTAS Exemption"),
         QStringLiteral("Stale HOTAS Exemption"), QStringLiteral("Hidden Virtual Output"),
@@ -65,7 +66,46 @@ ReadOnlyDiagnosticSnapshot createDevelopmentFixture(const QString &name, QString
         snapshot.environment.hidhide.provider = QStringLiteral("fixture-official-nefarius");
         snapshot.environment.capabilities.highestQualifiedRepairTier = RepairCapabilityTier::RecoverySupported;
     };
-    if (key.contains(QStringLiteral("whitelist")) || key.contains(QStringLiteral("0x57"))) {
+    if (key.contains(QStringLiteral("forensic evidence review"))) {
+        label = QStringLiteral("Forensic Evidence Review");
+        configureDeepLab();
+        const QDateTime capturedAt = QDateTime::currentDateTimeUtc();
+        snapshot.protocol[1] = {QStringLiteral("GET_ACTIVE"), DoctorCheckStatus::Healthy, QStringLiteral("true"), {}, std::nullopt,
+            1, false, QStringLiteral("\\\\.\\HidHide"), QStringLiteral("GENERIC_READ; shared read/write/delete; overlapped"),
+            QStringLiteral("CreateFileW + DeviceIoControl"), 0x222110, 0, 1, 1, 2500,
+            capturedAt.addMSecs(-2), capturedAt, 846};
+        snapshot.protocol[3] = {QStringLiteral("GET_WHITELIST_SIZE"), DoctorCheckStatus::Failed,
+            QStringLiteral("GET_WHITELIST_SIZE failed"), {},
+            NativeError{NativeErrorDomain::Win32, 0x57, QStringLiteral("ERROR_INVALID_PARAMETER"),
+                QStringLiteral("The parameter is incorrect.")},
+            2, true, QStringLiteral("\\\\.\\HidHide"), QStringLiteral("GENERIC_READ; shared read/write/delete; overlapped"),
+            QStringLiteral("CreateFileW + DeviceIoControl"), 0x222100, 0, 0, 2, 2500,
+            capturedAt.addMSecs(-4), capturedAt, 1724};
+        snapshot.artifacts.first().signer = QStringLiteral("CN=Fixture Nefarius Package Signer");
+        snapshot.driverPackages.append({QStringLiteral("hidhide.inf_amd64_fixture"), QStringLiteral("Nefarius"),
+            QStringLiteral("1.5.230.0"), QStringLiteral("C:\\Windows\\System32\\DriverStore\\FileRepository\\hidhide.inf_amd64_fixture"),
+            CpuArchitecture::X64, true, false, std::nullopt});
+        snapshot.devices.append({QStringLiteral("HID\\VID_FAULT&PID_0001"), QStringLiteral("{fixture-fault}"),
+            QStringLiteral("Forensic fixture HID device"), QStringLiteral("Fixture"), QStringLiteral("HIDClass"), {}, {}, {},
+            QStringLiteral("Fixture Driver"), QStringLiteral("1.0"), 0, 13, true, DeviceClassification::ProblemDevice,
+            {QStringLiteral("SPDRP_HARDWAREID: ERROR_INVALID_DATA")},
+            NativeError{NativeErrorDomain::Win32, 13, QStringLiteral("ERROR_INVALID_DATA"), QStringLiteral("A device property was malformed.")},
+            1, 4, {QStringLiteral("\\\\?\\hid#fixture-fault")}});
+        snapshot.events.append({QStringLiteral("Application"), QStringLiteral("HidHideClient"), 1000,
+            QStringLiteral("Error"), capturedAt, QStringLiteral("Fixture client crash observation retained for Inspector review."),
+            EvidenceSensitivity::RequiresRedaction, std::nullopt});
+        snapshot.werReports.append({QStringLiteral("WER"), QStringLiteral("Windows Error Reporting"), 1001,
+            QStringLiteral("Informational"), capturedAt, QStringLiteral("Fixture WER bucket for a HidHide client failure."),
+            EvidenceSensitivity::RequiresRedaction, std::nullopt});
+        snapshot.setupApiEvidence.append({QStringLiteral("SetupAPI.dev.log"), QStringLiteral("SetupAPI"), 20001,
+            QStringLiteral("Warning"), capturedAt, QStringLiteral("Fixture driver package install boundary evidence."),
+            EvidenceSensitivity::RequiresRedaction, std::nullopt});
+        snapshot.registryActive = false;
+        snapshot.contradictions.append(QStringLiteral("Fixture registry active state is false while direct GET_ACTIVE returned true."));
+        snapshot.catalogObservations.append({QStringLiteral("HD-PHASE4-RECOVERY-REQUIRED"), DoctorCheckStatus::Warning,
+            QStringLiteral("Fixture durable transaction requires an independently authorized recovery review."),
+            QStringLiteral("Fixture only: no repair was attempted or authorized."), std::nullopt});
+    } else if (key.contains(QStringLiteral("whitelist")) || key.contains(QStringLiteral("0x57"))) {
         label = QStringLiteral("GetWhitelist 0x57");
         snapshot.protocol[3] = {QStringLiteral("GET_WHITELIST_SIZE"), DoctorCheckStatus::Failed, QStringLiteral("GET_WHITELIST failed"), {},
             NativeError{NativeErrorDomain::Win32, 0x57, QStringLiteral("ERROR_INVALID_PARAMETER"), QStringLiteral("The parameter is incorrect.")}, 3, true};
