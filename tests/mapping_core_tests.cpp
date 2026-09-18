@@ -4571,7 +4571,45 @@ void MappingCoreTests::compiledManualAxisAcquisitionOverridesAreSafeAndDetermini
         QVERIFY(manual[static_cast<size_t>(target)]);
         QCOMPARE(normalizeRuntimeAxisAcquisition(100, binding), 1.0F);
         QCOMPARE(normalizeRuntimeAxisAcquisition(1100, binding), -1.0F);
+        if (target != static_cast<int>(PhysicalAxis::Rz)) {
+            QVERIFY(!bindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+        }
     }
+
+    // One object cannot be manually claimed twice. The compiler leaves its
+    // ordinary automatic binding intact instead of guessing which owner wins.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> duplicateSource{};
+    duplicateSource[0].enabled = true;
+    duplicateSource[0].target = PhysicalAxis::X;
+    duplicateSource[0].mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    duplicateSource[0].formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    duplicateSource[1] = duplicateSource[0];
+    duplicateSource[1].target = PhysicalAxis::Y;
+    const auto duplicateSourceBindings = compileRuntimeAxisAcquisitions(descriptors, duplicateSource);
+    QVERIFY(!((duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::X)].flags
+        & RuntimeAxisAcquisitionManual) != 0));
+    QVERIFY(!((duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::Y)].flags
+        & RuntimeAxisAcquisitionManual) != 0));
+    QVERIFY(duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+
+    // An observed bounded span is captured on the control plane but compiles
+    // to the same fixed constants as an explicit manual range. Runtime never
+    // reinterprets the diagnostic policy or consults the source monitor.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> observedOverrides{};
+    AxisAcquisitionOverride &observed = observedOverrides[0];
+    observed.enabled = true;
+    observed.target = PhysicalAxis::X;
+    observed.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    observed.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    observed.rangePolicy = AxisRawRangePolicy::Observed;
+    observed.manualMinimum = 200;
+    observed.manualMaximum = 1200;
+    const auto observedBindings = compileRuntimeAxisAcquisitions(descriptors, observedOverrides);
+    QVERIFY(observedBindings[static_cast<size_t>(PhysicalAxis::X)].valid);
+    QCOMPARE(normalizeRuntimeAxisAcquisition(200,
+        observedBindings[static_cast<size_t>(PhysicalAxis::X)]), -1.0F);
+    QCOMPARE(normalizeRuntimeAxisAcquisition(1200,
+        observedBindings[static_cast<size_t>(PhysicalAxis::X)]), 1.0F);
 
     // Exact native binding survives a matching reconnect, but any changed
     // identity falls back safely to the automatic acquisition binding.
@@ -4623,6 +4661,16 @@ void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
     QVERIFY(restoredOverride.enabled);
     QCOMPARE(restoredOverride.manualMinimum, 12);
     QCOMPARE(restoredOverride.manualMaximum, 400);
+
+    override.rangePolicy = AxisRawRangePolicy::Observed;
+    override.manualMinimum = 18;
+    override.manualMaximum = 900;
+    const MapperConfiguration observedRestored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(observedRestored.savedControllers.front().axisAcquisitionOverrides[
+                 static_cast<size_t>(PhysicalAxis::Rz)].rangePolicy,
+             AxisRawRangePolicy::Observed);
 
     QJsonObject invalid = ConfigStore::toJson(configuration);
     QJsonArray records = invalid.value(QStringLiteral("savedControllers")).toArray();

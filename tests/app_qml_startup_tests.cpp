@@ -4002,7 +4002,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsAppearanceGroup"),
             QStringLiteral("settings-appearance"))
         || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsStartupGroup"),
-            QStringLiteral("settings-startup"))) {
+            QStringLiteral("settings-startup"))
+        || !scrollSettingsAndCapture(QStringLiteral("flightDeckSettingsMappingDefaultsGroup"),
+            QStringLiteral("settings-mapping-defaults"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Settings primary visual capture failed")
             .arg(appearance));
     }
@@ -4801,6 +4803,23 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             {QStringLiteral("index"), index}, {QStringLiteral("key"), QStringLiteral("axis-%1").arg(index)},
             {QStringLiteral("label"), label}, {QStringLiteral("hardwareLabel"), QStringLiteral("Axis %1").arg(index)},
             {QStringLiteral("detail"), QStringLiteral("DirectInput axis %1").arg(index)},
+            {QStringLiteral("axisDiscovered"), true},
+            {QStringLiteral("resolutionSource"), QStringLiteral("Semantic GUID")},
+            {QStringLiteral("resolutionConfidence"), QStringLiteral("High")},
+            {QStringLiteral("canonicalAxis"), QStringLiteral("Axis %1").arg(index)},
+            {QStringLiteral("nativeObjectName"), QStringLiteral("Fixture DirectInput Axis %1").arg(index)},
+            {QStringLiteral("directInputGuid"), QStringLiteral("{FIXTURE-AXIS-%1}").arg(index)},
+            {QStringLiteral("directInputOffset"), 48 + index * 4},
+            {QStringLiteral("formattedSource"), QStringLiteral("Axis %1").arg(index)},
+            {QStringLiteral("formattedSourceIndex"), index},
+            {QStringLiteral("nativeRangeMinimum"), -32768},
+            {QStringLiteral("nativeRangeMaximum"), 32767},
+            {QStringLiteral("rawValue"), static_cast<int>(input * 32767.0)},
+            {QStringLiteral("observedRangeAvailable"), false},
+            {QStringLiteral("liveAvailable"), false},
+            {QStringLiteral("liveMovementObserved"), false},
+            {QStringLiteral("lastMovementAgeMs"), -1},
+            {QStringLiteral("manualOverride"), false},
             {QStringLiteral("deviceName"), device}, {QStringLiteral("available"), true},
             {QStringLiteral("fixed"), false}, {QStringLiteral("activity"), QStringLiteral("active")},
             {QStringLiteral("calibrated"), input}, {QStringLiteral("transformed"), output},
@@ -5011,6 +5030,54 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!captureShell(QStringLiteral("axes-expanded-response"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 expanded response fixture did not render")
             .arg(appearance));
+    }
+    // The specialty raw-input panel stays hidden during normal Flight Deck
+    // use.  The native visual harness opts in only long enough to prove the
+    // compact surface remains usable at ordinary, constrained, and wide
+    // sizes in both appearances.  Its fixture has no DirectInput device, so
+    // the monitor must present explicit unavailable state rather than invent
+    // raw telemetry.
+    if (!visualOutputDirectory.isEmpty()) {
+        backend.setShowUltraNerdControls(true);
+        auto *axisCard = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckAxisCard_0"));
+        auto *ultraPanel = qobject_cast<QQuickItem *>(findVisualItemByObjectName(
+            axesItem, QStringLiteral("flightDeckUltraNerdPanel_0")));
+        if (!axisCard || !ultraPanel || !axisCard->setProperty("ultraNerdOpen", true)) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck %1 Ultra Nerd panel could not open in its isolated visual fixture")
+                .arg(appearance));
+        }
+        settlePresentation();
+        const QSize ultraNerdOriginalSize = window->size();
+        const auto captureUltraNerd = [&](const QString &label, const QSize &size) {
+            window->resize(size);
+            axes->setProperty("contentY", 0.0);
+            settlePresentation();
+            if (!ultraPanel->isVisible() || ultraPanel->height() <= 0.0 || !captureShell(label)) {
+                return false;
+            }
+            const qreal maximumY = std::max<qreal>(0.0, axes->property("contentHeight").toReal()
+                - axesItem->height());
+            const QPointF panelBottom = ultraPanel->mapToItem(axesItem,
+                QPointF(0.0, ultraPanel->height()));
+            axes->setProperty("contentY", std::clamp(panelBottom.y() - axesItem->height() + 24.0,
+                0.0, maximumY));
+            settlePresentation();
+            return captureShell(label + QStringLiteral("-actions"));
+        };
+        const bool ultraNerdCaptured = captureUltraNerd(QStringLiteral("axes-ultra-nerd-normal"),
+                ultraNerdOriginalSize)
+            && captureUltraNerd(QStringLiteral("axes-ultra-nerd-narrow"), QSize{900, 650})
+            && captureUltraNerd(QStringLiteral("axes-ultra-nerd-wide"), QSize{1600, 980});
+        window->resize(ultraNerdOriginalSize);
+        axisCard->setProperty("ultraNerdOpen", false);
+        backend.setShowUltraNerdControls(false);
+        settlePresentation();
+        if (!ultraNerdCaptured) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Flight Deck %1 Ultra Nerd panel did not render safely across visual fixture sizes")
+                .arg(appearance));
+        }
     }
     QQmlExpression closeAxis(qmlContext(axes), axes, QStringLiteral("configureAxis(0)"));
     closeAxis.evaluate();

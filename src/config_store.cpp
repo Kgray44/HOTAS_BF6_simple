@@ -203,7 +203,8 @@ bool axisAcquisitionOverrideFromJson(const QJsonObject &json, AxisAcquisitionOve
                 && (restored.formattedSource < 0 || restored.formattedSource >= kPhysicalAxisCount))
             || (restored.mode == AxisAcquisitionMode::NativeDirectInputObject
                 && (restored.nativeSemanticGuid.isEmpty() || restored.nativeDirectInputType == 0))
-            || (restored.rangePolicy == AxisRawRangePolicy::Manual
+            || ((restored.rangePolicy == AxisRawRangePolicy::Manual
+                 || restored.rangePolicy == AxisRawRangePolicy::Observed)
                 && restored.manualMinimum >= restored.manualMaximum)
             || restored.interpretation == AxisRawInterpretation::Relative) {
             return false;

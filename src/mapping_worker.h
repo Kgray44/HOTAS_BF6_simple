@@ -119,6 +119,19 @@ struct AtomicAdaptiveTelemetry {
     std::atomic_bool physicalConnected{false};
 };
 
+// Raw DirectInput candidate channels are captured only while the Ultra Nerd
+// monitor is open.  This is a latest-snapshot diagnostic instrument: the
+// mapper never queues samples, formats values, or notifies QML from a report.
+struct AtomicAxisSourceTelemetry {
+    std::array<std::atomic_int, kPhysicalAxisCount> value{};
+    std::array<std::atomic_int, kPhysicalAxisCount> observedMinimum{};
+    std::array<std::atomic_int, kPhysicalAxisCount> observedMaximum{};
+    std::array<std::atomic_uint64_t, kPhysicalAxisCount> changeCount{};
+    std::array<std::atomic_int, kPhysicalAxisCount> recentMovementMagnitude{};
+    std::array<std::atomic_int64_t, kPhysicalAxisCount> lastChangeAgeMs{};
+    std::atomic_bool available{false};
+};
+
 struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
     // Selected Device reads this exact member snapshot in a Device Rig; it
     // never repurposes the aggregate (member-zero) presentation state.
@@ -141,6 +154,8 @@ struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
                kMaximumDeviceRigMembers> deviceRigMemberAxisLiveMovementObserved{};
     std::array<std::array<std::atomic_int64_t, kPhysicalAxisCount>,
                kMaximumDeviceRigMembers> deviceRigMemberAxisLastMovementAgeMs{};
+    std::array<AtomicAxisSourceTelemetry, kMaximumDeviceRigMembers>
+        deviceRigMemberAxisSourceTelemetry{};
     std::array<std::atomic<float>, kPhysicalAxisCount> virtualValues{};
     std::array<std::atomic_bool, kVirtualAxisSlotCount> virtualAxisAvailable{};
     std::array<std::atomic<bool>, kPhysicalAxisCount> axisAvailable{};
@@ -150,6 +165,10 @@ struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
     std::array<std::atomic_int, kPhysicalAxisCount> axisAcquisitionSource{};
     std::array<std::atomic_bool, kPhysicalAxisCount> axisLiveMovementObserved{};
     std::array<std::atomic_int64_t, kPhysicalAxisCount> axisLastMovementAgeMs{};
+    AtomicAxisSourceTelemetry axisSourceTelemetry{};
+    // The UI/control plane enables this opt-in diagnostic capture. With the
+    // monitor closed the report loop performs only this one relaxed branch.
+    std::atomic_bool axisSourceMonitorRequested{false};
     std::array<std::atomic_int, kPhysicalAxisCount> axisActivity{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationMinimum{};
     std::array<std::atomic<float>, kPhysicalAxisCount> calibrationCenter{};
@@ -318,6 +337,9 @@ public:
     static DirectInputAxisAcquisitionProbe captureExactPhysicalAxisAcquisition(
         const QString &expectedDirectInputId, int durationMs = 15000);
     void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
+    void setAxisSourceMonitorRequested(bool requested) {
+        m_runtime.axisSourceMonitorRequested.store(requested, std::memory_order_relaxed);
+    }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
 #ifdef HOTAS_STARTUP_TESTING

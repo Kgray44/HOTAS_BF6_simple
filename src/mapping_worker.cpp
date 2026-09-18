@@ -836,6 +836,21 @@ QString hidInstanceIdForDevice(LPDIRECTINPUTDEVICE8W device)
 MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
     : QThread(parent), m_configuration(std::move(configuration))
 {
+    const auto resetAxisSourceTelemetry = [](AtomicAxisSourceTelemetry &snapshot) {
+        snapshot.available.store(false, std::memory_order_relaxed);
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            snapshot.value[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.observedMinimum[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.observedMaximum[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.changeCount[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.recentMovementMagnitude[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.lastChangeAgeMs[static_cast<size_t>(index)].store(-1, std::memory_order_relaxed);
+        }
+    };
+    resetAxisSourceTelemetry(m_runtime.axisSourceTelemetry);
+    for (AtomicAxisSourceTelemetry &snapshot : m_runtime.deviceRigMemberAxisSourceTelemetry) {
+        resetAxisSourceTelemetry(snapshot);
+    }
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         m_runtime.raw[index] = 0.0F;
         m_runtime.normalized[index] = 0.0F;
@@ -1359,8 +1374,15 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     std::array<float, kPhysicalAxisCount> lastObservedAxisValues{};
     std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> lastAxisMovementAt{};
     std::array<bool, kPhysicalAxisCount> axisLiveMovementObserved{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorPrevious{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorMinimum{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorMaximum{};
+    std::array<std::uint64_t, kPhysicalAxisCount> sourceMonitorChanges{};
+    std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> sourceMonitorLastChanged{};
+    bool sourceMonitorInitialized = false;
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         axisLiveMovementObserved.fill(false);
+        sourceMonitorInitialized = false;
     PhysicalInputMonitor physicalMonitor;
     MeaningfulInputEvidence meaningfulInput;
     quint64 latestMeaningfulInputSequence = 0;
@@ -1607,6 +1629,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         axisAcquisitionMethods.fill(0);
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         axisLiveMovementObserved.fill(false);
+        sourceMonitorInitialized = false;
         availableButtons.fill(false);
         physicalMonitor.disconnect();
         meaningfulInput = {};
@@ -1618,6 +1641,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = false;
             m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = -1;
         }
+        m_runtime.axisSourceTelemetry.available.store(false, std::memory_order_relaxed);
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
         controlPlaneInitialized = false;
@@ -1997,6 +2021,44 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
 
         PhysicalInputReport physicalReport;
         const auto observedAt = std::chrono::steady_clock::now();
+        if (m_runtime.axisSourceMonitorRequested.load(std::memory_order_relaxed)) {
+            AtomicAxisSourceTelemetry &telemetry = m_runtime.axisSourceTelemetry;
+            for (int source = 0; source < kPhysicalAxisCount; ++source) {
+                const size_t sourceIndex = static_cast<size_t>(source);
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(source));
+                int movementMagnitude = 0;
+                if (!sourceMonitorInitialized) {
+                    sourceMonitorPrevious[sourceIndex] = value;
+                    sourceMonitorMinimum[sourceIndex] = value;
+                    sourceMonitorMaximum[sourceIndex] = value;
+                    sourceMonitorChanges[sourceIndex] = 0;
+                    sourceMonitorLastChanged[sourceIndex] = observedAt;
+                } else {
+                    const LONG delta = value - sourceMonitorPrevious[sourceIndex];
+                    movementMagnitude = std::abs(delta);
+                    if (delta != 0) {
+                        sourceMonitorPrevious[sourceIndex] = value;
+                        ++sourceMonitorChanges[sourceIndex];
+                        sourceMonitorLastChanged[sourceIndex] = observedAt;
+                    }
+                    sourceMonitorMinimum[sourceIndex] = std::min(sourceMonitorMinimum[sourceIndex], value);
+                    sourceMonitorMaximum[sourceIndex] = std::max(sourceMonitorMaximum[sourceIndex], value);
+                }
+                telemetry.value[sourceIndex].store(value, std::memory_order_relaxed);
+                telemetry.observedMinimum[sourceIndex].store(sourceMonitorMinimum[sourceIndex], std::memory_order_relaxed);
+                telemetry.observedMaximum[sourceIndex].store(sourceMonitorMaximum[sourceIndex], std::memory_order_relaxed);
+                telemetry.changeCount[sourceIndex].store(sourceMonitorChanges[sourceIndex], std::memory_order_relaxed);
+                telemetry.recentMovementMagnitude[sourceIndex].store(
+                    movementMagnitude, std::memory_order_relaxed);
+                telemetry.lastChangeAgeMs[sourceIndex].store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    observedAt - sourceMonitorLastChanged[sourceIndex]).count(), std::memory_order_relaxed);
+            }
+            sourceMonitorInitialized = true;
+            telemetry.available.store(true, std::memory_order_relaxed);
+        } else {
+            sourceMonitorInitialized = false;
+            m_runtime.axisSourceTelemetry.available.store(false, std::memory_order_relaxed);
+        }
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             const RuntimeAxisAcquisition &binding = axisAcquisitions[static_cast<size_t>(index)];
             if (!availableAxes[index] || !binding.valid) continue;
@@ -2580,6 +2642,12 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         std::array<float, kPhysicalAxisCount> lastObservedAxisValues{};
         std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> lastAxisMovementAt{};
         std::array<bool, kPhysicalAxisCount> axisLiveMovementObserved{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorPrevious{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorMinimum{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorMaximum{};
+        std::array<std::uint64_t, kPhysicalAxisCount> sourceMonitorChanges{};
+        std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> sourceMonitorLastChanged{};
+        bool sourceMonitorInitialized = false;
         std::array<bool, kMaximumPhysicalButtons> availableButtons{};
         PhysicalInputMonitor monitor;
         std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresis{};
@@ -2670,7 +2738,17 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 [static_cast<size_t>(axis)].store(false, std::memory_order_relaxed);
             m_runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(member)]
                 [static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
+            AtomicAxisSourceTelemetry &sourceTelemetry = m_runtime.deviceRigMemberAxisSourceTelemetry[
+                static_cast<size_t>(member)];
+            sourceTelemetry.value[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.observedMinimum[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.observedMaximum[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.changeCount[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.recentMovementMagnitude[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.lastChangeAgeMs[static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
         }
+        m_runtime.deviceRigMemberAxisSourceTelemetry[static_cast<size_t>(member)].available.store(
+            false, std::memory_order_relaxed);
     }
     for (int index = 0; index < plan.memberCount; ++index) {
         inputs[static_cast<size_t>(index)].member = &plan.members[static_cast<size_t>(index)];
@@ -2711,6 +2789,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             m_runtime.deviceRigMemberAxisLastMovementAgeMs[memberIndex][static_cast<size_t>(axis)]
                 .store(-1, std::memory_order_relaxed);
         }
+        m_runtime.deviceRigMemberAxisSourceTelemetry[memberIndex].available.store(
+            false, std::memory_order_relaxed);
     };
     const auto releaseInput = [](InputSession &session) {
         if (session.device) {
@@ -2731,6 +2811,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         session.axisAcquisitionMethods.fill(0);
         session.lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         session.axisLiveMovementObserved.fill(false);
+        session.sourceMonitorInitialized = false;
         session.availableButtons.fill(false);
         session.monitor.disconnect();
         session.connected = false;
@@ -3010,6 +3091,53 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                        &session.bufferedAxisValues, &session.bufferedAxisValuesKnown);
             }
             const auto observedAt = std::chrono::steady_clock::now();
+            if (m_runtime.axisSourceMonitorRequested.load(std::memory_order_relaxed)) {
+                AtomicAxisSourceTelemetry &telemetry = m_runtime.deviceRigMemberAxisSourceTelemetry[
+                    static_cast<size_t>(index)];
+                for (int source = 0; source < kPhysicalAxisCount; ++source) {
+                    const size_t sourceIndex = static_cast<size_t>(source);
+                    const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(source));
+                    int movementMagnitude = 0;
+                    if (!session.sourceMonitorInitialized) {
+                        session.sourceMonitorPrevious[sourceIndex] = value;
+                        session.sourceMonitorMinimum[sourceIndex] = value;
+                        session.sourceMonitorMaximum[sourceIndex] = value;
+                        session.sourceMonitorChanges[sourceIndex] = 0;
+                        session.sourceMonitorLastChanged[sourceIndex] = observedAt;
+                    } else {
+                        const LONG delta = value - session.sourceMonitorPrevious[sourceIndex];
+                        movementMagnitude = std::abs(delta);
+                        if (delta != 0) {
+                            session.sourceMonitorPrevious[sourceIndex] = value;
+                            ++session.sourceMonitorChanges[sourceIndex];
+                            session.sourceMonitorLastChanged[sourceIndex] = observedAt;
+                        }
+                        session.sourceMonitorMinimum[sourceIndex] = std::min(
+                            session.sourceMonitorMinimum[sourceIndex], value);
+                        session.sourceMonitorMaximum[sourceIndex] = std::max(
+                            session.sourceMonitorMaximum[sourceIndex], value);
+                    }
+                    telemetry.value[sourceIndex].store(value, std::memory_order_relaxed);
+                    telemetry.observedMinimum[sourceIndex].store(
+                        session.sourceMonitorMinimum[sourceIndex], std::memory_order_relaxed);
+                    telemetry.observedMaximum[sourceIndex].store(
+                        session.sourceMonitorMaximum[sourceIndex], std::memory_order_relaxed);
+                    telemetry.changeCount[sourceIndex].store(
+                        session.sourceMonitorChanges[sourceIndex], std::memory_order_relaxed);
+                    telemetry.recentMovementMagnitude[sourceIndex].store(
+                        movementMagnitude, std::memory_order_relaxed);
+                    telemetry.lastChangeAgeMs[sourceIndex].store(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            observedAt - session.sourceMonitorLastChanged[sourceIndex]).count(),
+                        std::memory_order_relaxed);
+                }
+                session.sourceMonitorInitialized = true;
+                telemetry.available.store(true, std::memory_order_relaxed);
+            } else {
+                session.sourceMonitorInitialized = false;
+                m_runtime.deviceRigMemberAxisSourceTelemetry[static_cast<size_t>(index)].available.store(
+                    false, std::memory_order_relaxed);
+            }
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
                 const RuntimeAxisAcquisition &binding = session.axisAcquisitions[static_cast<size_t>(axis)];
                 if (session.availableAxes[static_cast<size_t>(axis)] && binding.valid) {

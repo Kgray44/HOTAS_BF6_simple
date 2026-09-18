@@ -145,6 +145,8 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     const QString settings = sourceFile(QStringLiteral("qml/SettingsPage.qml"));
     const QString devices = sourceFile(QStringLiteral("qml/DevicesPage.qml"));
     const QString flightDeckAxes = sourceFile(QStringLiteral("qml/FlightDeckAxes.qml"));
+    const QString ultraNerdPanel = sourceFile(QStringLiteral("qml/FlightDeckUltraNerdPanel.qml"));
+    const QString acquisitionDialog = sourceFile(QStringLiteral("qml/FlightDeckAxisAcquisitionDialog.qml"));
     const QString flightDeckButtons = sourceFile(QStringLiteral("qml/FlightDeckButtons.qml"));
     const QString signalFlow = sourceFile(QStringLiteral("qml/FlightDeckSignalFlow.qml"));
     const QString qmlLifecycle = sourceFile(QStringLiteral("tests/app_qml_startup_tests.cpp"));
@@ -154,6 +156,8 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(bool showUltraNerdControls READ showUltraNerdControls NOTIFY stateChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisSourceMonitor READ axisSourceMonitor NOTIFY inputTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("activeProfileDisplayName READ activeProfileDisplayName NOTIFY stateChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged")));
     QVERIFY(header.contains(QStringLiteral("effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged")));
@@ -165,6 +169,9 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("void profilePresentationChanged();")));
     QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::axisConfiguration() const")));
     QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::axisTelemetry() const")));
+    QVERIFY(backend.contains(QStringLiteral("QVariantList AppBackend::axisSourceMonitor() const")));
+    QVERIFY(backend.contains(QStringLiteral("void AppBackend::setShowUltraNerdControls(bool enabled)")));
+    QVERIFY(backend.contains(QStringLiteral("bool AppBackend::saveAxisAcquisitionOverride(")));
     QVERIFY(backend.contains(QStringLiteral("void AppBackend::publishProfilePresentationIfChanged()")));
     QVERIFY(backend.contains(QStringLiteral("return m_controllerUiModel;")));
     QVERIFY(backend.contains(QStringLiteral("sameControllerInventory")));
@@ -193,6 +200,16 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisConfiguration")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisTelemetry")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("FlightDeckUltraNerdPanel")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("FlightDeckAxisAcquisitionDialog")));
+    QVERIFY(ultraNerdPanel.contains(QStringLiteral("ULTRA NERD · RAW INPUT")));
+    QVERIFY(ultraNerdPanel.contains(QStringLiteral("LIVE CANDIDATE SOURCE MONITOR")));
+    QVERIFY(ultraNerdPanel.contains(QStringLiteral("root.tokens.telemetryFont")));
+    QVERIFY(acquisitionDialog.contains(QStringLiteral("MANUAL RAW-INPUT OVERRIDE")));
+    QVERIFY(acquisitionDialog.contains(QStringLiteral("Raw HID acquisition")));
+    QVERIFY(ultraNerdPanel.contains(QStringLiteral("flightDeckUltraNerdPanel_")));
+    QVERIFY(qmlLifecycle.contains(QStringLiteral("axes-ultra-nerd-narrow")));
+    QVERIFY(qmlLifecycle.contains(QStringLiteral("axes-ultra-nerd-wide")));
     QVERIFY(!flightDeckAxes.contains(QStringLiteral("backend.axes")));
     QVERIFY(flightDeckButtons.contains(QStringLiteral("backend.buttonConfiguration")));
     QVERIFY(flightDeckButtons.contains(QStringLiteral("backend.buttonInputTelemetry")));

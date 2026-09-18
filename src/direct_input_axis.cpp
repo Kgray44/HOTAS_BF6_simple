@@ -113,7 +113,8 @@ RuntimeAxisAcquisition compileBinding(const NativeAxisDescriptor &descriptor, in
     }
     qint32 minimum = descriptor.nativeMinimum;
     qint32 maximum = descriptor.nativeMaximum;
-    if (override && override->rangePolicy == AxisRawRangePolicy::Manual) {
+    if (override && (override->rangePolicy == AxisRawRangePolicy::Manual
+        || override->rangePolicy == AxisRawRangePolicy::Observed)) {
         minimum = override->manualMinimum;
         maximum = override->manualMaximum;
     }
@@ -263,6 +264,11 @@ std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> compileRuntimeAxisAcquisi
         const int target = static_cast<int>(override.target);
         if (target >= 0 && target < kPhysicalAxisCount) ++targetClaims[static_cast<size_t>(target)];
     }
+    std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> manualBindings{};
+    std::array<int, kPhysicalAxisCount> manualSourceAutomaticTargets{};
+    manualSourceAutomaticTargets.fill(-1);
+    std::array<int, kPhysicalAxisCount> sourceClaims{};
+
     for (const AxisAcquisitionOverride &override : overrides) {
         if (!override.enabled || override.mode == AxisAcquisitionMode::Automatic
             || override.mode == AxisAcquisitionMode::RawHidValue) continue;
@@ -296,6 +302,33 @@ std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> compileRuntimeAxisAcquisi
         if (!sourceDescriptor) continue;
         RuntimeAxisAcquisition candidate = compileBinding(*sourceDescriptor, source, &override, true);
         if (!candidate.valid) continue;
+
+        // A manual claim replaces the selected object's automatic identity;
+        // it must never leave one report field feeding two canonical axes.
+        const int automaticTarget = sourceDescriptor->canonicalAxis >= 0
+            ? sourceDescriptor->canonicalAxis : source;
+        if (automaticTarget < 0 || automaticTarget >= kPhysicalAxisCount) continue;
+        if (++sourceClaims[static_cast<size_t>(automaticTarget)] != 1) continue;
+        manualBindings[static_cast<size_t>(target)] = candidate;
+        manualSourceAutomaticTargets[static_cast<size_t>(target)] = automaticTarget;
+    }
+
+    for (int target = 0; target < kPhysicalAxisCount; ++target) {
+        const RuntimeAxisAcquisition &candidate = manualBindings[static_cast<size_t>(target)];
+        if (!candidate.valid) continue;
+        const int automaticTarget = manualSourceAutomaticTargets[static_cast<size_t>(target)];
+        if (automaticTarget < 0 || automaticTarget >= kPhysicalAxisCount
+            || sourceClaims[static_cast<size_t>(automaticTarget)] != 1) continue;
+        if (automaticTarget >= 0 && automaticTarget < kPhysicalAxisCount) {
+            bindings[static_cast<size_t>(automaticTarget)] = {};
+        }
+    }
+    for (int target = 0; target < kPhysicalAxisCount; ++target) {
+        const RuntimeAxisAcquisition &candidate = manualBindings[static_cast<size_t>(target)];
+        if (!candidate.valid) continue;
+        const int automaticTarget = manualSourceAutomaticTargets[static_cast<size_t>(target)];
+        if (automaticTarget < 0 || automaticTarget >= kPhysicalAxisCount
+            || sourceClaims[static_cast<size_t>(automaticTarget)] != 1) continue;
         bindings[static_cast<size_t>(target)] = candidate;
         applied[static_cast<size_t>(target)] = true;
     }
