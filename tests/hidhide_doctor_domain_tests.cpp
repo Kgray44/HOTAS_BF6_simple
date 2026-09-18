@@ -388,7 +388,7 @@ void HidHideDoctorDomainTests::phaseOneEngineKeepsProtocolFailuresIndependentAnd
         DeviceClassification::PhysicalGamingInput, {QStringLiteral("SPDRP_HARDWAREID:13")}, std::nullopt}};
     SnapshotProvider provider(snapshot);
     DoctorDiagnosticEngine engine;
-    const DiagnosticRunOutcome outcome = engine.run(provider);
+    DiagnosticRunOutcome outcome = engine.run(provider);
     QCOMPARE(outcome.session.checkResults().size(), DoctorCatalog::v11DefinedCheckIds().size());
     const DoctorCheckResult *whitelist = resultFor(outcome.session, QStringLiteral("HD-API-004"));
     QVERIFY(whitelist);
@@ -906,7 +906,7 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     QString label;
     FixtureDiagnosticProvider provider(createDevelopmentFixture(QStringLiteral("Forensic Evidence Review"), &label));
     DoctorDiagnosticEngine engine;
-    const DiagnosticRunOutcome outcome = engine.run(provider);
+    DiagnosticRunOutcome outcome = engine.run(provider);
     QCOMPARE(label, QStringLiteral("Forensic Evidence Review"));
 
     const auto evidenceFor = [&outcome](const QString &checkId) -> const EvidenceRecord * {
@@ -941,6 +941,22 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     QVERIFY(std::any_of(outcome.session.diagnoses().cbegin(), outcome.session.diagnoses().cend(), [](const Diagnosis &diagnosis) {
         return diagnosis.id.value() == QStringLiteral("HD-DIAG-RECOVERY-REQUIRED");
     }));
+
+    DoctorSessionViewModel model(outcome.session, QStringLiteral("fixture-review"));
+    QString copied;
+    model.setCopyAction([&copied](QString value) { copied = std::move(value); });
+    model.selectEvidence(protocol->id.value());
+    model.copySelectedEvidenceMode(QStringLiteral("Summary"));
+    QVERIFY(copied.contains(QStringLiteral("HD-API-002")));
+    model.copySelectedEvidenceMode(QStringLiteral("Technical"));
+    QVERIFY(copied.contains(QStringLiteral("# TECHNICAL EVIDENCE")));
+    QVERIFY(copied.contains(QStringLiteral("IOCTL")));
+    model.copySelectedEvidenceMode(QStringLiteral("Complete"));
+    QVERIFY(copied.contains(QStringLiteral("HIDHIDE DOCTOR REPORT")));
+    model.copySelectedEvidenceMode(QStringLiteral("JSON"));
+    const QJsonObject copiedJson = QJsonDocument::fromJson(copied.toUtf8()).object();
+    QCOMPARE(copiedJson.value(QStringLiteral("checkId")).toString(), QStringLiteral("HD-API-002"));
+    QVERIFY(!copiedJson.value(QStringLiteral("fields")).toArray().isEmpty());
 }
 
 void HidHideDoctorDomainTests::phaseFiveBoundedProtocolJournalReportAndPackageFuzz()

@@ -874,7 +874,7 @@ void DoctorSessionViewModel::copySelectedEvidenceMode(const QString &mode, const
             QStringLiteral("- Check: %1").arg(record.value(QStringLiteral("checkId")).toString()),
             QStringLiteral("- Provider: %1").arg(record.value(QStringLiteral("provider")).toString()),
             QStringLiteral("- Operation: %1").arg(record.value(QStringLiteral("operation")).toString())};
-        const QSet<QString> technicalGroups{QStringLiteral("METHOD"), QStringLiteral("TIMING"), QStringLiteral("NATIVE RESULT"), QStringLiteral("TECHNICAL"), QStringLiteral("RAW")};
+        const QSet<QString> technicalGroups{QStringLiteral("Method"), QStringLiteral("Timing"), QStringLiteral("Native Result"), QStringLiteral("Technical"), QStringLiteral("Raw")};
         for (const QJsonValue &groupValue : record.value(QStringLiteral("fields")).toArray()) {
             const QJsonObject field = groupValue.toObject();
             if (technicalGroups.contains(field.value(QStringLiteral("group")).toString()))
