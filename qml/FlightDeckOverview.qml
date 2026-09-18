@@ -11,6 +11,7 @@ Flickable {
     property var readinessModel
     signal navigateToPage(int page)
     signal navigateToDevices(string context)
+    signal navigateToIssue(var issue)
 
     readonly property bool wide: width >= 900
     readonly property var readiness: readinessModel ? readinessModel.readiness : ({})
@@ -25,6 +26,11 @@ Flickable {
     // readiness presentation while Devices shows the same rig's session.
     readonly property var setupTruth: backend.setupTruthSnapshot || ({})
     readonly property var hidhideHealth: backend.hidhideHealth || ({})
+
+    function editSetupContext() {
+        const rigId = String(setupTruth.setupTargetRigId || backend.activeDeviceRigId || "")
+        return rigId.length ? "rig:" + rigId : "controllers"
+    }
 
     function setupGroup(id) {
         const groups = setupTruth.groups || []
@@ -51,6 +57,47 @@ Flickable {
     readonly property var setupPhysical: setupGroup("physical")
     readonly property var setupOutput: setupGroup("vjoy")
     readonly property var setupIsolation: setupGroup("isolation")
+    // Full exposes current setup context sooner; Guided keeps the same facts
+    // behind an explicit, persistent disclosure.
+    readonly property bool connectionEvidenceExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("overview-connection-evidence")
+    }
+    readonly property bool additionalAttentionExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("overview-additional-attention")
+    }
+    property string issueHandoffMessage: ""
+
+    function currentIssueById(issueId) {
+        const issues = setupTruth.issues || []
+        for (let index = 0; index < issues.length; ++index) {
+            if (String(issues[index].id || "") === String(issueId || ""))
+                return issues[index]
+        }
+        return null
+    }
+
+    function reviewIssue(issue) {
+        const issueId = String(issue && issue.id || "")
+        const current = currentIssueById(issueId)
+        if (!current) {
+            issueHandoffMessage = "This setup item changed before it could be opened. Review the current setup details."
+            return
+        }
+        issueHandoffMessage = ""
+        navigateToIssue(current)
+    }
+
+    function attentionFallbackTitle() {
+        return setupTruth.fresh ? "No current setup issue" : "Setup inspection pending"
+    }
+
+    function attentionFallbackExplanation() {
+        return setupTruth.fresh
+            ? "The latest setup inspection did not report an item requiring review."
+            : "Setup Health has not completed a current inspection. Run a check before relying on readiness."
+    }
 
     function hidhideTone() {
         if (String(hidhideHealth.freshness || "").toUpperCase() === "STALE") return "attention"
@@ -85,7 +132,7 @@ Flickable {
 
     function overviewMessage() {
         return setupTruth.overallStatus
-            ? "Status for " + String(setupTruth.rigName || "the selected Device Rig") + "."
+            ? "Review what is ready and the next action for " + String(setupTruth.rigName || "the selected Device Rig") + "."
             : "Checking current setup status.";
     }
 
@@ -95,6 +142,14 @@ Flickable {
         y: deck.space4
         width: Math.max(0, root.width - deck.space8)
         spacing: deck.space16
+
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · SETUP STATUS"
+            guidedText: "Start with the item marked for attention, then use the single setup action to continue without changing your mapping."
+            fullTitle: "SETUP CONTEXT"
+            fullText: "Current readiness and connection evidence are expanded below."
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -279,98 +334,194 @@ Flickable {
                         visible: root.wide
                     }
                 }
-            }
-        }
-
-        Text {
-            text: "SYSTEM HEALTH"
-            color: deck.textMuted
-            font.family: deck.telemetryFont
-            font.pixelSize: deck.scale(10)
-            font.bold: true
-            Layout.fillWidth: true
-        }
-
-        GridLayout {
-            Layout.fillWidth: true
-            columns: root.wide ? 3 : 1
-            columnSpacing: deck.space12
-            rowSpacing: deck.space12
-
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthInput"
-                tokens: deck
-                eyebrow: "PHYSICAL INPUT"
-                title: setupPhysical.title || "Checking"
-                detail: setupPhysical.detail || ""
-                tone: root.setupTone(setupPhysical)
-                actionLabel: "OPEN SETUP"
-                onActionRequested: root.navigateToDevices("controllers")
-            }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthOutput"
-                tokens: deck
-                eyebrow: "VIRTUAL OUTPUT"
-                title: setupOutput.title || "Checking"
-                detail: setupOutput.detail || ""
-                tone: root.setupTone(setupOutput)
-                actionLabel: "OPEN VIRTUAL OUTPUT"
-                onActionRequested: root.navigateToDevices("virtual-output")
-            }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthIsolation"
-                tokens: deck
-                eyebrow: "HIDHIDE HEALTH"
-                title: (root.hidhideHealth.overallState || setupIsolation.title || "Checking") + (String(root.hidhideHealth.freshness || "") === "STALE" ? " · Needs verification" : "")
-                detail: root.hidhideHealth.normalSummary || setupIsolation.detail || ""
-                tone: root.hidhideTone()
-                actionLabel: "OPEN ISOLATION"
-                onActionRequested: root.navigateToDevices("isolation")
-            }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthGame"
-                tokens: deck
-                eyebrow: "GAME DETECTION"
-                title: game.title || "Checking"
-                detail: game.detail || ""
-                tone: game.tone || "informational"
-                actionLabel: "OPEN PROFILES"
-                onActionRequested: root.navigateToPage(5)
-            }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthActivationResolver"
-                tokens: deck
-                eyebrow: "AUTOMATIC ACTIVATION"
-                title: activation.profileName ? activation.profileName + " · " + (activation.deviceRigName || "Device Rig") : "No automatic configuration"
-                detail: activation.explanation || "Checking the current Game / Application, profile, Device Rig, and virtual output."
-                tone: activation.valid ? "healthy" : "attention"
-                actionLabel: activation.manualOverride ? "RESUME AUTOMATIC" : "OPEN PROFILES"
-                onActionRequested: {
-                    if (activation.manualOverride)
-                        backend.resumeAutomaticActivation()
-                    else
-                        root.navigateToPage(5)
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: deck.space8
+                    Button {
+                        text: "EDIT SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.navigateToDevices(root.editSetupContext())
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        objectName: "flightDeckOverviewTestInput"
+                        text: "TEST PHYSICAL INPUT"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        enabled: String(backend.activeControllerRecordId || "").length > 0
+                        onClicked: root.navigateToDevices("input-test:" + String(backend.activeControllerRecordId || ""))
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: parent.enabled ? deck.textSecondary : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        text: "CHANGE SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.navigateToDevices("controllers")
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        objectName: "flightDeckMappingToggle"
+                        text: backend.mappingRequested ? "STOP MAPPING" : "START MAPPING"
+                        // Once Mapping has been requested, Stop must remain
+                        // available even if vJoy disappears. Stopping only
+                        // clears the request; it never reacquires or repairs.
+                        enabled: backend.mappingRequested
+                            || (String(backend.activeDeviceRigId || "").length > 0 && backend.vjoyReady)
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.toggleMapping()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.enabled ? (parent.down ? deck.accentMuted : deck.accent) : deck.disabled; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: parent.enabled ? (deck.light ? "white" : deck.primarySurface) : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
                 }
             }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthProfile"
-                tokens: deck
-                eyebrow: "PROFILE ROUTING"
-                title: profile.title || "Checking"
-                detail: profile.detail || ""
-                tone: profile.tone || "informational"
-                actionLabel: "OPEN PROFILES"
-                onActionRequested: root.navigateToPage(5)
+        }
+
+        FlightDeckCard {
+            objectName: "flightDeckPrioritizedAttention"
+            tokens: deck
+            Layout.fillWidth: true
+            implicitHeight: attentionContent.implicitHeight + contentPadding * 2
+            ColumnLayout {
+                id: attentionContent
+                anchors.fill: parent
+                anchors.margins: parent.contentPadding
+                spacing: deck.space8
+                readonly property var issue: (root.setupTruth.issues || []).length
+                    ? root.setupTruth.issues[0] : ({})
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: deck.space4
+                        Text { text: "ATTENTION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                        Text {
+                            text: attentionContent.issue.title || root.attentionFallbackTitle()
+                            color: attentionContent.issue.title ? deck.statusColor(root.setupTone(attentionContent.issue.severity || "attention")) : deck.healthy
+                            font.family: deck.displayFont; font.pixelSize: deck.scale(16); font.bold: true
+                            Layout.fillWidth: true; elide: Text.ElideRight
+                        }
+                        Text {
+                            text: root.issueHandoffMessage.length
+                                ? root.issueHandoffMessage
+                                : (attentionContent.issue.explanation || root.attentionFallbackExplanation())
+                            color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap
+                        }
+                    }
+                    Button {
+                        objectName: "flightDeckPrioritizedIssueReview"
+                        visible: !!attentionContent.issue.title
+                        text: "REVIEW DETAILS"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.reviewIssue(attentionContent.issue)
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                }
+                Button {
+                    visible: (setupTruth.issues || []).length > 1
+                    text: root.additionalAttentionExpanded ? "HIDE ADDITIONAL ITEMS" : "SHOW ADDITIONAL ITEMS · " + ((setupTruth.issues || []).length - 1)
+                    focusPolicy: Qt.StrongFocus
+                    implicitHeight: deck.compactControlHeight
+                    onClicked: themeManager.setGuidanceSectionExpanded("overview-additional-attention", !root.additionalAttentionExpanded)
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Repeater {
+                    model: root.additionalAttentionExpanded ? (root.setupTruth.issues || []).slice(1) : []
+                    delegate: Text {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        text: "• " + String(modelData.title || "Setup item") + " · " + String(modelData.explanation || "Review details in Devices.")
+                        color: deck.textSecondary; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap
+                    }
+                }
             }
-            FlightDeckHealthCard {
-                objectName: "flightDeckHealthMapper"
-                tokens: deck
-                eyebrow: "MAPPER"
-                title: readinessState.mappingStatus || backend.mappingStatus
-                detail: readinessState.mappingActive ? "Virtual output is receiving mapped controls." : "Use the established mapper controls when you are ready to run output."
-                tone: readiness.tone || "informational"
-                actionLabel: "OPEN DIAGNOSTICS"
-                onActionRequested: root.navigateToPage(3)
+        }
+
+        FlightDeckCard {
+            objectName: "flightDeckConnectionEvidence"
+            tokens: deck
+            Layout.fillWidth: true
+            implicitHeight: connectionContent.implicitHeight + contentPadding * 2
+            ColumnLayout {
+                id: connectionContent
+                anchors.fill: parent
+                anchors.margins: parent.contentPadding
+                spacing: deck.space8
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: deck.space4
+                        Text { text: "CONNECTION & EVIDENCE"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
+                        Text { text: String(setupPhysical.status || "CHECKING") + " input · " + String(setupOutput.status || "CHECKING") + " output · " + String(setupIsolation.status || "CHECKING") + " isolation"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(14); font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "Check controller connections and review anything that needs attention."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                    Button {
+                        text: root.connectionEvidenceExpanded ? "HIDE EVIDENCE" : "SHOW EVIDENCE"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: themeManager.setGuidanceSectionExpanded("overview-connection-evidence", !root.connectionEvidenceExpanded)
+                        background: Rectangle {
+                            radius: deck.radiusControl
+                            color: parent.down ? deck.secondarySurface : "transparent"
+                            border.color: parent.activeFocus ? deck.focus : deck.border
+                            border.width: parent.activeFocus ? 2 : 1
+                        }
+                        contentItem: Text {
+                            text: parent.text
+                            color: deck.textSecondary
+                            font.family: deck.telemetryFont
+                            font.pixelSize: deck.scale(8)
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+                ColumnLayout {
+                    visible: root.connectionEvidenceExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space4
+                    Text { Layout.fillWidth: true; text: "INPUT · " + String(setupPhysical.detail || "No evidence yet."); color: deck.textSecondary; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "OUTPUT · " + String(setupOutput.detail || "No evidence yet."); color: deck.textSecondary; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "ISOLATION · " + String(root.hidhideHealth.normalSummary || setupIsolation.detail || "No evidence yet."); color: deck.textSecondary; font.pixelSize: deck.scale(9); wrapMode: Text.WordWrap }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        text: "CHECK SETUP"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.navigateToDevices("verification")
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        text: "DIAGNOSTICS"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: root.navigateToPage(3)
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Button {
+                        text: "OPEN DOCTOR"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: backend.openHidHideDoctor()
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    }
+                    Item { Layout.fillWidth: true }
+                }
             }
         }
 
@@ -390,14 +541,14 @@ Flickable {
                         Layout.fillWidth: true
                         spacing: deck.space4
                         Text {
-                            text: "ACTIVE CONTROLS"
+                            text: "LIVE CONTROLS"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
                             font.pixelSize: deck.scale(10)
                             font.bold: true
                         }
                         Text {
-                            text: "Live values refresh automatically while this page is open."
+                            text: "Each card shows physical input separately from its mapped virtual output. Disabled and unassigned routes stay explicit."
                             color: deck.textSecondary
                             font.pixelSize: deck.scale(10)
                         }
@@ -434,6 +585,10 @@ Flickable {
                         tokens: deck
                         axis: modelData
                         Layout.fillWidth: true
+                        onEditRequested: function(axisIndex) {
+                            backend.setSelectedAxis(axisIndex)
+                            root.navigateToPage(0)
+                        }
                     }
                 }
                 Text {

@@ -355,8 +355,8 @@ Item {
     }
     function selectProfileContext(profile) {
         if (!profile || !profile.id) return false
-        if (!backendObject.activateProfile(String(profile.id))) {
-            notice = "The selected profile could not become the active editing context."
+        if (!backendObject.selectProfileForEditing(String(profile.id))) {
+            notice = "The selected profile could not become the editing context."
             noticeError = true
             return false
         }
@@ -1273,6 +1273,14 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: deck.sectionGap
+
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · ROUTE MAP"
+            guidedText: "Select a route to understand its source and destination, then use the existing inspector or processor controls when you need more detail."
+            fullTitle: "ROUTE EDITING CONTEXT"
+            fullText: "Configured topology, processor controls, and route inspection are ready for direct editing."
+        }
 
         RowLayout {
             Layout.fillWidth: true

@@ -22,6 +22,7 @@ Flickable {
     readonly property bool narrow: width < 760
     readonly property bool compact: width < 980
     readonly property var outputLayouts: backend.virtualOutputLayouts
+    property string guidanceSaveError: ""
 
     FlightDeckTheme {
         id: deck
@@ -45,6 +46,14 @@ Flickable {
                 return deviceId;
         }
         return 0;
+    }
+
+    function chooseGuidance(level) {
+        if (themeManager.chooseGuidanceLevel(level)) {
+            guidanceSaveError = ""
+            return
+        }
+        guidanceSaveError = "Could not save that guidance choice. The current view remains unchanged."
     }
 
     component DeckButton: Button {
@@ -582,6 +591,41 @@ Flickable {
                         }
                     }
                 }
+            }
+        }
+
+        SettingsGroup {
+            objectName: "flightDeckSettingsGuidanceGroup"
+            title: "Setup guidance"
+            detail: "Guided and Full change only explanations and default disclosure. Every profile, Device Rig, editor, repair path, and advanced setting remains available."
+            SettingsRow {
+                title: "GUIDANCE LEVEL"
+                detail: themeManager.guidanceLevel === "Guided"
+                    ? "Guided starts with concise next steps. Use Show details wherever you want more context."
+                    : "Full starts with complete technical context and advanced detail expanded."
+                last: guidanceSaveError.length === 0
+                RowLayout {
+                    spacing: deck.space8
+                    Repeater {
+                        model: themeManager.guidanceChoices
+                        delegate: AppearanceSegment {
+                            required property string modelData
+                            objectName: "flightDeckGuidance" + modelData
+                            text: modelData.toUpperCase()
+                            implicitWidth: deck.scale(98)
+                            selected: themeManager.guidanceLevel === modelData
+                            onClicked: root.chooseGuidance(modelData)
+                        }
+                    }
+                }
+            }
+            Text {
+                visible: root.guidanceSaveError.length > 0
+                text: root.guidanceSaveError
+                color: deck.fault
+                font.pixelSize: deck.scale(10)
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
         }
 

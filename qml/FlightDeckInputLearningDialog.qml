@@ -22,6 +22,7 @@ FlightDeckDialog {
     property bool complete: false
     property string startError: ""
     property bool confirmResetButtons: false
+    property bool startSingleAfterOpen: false
     // A prior popup can remain in its exit transition for one UI turn after
     // it is no longer visible. Keep a new request until that close has
     // finished so an old close event cannot immediately hide the new modal.
@@ -51,6 +52,7 @@ FlightDeckDialog {
         complete = false
         startError = ""
         confirmResetButtons = false
+        startSingleAfterOpen = false
     }
 
     function deferUntilClosed(operation, argument) {
@@ -84,16 +86,16 @@ FlightDeckDialog {
         if (deferUntilClosed("axis", target)) return
         resetFor("single-axis")
         targets = [{ "target": String(target || "Disabled") }]
+        startSingleAfterOpen = true
         open()
-        startSingle()
     }
 
     function openPovLearning(virtualButton) {
         if (deferUntilClosed("pov", virtualButton)) return
         resetFor("single-pov")
         selectedVirtualButton = Math.max(1, Number(virtualButton || 1))
+        startSingleAfterOpen = true
         open()
-        startSingle()
     }
 
     function openQuickAxes() {
@@ -189,8 +191,21 @@ FlightDeckDialog {
     }
 
     onAboutToHide: closeInProgress = true
+    onOpened: {
+        // The popup must have completed its own modal/open transition before
+        // starting a backend operation that can immediately report an
+        // unavailable input. This makes the reason visible rather than
+        // racing it against the originating pointer event.
+        if (!startSingleAfterOpen) return
+        startSingleAfterOpen = false
+        Qt.callLater(function() {
+            if (control.visible && (control.workflow === "single-axis"
+                    || control.workflow === "single-pov")) control.startSingle()
+        })
+    }
     onClosed: {
         closeInProgress = false
+        startSingleAfterOpen = false
         if (learning.active)
             backend.cancelInputLearning()
         workflow = ""

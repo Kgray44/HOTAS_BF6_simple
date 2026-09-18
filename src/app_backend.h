@@ -15,6 +15,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QList>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QObject>
@@ -106,6 +107,7 @@ class AppBackend final : public QObject {
     // always-live Flight Deck shell merely to recompute profile text.
     Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY profilePresentationChanged)
     Q_PROPERTY(QString effectiveProfileDisplayName READ effectiveProfileDisplayName NOTIFY profilePresentationChanged)
+    Q_PROPERTY(QString effectiveProfileId READ effectiveProfileId NOTIFY profilePresentationChanged)
     Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY profilePresentationChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
@@ -185,8 +187,14 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QString setupRepairSessionReport READ setupRepairSessionReport NOTIFY stateChanged)
     Q_PROPERTY(bool setupRepairSessionActive READ setupRepairSessionActive NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap setupAssistantLiveTest READ setupAssistantLiveTest NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QVariantMap readOnlyPhysicalInputTest READ readOnlyPhysicalInputTest NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QString setupAssistantScopeType READ setupAssistantScopeType NOTIFY stateChanged)
     Q_PROPERTY(QString setupAssistantScopeId READ setupAssistantScopeId NOTIFY stateChanged)
+    // Pass B keeps one small user-scoped task journal. It contains intent,
+    // references, decisions, and operation results only; canonical mappings,
+    // repair commands, and driver authority remain in their existing owners.
+    Q_PROPERTY(QVariantMap setupAssistantTask READ setupAssistantTask NOTIFY setupAssistantTaskChanged)
+    Q_PROPERTY(bool hasSetupAssistantTask READ hasSetupAssistantTask NOTIFY setupAssistantTaskChanged)
     // App Health reuses the Setup Assistant issue contract for every normal
     // surface.  It updates only with control-plane stateChanged, never the
     // high-frequency telemetry signals.
@@ -344,6 +352,9 @@ public:
     // without requiring real controllers or driver installation state.
     void setSetupAssistantFactsForTest(const QVariantMap &facts);
 #ifdef HOTAS_STARTUP_TESTING
+    // Models a lost/restored virtual-output readiness bit without invoking a
+    // device acquisition or repair path.
+    void setVjoyReadyForTest(bool ready);
     // Bounded startup-test presentation fixture. It neither enumerates
     // hardware nor reaches the DirectInput-to-vJoy report path.
     void setButtonUiFixtureForTest(int physicalButtonCount, int vjoyButtonCapacity,
@@ -382,6 +393,19 @@ public:
     // unverified. These seams exercise member-scoped UI/control-plane truth
     // without enumerating the owner's DirectInput devices.
     bool configureMultiControllerRigFixtureForTest();
+    // Replaces only one fixture member's capability evidence with canonical
+    // DirectInput slots. This is deliberately test-only: production derives
+    // the same evidence from the saved/discovered controller records.
+    bool setReadOnlyPhysicalInputAxisSlotsForTest(const QString &recordId,
+                                                  const QList<int> &axisSlots);
+    bool setEffectiveProfileOverrideForTest(const QString &profileId, int physicalButton = 1);
+    // Publishes one exact member's fixed runtime snapshot for the independent
+    // input-inspection contract. It cannot select a Rig, start mapping, or
+    // acquire an output; tests use it to prove one controller never borrows
+    // another member's controls.
+    bool publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
+                                                     float axisValue, bool buttonPressed,
+                                                     int povValue, int axisSlot = 0);
     bool commitExactControllerVerificationForTest(const QString &recordId);
     bool disconnectFixtureControllerForTest(const QString &recordId);
     QString hidHideHealthContextKeyForTest() const;
@@ -396,6 +420,7 @@ public:
     bool configureStaleWaitingForUserFixtureForTest();
     bool applyAutomaticProfileActivationForTest(const QString &profileId);
     void setActivationFaultInjectionsForTest(const QStringList &stages);
+    void clearSetupAssistantTaskForTest();
 #endif
     QVariantList buttons() const;
     QVariantList buttonTelemetry() const;
@@ -487,8 +512,11 @@ public:
     QString setupRepairSessionReport() const;
     bool setupRepairSessionActive() const;
     QVariantMap setupAssistantLiveTest() const;
+    QVariantMap readOnlyPhysicalInputTest() const;
     QString setupAssistantScopeType() const;
     QString setupAssistantScopeId() const;
+    QVariantMap setupAssistantTask() const;
+    bool hasSetupAssistantTask() const;
     QVariantList appIssues() const;
     QVariantMap appHealthSummary() const;
     QVariantList controllerReadinessProposedChanges() const;
@@ -731,7 +759,8 @@ public:
     Q_INVOKABLE QString createProfileForRigInCategory(const QString &name,
                                                        const QString &categoryId,
                                                        const QString &rigId,
-                                                       const QString &startFromId = {});
+                                                       const QString &startFromId = {},
+                                                       const QString &requestedProfileId = {});
     Q_INVOKABLE bool cloneProfile(const QString &profileId);
     Q_INVOKABLE bool duplicateProfileToCategory(const QString &profileId, const QString &name,
                                                 const QString &categoryId);
@@ -883,6 +912,45 @@ public:
     Q_INVOKABLE QVariantMap applySetupAssistantIssueAction(const QString &issueId);
     Q_INVOKABLE QVariantMap applySetupAssistantFix();
     Q_INVOKABLE QVariantMap startSetupAssistantLiveTest();
+    // The reusable Pass B coordinator delegates actual state changes to the
+    // existing Rig/Profile/activation/readiness APIs. Next/Back only changes
+    // this bounded journal; named commit calls are the explicit boundaries.
+    Q_INVOKABLE QVariantMap beginSetupAssistantTask(const QString &intent,
+                                                    const QVariantMap &context = {});
+    Q_INVOKABLE QVariantMap resumeSetupAssistantTask();
+    Q_INVOKABLE QVariantMap replaceUncommittedSetupAssistantTask(const QString &intent,
+                                                                 const QVariantMap &context = {});
+    Q_INVOKABLE QVariantMap chooseSetupAssistantIntent(const QString &intent);
+    Q_INVOKABLE QVariantMap updateSetupAssistantTask(const QVariantMap &changes);
+    Q_INVOKABLE QVariantMap commitSetupAssistantRigAndProfile(const QString &rigName,
+                                                              const QString &profileName,
+                                                              const QString &controllerRecordId,
+                                                              const QString &outputLayoutId,
+                                                              const QString &categoryId,
+                                                              const QString &copyProfileId = {},
+                                                              const QString &targetRigId = {});
+    Q_INVOKABLE QVariantMap commitSetupAssistantSharedMember(const QString &rigId,
+                                                             const QString &controllerRecordId,
+                                                             bool required,
+                                                             const QString &profileId = {},
+                                                             const QString &profileName = {},
+                                                             const QString &categoryId = {},
+                                                             const QString &copyProfileId = {});
+    Q_INVOKABLE QVariantMap prepareSetupAssistantEditor(int page);
+    Q_INVOKABLE QVariantMap useSetupAssistantTask();
+    Q_INVOKABLE QVariantMap markSetupAssistantProof(const QString &kind, const QString &state);
+    Q_INVOKABLE QVariantMap recordSetupAssistantRepairOperation(const QString &scopeType,
+                                                                 const QString &scopeId,
+                                                                 const QString &sessionId,
+                                                                 const QString &state);
+    Q_INVOKABLE QVariantMap finishSetupAssistantTask();
+    Q_INVOKABLE QVariantMap saveSetupAssistantForLater();
+    Q_INVOKABLE QVariantMap dismissSetupAssistantTask();
+    // This is deliberately separate from the guided setup test: it only
+    // observes the mapper's current physical-input evidence for one saved
+    // controller and never changes configuration, acquisition, or output.
+    Q_INVOKABLE QVariantMap startReadOnlyPhysicalInputTest(const QString &recordId);
+    Q_INVOKABLE void stopReadOnlyPhysicalInputTest();
     Q_INVOKABLE QVariantMap skipCalibrationForSetup(const QString &recordId = {});
     Q_INVOKABLE bool applyControllerReadiness();
     Q_INVOKABLE bool undoControllerReadiness();
@@ -1025,6 +1093,7 @@ public:
 
 signals:
     void stateChanged();
+    void setupAssistantTaskChanged();
     void selectedProfileChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
@@ -1237,6 +1306,10 @@ private:
     void refreshControllerInventory();
     void evaluateGameDetection();
     void refreshNumericTelemetry();
+    int activeRigMemberIndexForRecord(const QString &recordId) const;
+    void requestReadOnlyPhysicalInputProbe();
+    void acceptReadOnlyPhysicalInputProbe(quint64 sessionId,
+                                          const DirectInputControllerProbe &probe);
     void applyContentionPolicy();
     int scaledBackgroundInterval(int baseIntervalMs) const;
     int visibleButtonTelemetryIntervalMs() const;
@@ -1292,6 +1365,17 @@ private:
                                              const QString &scopeId) const;
     QVariantList setupAssistantIssuesForScope(const QString &scopeType,
                                               const QString &scopeId) const;
+    void loadSetupAssistantTask();
+    bool persistSetupAssistantTask();
+    void publishSetupAssistantTask();
+    QVariantMap reconcileSetupAssistantTask(bool persistChanges);
+    QVariantMap setupAssistantTaskFingerprints(const QVariantMap &task) const;
+    QStringList setupTaskAffectedProfileNames(const QString &rigId) const;
+    bool setupTaskCanCommit(QString *reason) const;
+    QString createDeviceRigWithId(const QString &name, const QStringList &controllerRecordIds,
+                                  const QString &outputLayoutId, const QString &requestedId);
+    QVariantMap createDeviceRigResultWithId(const QString &name, const QStringList &controllerRecordIds,
+                                            const QString &outputLayoutId, const QString &requestedId);
     QVariantMap applyPhysicalDeviceGameVisibility(const QStringList &controllerRecordIds, bool hidden);
     ControllerVJoyRequirements currentVjoyRequirements() const;
     bool rememberCurrentController(const QString &expectedRecordId = {},
@@ -1497,6 +1581,31 @@ private:
     quint64 m_setupAssistantOutputBaseline = 0;
     std::array<quint64, kMaximumDeviceRigMembers> m_setupAssistantMemberBaselines{};
     std::array<quint64, kMaximumDeviceRigOutputs> m_setupAssistantOutputBaselines{};
+    // Devices can offer an input-only inspection before a controller belongs
+    // to a Rig or Profile.  Active Rig members use their own existing worker
+    // atomics.  Every other target uses a bounded, nonexclusive DirectInput
+    // snapshot on a control-plane thread; neither path changes activation,
+    // driver state, mapping choice, or virtual output.
+    bool m_readOnlyPhysicalInputTestActive = false;
+    QString m_readOnlyPhysicalInputTestRecordId;
+    QString m_readOnlyPhysicalInputTestDirectInputId;
+    QString m_readOnlyPhysicalInputTestName;
+    int m_readOnlyPhysicalInputTestAxisCount = 0;
+    int m_readOnlyPhysicalInputTestButtonCount = 0;
+    int m_readOnlyPhysicalInputTestPovCount = 0;
+    quint64 m_readOnlyPhysicalInputTestBaseline = 0;
+    quint64 m_readOnlyPhysicalInputTestSessionId = 0;
+    quint64 m_readOnlyPhysicalInputTestSampleSequence = 0;
+    bool m_readOnlyPhysicalInputTestProbeInFlight = false;
+    bool m_readOnlyPhysicalInputTestProbeAttempted = false;
+    bool m_readOnlyPhysicalInputTestProbeAcquired = false;
+    QString m_readOnlyPhysicalInputTestProbeDiagnostic;
+    QString m_readOnlyPhysicalInputTestProbeHidInstanceId;
+    QVariantList m_readOnlyPhysicalInputTestProbeAxes;
+    QVariantList m_readOnlyPhysicalInputTestProbeButtons;
+    QVariantList m_readOnlyPhysicalInputTestProbePovs;
+    QPointer<QThread> m_readOnlyPhysicalInputTestProbeThread;
+    QTimer m_readOnlyPhysicalInputTestProbeTimer;
     QVariantMap m_setupAssistantTestFacts;
     QString m_setupAssistantScopeType = u"application"_qs;
     QString m_setupAssistantScopeId;
@@ -1505,6 +1614,7 @@ private:
     // distinct result so the assistant does not send the user through an
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
+    QVariantMap m_setupAssistantTask;
     // Per-record card state is deliberately separate from the global Setup
     // Health session. It lets a multi-controller Rig report the exact target
     // being verified without projecting a generic CHECKING state.

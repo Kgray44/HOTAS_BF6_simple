@@ -135,6 +135,10 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckSignalFlow.qml
         qml/FlightDeckTheme.qml
         qml/FlightDeckDialog.qml
+        qml/FlightDeckDialogFooter.qml
+        qml/FlightDeckGuidanceCallout.qml
+        qml/FlightDeckGuidanceOnboarding.qml
+        qml/FlightDeckSetupAssistant.qml
         qml/FlightDeckInputLearningDialog.qml
         qml/FlightDeckTransferDialog.qml
         qml/FlightDeckTooltip.qml
@@ -144,6 +148,7 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckHeaderPill.qml
         qml/FlightDeckSelectedDeviceSelector.qml
         qml/FlightDeckSelectedProfileSelector.qml
+        qml/FlightDeckContextStrip.qml
         qml/FlightDeckStatusChip.qml
         qml/FlightDeckReadiness.qml
         qml/FlightDeckHealthCard.qml
@@ -653,6 +658,10 @@ if (BUILD_TESTING)
             qml/FlightDeckSignalFlow.qml
             qml/FlightDeckTheme.qml
             qml/FlightDeckDialog.qml
+            qml/FlightDeckDialogFooter.qml
+            qml/FlightDeckGuidanceCallout.qml
+            qml/FlightDeckGuidanceOnboarding.qml
+            qml/FlightDeckSetupAssistant.qml
             qml/FlightDeckInputLearningDialog.qml
             qml/FlightDeckTransferDialog.qml
             qml/FlightDeckTooltip.qml
@@ -662,6 +671,7 @@ if (BUILD_TESTING)
             qml/FlightDeckHeaderPill.qml
             qml/FlightDeckSelectedDeviceSelector.qml
             qml/FlightDeckSelectedProfileSelector.qml
+            qml/FlightDeckContextStrip.qml
             qml/FlightDeckStatusChip.qml
             qml/FlightDeckReadiness.qml
             qml/FlightDeckHealthCard.qml

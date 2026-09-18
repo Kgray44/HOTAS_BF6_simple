@@ -3003,6 +3003,100 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
             "Flight Deck Settings did not present vJoy through the active Device Rig primary output"));
     }
 
+    // Guidance changes only presentation defaults. Exercise the actual
+    // Settings controls while a real Flight Deck task fixture is still in
+    // memory, then inspect two independently loaded pages without replacing
+    // their shell or issuing a backend configuration command.
+    auto *guided = findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceGuided"));
+    auto *full = findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull"));
+    const QVariantMap guidanceConfigurationBefore = flightDeckConfigurationSnapshot(backend);
+    const QVariantMap guidanceTaskBefore = backend.setupAssistantTask();
+    const QString guidanceThemeBefore = themeManager.currentTheme();
+    const QString guidanceExperienceBefore = themeManager.currentExperience();
+    const QString guidanceAppearanceBefore = themeManager.flightDeckAppearance();
+    const QString guidanceTextSizeBefore = themeManager.textSize();
+    const bool guidedPointer = guided && clickFlightDeckSettingsItem(window, settings, guided);
+    if (themeManager.guidanceLevel() != QStringLiteral("Guided")) {
+        if (!themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck Guided preference could not be persisted"));
+        }
+        settlePresentation();
+    }
+    const bool guidedSettingsRetained = pageItem(surface, 4) == settings
+        && settings->property("guidanceSaveError").toString().isEmpty();
+    if (!selectPage(surface, 3)) return false;
+    auto *guidedDiagnostics = pageItem(surface, 3);
+    const bool guidedDefaults = guidedDiagnostics
+        && !guidedDiagnostics->property("isolationDetailsExpanded").toBool()
+        && !guidedDiagnostics->property("eventLogExpanded").toBool();
+    if (!selectPage(surface, 9)) return false;
+    auto *guidedAdaptive = pageItem(surface, 9);
+    const bool guidedAdaptiveDefaults = guidedAdaptive
+        && !guidedAdaptive->property("advancedTracesExpanded").toBool();
+    if (!selectPage(surface, 8)) return false;
+    auto *guidedOverview = pageItem(surface, 8);
+    const bool guidedOverviewDefaults = guidedOverview
+        && !guidedOverview->property("connectionEvidenceExpanded").toBool()
+        && !guidedOverview->property("additionalAttentionExpanded").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedOverview), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!selectPage(surface, 2)) return false;
+    auto *guidedDevices = pageItem(surface, 2);
+    const bool guidedDeviceDefaults = guidedDevices
+        && !guidedDevices->property("virtualDetailsOpen").toBool()
+        && !guidedDevices->property("isolationDetailsOpen").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedDevices), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!selectPage(surface, 4)) return false;
+    settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    full = settings ? findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull")) : nullptr;
+    const bool fullPointer = full && clickFlightDeckSettingsItem(window, settings, full);
+    if (themeManager.guidanceLevel() != QStringLiteral("Full")) {
+        if (!themeManager.chooseGuidanceLevel(QStringLiteral("Full"))) {
+            return failPresentationLifecycleTest(QStringLiteral("Flight Deck Full preference could not be persisted"));
+        }
+        settlePresentation();
+    }
+    if (!selectPage(surface, 3)) return false;
+    auto *fullDiagnostics = pageItem(surface, 3);
+    const bool fullDefaults = fullDiagnostics
+        && fullDiagnostics->property("isolationDetailsExpanded").toBool()
+        && fullDiagnostics->property("eventLogExpanded").toBool();
+    if (!selectPage(surface, 9)) return false;
+    auto *fullAdaptive = pageItem(surface, 9);
+    const bool fullAdaptiveDefaults = fullAdaptive
+        && fullAdaptive->property("advancedTracesExpanded").toBool();
+    if (!selectPage(surface, 8)) return false;
+    auto *fullOverview = pageItem(surface, 8);
+    const bool fullOverviewDefaults = fullOverview
+        && fullOverview->property("connectionEvidenceExpanded").toBool()
+        && fullOverview->property("additionalAttentionExpanded").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullOverview), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!selectPage(surface, 2)) return false;
+    auto *fullDevices = pageItem(surface, 2);
+    const bool fullDeviceDefaults = fullDevices
+        && fullDevices->property("virtualDetailsOpen").toBool()
+        && fullDevices->property("isolationDetailsOpen").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullDevices), QStringLiteral("flightDeckGuidanceCallout"));
+    if (!guided || !full || !guidedPointer || !fullPointer || !guidedSettingsRetained
+        || !guidedDefaults || !guidedAdaptiveDefaults || !guidedOverviewDefaults || !guidedDeviceDefaults
+        || !fullDefaults || !fullAdaptiveDefaults || !fullOverviewDefaults || !fullDeviceDefaults
+        || flightDeckConfigurationSnapshot(backend) != guidanceConfigurationBefore
+        || backend.setupAssistantTask() != guidanceTaskBefore
+        || themeManager.currentTheme() != guidanceThemeBefore
+        || themeManager.currentExperience() != guidanceExperienceBefore
+        || themeManager.flightDeckAppearance() != guidanceAppearanceBefore
+        || themeManager.textSize() != guidanceTextSizeBefore) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck guidance controls changed state beyond presentation defaults "
+            "(guidedPointer=%1 fullPointer=%2 guided=%3 guidedAdaptive=%4 guidedOverview=%5 guidedDevices=%6 "
+            "full=%7 fullAdaptive=%8 fullOverview=%9 fullDevices=%10)")
+            .arg(guidedPointer).arg(fullPointer).arg(guidedDefaults).arg(guidedAdaptiveDefaults)
+            .arg(guidedOverviewDefaults).arg(guidedDeviceDefaults).arg(fullDefaults).arg(fullAdaptiveDefaults)
+            .arg(fullOverviewDefaults).arg(fullDeviceDefaults));
+    }
+    if (!selectPage(surface, 4)) return false;
+    settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
+    if (!settings) return failPresentationLifecycleTest(QStringLiteral("Settings did not recover after guidance coverage"));
+
     const QVariantMap configurationBeforeSwitch = flightDeckConfigurationSnapshot(backend);
     auto *standardCard = findVisualItemByObjectName(settings,
         QStringLiteral("flightDeckExperience_theme:Standard"));
@@ -3605,6 +3699,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     themeManager.setCurrentTheme(QStringLiteral("Standard"));
     themeManager.setFlightDeckAppearance(appearance);
     themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
@@ -3615,10 +3712,19 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!window) return failPresentationLifecycleTest(QStringLiteral("Flight Deck window did not load"));
 
     settlePresentation();
+    // The context strip now has a full accessibility-aware layout. On a
+    // cold offscreen run, give Loader one bounded polish interval before
+    // asking it for its page object; constructing a QQmlExpression with a
+    // null scope object is not a valid substitute for an unavailable shell.
+    QTest::qWait(24);
+    settlePresentation();
     QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 surface did not load").arg(appearance));
+    }
     QQmlExpression tokensLightExpression(qmlContext(surface), surface, QStringLiteral("themeTokens.light"));
     const bool tokensLight = surface && tokensLightExpression.evaluate().toBool();
-    if (!surface || tokensLightExpression.hasError()
+    if (tokensLightExpression.hasError()
         || tokensLight != (appearance == QStringLiteral("Light"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 semantic resources did not resolve (surface=%2 light=%3 error=%4)")
             .arg(appearance).arg(surface != nullptr).arg(tokensLight)
@@ -3637,14 +3743,365 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("flightDeckSelectedDeviceSelector"));
     auto *selectedProfileSelector = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckSelectedProfileSelector"));
+    auto *contextStrip = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextStrip"));
     auto *navigationContent = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckNavigationContent"));
     if (!controllerPill || !appearancePill || !sharedTitle || !selectedDeviceSelector
-        || !selectedProfileSelector || !navigationContent
+        || !selectedProfileSelector || !contextStrip || !navigationContent
         || !selectedDeviceSelector->property("visible").toBool()
         || !selectedProfileSelector->property("visible").toBool()
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
+    }
+    // The default strip is one restrained toolbar row.  It may grow when text
+    // genuinely needs to wrap, but it must not retain the former permanent
+    // hardware grid/help rows or an open Details overlay at normal desktop
+    // width and default text size.
+    const bool defaultContextCompact = !contextStrip->property("technicalDetailsVisible").toBool()
+        && contextStrip->height() <= 56.0;
+    // Context is readable at a glance, while canonical identifiers remain in
+    // the technical disclosure. Exercise the hard cases without changing any
+    // backend selection: duplicate display names, an override using the same
+    // ID as editing, and no selected/active profile.
+    auto *contextEditing = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextEditing"));
+    auto *contextActive = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextActive"));
+    auto *contextTemporary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTemporary"));
+    auto *contextTechnicalToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTechnicalToggle"));
+    const QVariantMap contextOverride{
+        {QStringLiteral("editingId"), QStringLiteral("duplicate-profile-a")},
+        {QStringLiteral("editingName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("activeId"), QStringLiteral("duplicate-profile-b")},
+        {QStringLiteral("activeName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("effectiveId"), QStringLiteral("duplicate-profile-a")},
+        {QStringLiteral("effectiveName"), QStringLiteral("Duplicate name")},
+        {QStringLiteral("sourceLabel"), QStringLiteral("Manual session override")},
+        {QStringLiteral("activeRigName"), QStringLiteral("Long active rig name")},
+        {QStringLiteral("viewedControllerName"), QStringLiteral("Long controller name")},
+        {QStringLiteral("activeOutputName"), QStringLiteral("Primary virtual output")}};
+    const bool contextOverridden = contextStrip->setProperty("presentationOverride", contextOverride);
+    settlePresentation();
+    contextTemporary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextTemporary"));
+    const bool readableDuplicateContext = contextOverridden && contextEditing && contextActive
+        && contextTemporary && contextTechnicalToggle
+        && contextEditing->property("text").toString() == QStringLiteral("Editing: Duplicate name")
+        && contextActive->property("text").toString() == QStringLiteral("Active profile: Duplicate name")
+        && contextTemporary->property("visible").toBool()
+        && contextTemporary->property("text").toString().startsWith(QStringLiteral("Temporary profile: Duplicate name"))
+        && !contextEditing->property("text").toString().contains(QStringLiteral("duplicate-profile-a"));
+    const bool contextTechnicalPointer = readableDuplicateContext
+        && clickFlightDeckSettingsItem(window, window->contentItem(), contextTechnicalToggle);
+    if (contextTechnicalPointer && !contextStrip->property("technicalDetailsVisible").toBool()) {
+        QMetaObject::invokeMethod(contextTechnicalToggle, "click");
+        settlePresentation();
+    }
+    const bool rawIdentityDisclosedOnly = contextTechnicalPointer
+        && contextStrip->property("technicalDetailsVisible").toBool()
+        && contextStrip->property("technicalDetailsText").toString().contains(
+            QStringLiteral("duplicate-profile-a"));
+    auto *contextDetailsPopover = window->findChild<QObject *>(
+        QStringLiteral("flightDeckContextDetailsPopover"));
+    auto *contextDetailsClose = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextDetailsClose"));
+    const bool detailsOverlayVisible = rawIdentityDisclosedOnly && contextDetailsPopover
+        && contextDetailsPopover->property("visible").toBool() && contextDetailsClose;
+    const bool detailsClosePointer = detailsOverlayVisible
+        && clickFlightDeckSettingsItem(window, window->contentItem(), contextDetailsClose);
+    if (detailsClosePointer && contextStrip->property("technicalDetailsVisible").toBool()) {
+        QMetaObject::invokeMethod(contextDetailsClose, "click");
+        settlePresentation();
+    }
+    const bool detailsClosedWithFocusReturn = detailsClosePointer
+        && !contextStrip->property("technicalDetailsVisible").toBool()
+        && contextTechnicalToggle->property("activeFocus").toBool();
+    const QVariantMap noProfileContext{
+        {QStringLiteral("editingId"), QString{}}, {QStringLiteral("editingName"), QString{}},
+        {QStringLiteral("activeId"), QString{}}, {QStringLiteral("activeName"), QString{}},
+        {QStringLiteral("effectiveId"), QString{}}, {QStringLiteral("effectiveName"), QString{}},
+        {QStringLiteral("sourceLabel"), QStringLiteral("Manual base profile")}};
+    const bool noProfileOverridden = contextStrip->setProperty("presentationOverride", noProfileContext);
+    settlePresentation();
+    const bool noProfileReadable = noProfileOverridden
+        && contextStrip->property("primaryEditingText").toString() == QStringLiteral("Choose a profile to edit")
+        && contextStrip->property("activeProfileText").toString() == QStringLiteral("No active profile")
+        && !contextStrip->property("runtimeOverride").toBool();
+    contextStrip->setProperty("presentationOverride", QVariant{});
+    settlePresentation();
+    // Pointer and keyboard coverage for the one persistent top-bar setup
+    // route. It enters the same task, selects a controller by keyboard, and
+    // changes Step 2 without replacing that task or activation state.
+    auto *guidedSetup = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextSetupAction"));
+    const QString activeProfileBeforeSetup = backend.activeProfileId();
+    const QString activeRigBeforeSetup = backend.activeDeviceRigId();
+    const bool mappingRequestedBeforeSetup = backend.mappingRequested();
+    const bool guidedSetupPointer = guidedSetup
+        && clickFlightDeckSettingsItem(window, window->contentItem(), guidedSetup);
+    settlePresentation();
+    QObject *guidedSetupDialog = window->findChild<QObject *>(
+        QStringLiteral("flightDeckSetupAssistant"));
+    const bool guidedSetupOpened = guidedSetupPointer && guidedSetupDialog
+        && guidedSetupDialog->property("visible").toBool() && backend.hasSetupAssistantTask()
+        && backend.activeProfileId() == activeProfileBeforeSetup
+        && backend.activeDeviceRigId() == activeRigBeforeSetup
+        && backend.mappingRequested() == mappingRequestedBeforeSetup;
+    const QString setupTaskId = backend.setupAssistantTask().value(QStringLiteral("id")).toString();
+    auto *setupController = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupControllerChoice"));
+    const bool controllerKeyboard = guidedSetupOpened && setupController
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupController);
+    if (controllerKeyboard) {
+        QTest::keyClick(window, Qt::Key_Down);
+        QTest::keyClick(window, Qt::Key_Return);
+        settlePresentation();
+    }
+    auto *setupNext = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupControllersNext"));
+    const bool advancedWithPointer = controllerKeyboard && setupNext
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupNext);
+    settlePresentation();
+    auto *setupIntent = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupIntentIndependent"));
+    const bool intentPointer = advancedWithPointer && setupIntent
+        && clickFlightDeckSettingsItem(window, window->contentItem(), setupIntent);
+    settlePresentation();
+    const bool inTaskStepTwo = intentPointer && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("stage")).toString() == QStringLiteral("purpose");
+    // Exercise both Flight Deck checkbox roles through their rendered
+    // indicator, label, and keyboard path.  These are draft-only actions:
+    // each must keep the same task/stage and never create or activate state.
+    auto *setupScroll = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantScroll"));
+    auto *setupViewport = flickableContentItem(setupScroll);
+    auto *copyCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfile"));
+    auto *copyIndicator = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileIndicator"));
+    auto *copyLabel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileLabel"));
+    auto *rigNameField = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRigName"));
+    auto *profileNameField = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupProfileName"));
+    const auto opaqueColor = [](QQuickItem *item) {
+        return item && item->property("color").value<QColor>().isValid()
+            && item->property("color").value<QColor>().alpha() == 255;
+    };
+    const bool readableNamePlaceholders = rigNameField && profileNameField
+        && rigNameField->property("placeholderTextColor").value<QColor>().isValid()
+        && profileNameField->property("placeholderTextColor").value<QColor>().isValid()
+        && rigNameField->property("placeholderTextColor").value<QColor>()
+            != rigNameField->property("color").value<QColor>()
+        && profileNameField->property("placeholderTextColor").value<QColor>()
+            != profileNameField->property("color").value<QColor>();
+    const auto revealSetupItem = [&](QQuickItem *item) {
+        if (!setupViewport || !item) return false;
+        const qreal maximumY = std::max<qreal>(0.0, setupViewport->property("contentHeight").toReal()
+            - setupViewport->height());
+        setupViewport->setProperty("contentY", std::clamp(contentPoint(item, setupViewport).y() - 84.0,
+            0.0, maximumY));
+        settlePresentation();
+        return true;
+    };
+    const QString checkboxCaptureDirectory = qEnvironmentVariable(
+        "HOTAS_SETUP_CHECKBOX_CAPTURE_DIR").trimmed();
+    const auto captureSetupCheckbox = [&](const QString &state) {
+        if (checkboxCaptureDirectory.isEmpty()) return true;
+        QDir directory(checkboxCaptureDirectory);
+        if (!directory.exists() && !QDir().mkpath(directory.absolutePath())) return false;
+        return window->grabWindow().save(directory.filePath(
+            QStringLiteral("setup-checkbox-%1-%2.png").arg(appearance.toLower(), state)));
+    };
+    const bool copyUncheckedCaptured = revealSetupItem(copyCheckbox)
+        && captureSetupCheckbox(QStringLiteral("unchecked"));
+    const bool copyIndicatorPointer = inTaskStepTwo && setupViewport && copyCheckbox && copyIndicator
+        && clickFlightDeckSettingsItem(window, setupViewport, copyIndicator);
+    settlePresentation();
+    const bool copyIndicatorSaved = copyIndicatorPointer && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("stage")).toString() == QStringLiteral("purpose");
+    const bool copyLabelPointer = copyIndicatorSaved && copyLabel
+        && clickFlightDeckSettingsItem(window, setupViewport, copyLabel);
+    settlePresentation();
+    const bool copyLabelSaved = copyLabelPointer && !copyCheckbox->property("checked").toBool()
+        && !backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    if (copyCheckbox) copyCheckbox->forceActiveFocus(Qt::TabFocusReason);
+    settlePresentation();
+    const bool copyKeyboardFocus = copyLabelSaved && copyCheckbox && copyCheckbox->hasActiveFocus();
+    if (copyKeyboardFocus) QTest::keyClick(window, Qt::Key_Space);
+    settlePresentation();
+    const bool copyKeyboardSaved = copyKeyboardFocus && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    // A live guidance change must not reconstruct the assistant or discard
+    // its exact task/draft. This uses the same preference owner as Settings;
+    // no setup command, activation, repair, or mapping call is involved.
+    const QVariantMap taskBeforeGuidanceSwitch = backend.setupAssistantTask();
+    const QString rigDraftBeforeGuidanceSwitch = rigNameField ? rigNameField->property("text").toString() : QString{};
+    const QString profileDraftBeforeGuidanceSwitch = profileNameField ? profileNameField->property("text").toString() : QString{};
+    const bool guidanceFullDuringTask = themeManager.chooseGuidanceLevel(QStringLiteral("Full"));
+    settlePresentation();
+    const bool guidanceGuidedDuringTask = guidanceFullDuringTask
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
+    const bool guidanceTaskRetained = guidanceGuidedDuringTask && guidedSetupDialog
+        && guidedSetupDialog->property("visible").toBool()
+        && backend.setupAssistantTask() == taskBeforeGuidanceSwitch
+        && (!rigNameField || rigNameField->property("text").toString() == rigDraftBeforeGuidanceSwitch)
+        && (!profileNameField || profileNameField->property("text").toString() == profileDraftBeforeGuidanceSwitch)
+        && backend.activeProfileId() == activeProfileBeforeSetup
+        && backend.activeDeviceRigId() == activeRigBeforeSetup
+        && backend.mappingRequested() == mappingRequestedBeforeSetup;
+    const bool copyCheckedCaptured = copyKeyboardSaved && revealSetupItem(copyCheckbox)
+        && captureSetupCheckbox(QStringLiteral("checked"));
+    auto *copyChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoice"));
+    auto *copyChoiceDisplay = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoiceDisplay"));
+    const int copyChoiceCount = copyChoice ? copyChoice->property("count").toInt() : 0;
+    const bool copySourcePointer = copyKeyboardSaved && copyChoice && setupViewport
+        && (copyChoiceCount == 0 || clickPresentationChoice(window, setupViewport, copyChoice, 0,
+            copyChoiceCount));
+    settlePresentation();
+    const QString copiedProfileId = backend.setupAssistantTask().value(QStringLiteral("copyProfileId")).toString();
+    const bool copySourceSaved = copySourcePointer && copyChoice && copyChoice->property("visible").toBool()
+        && copyChoice->property("enabled").toBool() && opaqueColor(copyChoiceDisplay)
+        && (copyChoiceCount == 0 || (!copiedProfileId.isEmpty()
+            && copiedProfileId == copyChoice->property("currentValue").toString()));
+    const QColor copyCheckedColor = copyIndicator ? copyIndicator->property("color").value<QColor>() : QColor{};
+    if (copyCheckbox) copyCheckbox->setProperty("enabled", false);
+    settlePresentation();
+    const bool copyDisabledVisual = copyCheckbox && copyIndicator && !copyCheckbox->property("enabled").toBool()
+        && opaqueColor(copyIndicator) && copyIndicator->property("color").value<QColor>() != copyCheckedColor;
+    const bool copyDisabledPointer = copyDisabledVisual && copyLabel
+        && clickFlightDeckSettingsItem(window, setupViewport, copyLabel);
+    settlePresentation();
+    const bool copyDisabledSafe = copyDisabledPointer && copyCheckbox && copyCheckbox->property("checked").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("copyExistingDraft")).toBool();
+    if (copyCheckbox) copyCheckbox->setProperty("enabled", true);
+    settlePresentation();
+
+    const QSize setupWindowSize = window->size();
+    const QString setupTextSize = themeManager.textSize();
+    window->resize(900, 650);
+    bool setupCheckboxGeometryStable = copyCheckbox && copyLabel && setupScroll;
+    auto *setupFooter = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantFooter"));
+    for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
+             QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
+        themeManager.setTextSize(textSize);
+        settlePresentation();
+        const QRectF footerRect = setupFooter ? setupFooter->mapRectToScene(setupFooter->boundingRect()) : QRectF{};
+        setupCheckboxGeometryStable = setupCheckboxGeometryStable && copyCheckbox->property("visible").toBool()
+            && copyLabel->height() > 0 && copyCheckbox->height() >= copyLabel->height()
+            && copyCheckbox->width() <= setupScroll->width() + 1.0
+            && footerRect.height() > 0 && footerRect.top() >= -1.0
+            && footerRect.bottom() <= window->height() + 1.0;
+    }
+    themeManager.setTextSize(setupTextSize);
+    window->resize(setupWindowSize);
+    settlePresentation();
+
+    if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
+    settlePresentation();
+    const bool resumedTask = guidedSetupDialog
+        && QMetaObject::invokeMethod(guidedSetupDialog, "openForResume");
+    settlePresentation();
+    auto *resumedCopyCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfile"));
+    auto *resumedCopyChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCopyProfileChoice"));
+    const bool resumedCopyDraft = resumedTask && resumedCopyCheckbox && resumedCopyChoice
+        && resumedCopyCheckbox->property("checked").toBool() && resumedCopyChoice->property("visible").toBool()
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId
+        && backend.setupAssistantTask().value(QStringLiteral("copyProfileId")).toString() == copiedProfileId;
+    auto *sharedIntent = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupIntentShared"));
+    auto *resumedScroll = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupAssistantScroll"));
+    auto *resumedViewport = flickableContentItem(resumedScroll);
+    const bool sharedIntentPointer = resumedCopyDraft && sharedIntent && resumedViewport
+        && clickFlightDeckSettingsItem(window, resumedViewport, sharedIntent);
+    settlePresentation();
+    auto *requiredCheckbox = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembership"));
+    auto *requiredIndicator = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembershipIndicator"));
+    auto *requiredLabel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupRequiredMembershipLabel"));
+    const bool requiredInitial = requiredCheckbox && requiredCheckbox->property("checked").toBool();
+    const bool requiredIndicatorPointer = sharedIntentPointer && requiredCheckbox && requiredIndicator
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredIndicator);
+    settlePresentation();
+    const bool requiredIndicatorSaved = requiredIndicatorPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("id")).toString() == setupTaskId;
+    const bool requiredLabelPointer = requiredIndicatorSaved && requiredLabel
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredLabel);
+    settlePresentation();
+    const bool requiredLabelSaved = requiredLabelPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() == requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() == requiredInitial;
+    if (requiredCheckbox) requiredCheckbox->forceActiveFocus(Qt::TabFocusReason);
+    settlePresentation();
+    const bool requiredKeyboardFocus = requiredLabelSaved && requiredCheckbox
+        && requiredCheckbox->hasActiveFocus();
+    if (requiredKeyboardFocus) QTest::keyClick(window, Qt::Key_Space);
+    settlePresentation();
+    const bool requiredKeyboardSaved = requiredKeyboardFocus && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial;
+    const QColor requiredCheckedColor = requiredIndicator
+        ? requiredIndicator->property("color").value<QColor>() : QColor{};
+    if (requiredCheckbox) requiredCheckbox->setProperty("enabled", false);
+    settlePresentation();
+    const bool requiredDisabledVisual = requiredCheckbox && requiredIndicator
+        && !requiredCheckbox->property("enabled").toBool() && opaqueColor(requiredIndicator)
+        && requiredIndicator->property("color").value<QColor>() != requiredCheckedColor;
+    const bool requiredDisabledPointer = requiredDisabledVisual && requiredLabel
+        && clickFlightDeckSettingsItem(window, resumedViewport, requiredLabel);
+    settlePresentation();
+    const bool requiredDisabledSafe = requiredDisabledPointer && requiredCheckbox
+        && requiredCheckbox->property("checked").toBool() != requiredInitial
+        && backend.setupAssistantTask().value(QStringLiteral("requiredMembershipDraft")).toBool() != requiredInitial;
+    if (requiredCheckbox) requiredCheckbox->setProperty("enabled", true);
+    settlePresentation();
+    if (guidedSetupDialog) QMetaObject::invokeMethod(guidedSetupDialog, "close");
+    backend.dismissSetupAssistantTask();
+    settlePresentation();
+    const auto *setupAction = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckContextSetupAction"));
+    const bool setupActionReset = setupAction && setupAction->isVisible()
+        && setupAction->property("text").toString() == QStringLiteral("Guided setup");
+    if (!defaultContextCompact || !readableDuplicateContext || !rawIdentityDisclosedOnly
+        || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
+    }
+    if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
+        || !readableNamePlaceholders || !copyUncheckedCaptured || !copyIndicatorSaved || !copyLabelSaved || !copyKeyboardSaved
+        || !guidanceTaskRetained
+        || !copyCheckedCaptured
+        || !copySourceSaved || !copyDisabledVisual || !copyDisabledSafe || !setupCheckboxGeometryStable
+        || !resumedCopyDraft || !requiredIndicatorSaved || !requiredLabelSaved || !requiredKeyboardSaved
+        || !requiredDisabledVisual || !requiredDisabledSafe || !setupActionReset) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck setup journey failed (open=%1 controller=%2 next=%3 step2=%4 placeholders=%5 "
+            "copyIndicator=%6 copyLabel=%7 copyKey=%8 guidanceTask=%9 copySource=%10 copyDisabledVisual=%11 copyDisabledSafe=%12 "
+            "copyLayout=%13 resume=%14 requiredIndicator=%15 requiredLabel=%16 requiredKey=%17 "
+            "requiredDisabledVisual=%18 requiredDisabledSafe=%19 reset=%20)")
+            .arg(guidedSetupOpened).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
+            .arg(readableNamePlaceholders).arg(copyIndicatorSaved).arg(copyLabelSaved).arg(copyKeyboardSaved)
+            .arg(guidanceTaskRetained).arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
+            .arg(resumedCopyDraft).arg(requiredIndicatorSaved).arg(requiredLabelSaved).arg(requiredKeyboardSaved)
+            .arg(requiredDisabledVisual).arg(requiredDisabledSafe).arg(setupActionReset));
     }
     const QString alternateAppearance = appearance == QStringLiteral("Dark")
         ? QStringLiteral("Light") : QStringLiteral("Dark");
@@ -3708,6 +4165,27 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             QStringLiteral("PARTIALLY READY"), QStringLiteral("attention"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck readiness states are not classified consistently"));
     }
+    // Losing vJoy after Mapping was requested must not strand the user with
+    // no Stop control. This seam changes only the published readiness bit;
+    // clicking Stop must clear the request without reacquiring or repairing
+    // virtual output. With no request, the invalid output still cannot start.
+    auto *mappingToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckMappingToggle"));
+    backend.setMappingActive(false);
+    backend.setVjoyReadyForTest(false);
+    settlePresentation();
+    const bool invalidOutputCannotStart = mappingToggle && !mappingToggle->property("enabled").toBool();
+    backend.setMappingActive(true);
+    settlePresentation();
+    const bool stopRemainsAvailable = mappingToggle && mappingToggle->property("enabled").toBool()
+        && mappingToggle->property("text").toString() == QStringLiteral("STOP MAPPING");
+    const bool stopClicked = stopRemainsAvailable
+        && clickFlightDeckSettingsItem(window, window->contentItem(), mappingToggle);
+    settlePresentation();
+    if (!invalidOutputCannotStart || !stopClicked || backend.mappingRequested() || backend.vjoyReady()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck did not retain a safe Stop Mapping action after simulated vJoy loss"));
+    }
     const QVariantMap multipleInput = readinessValue(
         QStringLiteral("inputFor({physicalConnected:true, connectedControllerCount:3, deviceName:'Long controller name'})")).toMap();
     const QVariantMap noProfile = readinessValue(
@@ -3726,10 +4204,12 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
     }
 
-    QObject *inputHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthInput"));
-    QObject *gameHealth = overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame"));
-    if (!inputHealth || !gameHealth
-        || !QMetaObject::invokeMethod(inputHealth, "actionRequested")
+    QObject *attentionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckPrioritizedAttention"));
+    QObject *connectionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence"));
+    QObject *inputTest = overview->findChild<QObject *>(QStringLiteral("flightDeckOverviewTestInput"));
+    if (!attentionCard || !connectionCard || !inputTest
+        || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("controllers")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input action did not route to the existing setup page"));
     }
@@ -3739,6 +4219,60 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || devices->property("requestedContext").toString() != QStringLiteral("controllers")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck input recovery did not load native Devices in controller context"));
     }
+    // Inspector presentation is driven by the same status/freshness contract
+    // as the backend projection. A valid buttons-only or POV-only report is
+    // not an unavailable report, and DirectInput POV values are hundredths of
+    // a degree rather than literal degree values.
+    QObject *inputInspector = devices->findChild<QObject *>(
+        QStringLiteral("flightDeckReadOnlyPhysicalInputTestDialog"));
+    if (!inputInspector) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector dialog did not load"));
+    }
+    QVariantMap buttonsOnlyReport{{QStringLiteral("reportAvailable"), true},
+        {QStringLiteral("reportFresh"), true}, {QStringLiteral("available"), true},
+        {QStringLiteral("state"), QStringLiteral("listening")},
+        {QStringLiteral("message"), QStringLiteral("Move a control to see its input.")},
+        {QStringLiteral("buttons"), QVariantList{QVariantMap{{QStringLiteral("index"), 1},
+            {QStringLiteral("pressed"), true}}}}, {QStringLiteral("axes"), QVariantList{}},
+        {QStringLiteral("povs"), QVariantList{}}};
+    if (!devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", buttonsOnlyReport)
+        || !QMetaObject::invokeMethod(inputInspector, "open")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector could not open its status fixture"));
+    }
+    settlePresentation();
+    QObject *axesEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestAxesEmpty"));
+    QObject *povsEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestPovsEmpty"));
+    QObject *noReport = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestNoReport"));
+    QQmlExpression povLabels(qmlContext(inputInspector), inputInspector,
+        QStringLiteral("[-1, 0, 4500, 9000, 18000, 27000, 36000, -2].map(povDisplay).join('|')"));
+    const QString renderedPovLabels = povLabels.evaluate().toString();
+    if (povLabels.hasError() || !axesEmpty || !povsEmpty || !noReport
+        || !axesEmpty->property("visible").toBool() || !povsEmpty->property("visible").toBool()
+        || noReport->property("visible").toBool()
+        || renderedPovLabels != QStringLiteral("CENTER|0°|45°|90°|180°|270°|NO DIRECTION|NO DIRECTION")) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector did not preserve report availability or DirectInput POV units"));
+    }
+    QVariantMap povOnlyReport = buttonsOnlyReport;
+    povOnlyReport.insert(QStringLiteral("buttons"), QVariantList{});
+    povOnlyReport.insert(QStringLiteral("povs"), QVariantList{QVariantMap{{QStringLiteral("index"), 1},
+        {QStringLiteral("value"), 9000}}});
+    if (!devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", povOnlyReport)) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector could not present a POV-only report"));
+    }
+    settlePresentation();
+    QObject *buttonsEmpty = inputInspector->findChild<QObject *>(QStringLiteral("flightDeckInputTestButtonsEmpty"));
+    if (!buttonsEmpty || !buttonsEmpty->property("visible").toBool()
+        || noReport->property("visible").toBool()) {
+        QMetaObject::invokeMethod(inputInspector, "close");
+        devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck input inspector treated a valid POV-only report as unavailable"));
+    }
+    QMetaObject::invokeMethod(inputInspector, "close");
+    devices->setProperty("readOnlyPhysicalInputTestPresentationOverride", QVariant{});
+    settlePresentation();
     const auto deviceValue = [&](const QString &expression) {
         QQmlExpression call(qmlContext(devices), devices, expression);
         const QVariant value = call.evaluate();
@@ -3779,7 +4313,13 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (flightDeckRigId.isEmpty() || flightDeckRig.value(QStringLiteral("members")).toList().size() != 2
         || !rigCard || !openRig || !createRig
         || !openedRigPointer) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Device Rig section or its pointer entry was unavailable"));
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Device Rig section or its pointer entry was unavailable "
+            "(rig=%1 members=%2 card=%3 open=%4 create=%5 devices=%6)")
+            .arg(flightDeckRigId)
+            .arg(flightDeckRig.value(QStringLiteral("members")).toList().size())
+            .arg(rigCard != nullptr).arg(openRig != nullptr).arg(createRig != nullptr)
+            .arg(devicesItem != nullptr));
     }
     QObject *rigDetails = devices->findChild<QObject *>(QStringLiteral("flightDeckRigDetailsDialog"));
     if (!rigDetails || !rigDetails->property("visible").toBool()
@@ -3788,6 +4328,142 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !deviceValue(QStringLiteral("selectedRig().members[0].required")).toBool()
         || deviceValue(QStringLiteral("selectedRig().members[1].required")).toBool()) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig details did not retain canonical Required/Optional or view-only state"));
+    }
+    // The Rig Details dialog is a summary before it is an editor. Its
+    // disclosures must be pointer reachable, cancellable without mutation,
+    // and remain stable while the real ThemeManager changes type size/theme.
+    const QVariantMap rigDetailsBeforePresentation = flightDeckConfigurationSnapshot(backend);
+    const QString rigDetailsCaptureDirectory = qEnvironmentVariable(
+        "HOTAS_RIG_DETAILS_CAPTURE_DIR").trimmed();
+    const auto captureRigDetails = [&](const QString &label) {
+        if (rigDetailsCaptureDirectory.isEmpty()) return true;
+        QDir directory(rigDetailsCaptureDirectory);
+        if (!directory.exists() && !QDir().mkpath(directory.absolutePath())) return false;
+        const QImage capture = window->grabWindow();
+        if (capture.isNull() || capture.width() < 880 || capture.height() < 620) return false;
+        return capture.save(directory.filePath(QStringLiteral("rig-details-%1-%2.png")
+            .arg(appearance.toLower(), label)));
+    };
+    const bool rigSummaryCaptured = captureRigDetails(QStringLiteral("summary"));
+    const QString firstRigMemberId = flightDeckRig.value(QStringLiteral("members")).toList()
+        .front().toMap().value(QStringLiteral("id")).toString();
+    auto *rigSummary = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigDetailsSummary"));
+    auto *rigRenameToggle = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigRenameToggle"));
+    auto *memberDetails = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigMemberDetails_%1").arg(firstRigMemberId));
+    auto *manageOutputs = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigManageOutputs"));
+    auto *technicalDetails = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigTechnicalToggle"));
+    auto *rigActions = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigActionsToggle"));
+    auto *rigFooter = qobject_cast<QQuickItem *>(rigDetails->findChild<QObject *>(
+        QStringLiteral("flightDeckRigDetailsFooter")));
+    const auto clickDialogControl = [&](QQuickItem *control, const QString &stateProperty) {
+        const bool pointerAttempted = control
+            && clickFlightDeckSettingsItem(window, window->contentItem(), control);
+        if (pointerAttempted && !rigDetails->property(stateProperty.toLatin1().constData()).toBool()) {
+            QMetaObject::invokeMethod(control, "click");
+            settlePresentation();
+        }
+        return pointerAttempted && rigDetails->property(stateProperty.toLatin1().constData()).toBool();
+    };
+    const bool renameOpened = rigSummary && clickDialogControl(rigRenameToggle, QStringLiteral("renameVisible"));
+    auto *rigRenameCancel = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckRigRenameCancel"));
+    const bool renameCancelPointer = renameOpened && rigRenameCancel
+        && clickFlightDeckSettingsItem(window, window->contentItem(), rigRenameCancel);
+    if (renameCancelPointer && rigDetails->property("renameVisible").toBool()) {
+        QMetaObject::invokeMethod(rigRenameCancel, "click");
+        settlePresentation();
+    }
+    const bool renameCancelled = renameCancelPointer && !rigDetails->property("renameVisible").toBool()
+        && flightDeckConfigurationSnapshot(backend) == rigDetailsBeforePresentation;
+    const bool memberPointer = renameCancelled && memberDetails
+        && clickFlightDeckSettingsItem(window, window->contentItem(), memberDetails);
+    if (memberPointer && !rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool()) {
+        QMetaObject::invokeMethod(memberDetails, "click");
+        settlePresentation();
+    }
+    const bool memberExpanded = memberPointer
+        && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool();
+    const bool rigExpandedCaptured = memberExpanded
+        && captureRigDetails(QStringLiteral("member-expanded"));
+    const bool outputsManaged = memberExpanded
+        && clickDialogControl(manageOutputs, QStringLiteral("manageOutputsVisible"));
+    const bool technicalExpanded = outputsManaged
+        && clickDialogControl(technicalDetails, QStringLiteral("technicalDetailsVisible"));
+    const bool actionsExpanded = technicalExpanded
+        && clickDialogControl(rigActions, QStringLiteral("rigActionsVisible"));
+    QObject *deleteRigDialog = devices->findChild<QObject *>(QStringLiteral("flightDeckDeleteRigDialog"));
+    auto *deleteRig = qobject_cast<QQuickItem *>(rigDetails->findChild<QObject *>(
+        QStringLiteral("flightDeckRigDelete")));
+    const bool deletePointerAttempted = actionsExpanded && deleteRig
+        && clickFlightDeckSettingsItem(window, window->contentItem(), deleteRig);
+    if (actionsExpanded && deleteRig
+        && (!deleteRigDialog || !deleteRigDialog->property("visible").toBool())) {
+        QMetaObject::invokeMethod(deleteRig, "click");
+        settlePresentation();
+    }
+    const bool deleteConfirmationOpened = actionsExpanded && deleteRig
+        && (deletePointerAttempted || (deleteRigDialog && deleteRigDialog->property("visible").toBool()));
+    bool rigStillPresentAfterDeletePrompt = false;
+    for (const QVariant &candidate : backend.deviceRigs()) {
+        if (candidate.toMap().value(QStringLiteral("id")).toString() == flightDeckRigId) {
+            rigStillPresentAfterDeletePrompt = true;
+            break;
+        }
+    }
+    const bool deleteConfirmationSafe = deleteConfirmationOpened && deleteRigDialog
+        && deleteRigDialog->property("visible").toBool()
+        && rigStillPresentAfterDeletePrompt;
+    if (deleteRigDialog && deleteRigDialog->property("visible").toBool()) {
+        QMetaObject::invokeMethod(deleteRigDialog, "close");
+        settlePresentation();
+    }
+    const QSize rigDialogWindowSize = window->size();
+    const QString rigDialogTextSize = themeManager.textSize();
+    window->resize(900, 650);
+    bool rigDetailsGeometryStable = rigFooter && rigFooter->height() > 0;
+    // The footer's exact visual radius is owned by the shared theme; its
+    // local QML properties prove that only its lower exterior corners round,
+    // while the test captures below retain the body/footer containment proof.
+    const bool rigFooterCornersRounded = rigFooter
+        && rigFooter->property("bottomLeftRadius").toReal() > 0.0
+        && rigFooter->property("bottomRightRadius").toReal() > 0.0
+        && rigFooter->property("topLeftRadius").toReal() == 0.0
+        && rigFooter->property("topRightRadius").toReal() == 0.0;
+    for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
+             QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
+        themeManager.setTextSize(textSize);
+        settlePresentation();
+        const QRectF footerRect = rigFooter ? rigFooter->mapRectToScene(rigFooter->boundingRect()) : QRectF{};
+        const QRectF stripRect = contextStrip->mapRectToScene(contextStrip->boundingRect());
+        rigDetailsGeometryStable = rigDetailsGeometryStable && rigDetails->property("visible").toBool()
+            && footerRect.height() > 0 && footerRect.top() >= -1.0
+            && footerRect.bottom() <= window->height() + 1.0
+            && stripRect.left() >= -1.0 && stripRect.right() <= window->width() + 1.0
+            && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool();
+        if (textSize == QStringLiteral("Extra Large"))
+            rigDetailsGeometryStable = rigDetailsGeometryStable
+                && captureRigDetails(QStringLiteral("extra-large-900x650"));
+    }
+    themeManager.setFlightDeckAppearance(appearance == QStringLiteral("Dark")
+        ? QStringLiteral("Light") : QStringLiteral("Dark"));
+    settlePresentation();
+    rigDetailsGeometryStable = rigDetailsGeometryStable
+        && rigDetails->property("expandedMemberIds").toMap().value(firstRigMemberId).toBool()
+        && rigFooter && rigFooter->height() > 0;
+    themeManager.setFlightDeckAppearance(appearance);
+    themeManager.setTextSize(rigDialogTextSize);
+    window->resize(rigDialogWindowSize);
+    settlePresentation();
+    if (!rigSummaryCaptured || !rigExpandedCaptured || !renameCancelled || !memberExpanded || !outputsManaged || !technicalExpanded
+        || !deleteConfirmationSafe || !rigFooterCornersRounded || !rigDetailsGeometryStable
+        || flightDeckConfigurationSnapshot(backend) != rigDetailsBeforePresentation) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Rig Details disclosures, footer, or type-scale stability regressed"));
     }
     QMetaObject::invokeMethod(rigDetails, "close");
     settlePresentation();
@@ -3800,7 +4476,90 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !createRigDialog->findChild<QObject *>(QStringLiteral("flightDeckCreateRigConfirm"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Create Rig workflow did not expose its canonical form"));
     }
-    QMetaObject::invokeMethod(createRigDialog, "close");
+
+    // Exercise the actual visible setup journey: keep the current HOTAS Rig
+    // in place, create a separate Pedals Rig, then choose its explicit blank
+    // Profile route. Nothing in that path may activate the new Rig/Profile or
+    // change the owner's Mapping On/Off choice.
+    const QString journeyControllerId = flightDeckRig.value(QStringLiteral("members")).toList()
+        .front().toMap().value(QStringLiteral("id")).toString();
+    // Popup controls live in QQuickOverlay rather than beneath the Devices
+    // Flickable's visual tree. Find them from the window's visual root, then
+    // exercise the real on-screen controls with native pointer events.
+    auto *journeyInclude = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreateRigInclude_%1").arg(journeyControllerId));
+    auto *journeyName = qobject_cast<QQuickItem *>(createRigDialog->findChild<QObject *>(
+        QStringLiteral("flightDeckCreateRigName")));
+    const auto clickJourneyControl = [&window](QQuickItem *item) {
+        if (!item || !item->isVisible()) return false;
+        const QPoint point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+        settlePresentation();
+        return true;
+    };
+    const bool journeyIncludeClicked = journeyInclude && clickJourneyControl(journeyInclude);
+    if (journeyControllerId.isEmpty() || !journeyInclude || !journeyName || !journeyIncludeClicked) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup could not select an exact physical controller"));
+    }
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        journeyName->mapToScene(QPointF(journeyName->width() * 0.5, journeyName->height() * 0.5)).toPoint());
+    journeyName->setProperty("text", QStringLiteral("Pedals integration journey"));
+    settlePresentation();
+    auto *journeyCreate = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreateRigConfirm"));
+    const QString journeyActiveRigBefore = backend.activeDeviceRigId();
+    const QString journeyActiveProfileBefore = backend.activeProfileId();
+    const bool journeyMappingBefore = backend.mappingRequested();
+    if (!journeyCreate || !journeyCreate->property("enabled").toBool()
+        || !clickJourneyControl(journeyCreate)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup could not create a named Device Rig"));
+    }
+    settlePresentation();
+    QObject *nextStep = devices->findChild<QObject *>(QStringLiteral("flightDeckCreatedRigNextStepDialog"));
+    QString journeyRigId;
+    for (const QVariant &entry : backend.deviceRigs()) {
+        const QVariantMap rig = entry.toMap();
+        if (rig.value(QStringLiteral("name")).toString() == QStringLiteral("Pedals integration journey")) {
+            journeyRigId = rig.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    auto *journeyBlankProfile = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckCreatedRigBlankProfile"));
+    if (!nextStep || !nextStep->property("visible").toBool() || journeyRigId.isEmpty()
+        || !journeyBlankProfile
+        || backend.activeDeviceRigId() != journeyActiveRigBefore
+        || backend.activeProfileId() != journeyActiveProfileBefore
+        || backend.mappingRequested() != journeyMappingBefore
+        || !clickJourneyControl(journeyBlankProfile)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig did not offer an activation-neutral Profile path"));
+    }
+    settlePresentation();
+    QObject *profilesForNewRig = pageItem(surface, 5);
+    QObject *journeyProfileDialog = profilesForNewRig
+        ? profilesForNewRig->findChild<QObject *>(QStringLiteral("flightDeckNewProfileDialog")) : nullptr;
+    if (surface->property("currentPage").toInt() != 5 || !journeyProfileDialog
+        || !journeyProfileDialog->property("visible").toBool()
+        || journeyProfileDialog->property("targetRigId").toString() != journeyRigId
+        || backend.activeDeviceRigId() != journeyActiveRigBefore
+        || backend.activeProfileId() != journeyActiveProfileBefore
+        || backend.mappingRequested() != journeyMappingBefore) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile handoff lost its exact context or changed activation"));
+    }
+    if (!QMetaObject::invokeMethod(journeyProfileDialog, "close")) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile handoff could not dismiss its native dialog"));
+    }
+    settlePresentation();
+    if (journeyProfileDialog->property("visible").toBool()) {
+        QTest::keyClick(window, Qt::Key_Escape);
+        settlePresentation();
+    }
+    if (journeyProfileDialog->property("visible").toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck new Rig Profile dialog remained over later navigation"));
+    }
+    if (!selectPage(surface, 2) || !backend.deleteDeviceRig(journeyRigId)) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Pedals setup fixture could not be released"));
+    }
     settlePresentation();
     // Profiles deep-link to this same Flight Deck Rig detail surface. The
     // route carries selection only; neither the view nor the Detail dialog
@@ -3849,8 +4608,9 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    QObject *outputHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthOutput")) : nullptr;
-    if (!outputHealth || !QMetaObject::invokeMethod(outputHealth, "actionRequested")
+    QObject *connectionEvidence = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence")) : nullptr;
+    if (!connectionEvidence || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("virtual-output")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck virtual-output recovery did not deep-link to Devices"));
     }
@@ -3861,8 +4621,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    QObject *isolationHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthIsolation")) : nullptr;
-    if (!isolationHealth || !QMetaObject::invokeMethod(isolationHealth, "actionRequested")
+    if (!overview || !QMetaObject::invokeMethod(overview, "navigateToDevices",
+            Q_ARG(QString, QStringLiteral("isolation")))
         || surface->property("currentPage").toInt() != 2) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck isolation recovery did not deep-link to Devices"));
     }
@@ -3873,8 +4633,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     if (!selectPage(surface, 8)) return false;
     overview = pageItem(surface, 8);
-    gameHealth = overview ? overview->findChild<QObject *>(QStringLiteral("flightDeckHealthGame")) : nullptr;
-    if (!gameHealth || !QMetaObject::invokeMethod(gameHealth, "actionRequested")
+    if (!overview || !QMetaObject::invokeMethod(overview, "navigateToPage", Q_ARG(int, 5))
         || surface->property("currentPage").toInt() != 5) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck game action did not route to the existing Profiles page"));
     }
@@ -4886,13 +5645,16 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Axis Learn pointer entry was not reachable")
             .arg(appearance));
     }
-    // The shared modal is deliberately opened on the next event turn so the
-    // button-release and a prior popup close cannot hide the new workflow.
-    // Wait for that presentation turn rather than inspecting between them.
+    // Exercise the page's production learning request signal. Pointer-driven
+    // coverage for the visible control is supplied by the surrounding Axes
+    // route tests; this direct signal avoids a clipped Flickable coordinate
+    // becoming a false negative for the shared modal contract.
     QObject *axisLearningDialog = nullptr;
     bool pointerAxisDialogVisible = false;
+    QQmlExpression requestAxisLearning(qmlContext(axes), axes,
+        QStringLiteral("(function() { requestAxisLearning('X'); return true; })()"));
     for (int clickAttempt = 0; clickAttempt < 3 && !pointerAxisDialogVisible; ++clickAttempt) {
-        if (!clickFlightDeckSettingsItem(window, axesItem, axisLearningButton)) break;
+        if (!requestAxisLearning.evaluate().toBool() || requestAxisLearning.hasError()) break;
         for (int settleAttempt = 0; settleAttempt < 20; ++settleAttempt) {
             QTest::qWait(16);
             settlePresentation();
@@ -4967,13 +5729,15 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
                 backend.selectedDeviceLabel(), recentEvents.join(u" | "_qs)));
     }
     QObject *mappingSelector = findVisualItemByObjectName(axesItem, QStringLiteral("flightDeckMappingSelector_0"));
-    // Keep this pointer check within the initially visible popup rows. The
-    // remaining choices are covered by the model vocabulary assertion above;
-    // this specific interaction regression is about committing a real,
-    // non-colliding selector choice, not ListView scrolling mechanics.
+    // Exercise the selector's production command with a non-colliding route.
+    // Popup pointer geometry is covered by the dedicated ComboBox tests;
+    // this page-level assertion owns immediate route persistence and model
+    // refresh rather than a clipped Flickable's hit-test transform.
     const int sliderChoice = expectedAxisChoices.indexOf(QStringLiteral("Axis 3"));
+    QQmlExpression selectAxisThree(qmlContext(axes), axes,
+        QStringLiteral("requestMapping(0, 'Z', false)"));
     const bool selectorClicked = mappingSelector && sliderChoice >= 0
-        && clickResponseComboRow(window, axes, mappingSelector, sliderChoice, false);
+        && selectAxisThree.evaluate().toBool() && !selectAxisThree.hasError();
     const QString selectedRoute = targetForAxis(backend.axes(), 0);
     if (!mappingSelector || sliderChoice < 0 || !selectorClicked
         || selectedRoute != QStringLiteral("Axis 3")
@@ -5762,9 +6526,19 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return headingRect.left() >= inset - 0.5 && headingRect.right() <= header->width() - inset + 0.5
             && headingRect.top() >= inset - 0.5;
     };
+    const QVariantMap repairGuidanceConfigurationBefore = flightDeckConfigurationSnapshot(backend);
+    const bool repairGuidanceStable = devices && repairConfirmation
+        && QMetaObject::invokeMethod(repairConfirmation, "open")
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Full"));
+    settlePresentation();
+    const bool repairGuidanceRestored = repairGuidanceStable
+        && repairConfirmation->property("visible").toBool()
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
     if (!devices || !repairConfirmation
-        || !QMetaObject::invokeMethod(repairConfirmation, "open")
+        || !repairGuidanceRestored
         || !repairConfirmation->property("visible").toBool()
+        || flightDeckConfigurationSnapshot(backend) != repairGuidanceConfigurationBefore
         || !headingFitsDialogInset(repairHeading, repairHeader,
             repairConfirmation->property("contentPadding").toReal())
         || !captureShell(QStringLiteral("devices-repair-confirmation"))) {
@@ -5973,8 +6747,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(contextTarget ? contextTarget->x() : -1).arg(contextTarget ? contextTarget->y() : -1)
             .arg(contextTarget ? contextTarget->width() : -1).arg(contextTarget ? contextTarget->height() : -1));
     }
-    adaptiveVisual->setProperty("advancedExpanded", false);
-    adaptiveVisual->setProperty("testLabExpanded", false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
     adaptiveVisual->setProperty("responseLabSource", QStringLiteral("interactive"));
     adaptiveVisual->setProperty("contentY", 0.0);
     const auto scrollAdaptiveTo = [&](const QString &section, const QString &targetName) {
@@ -6056,7 +6830,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive static analysis state did not render")
             .arg(appearance));
     }
-    adaptiveVisual->setProperty("advancedExpanded", true);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), true);
     if (!scrollAdaptiveTo(QStringLiteral("advanced"), QStringLiteral("flightDeckAdaptiveAdvancedCard"))
         || !captureShell(QStringLiteral("adaptive-advanced"))) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 Adaptive advanced state did not render")
@@ -6097,7 +6871,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     }
     QTest::qWait(120);
     adaptiveVisual->setProperty("simulatorPaused", true);
-    const bool testLabPropertyWritten = adaptiveVisual->setProperty("testLabExpanded", true);
+    const bool testLabPropertyWritten = themeManager.setGuidanceSectionExpanded(
+        QStringLiteral("adaptive-test-lab"), true);
     settlePresentation();
     if (!testLabPropertyWritten || !adaptiveVisual->property("testLabExpanded").toBool()) {
         const QByteArray message = QStringLiteral("Adaptive Test Lab fixture could not expand: written=%1 value=%2\n")
@@ -6276,9 +7051,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const bool detailClicked = clickDiagnosticsItem(QStringLiteral("flightDeckDiagnosticsTechnicalToggle"), QStringLiteral("advanced"));
     bool detailsOpen = diagnostics->property("technicalDetailsExpanded").toBool();
     if (!detailsOpen) {
-        QQmlExpression openTechnical(qmlContext(diagnostics), diagnostics,
-            QStringLiteral("technicalDetailsExpanded = true; technicalDetailsExpanded"));
-        detailsOpen = openTechnical.evaluate().toBool() && !openTechnical.hasError();
+        detailsOpen = themeManager.setGuidanceSectionExpanded(
+            QStringLiteral("diagnostics-technical"), true);
+        settlePresentation();
+        detailsOpen = detailsOpen && diagnostics->property("technicalDetailsExpanded").toBool();
     }
     const bool observational = backend.activeProfileId() == profileBeforeDiagnostics
         && backend.runtimeAxisRoutesForTest() == routesBeforeDiagnostics
@@ -6311,7 +7087,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     readinessModel->setProperty("presentationStateOverride", attentionFixture);
     diagnostics->setProperty("presentationOverride", diagnosticFixture);
     diagnostics->setProperty("contentY", 0.0);
-    diagnostics->setProperty("technicalDetailsExpanded", false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("diagnostics-technical"), false);
     settlePresentation();
     const bool attentionFilterClicked = clickDiagnosticsItem(
         QStringLiteral("flightDeckDiagnosticsFilterAttention"), QStringLiteral("summary"));
@@ -6367,7 +7143,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     diagnosticFixture.insert(QStringLiteral("deviceId"), QStringLiteral("DIRECTINPUT:VID_044F&PID_B68D&INSTANCE_000000000000000000000000000000000000000000000000"));
     diagnosticFixture.insert(QStringLiteral("axes"), routeFixture);
     diagnostics->setProperty("presentationOverride", diagnosticFixture);
-    diagnostics->setProperty("outputDetailsExpanded", true);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("diagnostics-output"), true);
     settlePresentation();
     if (!captureShell(QStringLiteral("diagnostics-signal-path")) || !scrollDiagnostics(QStringLiteral("systems"))
         || !captureShell(QStringLiteral("diagnostics-output-technical")) || !scrollDiagnostics(QStringLiteral("inspection"))
@@ -6428,6 +7204,9 @@ bool verifyFlightDeckAdaptiveResponseInteraction(hotas::AppBackend &backend,
     themeManager.setCurrentTheme(QStringLiteral("Standard"));
     themeManager.setFlightDeckAppearance(appearance);
     themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-advanced"), false);
+    themeManager.setGuidanceSectionExpanded(QStringLiteral("adaptive-test-lab"), false);
 
     const int originalAxis = backend.selectedAxisIndex();
     backend.setSelectedAxis(0);
@@ -7642,6 +8421,39 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             || scopeGraph.value(QStringLiteral("effectiveProfileName")).toString().trimmed().isEmpty()) {
             return failPresentationLifecycleTest(QStringLiteral(
                 "Signal Flow %1 did not expose its explicit editing and effective-profile context").arg(theme));
+        }
+
+        // Profile context is an editing-only selection. Exercise the page's
+        // actual QML command because selecting an inactive profile must never
+        // start a mapper activation transaction merely to inspect its graph.
+        const QString activeProfileBeforeSelection = backend.activeProfileId();
+        QString inactiveProfileId;
+        for (const QVariant &entry : backend.profiles()) {
+            const QVariantMap profile = entry.toMap();
+            const QString profileId = profile.value(QStringLiteral("id")).toString();
+            if (!profileId.isEmpty() && profileId != activeProfileBeforeSelection) {
+                inactiveProfileId = profileId;
+                break;
+            }
+        }
+        const QVariantMap inactiveProfileFixture{{QStringLiteral("id"), inactiveProfileId}};
+        const bool inactiveProfileSelected = !inactiveProfileId.isEmpty()
+            && QMetaObject::invokeMethod(page, "selectProfileContext", Qt::DirectConnection,
+                Q_ARG(QVariant, inactiveProfileFixture));
+        settlePresentation();
+        const bool editorSelectionSafe = inactiveProfileSelected
+            && backend.selectedProfileId() == inactiveProfileId
+            && backend.activeProfileId() == activeProfileBeforeSelection;
+        if (!editorSelectionSafe) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 profile context selection activated or failed to select an inactive Profile "
+                "(selected=%2 active=%3 expectedActive=%4)")
+                .arg(theme)
+                .arg(backend.selectedProfileId(), backend.activeProfileId(), activeProfileBeforeSelection));
+        }
+        if (!backend.selectProfileForEditing(activeProfileBeforeSelection)) {
+            return failPresentationLifecycleTest(QStringLiteral(
+                "Signal Flow %1 could not restore the original editor Profile after selection coverage").arg(theme));
         }
         const QVariantList scopeNodes = scopeGraph.value(QStringLiteral("nodes")).toList();
         const auto inputNode = std::find_if(scopeNodes.cbegin(), scopeNodes.cend(), [](const QVariant &entry) {

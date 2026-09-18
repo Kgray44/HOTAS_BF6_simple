@@ -14,6 +14,10 @@ constexpr auto kThemeKey = "presentation/uiTheme";
 constexpr auto kExperienceKey = "presentation/uxExperience";
 constexpr auto kFlightDeckAppearanceKey = "presentation/flightDeckAppearance";
 constexpr auto kTextSizeKey = "presentation/textSize";
+constexpr auto kGuidanceLevelKey = "presentation/guidanceLevel";
+constexpr auto kGuidanceOnboardingKey = "presentation/guidanceOnboardingVersion";
+constexpr auto kGuidanceSectionsPrefix = "presentation/guidanceSections/";
+constexpr auto kGuidanceOnboardingVersion = 1;
 
 QString defaultSettingsFilePath()
 {
@@ -29,7 +33,7 @@ ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
     , m_settingsFilePath(settingsFilePath.isEmpty() ? defaultSettingsFilePath() : settingsFilePath)
 {
     QSettings stored(m_settingsFilePath, QSettings::IniFormat);
-    // Flight Deck is the first-run presentation.  Do not overwrite an
+    // Flight Deck is the first-run presentation. Do not overwrite an
     // explicit existing-theme choice made by an earlier build that predates
     // the separate experience key: either persisted presentation key is
     // sufficient evidence of user intent.
@@ -47,13 +51,27 @@ ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
     // mapping, profile, or device-rig setting.
     m_textSize = normalizedTextSize(
         stored.value(QLatin1String(kTextSizeKey), u"Medium"_qs).toString());
-    // Persist the production first-run choice.  This keeps a fresh install
-    // deterministic without overwriting any presentation selection saved by
-    // an earlier version.
-    if (!hasExplicitPresentation) {
-        stored.setValue(QLatin1String(kExperienceKey), m_currentExperience);
-        stored.setValue(QLatin1String(kFlightDeckAppearanceKey), m_flightDeckAppearance);
-        stored.sync();
+    // Do not write a default before guidance has classified the installation.
+    // In particular, a backend's normal first-run defaults must not turn an
+    // empty install into a fake returning user. Main constructs this object
+    // before AppBackend for exactly that reason.
+    const bool established = hasEstablishedInstallation(stored);
+    const QString persistedGuidance = stored.value(QLatin1String(kGuidanceLevelKey)).toString();
+    if (persistedGuidance.compare(u"Guided"_qs, Qt::CaseInsensitive) == 0
+        || persistedGuidance.compare(u"Full"_qs, Qt::CaseInsensitive) == 0) {
+        m_guidanceLevel = normalizedGuidanceLevel(persistedGuidance);
+        m_guidanceLevelPersisted = true;
+        m_guidanceOnboardingPending = false;
+    } else if (established) {
+        // An upgrade remains non-intrusive. It uses the compatible Full
+        // default in memory and writes nothing until the owner changes it.
+        m_guidanceLevel = u"Full"_qs;
+        m_guidanceOnboardingPending = false;
+    } else {
+        // A genuine first use offers the two choices before any normal
+        // startup default is written. Skip is a durable Guided choice.
+        m_guidanceLevel = u"Guided"_qs;
+        m_guidanceOnboardingPending = true;
     }
 }
 
@@ -75,6 +93,11 @@ QStringList ThemeManager::themeChoices() const
 QStringList ThemeManager::experienceChoices() const
 {
     return {u"Existing"_qs, u"Flight Deck"_qs};
+}
+
+QStringList ThemeManager::guidanceChoices() const
+{
+    return {u"Guided"_qs, u"Full"_qs};
 }
 
 QString ThemeManager::currentPresentationId() const
@@ -127,10 +150,19 @@ void ThemeManager::setCurrentTheme(const QString &theme)
 void ThemeManager::setCurrentExperience(const QString &experience)
 {
     const QString normalized = normalizedExperience(experience);
-    if (m_currentExperience == normalized) return;
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    // A returning installation can inherit the compatible default without a
+    // presentation key. Choosing the already-visible experience is still an
+    // explicit preference and should be retained for the next launch.
+    if (m_currentExperience == normalized) {
+        if (stored.value(QLatin1String(kExperienceKey)).toString() != normalized) {
+            stored.setValue(QLatin1String(kExperienceKey), normalized);
+            stored.sync();
+        }
+        return;
+    }
 
     m_currentExperience = normalized;
-    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
     stored.setValue(QLatin1String(kExperienceKey), m_currentExperience);
     stored.sync();
     emit experienceChanged();
@@ -188,6 +220,59 @@ void ThemeManager::selectPresentation(const QString &presentationId)
     }
 }
 
+bool ThemeManager::chooseGuidanceLevel(const QString &level)
+{
+    const QString normalized = normalizedGuidanceLevel(level);
+    // Unknown values must never become an accidental advanced mode.
+    if (level.trimmed().compare(u"Guided"_qs, Qt::CaseInsensitive) != 0
+        && level.trimmed().compare(u"Full"_qs, Qt::CaseInsensitive) != 0) {
+        return false;
+    }
+    if (m_guidanceLevel == normalized && m_guidanceLevelPersisted
+        && !m_guidanceOnboardingPending) {
+        return true;
+    }
+    if (!persistGuidanceLevel(normalized, true)) return false;
+    const bool levelChanged = m_guidanceLevel != normalized;
+    const bool onboardingChanged = m_guidanceOnboardingPending;
+    m_guidanceLevel = normalized;
+    m_guidanceLevelPersisted = true;
+    m_guidanceOnboardingPending = false;
+    if (levelChanged) emit guidanceLevelChanged();
+    if (onboardingChanged) emit guidanceOnboardingChanged();
+    advanceGuidancePolicyRevision();
+    return true;
+}
+
+bool ThemeManager::skipGuidanceOnboarding()
+{
+    return chooseGuidanceLevel(u"Guided"_qs);
+}
+
+bool ThemeManager::guidanceSectionExpanded(const QString &sectionId) const
+{
+    const QString normalizedSection = sectionId.trimmed();
+    if (normalizedSection.isEmpty()) return false;
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    const QString key = QLatin1String(kGuidanceSectionsPrefix) + normalizedSection;
+    if (stored.contains(key)) return stored.value(key).toBool();
+    return defaultGuidanceSectionExpanded(normalizedSection);
+}
+
+bool ThemeManager::setGuidanceSectionExpanded(const QString &sectionId, bool expanded)
+{
+    const QString normalizedSection = sectionId.trimmed();
+    if (normalizedSection.isEmpty()) return false;
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    const QString key = QLatin1String(kGuidanceSectionsPrefix) + normalizedSection;
+    if (stored.contains(key) && stored.value(key).toBool() == expanded) return true;
+    stored.setValue(key, expanded);
+    stored.sync();
+    if (stored.status() != QSettings::NoError) return false;
+    advanceGuidancePolicyRevision();
+    return true;
+}
+
 QString ThemeManager::normalizedTheme(const QString &theme)
 {
     const QString normalized = theme.trimmed();
@@ -223,6 +308,51 @@ QString ThemeManager::normalizedTextSize(const QString &size)
         return u"Extra Large"_qs;
     }
     return u"Medium"_qs;
+}
+
+QString ThemeManager::normalizedGuidanceLevel(const QString &level)
+{
+    if (level.trimmed().compare(u"Full"_qs, Qt::CaseInsensitive) == 0) return u"Full"_qs;
+    return u"Guided"_qs;
+}
+
+bool ThemeManager::hasEstablishedInstallation(const QSettings &stored) const
+{
+    // This checks only durable UI/configuration markers, not hardware count
+    // or a current device report. A controller being disconnected is not a
+    // first-use signal. The keys are intentionally read-only here.
+    return stored.contains(QLatin1String(kThemeKey))
+        || stored.contains(QLatin1String(kExperienceKey))
+        || stored.contains(QLatin1String(kFlightDeckAppearanceKey))
+        || stored.contains(QLatin1String(kTextSizeKey))
+        || stored.contains(u"mapper/config"_qs)
+        || stored.contains(u"profiles/active"_qs)
+        || stored.contains(u"setupAssistant/task-v1"_qs);
+}
+
+bool ThemeManager::persistGuidanceLevel(const QString &level, bool onboardingHandled)
+{
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    stored.setValue(QLatin1String(kGuidanceLevelKey), level);
+    if (onboardingHandled)
+        stored.setValue(QLatin1String(kGuidanceOnboardingKey), kGuidanceOnboardingVersion);
+    stored.sync();
+    return stored.status() == QSettings::NoError;
+}
+
+bool ThemeManager::defaultGuidanceSectionExpanded(const QString &sectionId) const
+{
+    Q_UNUSED(sectionId);
+    // Full surfaces advanced context sooner. Guided retains every capability
+    // behind an explicit, keyboard-accessible disclosure rather than hiding
+    // or changing it. Explicit per-section settings always win above.
+    return m_guidanceLevel == u"Full"_qs;
+}
+
+void ThemeManager::advanceGuidancePolicyRevision()
+{
+    ++m_guidancePolicyRevision;
+    emit guidancePolicyChanged();
 }
 
 } // namespace hotas

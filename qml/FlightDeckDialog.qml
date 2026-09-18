@@ -19,6 +19,7 @@ Dialog {
         (parent ? parent.height : implicitHeight) - tokens.space48)
     readonly property int maximumBodyHeight: Math.max(tokens.controlHeight,
         maximumViewportHeight - (header ? header.implicitHeight : 0)
+        - (footer ? footer.implicitHeight : 0)
         - contentPadding * 2)
 
     parent: Overlay.overlay

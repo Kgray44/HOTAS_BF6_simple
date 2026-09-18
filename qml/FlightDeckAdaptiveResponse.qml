@@ -18,9 +18,21 @@ Flickable {
     property string scenario: "Human-Like Rapid Reversal"
     property int contextEpoch: 0
     property int telemetryEpoch: 0
-    property bool advancedExpanded: false
-    property bool testLabExpanded: false
-    property bool advancedTracesExpanded: false
+    // These disclosures use one persisted presentation policy. Full starts
+    // with complete engineering context; Guided keeps the same controls one
+    // explicit button away. The backend state is never altered here.
+    readonly property bool advancedExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("adaptive-advanced")
+    }
+    readonly property bool testLabExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("adaptive-test-lab")
+    }
+    readonly property bool advancedTracesExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("adaptive-traces")
+    }
     property bool showPhysicalTrace: true
     property bool showPredictedTrace: true
     property bool showOutputTrace: true
@@ -2791,7 +2803,7 @@ Flickable {
                         border.color: advancedToggle.activeFocus ? deck.focus : deck.border
                         border.width: advancedToggle.activeFocus ? 2 : 1
                     }
-                    onClicked: root.advancedExpanded = !root.advancedExpanded
+                    onClicked: themeManager.setGuidanceSectionExpanded("adaptive-advanced", !root.advancedExpanded)
                 }
                 Column {
                     id: advancedTuningContent
@@ -3696,7 +3708,7 @@ Flickable {
                             DeckButton {
                                 text: root.advancedTracesExpanded ? "HIDE ADVANCED TRACES" : "ADVANCED TRACES"
                                 subdued: true
-                                onClicked: root.advancedTracesExpanded = !root.advancedTracesExpanded
+                                onClicked: themeManager.setGuidanceSectionExpanded("adaptive-traces", !root.advancedTracesExpanded)
                             }
                             TraceLegend {
                                 objectName: "flightDeckTraceBaseline"
@@ -4062,7 +4074,7 @@ Flickable {
                         border.color: testLabToggle.activeFocus ? deck.focus : deck.border
                         border.width: testLabToggle.activeFocus ? 2 : 1
                     }
-                    onClicked: root.testLabExpanded = !root.testLabExpanded
+                    onClicked: themeManager.setGuidanceSectionExpanded("adaptive-test-lab", !root.testLabExpanded)
                 }
                 Column {
                     id: testLabDetails

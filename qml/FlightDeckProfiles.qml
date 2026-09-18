@@ -63,6 +63,10 @@ Flickable {
     signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
+    // The shell owns the request value. A one-shot handoff must clear it
+    // after this page has consumed it, otherwise recreating the lazy Profile
+    // page can reopen a stale dialog and pull later navigation back here.
+    signal profileCreationRequestConsumed()
     signal presentationStateCaptured(var state)
 
     readonly property var categories: categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined ? categoriesPresentationOverride : backend.profileCategories
@@ -312,6 +316,7 @@ Flickable {
         if (!token || token === consumedProfileCreationToken)
             return;
         consumedProfileCreationToken = token;
+        profileCreationRequestConsumed();
         const mode = String(request.mode || "choose");
         if (mode === "choose") {
             compatibleRigId = String(request.rigId || "");
@@ -1231,6 +1236,14 @@ Flickable {
         x: deck.space4
         width: root.width - deck.space8
         spacing: deck.space16
+
+        FlightDeckGuidanceCallout {
+            tokens: deck
+            guidedTitle: "NEXT DECISION · PROFILE LIBRARY"
+            guidedText: "Choose the profile that matches this rig and review whether it is active, automatic, or only being edited."
+            fullTitle: "PROFILE EDITING CONTEXT"
+            fullText: "Library, association, and direct-management details remain available in place."
+        }
 
         RowLayout {
             Layout.fillWidth: true
