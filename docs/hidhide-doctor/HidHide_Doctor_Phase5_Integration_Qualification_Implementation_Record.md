@@ -23,6 +23,18 @@
   Staged `--startup-smoke` and read-only `--scan-smoke` each exited 0. This
   records local candidate provenance only; it does not qualify repair,
   accessibility, cross-machine behavior, or release.
+- Current forensic owner-review-fixture candidate: `e8dcd71`. Its full local
+  CTest run at `C:\hotas-builds\hidhide-doctor-phase5-addendum1` passed all
+  18 registered tests in 241.99 seconds with the same 180-second timeout
+  bound. The newly added fixture is staged in
+  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R5`; all 1,387 payload files
+  match the stage manifest by path, byte count, and SHA-256. The manifest
+  SHA-256 is `11D6C061E08CF0A3644BF4E6C2CEE124901FCDAD6BE81235C0263275EB97C70E`;
+  `HidHide Doctor.exe` is
+  `E6620839285D58F39BE57984218822C063AD242B26E82D71EB377866FD79002F`.
+  The staged `Forensic Evidence Review` fixture completed headlessly with exit
+  0. It remains simulated, explicitly labelled review evidence—not a repair
+  action or a substitute for the required owner-machine scan.
 - Current crash-fix and bundle-folder product candidate:
   `0846edfc73b282660fcf2d410d9523d5e0545cb1`. Its staged `2.6.2` package is
   `C:\hotas-builds\hidhide-doctor-phase5-rc-0846edf-crashfix-stage`; it has
