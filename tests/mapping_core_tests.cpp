@@ -867,6 +867,7 @@ private slots:
     void controllerRegistryPersistsPerDeviceCalibrationAndRequirements();
     void directInputAxesUseDeterministicNativeStateFields();
     void nativeAxisIdentityIsIndependentOfEnumerationOrder();
+    void saitekRzObjectIdentityOverridesContradictoryStateOffset();
     void directInputOffsetAccessIgnoresEnumerationOrder();
     void nativeAxisNormalizationUsesObservedRange();
     void nativeAxisAcquisitionEvidencePersists();
@@ -4435,6 +4436,33 @@ void MappingCoreTests::nativeAxisIdentityIsIndependentOfEnumerationOrder()
         QCOMPARE(physicalAxisIndexForDirectInputOffset(scrambled[static_cast<size_t>(index)]),
                  static_cast<int>(expected[static_cast<size_t>(index)]));
     }
+}
+
+void MappingCoreTests::saitekRzObjectIdentityOverridesContradictoryStateOffset()
+{
+    // Fixture from the physical Saitek Pro Flight Rudder Pedals capture:
+    // `Z Rotation` reports GUID_RzAxis and dwOfs=DIJOFS_Z, while movement
+    // changes DIJOYSTATE2::lRz (not lZ). Keep the raw offset as evidence but
+    // bind to the stable native-object GUID for runtime acquisition.
+    DIDEVICEOBJECTINSTANCEW object{};
+    object.guidType = GUID_RzAxis;
+    object.dwOfs = DIJOFS_Z;
+    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Rz));
+
+    DIJOYSTATE2 state{};
+    state.lZ = 0;
+    state.lRz = 65535;
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
+        physicalAxisIndexForDirectInputObject(object))), 65535L);
+
+    object.guidType = GUID_XAxis;
+    object.dwOfs = DIJOFS_RZ;
+    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::X));
+
+    // Unknown object GUIDs preserve the established offset fallback.
+    object.guidType = GUID_Slider;
+    object.dwOfs = DIJOFS_SLIDER(1);
+    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Slider1));
 }
 
 void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()

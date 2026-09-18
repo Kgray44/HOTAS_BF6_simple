@@ -1,4 +1,5 @@
 #include "app_backend.h"
+#include "config_store.h"
 #include "contention_resilience_controller.h"
 #include "crash_diagnostics.h"
 #include "hotas_build_version.h"
@@ -9,11 +10,14 @@
 #include "theme_manager.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QIcon>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QQmlError>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -21,11 +25,16 @@
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QTextStream>
+#include <QThread>
 #include <QUrl>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <limits>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -41,6 +50,157 @@ bool hasArgument(int argc, char *argv[], const char *argument)
         if (std::strcmp(argv[index], argument) == 0) return true;
     }
     return false;
+}
+
+QString argumentValue(int argc, char *argv[], const char *prefix)
+{
+    const size_t prefixLength = std::strlen(prefix);
+    for (int index = 1; index < argc; ++index) {
+        if (std::strncmp(argv[index], prefix, prefixLength) == 0) {
+            return QString::fromLocal8Bit(argv[index] + prefixLength).trimmed();
+        }
+    }
+    return {};
+}
+
+QString selectedDirectInputId(const hotas::MapperConfiguration &configuration)
+{
+    if (const hotas::DeviceRig *rig = hotas::findDeviceRig(configuration, configuration.activeDeviceRigId)) {
+        for (const hotas::DeviceRigMember &member : rig->members) {
+            if (!member.enabled) continue;
+            for (const hotas::SavedControllerRecord &record : configuration.savedControllers) {
+                if (record.id == member.controllerRecordId && !record.lastDirectInputId.trimmed().isEmpty()) {
+                    return record.lastDirectInputId.trimmed();
+                }
+            }
+        }
+    }
+    for (const hotas::SavedControllerRecord &record : configuration.savedControllers) {
+        if (record.id == configuration.activeControllerRecordId) return record.lastDirectInputId.trimmed();
+    }
+    return configuration.preferredDeviceId.trimmed();
+}
+
+struct AxisHotPathTarget {
+    QString directInputId;
+    QString controllerRecordId;
+    int memberIndex = -1;
+    bool rzDescriptorPresent = false;
+};
+
+AxisHotPathTarget selectedAxisHotPathTarget(const hotas::MapperConfiguration &configuration)
+{
+    AxisHotPathTarget target;
+    target.directInputId = selectedDirectInputId(configuration);
+    if (target.directInputId.isEmpty()) return target;
+
+    if (!configuration.activeDeviceRigId.isEmpty()) {
+        const hotas::CompiledDeviceRigRuntime compiled = hotas::compileDeviceRigRuntime(
+            configuration, configuration.activeDeviceRigId, configuration.activeProfileId);
+        if (compiled.valid) {
+            for (int index = 0; index < compiled.memberCount; ++index) {
+                const hotas::CompiledDeviceRigMember &member = compiled.members[static_cast<size_t>(index)];
+                if (member.directInputId.compare(target.directInputId, Qt::CaseInsensitive) != 0) continue;
+                target.memberIndex = index;
+                target.controllerRecordId = member.controllerRecordId;
+                break;
+            }
+        }
+    }
+
+    for (const hotas::SavedControllerRecord &record : configuration.savedControllers) {
+        if (record.id != target.controllerRecordId
+            && record.lastDirectInputId.compare(target.directInputId, Qt::CaseInsensitive) != 0) continue;
+        target.controllerRecordId = record.id;
+        target.rzDescriptorPresent = record.axisDescriptors[static_cast<size_t>(hotas::PhysicalAxis::Rz)].present;
+        break;
+    }
+    return target;
+}
+
+QString directInputStateFieldName(hotas::PhysicalAxis axis)
+{
+    switch (axis) {
+    case hotas::PhysicalAxis::X: return QStringLiteral("lX");
+    case hotas::PhysicalAxis::Y: return QStringLiteral("lY");
+    case hotas::PhysicalAxis::Z: return QStringLiteral("lZ");
+    case hotas::PhysicalAxis::Rx: return QStringLiteral("lRx");
+    case hotas::PhysicalAxis::Ry: return QStringLiteral("lRy");
+    case hotas::PhysicalAxis::Rz: return QStringLiteral("lRz");
+    case hotas::PhysicalAxis::Slider0: return QStringLiteral("rglSlider[0]");
+    case hotas::PhysicalAxis::Slider1: return QStringLiteral("rglSlider[1]");
+    }
+    return QStringLiteral("unknown");
+}
+
+int runAxisHotPathValidation()
+{
+    // This is a diagnostic-only worker run. Mapping stays off, so the real
+    // report loop can be observed without acquiring, neutralizing, or writing
+    // a virtual output. It neither persists configuration nor changes a
+    // physical device.
+    const hotas::MapperConfiguration configuration = hotas::ConfigStore::load();
+    const AxisHotPathTarget target = selectedAxisHotPathTarget(configuration);
+    if (target.directInputId.isEmpty() || (hotas::hasActiveDeviceRigRuntime(configuration) && target.memberIndex < 0)) {
+        return -2;
+    }
+    hotas::MappingWorker worker(configuration);
+    worker.setMappingEnabled(false);
+    worker.start(QThread::HighPriority);
+
+    constexpr size_t rz = static_cast<size_t>(hotas::PhysicalAxis::Rz);
+    float minimum = std::numeric_limits<float>::infinity();
+    float maximum = -std::numeric_limits<float>::infinity();
+    float last = 0.0F;
+    bool known = false;
+    bool connected = false;
+    quint64 changes = 0;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < 30000) {
+        const hotas::AtomicRuntimeState &runtime = worker.runtime();
+        const hotas::AtomicAdaptiveTelemetry &source = target.memberIndex <= 0
+            ? static_cast<const hotas::AtomicAdaptiveTelemetry &>(runtime)
+            : runtime.deviceRigMemberAdaptive[static_cast<size_t>(target.memberIndex)];
+        connected = target.memberIndex < 0
+            ? runtime.physicalConnected.load(std::memory_order_relaxed)
+            : runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(target.memberIndex)]
+                .load(std::memory_order_relaxed);
+        if (connected) {
+            const float value = source.raw[rz].load(std::memory_order_relaxed);
+            minimum = std::min(minimum, value);
+            maximum = std::max(maximum, value);
+            if (known && !qFuzzyCompare(value + 1.0F, last + 1.0F)) ++changes;
+            last = value;
+            known = true;
+        }
+        QThread::msleep(4);
+    }
+    const hotas::AtomicRuntimeState &runtime = worker.runtime();
+    const bool mappingActive = runtime.mappingActive.load(std::memory_order_relaxed);
+    worker.requestStop();
+    const bool stopped = worker.wait(2000);
+
+    const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+        .filePath(QStringLiteral("HOTAS-BF6-axis-hot-path-validation.txt"));
+    QFile report(path);
+    if (!report.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return -4;
+    QTextStream output(&report);
+    output << "targetDirectInputId=" << target.directInputId << '\n'
+           << "targetControllerRecordId=" << target.controllerRecordId << '\n'
+           << "sourceMemberIndex=" << target.memberIndex << '\n'
+           << "targetConnected=" << connected << '\n'
+           << "rzDescriptorPresent=" << target.rzDescriptorPresent << '\n'
+           << "mappingRequested=false\n"
+           << "mappingActive=" << mappingActive << '\n'
+           << "workerStopped=" << stopped << '\n'
+           << "rzRawRange=" << minimum << ':' << maximum << '\n'
+           << "rzRawChanges=" << changes << '\n'
+           << "report=" << path << '\n';
+    // A pre-fix saved layout can legitimately retain Rz metadata under its
+    // former offset-derived slot.  This probe qualifies the real worker
+    // acquisition path, not the age of that cached presentation metadata.
+    return connected && changes > 0 && !mappingActive && stopped ? 0 : -3;
 }
 
 void crashMessageHandler(QtMsgType type, const QMessageLogContext &, const QString &message)
@@ -101,6 +261,61 @@ int main(int argc, char *argv[])
     application.setApplicationName(QStringLiteral("HOTAS Mapper"));
     application.setApplicationVersion(QString::fromLatin1(HOTAS_BF6_VERSION));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+    if (hasArgument(argc, argv, "--axis-hot-path-validation")) {
+        return runAxisHotPathValidation();
+    }
+    if (hasArgument(argc, argv, "--axis-acquisition-probe")) {
+        const QString explicitDirectInputId = argumentValue(argc, argv, "--axis-acquisition-probe-id=");
+        bool durationValid = false;
+        const int requestedDuration = argumentValue(argc, argv, "--axis-acquisition-probe-duration=")
+            .toInt(&durationValid);
+        const hotas::DirectInputAxisAcquisitionProbe probe =
+            hotas::MappingWorker::captureExactPhysicalAxisAcquisition(
+                explicitDirectInputId.isEmpty()
+                    ? selectedDirectInputId(hotas::ConfigStore::load())
+                    : explicitDirectInputId,
+                durationValid ? requestedDuration : 30000);
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .filePath(QStringLiteral("HOTAS-BF6-axis-acquisition-probe.txt"));
+        QFile report(path);
+        if (!report.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return -4;
+        QTextStream output(&report);
+        output << "diagnostic=" << probe.diagnostic << '\n'
+               << "controller=" << probe.name << '\n'
+               << "directInputId=" << probe.directInputId << '\n'
+               << "durationMs=" << probe.durationMs << '\n'
+               << "bufferedConfigureHRESULT=" << probe.bufferedConfigureResult << '\n'
+               << "lastBufferedReadHRESULT=" << probe.lastBufferedReadResult << '\n';
+        for (int axis = 0; axis < hotas::kPhysicalAxisCount; ++axis) {
+            const auto physicalAxis = static_cast<hotas::PhysicalAxis>(axis);
+            output << "stateField=" << directInputStateFieldName(physicalAxis)
+                   << " canonicalSlot=" << hotas::physicalAxisKey(physicalAxis)
+                   << " range=" << probe.stateFieldMinimum[static_cast<size_t>(axis)] << ':' << probe.stateFieldMaximum[static_cast<size_t>(axis)]
+                   << " changes=" << probe.stateFieldChanges[static_cast<size_t>(axis)] << '\n';
+        }
+        for (int axis = 0; axis < hotas::kPhysicalAxisCount; ++axis) {
+            const auto &descriptor = probe.axisDescriptors[static_cast<size_t>(axis)];
+            if (!descriptor.present) continue;
+            output << "axis=" << hotas::physicalAxisKey(static_cast<hotas::PhysicalAxis>(axis))
+                   << " nativeName=" << descriptor.nativeName
+                   << " enumerationIndex=" << descriptor.enumerationIndex
+                   << " offset=" << descriptor.directInputOffset
+                   << " type=" << descriptor.directInputType
+                   << " guid=" << descriptor.directInputGuid
+                   << " objectInstance=" << descriptor.directInputInstance
+                   << " relative=" << descriptor.relative
+                   << " nativeRange=" << descriptor.nativeMinimum << ':' << descriptor.nativeMaximum
+                   << " rangeReadHRESULT=" << descriptor.rangeReadResult
+                   << " rangeSetAttempted=" << descriptor.rangeSetAttempted
+                   << " rangeSetHRESULT=" << descriptor.rangeSetResult
+                   << " standardRange=" << probe.standardMinimum[static_cast<size_t>(axis)] << ':' << probe.standardMaximum[static_cast<size_t>(axis)]
+                   << " standardChanges=" << probe.standardChanges[static_cast<size_t>(axis)]
+                   << " bufferedRange=" << probe.bufferedMinimum[static_cast<size_t>(axis)] << ':' << probe.bufferedMaximum[static_cast<size_t>(axis)]
+                   << " bufferedEvents=" << probe.bufferedEvents[static_cast<size_t>(axis)] << '\n';
+        }
+        output << "report=" << path << '\n';
+        return probe.acquired ? 0 : -3;
+    }
     hotas::CrashDiagnostics::initialize(QCoreApplication::applicationFilePath(),
         QString::fromLatin1(HOTAS_BF6_VERSION), QStringLiteral(HOTAS_BF6_BUILD_ID));
     qInstallMessageHandler(crashMessageHandler);

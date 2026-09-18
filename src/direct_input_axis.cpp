@@ -20,6 +20,20 @@ int physicalAxisIndexForDirectInputOffset(DWORD offset)
     return -1;
 }
 
+int physicalAxisIndexForDirectInputObject(const DIDEVICEOBJECTINSTANCEW &instance)
+{
+    // GUID_*Axis expresses the native object identity. A valid standard
+    // identity is stronger evidence than dwOfs, which is merely a driver's
+    // claimed location in the currently selected data format.
+    if (IsEqualGUID(instance.guidType, GUID_XAxis)) return static_cast<int>(PhysicalAxis::X);
+    if (IsEqualGUID(instance.guidType, GUID_YAxis)) return static_cast<int>(PhysicalAxis::Y);
+    if (IsEqualGUID(instance.guidType, GUID_ZAxis)) return static_cast<int>(PhysicalAxis::Z);
+    if (IsEqualGUID(instance.guidType, GUID_RxAxis)) return static_cast<int>(PhysicalAxis::Rx);
+    if (IsEqualGUID(instance.guidType, GUID_RyAxis)) return static_cast<int>(PhysicalAxis::Ry);
+    if (IsEqualGUID(instance.guidType, GUID_RzAxis)) return static_cast<int>(PhysicalAxis::Rz);
+    return physicalAxisIndexForDirectInputOffset(instance.dwOfs);
+}
+
 LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis)
 {
     switch (axis) {
@@ -71,7 +85,7 @@ NativeAxisDescriptor describeDirectInputAxisObject(LPDIRECTINPUTDEVICE8W device,
                                                    const DIDEVICEOBJECTINSTANCEW &instance)
 {
     NativeAxisDescriptor descriptor;
-    const int index = physicalAxisIndexForDirectInputOffset(instance.dwOfs);
+    const int index = physicalAxisIndexForDirectInputObject(instance);
     if (index < 0) return descriptor;
 
     descriptor.present = true;
@@ -101,7 +115,7 @@ void configureDirectInputAxisRange(LPDIRECTINPUTDEVICE8W device,
                                    const DIDEVICEOBJECTINSTANCEW &instance,
                                    NativeAxisDescriptor *descriptor)
 {
-    if (!device || physicalAxisIndexForDirectInputOffset(instance.dwOfs) < 0) return;
+    if (!device || physicalAxisIndexForDirectInputObject(instance) < 0) return;
     DIPROPRANGE range{};
     range.diph.dwSize = sizeof(range);
     range.diph.dwHeaderSize = sizeof(range.diph);
@@ -129,7 +143,7 @@ void configureDirectInputAxisRange(LPDIRECTINPUTDEVICE8W device,
             descriptor->nativeMaximum = actual.lMax;
         }
         descriptor->acquisitionSourceResolved = SUCCEEDED(readResult)
-            && physicalAxisIndexForDirectInputOffset(instance.dwOfs) >= 0;
+            && physicalAxisIndexForDirectInputObject(instance) >= 0;
     }
 }
 

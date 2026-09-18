@@ -155,13 +155,13 @@
 | T19 | Covered directly | Both ThemeManager and production Settings changes preserve task, repair dialog, configuration, and mapping-request state. |
 | T20 | Covered by the existing Dark/Light, text-size, minimum-window, keyboard, dialog/footer, and focus fixtures | Offscreen glyph replacement remains a typography limit. |
 | T21 | Covered by the existing controlled navigation/slider workload | Final offscreen slider burst reports p95/p99 values in the final test log; it is not native-display or arbitrary-OS-starvation proof. |
-| T22 | Covered: the final cached Release test-target build completed; full CTest passed 18/18 in 74.39 seconds | The pre-existing normal-output executable was locked by its owner review process, so the product was linked as a side-by-side review executable. The existing benchmark gate passed; no new allocation claim is inferred beyond that gate. |
+| T22 | Covered: the final integrated cached Release test-target build completed; full CTest passed 18/18 in 76.72 seconds | The pre-existing normal-output executable was locked by its owner review process, so the product was linked as a side-by-side review executable. The existing benchmark gate passed; no new allocation claim is inferred beyond that gate. |
 
 ### Evidence limits
 
 - The final focused QML journey completed with the offscreen platform and disabled external setup inspection. It proves generated QML, pointer/keyboard routing, policy behavior, and fixture invariants only.
 - Offscreen captures with replacement-box glyphs are structural evidence only. They do **not** establish native Windows typography, native pointer acceptance, physical controller acquisition, vJoy/HidHide behavior, UAC, game visibility, or owner acceptance.
-- The final owner-review candidate is staged separately from the owner’s existing review process at `C:\hotas-builds\usability-setup-guidance\Release\HOTAS BF6 Pass C Review.exe`. It must use isolated settings and a normal Windows launch; no owner configuration, mapping, driver state, or running executable is replaced.
+- The final owner-review candidate is staged separately from the owner’s existing review process at `C:\hotas-builds\usability-setup-guidance\Release\HOTAS BF6 Pass C Integrated Review.exe` (SHA-256 `3ABEC99E3079E2B36EC362C06F570E435A2A65B7976E81AC0D5F9CC7931CB18D`). It must use isolated settings and a normal Windows launch; no owner configuration, mapping, driver state, or running executable is replaced.
 
 ## Matched synthetic mapper benchmark
 

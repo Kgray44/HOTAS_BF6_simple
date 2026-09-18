@@ -262,6 +262,33 @@ struct DirectInputControllerProbe {
     QString diagnostic;
 };
 
+// A bounded, read-only characterization capture.  It never starts mapping,
+// opens vJoy, persists configuration, or requests a device report range.
+// The caller may run it alongside the normal non-exclusive mapper solely to
+// establish which channel a physical object actually drives.
+struct DirectInputAxisAcquisitionProbe {
+    bool acquired = false;
+    QString name;
+    QString directInputId;
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    std::array<qint32, kPhysicalAxisCount> standardMinimum{};
+    std::array<qint32, kPhysicalAxisCount> standardMaximum{};
+    // These sample every fixed c_dfDIJoystick2 field, not merely the field
+    // named by an enumerated object.  They make descriptor/data-channel
+    // disagreement visible in a real-hardware capture.
+    std::array<qint32, kPhysicalAxisCount> stateFieldMinimum{};
+    std::array<qint32, kPhysicalAxisCount> stateFieldMaximum{};
+    std::array<qint32, kPhysicalAxisCount> bufferedMinimum{};
+    std::array<qint32, kPhysicalAxisCount> bufferedMaximum{};
+    std::array<quint64, kPhysicalAxisCount> standardChanges{};
+    std::array<quint64, kPhysicalAxisCount> stateFieldChanges{};
+    std::array<quint64, kPhysicalAxisCount> bufferedEvents{};
+    qint32 bufferedConfigureResult = -1;
+    qint32 lastBufferedReadResult = -1;
+    int durationMs = 0;
+    QString diagnostic;
+};
+
 class MappingWorker final : public QThread {
     Q_OBJECT
 
@@ -295,6 +322,8 @@ public:
     // Setup can inspect an editing Rig without activating it.  This direct
     // proof is deliberately independent from the long-lived mapping runtime.
     static DirectInputControllerProbe probeExactPhysicalController(const QString &expectedDirectInputId);
+    static DirectInputAxisAcquisitionProbe captureExactPhysicalAxisAcquisition(
+        const QString &expectedDirectInputId, int durationMs = 15000);
     void requestPhysicalControllerSelection() { m_reacquireInputRequested.fetch_add(1); }
     void requestStop();
     const AtomicRuntimeState &runtime() const { return m_runtime; }
