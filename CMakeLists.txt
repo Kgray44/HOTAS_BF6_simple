@@ -296,8 +296,92 @@ set_target_properties(HOTASBF6Launcher PROPERTIES
 target_link_libraries(HOTASMapper PRIVATE hotas_update_core)
 target_include_directories(HOTASMapper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/launcher")
 
+# HidHide Doctor is deliberately outside the mapper executable and its
+# DirectInput -> MappingWorker -> vJoy report path.  The core library has no
+# dependency on AppBackend, QML, profiles, Device Rigs, or persisted HOTAS
+# configuration.  Phase 0 uses only deterministic fixture providers.
+add_library(hidhide_doctor_core STATIC
+    src/hidhide_doctor/doctor_types.h
+    src/hidhide_doctor/doctor_types.cpp
+    src/hidhide_doctor/doctor_environment.h
+    src/hidhide_doctor/doctor_environment.cpp
+    src/hidhide_doctor/doctor_catalog.h
+    src/hidhide_doctor/doctor_catalog.cpp
+    src/hidhide_doctor/doctor_session.h
+    src/hidhide_doctor/doctor_session.cpp
+    src/hidhide_doctor/doctor_repair_contract.h
+    src/hidhide_doctor/doctor_repair_contract.cpp
+    src/hidhide_doctor/doctor_session_view_model.h
+    src/hidhide_doctor/doctor_session_view_model.cpp
+)
+target_link_libraries(hidhide_doctor_core PUBLIC Qt6::Core)
+target_include_directories(hidhide_doctor_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/hidhide_doctor")
+qt_add_resources(hidhide_doctor_core hidhide_doctor_governance_resources
+    PREFIX "/hidhide-doctor"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/docs/hidhide-doctor"
+    FILES
+        docs/hidhide-doctor/HOTAS_BF6_HidHide_Doctor_Diagnostic_Catalog_v1.1.md
+)
+
+qt_add_executable(HidHideDoctor WIN32
+    src/hidhide_doctor/doctor_main.cpp
+)
+qt_add_qml_module(HidHideDoctor
+    URI HidHideDoctor
+    VERSION 1.0
+    QML_FILES
+        qml/HidHideDoctorMain.qml
+)
+target_link_libraries(HidHideDoctor PRIVATE
+    hidhide_doctor_core
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::Widgets
+)
+target_include_directories(HidHideDoctor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(HidHideDoctor PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+set_target_properties(HidHideDoctor PROPERTIES
+    OUTPUT_NAME "HidHide Doctor"
+    WIN32_EXECUTABLE TRUE
+    VERSION "${HOTAS_BF6_VERSION}"
+)
+if (WIN32)
+    # Keep this independently launchable executable self-contained at its
+    # build output, just like the mapper. It neither elevates nor deploys any
+    # HidHide component; this is only the Qt runtime for the Doctor UI.
+    get_filename_component(HIDHIDE_DOCTOR_QT_BIN_DIR "${Qt6Core_DIR}/../../../bin" ABSOLUTE)
+    set(HIDHIDE_DOCTOR_WINDEPLOYQT "${HIDHIDE_DOCTOR_QT_BIN_DIR}/windeployqt.exe")
+    if (EXISTS "${HIDHIDE_DOCTOR_WINDEPLOYQT}")
+        add_custom_command(TARGET HidHideDoctor POST_BUILD
+            COMMAND "${HIDHIDE_DOCTOR_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HidHideDoctor>"
+            COMMENT "Deploying the standalone HidHide Doctor Qt runtime")
+    else()
+        message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
+    endif()
+endif()
+
 include(CTest)
 if (BUILD_TESTING)
+    qt_add_executable(hidhide_doctor_domain_tests
+        tests/hidhide_doctor_domain_tests.cpp
+    )
+    set_target_properties(hidhide_doctor_domain_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(hidhide_doctor_domain_tests PRIVATE hidhide_doctor_core Qt6::Core Qt6::Test)
+    add_test(NAME hidhide_doctor_domain_tests COMMAND hidhide_doctor_domain_tests)
+    add_test(NAME hidhide_doctor_standalone_startup_smoke COMMAND HidHideDoctor --startup-smoke)
+    if (WIN32)
+        set_tests_properties(hidhide_doctor_domain_tests PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(hidhide_doctor_standalone_startup_smoke PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
     qt_add_executable(mapping_core_tests
         tests/mapping_core_tests.cpp
         src/mapping_types.h
