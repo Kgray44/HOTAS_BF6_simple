@@ -401,6 +401,11 @@ path has not run for this unsigned candidate.
   first-visible-progress timing, click/render latency, cancellation, or export
   was exercised during the intervals, so they do not qualify user-visible
   graceful degradation.
+- A 15.035-second post-load idle observation then found the protected R8
+  Doctor still `Responding=True`, at 0.006% of all 16 logical CPU capacity,
+  137,646,080 B working set, and 148,353,024 B private memory. It is a short
+  process observation only, not an interaction-latency or long-term-idle
+  qualification.
 - The deep-helper regression now also re-seals and injects forbidden
   `command`, argument, executable, service, filter, registry-path, cache-path,
   and RunOnce-like package fields, plus a mismatched one-time nonce. Each is
