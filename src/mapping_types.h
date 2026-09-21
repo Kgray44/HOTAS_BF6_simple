@@ -158,7 +158,13 @@ struct NativeAxisDescriptor {
 struct AxisAcquisitionOverride {
     bool enabled = false;
     PhysicalAxis target = PhysicalAxis::X;
+    // `target` always stores a validated concrete axis for the compiled
+    // binding. This preserves whether the owner asked to retain the selected
+    // object's automatic canonical identity rather than forcing that target.
+    bool automaticTarget = false;
     AxisAcquisitionMode mode = AxisAcquisitionMode::Automatic;
+    // -1 means retain the uniquely resolved automatic DirectInput source for
+    // `target`; an explicit 0..7 source is a manual formatted-slot choice.
     int formattedSource = -1;
     QString nativeSemanticGuid;
     quint32 nativeDirectInputType = 0;

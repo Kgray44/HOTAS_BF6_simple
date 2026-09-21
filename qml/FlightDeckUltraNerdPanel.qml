@@ -175,6 +175,26 @@ Item {
                         ? "Offset conflicts with semantic identity · semantic GUID remains authoritative"
                         : "Semantic identity and state metadata agree"
                 }
+                Text {
+                    visible: Boolean(root.axis.metadataContradiction)
+                    text: "CONTRADICTION · reported offset is retained as evidence, not used as the runtime source"
+                    color: root.tokens.attention
+                    font.family: root.tokens.telemetryFont
+                    font.pixelSize: root.tokens.bodySmall
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    visible: Boolean(root.axis.manualOverride)
+                    text: "MANUAL OVERRIDE · Automatic acquisition is bypassed for this axis."
+                    color: root.tokens.attention
+                    font.family: root.tokens.telemetryFont
+                    font.pixelSize: root.tokens.bodySmall
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
                 TechnicalLine { label: "RAW RANGE"; value: root.formatted(root.axis.nativeRangeMinimum) + " to " + root.formatted(root.axis.nativeRangeMaximum) }
                 TechnicalLine {
                     label: "OBSERVED RANGE"
@@ -245,14 +265,38 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.columnSpan: 4
                                     implicitHeight: monitorRow.implicitHeight
-                                    RowLayout {
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 4
+                                        color: String(modelData.state) === "ACTIVE" ? root.tokens.accentMuted : "transparent"
+                                        border.width: String(modelData.state) === "ACTIVE" ? 1 : 0
+                                        border.color: root.tokens.accent
+                                    }
+                                    ColumnLayout {
                                         id: monitorRow
                                         anchors.fill: parent
-                                        spacing: root.tokens.space8
-                                        Text { text: String(modelData.label || "?"); color: root.tokens.textPrimary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.fillWidth: true }
-                                        Text { text: root.formatted(modelData.value); color: root.tokens.textPrimary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(88); horizontalAlignment: Text.AlignRight }
-                                        Text { text: root.formatted(modelData.changeCount); color: root.tokens.textSecondary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(88); horizontalAlignment: Text.AlignRight }
-                                        Text { text: String(modelData.state || "UNAVAILABLE"); color: String(modelData.state) === "ACTIVE" ? root.tokens.accent : root.tokens.textMuted; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(78); horizontalAlignment: Text.AlignRight }
+                                        anchors.margins: root.tokens.space4
+                                        spacing: 1
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: root.tokens.space8
+                                            Text { text: String(modelData.label || "?"); color: root.tokens.textPrimary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.fillWidth: true }
+                                            Text { text: root.formatted(modelData.value); color: root.tokens.textPrimary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(88); horizontalAlignment: Text.AlignRight }
+                                            Text { text: root.formatted(modelData.changeCount); color: root.tokens.textSecondary; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(88); horizontalAlignment: Text.AlignRight }
+                                            Text { text: String(modelData.state || "UNAVAILABLE"); color: String(modelData.state) === "ACTIVE" ? root.tokens.accent : root.tokens.textMuted; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.bodySmall; Layout.preferredWidth: root.tokens.scale(78); horizontalAlignment: Text.AlignRight }
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: Boolean(modelData.available)
+                                                ? "range " + root.formatted(modelData.observedMinimum) + "–" + root.formatted(modelData.observedMaximum)
+                                                    + "  ·  Δ " + root.formatted(modelData.recentMovementMagnitude)
+                                                    + "  ·  last " + root.formatted(modelData.lastChangeAgeMs) + " ms"
+                                                : "Monitor unavailable until this verified controller is live."
+                                            color: root.tokens.textMuted
+                                            font.family: root.tokens.telemetryFont
+                                            font.pixelSize: root.tokens.tinyTechnical
+                                            elide: Text.ElideRight
+                                        }
                                     }
                                 }
                             }
@@ -298,5 +342,6 @@ Item {
     }
 
     onExpandedChanged: monitorVisibilityRequested(expanded)
+    onVisibleChanged: monitorVisibilityRequested(visible && expanded)
     Component.onDestruction: monitorVisibilityRequested(false)
 }

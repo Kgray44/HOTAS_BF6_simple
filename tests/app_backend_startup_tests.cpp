@@ -1300,11 +1300,107 @@ bool verifySelectedProfileEditorContext()
     return true;
 }
 
+bool verifyAxisAcquisitionIdentifyLifecycle()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureAxisAcquisitionFixtureForTest()
+        || backend->axisSourceMonitor().size() != hotas::kPhysicalAxisCount) {
+        std::fprintf(stderr, "axis acquisition fixture did not publish eight candidates\n");
+        return false;
+    }
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int rz = static_cast<int>(hotas::PhysicalAxis::Rz);
+
+    if (!backend->beginAxisIdentification(rz)
+        || !backend->setAxisSourceMonitorCandidateForTest(x, 100, 0, 65535, 2, 4)
+        || !backend->setAxisSourceMonitorCandidateForTest(rz, 32761, 102, 65411, 20, 120)
+        || !backend->axisSourceMonitorRequestedForTest()) {
+        std::fprintf(stderr, "axis identification could not start its bounded monitor capture\n");
+        return false;
+    }
+    backend->completeAxisIdentificationForTest();
+    const QVariantMap strong = backend->axisIdentification();
+    if (strong.value(QStringLiteral("status")).toString() != QStringLiteral("STRONG MATCH FOUND")
+        || strong.value(QStringLiteral("selectedSource")).toInt() != rz
+        || backend->axisSourceMonitorRequestedForTest()
+        || !backend->useIdentifiedAxisSource()) {
+        std::fprintf(stderr, "strong unique axis identification did not require explicit use or release capture\n");
+        return false;
+    }
+    const QVariantMap applied = backend->axisConfiguration().at(rz).toMap();
+    if (!applied.value(QStringLiteral("manualOverride")).toBool()
+        || applied.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || !backend->resetAxisAcquisitionOverride(rz)
+        || backend->axisConfiguration().at(rz).toMap().value(QStringLiteral("manualOverride")).toBool()) {
+        std::fprintf(stderr, "identified manual override did not apply and reset cleanly\n");
+        return false;
+    }
+
+    // An expert can retain the canonical/source resolver while overriding raw
+    // range behavior. The saved record keeps that intent rather than freezing
+    // an enumeration slot, and the projection makes it explicit to the UI.
+    if (!backend->saveAxisAcquisitionOverride(rz, -1, -1, QStringLiteral("automatic-source"),
+                                               QStringLiteral("manual"), 0, 65535,
+                                               QStringLiteral("automatic"),
+                                               QStringLiteral("automatic"))) {
+        std::fprintf(stderr, "automatic source manual normalization was not accepted\n");
+        return false;
+    }
+    const QVariantMap automaticSource = backend->axisConfiguration().at(rz).toMap();
+    if (!automaticSource.value(QStringLiteral("manualOverride")).toBool()
+        || !automaticSource.value(QStringLiteral("manualAutomaticTarget")).toBool()
+        || !automaticSource.value(QStringLiteral("manualAutomaticSource")).toBool()
+        || automaticSource.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || !backend->resetAxisAcquisitionOverride(rz)) {
+        std::fprintf(stderr, "automatic source override did not preserve the verified resolver\n");
+        return false;
+    }
+
+    if (!backend->beginAxisIdentification(rz)
+        || !backend->setAxisSourceMonitorCandidateForTest(x, 200, 0, 65535, 10, 8)
+        || !backend->setAxisSourceMonitorCandidateForTest(rz, 32000, 102, 65411, 24, 80)) {
+        std::fprintf(stderr, "ambiguous axis identification fixture could not advance candidates\n");
+        return false;
+    }
+    backend->completeAxisIdentificationForTest();
+    const QVariantMap ambiguous = backend->axisIdentification();
+    if (ambiguous.value(QStringLiteral("status")).toString() != QStringLiteral("NO UNIQUE SOURCE IDENTIFIED")
+        || ambiguous.value(QStringLiteral("selectedSource")).toInt() >= 0
+        || backend->axisSourceMonitorRequestedForTest()) {
+        std::fprintf(stderr, "ambiguous movement silently selected a source\n");
+        return false;
+    }
+
+    if (!backend->beginAxisIdentification(rz)) {
+        std::fprintf(stderr, "no-movement axis identification fixture could not start\n");
+        return false;
+    }
+    backend->completeAxisIdentificationForTest();
+    const QVariantMap noMovement = backend->axisIdentification();
+    if (noMovement.value(QStringLiteral("status")).toString() != QStringLiteral("NO MOVEMENT OBSERVED")
+        || noMovement.value(QStringLiteral("selectedSource")).toInt() >= 0
+        || backend->axisSourceMonitorRequestedForTest()) {
+        std::fprintf(stderr, "no-movement capture did not remain non-destructive\n");
+        return false;
+    }
+
+    backend->setAxisSourceMonitorVisible(true);
+    if (!backend->beginAxisIdentification(rz)) return false;
+    backend->completeAxisIdentificationForTest();
+    const bool panelCaptureRetained = backend->axisSourceMonitorRequestedForTest();
+    backend->setAxisSourceMonitorVisible(false);
+    if (!panelCaptureRetained || backend->axisSourceMonitorRequestedForTest()) {
+        std::fprintf(stderr, "Identify Axis did not restore the panel monitor ownership\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 22> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 22> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 23> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1327,6 +1423,7 @@ const std::array<std::pair<QString, StartupFixture>, 22> &startupFixtures()
         {QStringLiteral("hidhide-health-actions"), verifyHidHideHealthActionFeedbackContracts},
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
+        {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},
     }};
     return fixtures;
 }

@@ -360,6 +360,14 @@ public:
     // compiled only into the isolated startup suites and cannot alter a
     // production mapper, driver, or visibility transaction.
     bool configureActivationTransactionFixtureForTest();
+    // Installs a bounded verified-controller record and monitor snapshot for
+    // acquisition/Identify Axis tests. It never enumerates user hardware.
+    bool configureAxisAcquisitionFixtureForTest();
+    bool setAxisSourceMonitorCandidateForTest(int source, qint32 value,
+                                              qint32 observedMinimum, qint32 observedMaximum,
+                                              quint64 changeCount, int movementMagnitude = 0);
+    void completeAxisIdentificationForTest();
+    bool axisSourceMonitorRequestedForTest() const;
     // Uses the same selected-device runtime atomics as production to stress
     // the Flight Deck button presentation path without DirectInput hardware.
     bool configureSelectedButtonPresentationFixtureForTest(int buttonCount = 32);
@@ -1714,6 +1722,10 @@ private:
     InputLearningState m_inputLearning;
     AxisIdentificationState m_axisIdentification;
     bool m_showUltraNerdControls = false;
+    // The QML panel owns this presentation intent. Identification temporarily
+    // enables monitor capture but must restore this value when its bounded
+    // capture window ends.
+    bool m_axisSourceMonitorVisible = false;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;

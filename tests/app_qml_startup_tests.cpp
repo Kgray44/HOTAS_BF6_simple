@@ -5065,11 +5065,48 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             settlePresentation();
             return captureShell(label + QStringLiteral("-actions"));
         };
-        const bool ultraNerdCaptured = captureUltraNerd(QStringLiteral("axes-ultra-nerd-normal"),
+        const bool ultraNerdLayoutCaptured = captureUltraNerd(QStringLiteral("axes-ultra-nerd-normal"),
                 ultraNerdOriginalSize)
             && captureUltraNerd(QStringLiteral("axes-ultra-nerd-narrow"), QSize{900, 650})
             && captureUltraNerd(QStringLiteral("axes-ultra-nerd-wide"), QSize{1600, 980});
+        // The panel presents dense diagnostic evidence, so token use alone is
+        // not enough to prove accessibility-scale resilience. Render every
+        // supported setting at the constrained viewport, including its
+        // scrolled action area, while retaining the normal/wide coverage
+        // above.
+        const QString originalTextSize = themeManager.textSize();
+        bool ultraNerdTextScaleCaptured = true;
+        for (const QString &textSize : {QStringLiteral("Small"), QStringLiteral("Medium"),
+                 QStringLiteral("Large"), QStringLiteral("Extra Large")}) {
+            QString textSizeLabel = textSize.toLower();
+            textSizeLabel.replace(u' ', u'-');
+            themeManager.setTextSize(textSize);
+            ultraNerdTextScaleCaptured = ultraNerdTextScaleCaptured
+                && captureUltraNerd(QStringLiteral("axes-ultra-nerd-text-%1")
+                    .arg(textSizeLabel), QSize{900, 650});
+        }
+        themeManager.setTextSize(originalTextSize);
         window->resize(ultraNerdOriginalSize);
+        settlePresentation();
+        QObject *acquisitionDialog = axesItem->findChild<QObject *>(
+            QStringLiteral("flightDeckAxisAcquisitionDialog"));
+        QQmlExpression openAcquisitionDialog(qmlContext(axes), axes,
+            QStringLiteral("openUltraNerdEditor(0)"));
+        openAcquisitionDialog.evaluate();
+        settlePresentation();
+        const bool manualEditorNormalCaptured = !openAcquisitionDialog.hasError()
+            && acquisitionDialog && acquisitionDialog->property("visible").toBool()
+            && captureShell(QStringLiteral("axes-ultra-nerd-manual-normal"));
+        window->resize(900, 650);
+        settlePresentation();
+        const bool manualEditorNarrowCaptured = acquisitionDialog
+            && acquisitionDialog->property("visible").toBool()
+            && captureShell(QStringLiteral("axes-ultra-nerd-manual-narrow"));
+        if (acquisitionDialog) QMetaObject::invokeMethod(acquisitionDialog, "close");
+        window->resize(ultraNerdOriginalSize);
+        settlePresentation();
+        const bool ultraNerdCaptured = ultraNerdLayoutCaptured && ultraNerdTextScaleCaptured
+            && manualEditorNormalCaptured && manualEditorNarrowCaptured;
         axisCard->setProperty("ultraNerdOpen", false);
         backend.setShowUltraNerdControls(false);
         settlePresentation();

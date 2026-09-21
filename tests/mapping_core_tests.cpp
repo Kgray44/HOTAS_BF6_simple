@@ -4450,22 +4450,25 @@ void MappingCoreTests::saitekRzObjectIdentityOverridesContradictoryStateOffset()
     DIDEVICEOBJECTINSTANCEW object{};
     object.guidType = GUID_RzAxis;
     object.dwOfs = DIJOFS_Z;
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Rz));
+    const NativeAxisDescriptor rudder = describeDirectInputAxisObject(nullptr, object);
+    QCOMPARE(rudder.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(rudder.formattedSource, static_cast<int>(PhysicalAxis::Rz));
 
     DIJOYSTATE2 state{};
     state.lZ = 0;
     state.lRz = 65535;
-    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
-        physicalAxisIndexForDirectInputObject(object))), 65535L);
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(rudder.formattedSource)), 65535L);
 
     object.guidType = GUID_XAxis;
     object.dwOfs = DIJOFS_RZ;
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(describeDirectInputAxisObject(nullptr, object).canonicalAxis,
+             static_cast<int>(PhysicalAxis::X));
 
     // Unknown object GUIDs preserve the established offset fallback.
     object.guidType = GUID_Slider;
     object.dwOfs = DIJOFS_SLIDER(1);
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(describeDirectInputAxisObject(nullptr, object).canonicalAxis,
+             static_cast<int>(PhysicalAxis::Slider1));
 }
 
 void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()
@@ -4592,6 +4595,29 @@ void MappingCoreTests::compiledManualAxisAcquisitionOverridesAreSafeAndDetermini
         & RuntimeAxisAcquisitionManual) != 0));
     QVERIFY(duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
 
+    // A manual range/polarity policy may deliberately retain the automatic
+    // source. The compiler resolves it once from the canonical target, then
+    // the report path sees the same fixed primitive binding as any other
+    // override. No source ordinal is persisted for this choice.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> automaticSourceOverrides{};
+    AxisAcquisitionOverride &automaticSource = automaticSourceOverrides[
+        static_cast<size_t>(PhysicalAxis::Rz)];
+    automaticSource.enabled = true;
+    automaticSource.target = PhysicalAxis::Rz;
+    automaticSource.automaticTarget = true;
+    automaticSource.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    automaticSource.formattedSource = -1;
+    automaticSource.rangePolicy = AxisRawRangePolicy::Manual;
+    automaticSource.manualMinimum = 0;
+    automaticSource.manualMaximum = 65535;
+    std::array<bool, kPhysicalAxisCount> automaticSourceApplied{};
+    const auto automaticSourceBindings = compileRuntimeAxisAcquisitions(
+        descriptors, automaticSourceOverrides, &automaticSourceApplied);
+    QVERIFY(automaticSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QCOMPARE(automaticSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Rz));
+    QVERIFY(automaticSourceApplied[static_cast<size_t>(PhysicalAxis::Rz)]);
+
     // An observed bounded span is captured on the control plane but compiles
     // to the same fixed constants as an explicit manual range. Runtime never
     // reinterprets the diagnostic policy or consults the source monitor.
@@ -4652,6 +4678,7 @@ void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
     override.rangePolicy = AxisRawRangePolicy::Manual;
     override.manualMinimum = 12;
     override.manualMaximum = 400;
+    override.automaticTarget = true;
 
     bool valid = false;
     const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
@@ -4659,6 +4686,7 @@ void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
     const AxisAcquisitionOverride &restoredOverride = restored.savedControllers.front()
         .axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
     QVERIFY(restoredOverride.enabled);
+    QVERIFY(restoredOverride.automaticTarget);
     QCOMPARE(restoredOverride.manualMinimum, 12);
     QCOMPARE(restoredOverride.manualMaximum, 400);
 
@@ -4671,6 +4699,16 @@ void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
     QCOMPARE(observedRestored.savedControllers.front().axisAcquisitionOverrides[
                  static_cast<size_t>(PhysicalAxis::Rz)].rangePolicy,
              AxisRawRangePolicy::Observed);
+
+    override.formattedSource = -1;
+    override.automaticTarget = true;
+    const MapperConfiguration automaticSourceRestored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const AxisAcquisitionOverride &automaticSourceRestoredOverride = automaticSourceRestored
+        .savedControllers.front().axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    QCOMPARE(automaticSourceRestoredOverride.formattedSource, -1);
+    QVERIFY(automaticSourceRestoredOverride.automaticTarget);
 
     QJsonObject invalid = ConfigStore::toJson(configuration);
     QJsonArray records = invalid.value(QStringLiteral("savedControllers")).toArray();

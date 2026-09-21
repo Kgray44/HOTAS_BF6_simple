@@ -149,6 +149,7 @@ QJsonObject axisAcquisitionOverrideToJson(const AxisAcquisitionOverride &overrid
 {
     return {{u"enabled"_qs, override.enabled},
             {u"target"_qs, static_cast<int>(override.target)},
+            {u"automaticTarget"_qs, override.automaticTarget},
             {u"mode"_qs, static_cast<int>(override.mode)},
             {u"formattedSource"_qs, override.formattedSource},
             {u"nativeSemanticGuid"_qs, override.nativeSemanticGuid.trimmed().left(96)},
@@ -183,6 +184,9 @@ bool axisAcquisitionOverrideFromJson(const QJsonObject &json, AxisAcquisitionOve
         return false;
     }
     restored.target = static_cast<PhysicalAxis>(target);
+    // Older development records did not expose this choice. Treat those
+    // explicit persisted targets as manual so their meaning cannot drift.
+    restored.automaticTarget = json.value(u"automaticTarget"_qs).toBool(false);
     restored.mode = static_cast<AxisAcquisitionMode>(mode);
     restored.formattedSource = json.value(u"formattedSource"_qs).toInt(-1);
     restored.nativeSemanticGuid = json.value(u"nativeSemanticGuid"_qs).toString().trimmed().left(96);
@@ -200,7 +204,7 @@ bool axisAcquisitionOverrideFromJson(const QJsonObject &json, AxisAcquisitionOve
         if (restored.mode == AxisAcquisitionMode::Automatic
             || restored.mode == AxisAcquisitionMode::RawHidValue
             || (restored.mode == AxisAcquisitionMode::DirectInputFormattedSlot
-                && (restored.formattedSource < 0 || restored.formattedSource >= kPhysicalAxisCount))
+                && (restored.formattedSource < -1 || restored.formattedSource >= kPhysicalAxisCount))
             || (restored.mode == AxisAcquisitionMode::NativeDirectInputObject
                 && (restored.nativeSemanticGuid.isEmpty() || restored.nativeDirectInputType == 0))
             || ((restored.rangePolicy == AxisRawRangePolicy::Manual

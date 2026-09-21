@@ -279,12 +279,38 @@ std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> compileRuntimeAxisAcquisi
         const NativeAxisDescriptor *sourceDescriptor = nullptr;
         int source = override.formattedSource;
         if (override.mode == AxisAcquisitionMode::DirectInputFormattedSlot) {
-            if (source < 0 || source >= kPhysicalAxisCount) continue;
-            const auto found = std::find_if(descriptors.cbegin(), descriptors.cend(), [source](const NativeAxisDescriptor &candidate) {
-                return candidate.present && candidate.formattedSource == source;
-            });
-            if (found == descriptors.cend()) continue;
-            sourceDescriptor = &*found;
+            if (source < 0) {
+                // Manual normalization can retain an automatic source. Resolve
+                // that source only while compiling the fixed binding and only
+                // when exactly one native object owns the requested canonical
+                // axis. An ambiguous reconnect falls back to automatic.
+                for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount;
+                     ++descriptorIndex) {
+                    const NativeAxisDescriptor &candidate = descriptors[
+                        static_cast<size_t>(descriptorIndex)];
+                    const int candidateTarget = candidate.canonicalAxis >= 0
+                        ? candidate.canonicalAxis : descriptorIndex;
+                    if (!candidate.present || candidate.formattedSource < 0
+                        || candidateTarget != target) {
+                        continue;
+                    }
+                    if (sourceDescriptor) {
+                        sourceDescriptor = nullptr;
+                        break;
+                    }
+                    sourceDescriptor = &candidate;
+                }
+                if (!sourceDescriptor) continue;
+                source = sourceDescriptor->formattedSource;
+            } else {
+                if (source >= kPhysicalAxisCount) continue;
+                const auto found = std::find_if(descriptors.cbegin(), descriptors.cend(),
+                    [source](const NativeAxisDescriptor &candidate) {
+                        return candidate.present && candidate.formattedSource == source;
+                    });
+                if (found == descriptors.cend()) continue;
+                sourceDescriptor = &*found;
+            }
         } else if (override.mode == AxisAcquisitionMode::NativeDirectInputObject) {
             const NativeAxisDescriptor *match = nullptr;
             for (const NativeAxisDescriptor &candidate : descriptors) {

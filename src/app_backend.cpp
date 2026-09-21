@@ -865,6 +865,20 @@ QVariantList AppBackend::axisConfiguration() const
     const DiscoveredController *observedController = sourceRecord
         ? discoveredController(sourceRecord->lastDirectInputId) : nullptr;
     const bool sourceConnected = observedController != nullptr;
+    const auto automaticSourceForTarget = [sourceRecord](int target) -> const NativeAxisDescriptor * {
+        if (!sourceRecord) return nullptr;
+        const NativeAxisDescriptor *resolved = nullptr;
+        for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount; ++descriptorIndex) {
+            const NativeAxisDescriptor &candidate = sourceRecord->axisDescriptors[
+                static_cast<size_t>(descriptorIndex)];
+            const int candidateTarget = candidate.canonicalAxis >= 0
+                ? candidate.canonicalAxis : descriptorIndex;
+            if (!candidate.present || candidate.formattedSource < 0 || candidateTarget != target) continue;
+            if (resolved) return nullptr;
+            resolved = &candidate;
+        }
+        return resolved;
+    };
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
         const AxisMapping &mapping = axes[index];
@@ -902,8 +916,14 @@ QVariantList AppBackend::axisConfiguration() const
             : AxisAcquisitionOverride{};
         const bool manualOverride = override.enabled
             && override.mode != AxisAcquisitionMode::Automatic;
+        const int automaticTarget = descriptor.canonicalAxis >= 0 ? descriptor.canonicalAxis : index;
+        const int effectiveTarget = manualOverride ? static_cast<int>(override.target) : automaticTarget;
+        const NativeAxisDescriptor *automaticSourceDescriptor = manualOverride
+            && override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+            && override.formattedSource < 0 ? automaticSourceForTarget(effectiveTarget) : nullptr;
         const int displaySource = manualOverride && override.formattedSource >= 0
-            ? override.formattedSource : descriptor.formattedSource;
+            ? override.formattedSource : automaticSourceDescriptor
+                ? automaticSourceDescriptor->formattedSource : descriptor.formattedSource;
         item.insert(u"resolutionSource"_qs, descriptor.resolutionSource
                 == AxisResolutionSource::StandardSemanticGuid ? u"Semantic GUID"_qs
             : descriptor.resolutionSource == AxisResolutionSource::ReportedOffset
@@ -916,16 +936,21 @@ QVariantList AppBackend::axisConfiguration() const
             : descriptor.resolutionConfidence == AxisResolutionConfidence::Contradictory
                 ? u"Contradictory"_qs : u"Low"_qs);
         item.insert(u"metadataContradiction"_qs, descriptor.metadataContradiction);
-        item.insert(u"canonicalAxis"_qs, descriptor.canonicalAxis >= 0
-            ? physicalAxisLabel(static_cast<PhysicalAxis>(descriptor.canonicalAxis))
-            : physicalAxisLabel(axis));
+        item.insert(u"canonicalAxis"_qs, validAxis(effectiveTarget)
+            ? physicalAxisLabel(static_cast<PhysicalAxis>(effectiveTarget)) : physicalAxisLabel(axis));
+        item.insert(u"manualTargetAxisIndex"_qs, manualOverride ? effectiveTarget : -1);
+        item.insert(u"manualAutomaticTarget"_qs, manualOverride && override.automaticTarget);
+        item.insert(u"manualAutomaticSource"_qs, manualOverride
+            && override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+            && override.formattedSource < 0);
         item.insert(u"formattedSource"_qs, displaySource >= 0 && displaySource < kPhysicalAxisCount
             ? physicalAxisLabel(static_cast<PhysicalAxis>(displaySource)) : u"Not resolved"_qs);
         item.insert(u"formattedSourceIndex"_qs, displaySource);
         item.insert(u"manualOverride"_qs, manualOverride);
         item.insert(u"manualOverrideMode"_qs, !manualOverride ? u"Automatic"_qs
             : override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
-                ? u"DirectInput formatted source"_qs
+                ? (override.formattedSource < 0 ? u"Automatic DirectInput source"_qs
+                                                : u"DirectInput formatted source"_qs)
             : override.mode == AxisAcquisitionMode::NativeDirectInputObject
                 ? u"Exact native object"_qs : u"Raw HID unavailable"_qs);
         item.insert(u"manualRangePolicy"_qs, override.rangePolicy == AxisRawRangePolicy::Manual
@@ -2321,6 +2346,89 @@ bool AppBackend::configureActivationTransactionFixtureForTest()
     emit deviceRigsChanged();
     emit stateChanged();
     return true;
+}
+
+bool AppBackend::configureAxisAcquisitionFixtureForTest()
+{
+    if (!configureActivationTransactionFixtureForTest()) return false;
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [](const SavedControllerRecord &candidate) {
+            return candidate.id == u"activation-transaction-controller"_qs;
+        });
+    if (record == m_configuration.savedControllers.end()) return false;
+
+    record->axisCount = kPhysicalAxisCount;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
+        NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(index)];
+        descriptor.present = true;
+        descriptor.nativeName = QString(u"Fixture %1"_qs).arg(physicalAxisLabel(axis));
+        descriptor.directInputGuid = QString(u"GUID_%1Axis"_qs)
+            .arg(physicalAxisKey(axis).toUpper().replace(u'-', u""_qs));
+        descriptor.directInputType = 0x1000U + static_cast<quint32>(index);
+        descriptor.directInputOffset = 0x2000U + static_cast<quint32>(index * 4);
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.acquisitionSourceResolved = true;
+        descriptor.acquisitionMethod = 0;
+        descriptor.canonicalAxis = index;
+        descriptor.formattedSource = index;
+        descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+        descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+        record->axes[static_cast<size_t>(index)] = true;
+        record->axisAcquisitionOverrides[static_cast<size_t>(index)] = {};
+    }
+    if (!ConfigStore::save(m_configuration) || !selectControllerForEditing(record->id)) return false;
+
+    m_axisIdentificationTimer.stop();
+    m_axisIdentification = {};
+    m_axisSourceMonitorVisible = false;
+    m_worker.updateConfiguration(m_configuration);
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    AtomicAxisSourceTelemetry &telemetry = runtime.deviceRigMemberAxisSourceTelemetry[0];
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const size_t index = static_cast<size_t>(source);
+        telemetry.value[index].store(0, std::memory_order_relaxed);
+        telemetry.observedMinimum[index].store(0, std::memory_order_relaxed);
+        telemetry.observedMaximum[index].store(65535, std::memory_order_relaxed);
+        telemetry.changeCount[index].store(0, std::memory_order_relaxed);
+        telemetry.recentMovementMagnitude[index].store(0, std::memory_order_relaxed);
+        telemetry.lastChangeAgeMs[index].store(-1, std::memory_order_relaxed);
+    }
+    telemetry.available.store(true, std::memory_order_relaxed);
+    m_worker.setAxisSourceMonitorRequested(false);
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::setAxisSourceMonitorCandidateForTest(int source, qint32 value,
+                                                      qint32 observedMinimum, qint32 observedMaximum,
+                                                      quint64 changeCount, int movementMagnitude)
+{
+    if (source < 0 || source >= kPhysicalAxisCount || observedMinimum > observedMaximum) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    AtomicAxisSourceTelemetry &telemetry = runtime.deviceRigMemberAxisSourceTelemetry[0];
+    const size_t index = static_cast<size_t>(source);
+    telemetry.value[index].store(value, std::memory_order_relaxed);
+    telemetry.observedMinimum[index].store(observedMinimum, std::memory_order_relaxed);
+    telemetry.observedMaximum[index].store(observedMaximum, std::memory_order_relaxed);
+    telemetry.changeCount[index].store(changeCount, std::memory_order_relaxed);
+    telemetry.recentMovementMagnitude[index].store(movementMagnitude, std::memory_order_relaxed);
+    telemetry.lastChangeAgeMs[index].store(0, std::memory_order_relaxed);
+    telemetry.available.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+void AppBackend::completeAxisIdentificationForTest()
+{
+    finishAxisIdentification();
+}
+
+bool AppBackend::axisSourceMonitorRequestedForTest() const
+{
+    return m_worker.runtime().axisSourceMonitorRequested.load(std::memory_order_relaxed);
 }
 
 bool AppBackend::configureSelectedButtonPresentationFixtureForTest(int buttonCount)
@@ -13982,15 +14090,22 @@ void AppBackend::setShowUltraNerdControls(bool enabled)
     m_showUltraNerdControls = enabled;
     QSettings settings;
     settings.setValue(u"presentation/showUltraNerdControls"_qs, enabled);
-    if (!enabled && !m_axisIdentification.active) {
-        m_worker.setAxisSourceMonitorRequested(false);
+    if (!enabled) {
+        // Disabling the specialty surface revokes its presentation lease.
+        // A bounded Identify Axis capture may still finish independently,
+        // after which it restores this false (closed) state.
+        m_axisSourceMonitorVisible = false;
+        if (!m_axisIdentification.active) {
+            m_worker.setAxisSourceMonitorRequested(false);
+        }
     }
     emit stateChanged();
 }
 
 void AppBackend::setAxisSourceMonitorVisible(bool visible)
 {
-    m_worker.setAxisSourceMonitorRequested(visible || m_axisIdentification.active);
+    m_axisSourceMonitorVisible = visible;
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible || m_axisIdentification.active);
     emit inputTelemetryChanged();
 }
 
@@ -14025,6 +14140,7 @@ bool AppBackend::beginAxisIdentification(int physicalAxis)
 void AppBackend::finishAxisIdentification()
 {
     if (!m_axisIdentification.active) return;
+    m_axisIdentificationTimer.stop();
     QVariantList candidates;
     int bestSource = -1;
     quint64 bestChanges = 0;
@@ -14066,6 +14182,10 @@ void AppBackend::finishAxisIdentification()
         {u"axis"_qs, m_axisIdentification.targetAxis}, {u"selectedSource"_qs, strong ? bestSource : -1},
         {u"changeCount"_qs, QVariant::fromValue<qulonglong>(bestChanges)}, {u"candidates"_qs, candidates},
         {u"message"_qs, message}};
+    // Identification owns the monitor only for its bounded capture. An
+    // already-open panel remains live; otherwise the worker immediately
+    // returns to the no-snapshot report path.
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible);
     emit stateChanged();
 }
 
@@ -14074,7 +14194,7 @@ void AppBackend::cancelAxisIdentification()
     m_axisIdentificationTimer.stop();
     m_axisIdentification.active = false;
     m_axisIdentification.result = {};
-    m_worker.setAxisSourceMonitorRequested(false);
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible);
     emit stateChanged();
 }
 
@@ -14100,7 +14220,7 @@ bool AppBackend::saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
                                              qint32 manualMaximum, const QString &interpretation,
                                              const QString &polarity)
 {
-    if (!validAxis(physicalAxis) || !validAxis(targetAxis)) return false;
+    if (!validAxis(physicalAxis) || (targetAxis != -1 && !validAxis(targetAxis))) return false;
     const QString recordId = selectedEditingControllerId();
     auto record = std::find_if(m_configuration.savedControllers.begin(),
         m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
@@ -14111,13 +14231,39 @@ bool AppBackend::saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
         emit stateChanged();
         return false;
     }
+    const NativeAxisDescriptor &native = record->axisDescriptors[static_cast<size_t>(physicalAxis)];
+    const bool automaticTarget = targetAxis == -1;
+    const int resolvedTarget = automaticTarget
+        ? (native.canonicalAxis >= 0 ? native.canonicalAxis : physicalAxis) : targetAxis;
+    if (!validAxis(resolvedTarget)) return false;
+    const auto automaticSourceForTarget = [&record](int target) -> const NativeAxisDescriptor * {
+        const NativeAxisDescriptor *resolved = nullptr;
+        for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount; ++descriptorIndex) {
+            const NativeAxisDescriptor &candidate = record->axisDescriptors[
+                static_cast<size_t>(descriptorIndex)];
+            const int candidateTarget = candidate.canonicalAxis >= 0
+                ? candidate.canonicalAxis : descriptorIndex;
+            if (!candidate.present || candidate.formattedSource < 0 || candidateTarget != target) continue;
+            if (resolved) return nullptr;
+            resolved = &candidate;
+        }
+        return resolved;
+    };
     const QString normalizedMode = mode.trimmed().toCaseFolded();
+    const bool automaticSource = normalizedMode == u"automatic-source"_qs;
+    if (!automaticSource && normalizedMode != u"direct-input"_qs
+        && normalizedMode != u"exact-native"_qs) {
+        appendEvent(u"That raw acquisition source mode is not available in this build"_qs);
+        emit stateChanged();
+        return false;
+    }
     AxisAcquisitionOverride override;
     override.enabled = true;
-    override.target = static_cast<PhysicalAxis>(targetAxis);
+    override.target = static_cast<PhysicalAxis>(resolvedTarget);
+    override.automaticTarget = automaticTarget;
     override.mode = normalizedMode == u"exact-native"_qs
         ? AxisAcquisitionMode::NativeDirectInputObject : AxisAcquisitionMode::DirectInputFormattedSlot;
-    override.formattedSource = formattedSource;
+    override.formattedSource = automaticSource ? -1 : formattedSource;
     const QString normalizedRange = rangePolicy.trimmed().toCaseFolded();
     override.rangePolicy = normalizedRange == u"manual"_qs ? AxisRawRangePolicy::Manual
         : normalizedRange == u"observed"_qs ? AxisRawRangePolicy::Observed
@@ -14137,17 +14283,33 @@ bool AppBackend::saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
         emit stateChanged();
         return false;
     }
-    if (override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
-        && (formattedSource < 0 || formattedSource >= kPhysicalAxisCount
-            || std::none_of(record->axisDescriptors.cbegin(), record->axisDescriptors.cend(),
-                [formattedSource](const NativeAxisDescriptor &descriptor) {
-                    return descriptor.present && descriptor.formattedSource == formattedSource;
-                }))) {
-        appendEvent(u"That DirectInput source is not available on the selected controller"_qs);
-        emit stateChanged();
-        return false;
+    if (automaticTarget && automaticSource
+        && override.rangePolicy == AxisRawRangePolicy::Automatic
+        && override.interpretation == AxisRawInterpretation::Automatic
+        && override.polarity == AxisRawPolarity::Automatic) {
+        return resetAxisAcquisitionOverride(physicalAxis);
     }
-    const NativeAxisDescriptor &native = record->axisDescriptors[static_cast<size_t>(physicalAxis)];
+    int resolvedFormattedSource = override.formattedSource;
+    if (override.mode == AxisAcquisitionMode::DirectInputFormattedSlot) {
+        const NativeAxisDescriptor *sourceDescriptor = automaticSource
+            ? automaticSourceForTarget(resolvedTarget) : nullptr;
+        if (!automaticSource) {
+            const auto found = std::find_if(record->axisDescriptors.cbegin(),
+                record->axisDescriptors.cend(), [formattedSource](const NativeAxisDescriptor &descriptor) {
+                    return descriptor.present && descriptor.formattedSource == formattedSource;
+                });
+            if (found != record->axisDescriptors.cend()) sourceDescriptor = &*found;
+        }
+        if (!sourceDescriptor || sourceDescriptor->formattedSource < 0
+            || sourceDescriptor->formattedSource >= kPhysicalAxisCount) {
+            appendEvent(automaticSource
+                ? u"Automatic DirectInput source is not uniquely resolved for that canonical axis"_qs
+                : u"That DirectInput source is not available on the selected controller"_qs);
+            emit stateChanged();
+            return false;
+        }
+        resolvedFormattedSource = sourceDescriptor->formattedSource;
+    }
     if (override.mode == AxisAcquisitionMode::NativeDirectInputObject) {
         if (!native.present || native.directInputGuid.isEmpty() || native.formattedSource < 0) {
             appendEvent(u"The selected native axis does not have a safe stable DirectInput identity"_qs);
@@ -14159,15 +14321,16 @@ bool AppBackend::saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
         override.nativeDirectInputType = native.directInputType;
         override.nativeDirectInputOffset = native.directInputOffset;
         override.nativeName = native.nativeName;
+        resolvedFormattedSource = native.formattedSource;
     }
     if (override.rangePolicy == AxisRawRangePolicy::Observed) {
         const QVariantList sources = axisSourceMonitor();
-        if (override.formattedSource < 0 || override.formattedSource >= sources.size()) {
+        if (resolvedFormattedSource < 0 || resolvedFormattedSource >= sources.size()) {
             appendEvent(u"Open the live source monitor and move the control before using its observed range"_qs);
             emit stateChanged();
             return false;
         }
-        const QVariantMap observed = sources.at(override.formattedSource).toMap();
+        const QVariantMap observed = sources.at(resolvedFormattedSource).toMap();
         manualMinimum = observed.value(u"observedMinimum"_qs).toInt();
         manualMaximum = observed.value(u"observedMaximum"_qs).toInt();
     }

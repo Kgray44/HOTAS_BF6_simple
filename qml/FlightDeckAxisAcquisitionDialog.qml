@@ -7,6 +7,7 @@ import QtQuick.Layouts 6.5
 // in their existing Flight Deck owners.
 Dialog {
     id: root
+    objectName: "flightDeckAxisAcquisitionDialog"
     required property var tokens
     property var axis: ({})
     property int axisIndex: -1
@@ -39,10 +40,19 @@ Dialog {
         return choices
     }
 
+    function canonicalChoiceModel() {
+        const choices = [{ label: "Automatic", value: -1 }]
+        for (let index = 0; index < axisChoices.length; ++index)
+            choices.push(axisChoices[index])
+        return choices
+    }
+
     onOpened: {
-        canonical.currentIndex = indexForValue(axisChoices, Number(axisIndex))
+        canonical.currentIndex = Boolean(axis.manualOverride) && !Boolean(axis.manualAutomaticTarget)
+            ? indexForValue(canonicalChoiceModel(), Number(axis.manualTargetAxisIndex)) : 0
         source.currentIndex = indexForValue(sourceChoiceModel(), Number(axis.formattedSourceIndex))
-        mode.currentIndex = axis.manualOverrideMode === "Exact native object" ? 1 : 0
+        mode.currentIndex = axis.manualOverrideMode === "Exact native object" ? 2
+            : Boolean(axis.manualOverride) && !Boolean(axis.manualAutomaticSource) ? 1 : 0
         range.currentIndex = axis.manualRangePolicy === "Manual" ? 2 : axis.manualRangePolicy === "Observed snapshot" ? 3 : axis.manualRangePolicy === "Driver-reported" ? 1 : 0
         interpretation.currentIndex = axis.manualInterpretation === "Centered absolute" ? 1 : axis.manualInterpretation === "One-sided absolute" ? 2 : 0
         polarity.currentIndex = axis.manualPolarity === "Normal" ? 1 : axis.manualPolarity === "Reversed" ? 2 : 0
@@ -164,14 +174,14 @@ Dialog {
                 ColumnLayout {
                     Layout.fillWidth: true
                     FieldLabel { text: "CANONICAL AXIS IDENTITY" }
-                    EditorCombo { id: canonical; model: root.axisChoices }
+                    EditorCombo { id: canonical; model: root.canonicalChoiceModel() }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
                     FieldLabel { text: "ACQUISITION SOURCE" }
                     EditorCombo {
                         id: mode
-                        model: [ { label: "DirectInput formatted source", value: "direct-input" }, { label: "Exact native object", value: "exact-native" } ]
+                        model: [ { label: "Automatic DirectInput source", value: "automatic-source" }, { label: "DirectInput formatted source", value: "direct-input" }, { label: "Exact native object", value: "exact-native" } ]
                     }
                 }
                 ColumnLayout {
@@ -179,6 +189,15 @@ Dialog {
                     visible: mode.currentValue === "direct-input"
                     FieldLabel { text: "DIRECTINPUT SOURCE" }
                     EditorCombo { id: source; model: root.sourceChoiceModel() }
+                }
+                Text {
+                    visible: mode.currentValue === "automatic-source"
+                    Layout.fillWidth: true
+                    Layout.columnSpan: root.width < root.tokens.scale(560) ? 1 : 2
+                    text: "Uses the uniquely resolved DirectInput source for the selected canonical axis. Reconnect validation keeps this source automatic; no enumeration position is saved."
+                    color: root.tokens.textMuted
+                    font.pixelSize: root.tokens.bodySmall
+                    wrapMode: Text.WordWrap
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -240,7 +259,8 @@ Dialog {
                             return
                         }
                         const saved = backend.saveAxisAcquisitionOverride(root.axisIndex,
-                            Number(canonical.currentValue), Number(source.currentValue),
+                            Number(canonical.currentValue), mode.currentValue === "automatic-source"
+                                ? -1 : Number(source.currentValue),
                             String(mode.currentValue), String(range.currentValue), Number(minimum.text),
                             Number(maximum.text), String(interpretation.currentValue), String(polarity.currentValue))
                         if (saved) root.close()

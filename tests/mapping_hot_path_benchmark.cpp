@@ -3,6 +3,7 @@
 #include "adaptive_response.h"
 #include "automation_engine.h"
 #include "button_mapping.h"
+#include "direct_input_axis.h"
 #include "mapping_worker.h"
 #include "physical_input_monitor.h"
 #include "profile_model.h"
@@ -182,6 +183,7 @@ struct HotPathState {
 };
 
 struct Percentiles {
+    double averageUs = 0.0;
     double typicalUs = 0.0;
     double p95Us = 0.0;
     double p99Us = 0.0;
@@ -198,6 +200,63 @@ struct BenchmarkResult {
     double stationaryWritesPerReport = 0.0;
 };
 
+// This deliberately covers the input-acquisition portion that precedes the
+// existing synthetic transform benchmark. It receives already-polled
+// DIJOYSTATE2 reports, so it cannot claim driver Poll/GetDeviceState or vJoy
+// timing. Its purpose is narrower: protect the fixed runtime binding and
+// opt-in source-monitor work from adding allocation or control-plane work to
+// every report.
+struct AxisAcquisitionBenchmarkState {
+    std::array<hotas::RuntimeAxisAcquisition, hotas::kPhysicalAxisCount> bindings{};
+    std::array<int, hotas::kPhysicalAxisCount> acquisitionMethods{};
+    std::array<bool, hotas::kPhysicalAxisCount> bufferedKnown{};
+    std::array<LONG, hotas::kPhysicalAxisCount> bufferedValues{};
+    std::array<float, hotas::kPhysicalAxisCount> lastObserved{};
+    std::array<bool, hotas::kPhysicalAxisCount> liveMovement{};
+    std::array<std::chrono::steady_clock::time_point, hotas::kPhysicalAxisCount> lastMovementAt{};
+    std::array<LONG, hotas::kPhysicalAxisCount> monitorPrevious{};
+    std::array<LONG, hotas::kPhysicalAxisCount> monitorMinimum{};
+    std::array<LONG, hotas::kPhysicalAxisCount> monitorMaximum{};
+    std::array<std::uint64_t, hotas::kPhysicalAxisCount> monitorChanges{};
+    std::array<std::chrono::steady_clock::time_point, hotas::kPhysicalAxisCount> monitorLastChanged{};
+    bool monitorInitialized = false;
+    hotas::AtomicAxisSourceTelemetry sourceTelemetry{};
+    std::array<std::atomic_int, hotas::kPhysicalAxisCount> publishedSource{};
+    std::array<std::atomic_bool, hotas::kPhysicalAxisCount> publishedLiveMovement{};
+    std::array<std::atomic_int64_t, hotas::kPhysicalAxisCount> publishedLastMovementAgeMs{};
+    std::atomic_bool sourceMonitorRequested{false};
+
+    AxisAcquisitionBenchmarkState()
+    {
+        lastObserved.fill(std::numeric_limits<float>::quiet_NaN());
+        for (int index = 0; index < hotas::kPhysicalAxisCount; ++index) {
+            hotas::RuntimeAxisAcquisition &binding = bindings[static_cast<size_t>(index)];
+            binding.sourceIndex = static_cast<std::uint8_t>(index);
+            binding.valid = true;
+            binding.scale = 2.0F / 65535.0F;
+            binding.offset = -1.0F + 32768.0F * binding.scale;
+            binding.minimum = -32768.0F;
+            binding.maximum = 32767.0F;
+            binding.flags = hotas::RuntimeAxisAcquisitionAllowBufferedEvidence;
+        }
+    }
+};
+
+struct AxisAcquisitionBenchmarkResult {
+    std::string_view binding;
+    std::string_view monitorState;
+    int memberCount = 1;
+    double reportsPerSecond = 0.0;
+    Percentiles latency;
+    std::uint64_t hotPathAllocations = 0;
+};
+
+enum class AxisAcquisitionBindingScenario {
+    Automatic,
+    ManualFormattedRz,
+    ExactNativeObjectRz,
+};
+
 float percentileUs(std::vector<std::uint64_t> samples, double fraction)
 {
     if (samples.empty()) return 0.0F;
@@ -210,11 +269,229 @@ float percentileUs(std::vector<std::uint64_t> samples, double fraction)
 Percentiles summarize(const std::vector<std::uint64_t> &samples)
 {
     Percentiles result;
+    if (samples.empty()) return result;
+    result.averageUs = std::accumulate(samples.cbegin(), samples.cend(), 0.0)
+        / static_cast<double>(samples.size()) / 1000.0;
     result.typicalUs = percentileUs(samples, 0.50);
     result.p95Us = percentileUs(samples, 0.95);
     result.p99Us = percentileUs(samples, 0.99);
     result.worstUs = static_cast<double>(*std::max_element(samples.begin(), samples.end())) / 1000.0;
     return result;
+}
+
+std::vector<DIJOYSTATE2> makeDirectInputStates()
+{
+    std::vector<DIJOYSTATE2> states;
+    states.reserve(4096);
+    std::uint32_t state = 0xA71C0F1u;
+    const auto nextAxisValue = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return static_cast<LONG>((state >> 8) & 0xFFFFu) - 32768L;
+    };
+    for (int reportIndex = 0; reportIndex < 4096; ++reportIndex) {
+        DIJOYSTATE2 report{};
+        report.lX = nextAxisValue();
+        report.lY = nextAxisValue();
+        report.lZ = nextAxisValue();
+        report.lRx = nextAxisValue();
+        report.lRy = nextAxisValue();
+        report.lRz = nextAxisValue();
+        report.rglSlider[0] = nextAxisValue();
+        report.rglSlider[1] = nextAxisValue();
+        states.push_back(report);
+    }
+    return states;
+}
+
+void processAxisAcquisitionReport(const DIJOYSTATE2 &state,
+                                  AxisAcquisitionBenchmarkState &acquisition,
+                                  volatile float &sink)
+{
+    const auto observedAt = Clock::now();
+    if (acquisition.sourceMonitorRequested.load(std::memory_order_relaxed)) {
+        for (int source = 0; source < hotas::kPhysicalAxisCount; ++source) {
+            const size_t sourceIndex = static_cast<size_t>(source);
+            const LONG value = hotas::directInputAxisValue(
+                state, static_cast<hotas::PhysicalAxis>(source));
+            int movementMagnitude = 0;
+            if (!acquisition.monitorInitialized) {
+                acquisition.monitorPrevious[sourceIndex] = value;
+                acquisition.monitorMinimum[sourceIndex] = value;
+                acquisition.monitorMaximum[sourceIndex] = value;
+                acquisition.monitorChanges[sourceIndex] = 0;
+                acquisition.monitorLastChanged[sourceIndex] = observedAt;
+            } else {
+                const LONG delta = value - acquisition.monitorPrevious[sourceIndex];
+                movementMagnitude = std::abs(delta);
+                if (delta != 0) {
+                    acquisition.monitorPrevious[sourceIndex] = value;
+                    ++acquisition.monitorChanges[sourceIndex];
+                    acquisition.monitorLastChanged[sourceIndex] = observedAt;
+                }
+                acquisition.monitorMinimum[sourceIndex] = std::min(
+                    acquisition.monitorMinimum[sourceIndex], value);
+                acquisition.monitorMaximum[sourceIndex] = std::max(
+                    acquisition.monitorMaximum[sourceIndex], value);
+            }
+            acquisition.sourceTelemetry.value[sourceIndex].store(value, std::memory_order_relaxed);
+            acquisition.sourceTelemetry.observedMinimum[sourceIndex].store(
+                acquisition.monitorMinimum[sourceIndex], std::memory_order_relaxed);
+            acquisition.sourceTelemetry.observedMaximum[sourceIndex].store(
+                acquisition.monitorMaximum[sourceIndex], std::memory_order_relaxed);
+            acquisition.sourceTelemetry.changeCount[sourceIndex].store(
+                acquisition.monitorChanges[sourceIndex], std::memory_order_relaxed);
+            acquisition.sourceTelemetry.recentMovementMagnitude[sourceIndex].store(
+                movementMagnitude, std::memory_order_relaxed);
+            acquisition.sourceTelemetry.lastChangeAgeMs[sourceIndex].store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    observedAt - acquisition.monitorLastChanged[sourceIndex]).count(),
+                std::memory_order_relaxed);
+        }
+        acquisition.monitorInitialized = true;
+        acquisition.sourceTelemetry.available.store(true, std::memory_order_relaxed);
+    } else {
+        acquisition.monitorInitialized = false;
+        acquisition.sourceTelemetry.available.store(false, std::memory_order_relaxed);
+    }
+
+    for (int axis = 0; axis < hotas::kPhysicalAxisCount; ++axis) {
+        const size_t axisIndex = static_cast<size_t>(axis);
+        const hotas::RuntimeAxisAcquisition &binding = acquisition.bindings[axisIndex];
+        const LONG standardValue = hotas::directInputAxisValue(
+            state, static_cast<hotas::PhysicalAxis>(binding.sourceIndex));
+        if (acquisition.bufferedKnown[axisIndex]
+            && acquisition.acquisitionMethods[axisIndex] == 0
+            && (binding.flags & hotas::RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
+            && std::abs(hotas::normalizeRuntimeAxisAcquisition(
+                            acquisition.bufferedValues[axisIndex], binding)
+                        - hotas::normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
+            acquisition.acquisitionMethods[axisIndex] = 1;
+        }
+        const LONG acquiredValue = acquisition.acquisitionMethods[axisIndex] == 1
+                && acquisition.bufferedKnown[axisIndex]
+            ? acquisition.bufferedValues[axisIndex] : standardValue;
+        const float current = hotas::normalizeRuntimeAxisAcquisition(acquiredValue, binding);
+        if (!std::isfinite(acquisition.lastObserved[axisIndex])) {
+            acquisition.lastObserved[axisIndex] = current;
+        } else if (std::abs(current - acquisition.lastObserved[axisIndex]) > 0.002F) {
+            acquisition.lastObserved[axisIndex] = current;
+            acquisition.lastMovementAt[axisIndex] = observedAt;
+            acquisition.liveMovement[axisIndex] = true;
+        }
+    }
+    for (int axis = 0; axis < hotas::kPhysicalAxisCount; ++axis) {
+        const size_t axisIndex = static_cast<size_t>(axis);
+        const bool live = acquisition.liveMovement[axisIndex];
+        acquisition.publishedSource[axisIndex].store(acquisition.acquisitionMethods[axisIndex],
+                                                      std::memory_order_relaxed);
+        acquisition.publishedLiveMovement[axisIndex].store(live, std::memory_order_relaxed);
+        acquisition.publishedLastMovementAgeMs[axisIndex].store(live
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                    observedAt - acquisition.lastMovementAt[axisIndex]).count()
+                : -1,
+            std::memory_order_relaxed);
+    }
+    sink += acquisition.lastObserved[0] + acquisition.lastObserved[5];
+}
+
+std::string_view axisAcquisitionBindingLabel(AxisAcquisitionBindingScenario scenario)
+{
+    switch (scenario) {
+    case AxisAcquisitionBindingScenario::Automatic:
+        return "automatic-all-axes";
+    case AxisAcquisitionBindingScenario::ManualFormattedRz:
+        return "manual-formatted-rz";
+    case AxisAcquisitionBindingScenario::ExactNativeObjectRz:
+        // Native identity matching happens during reconnect/configuration;
+        // the report path deliberately receives the same primitive Rz binding
+        // as a validated exact-native selection.
+        return "exact-native-rz";
+    }
+    return "unknown";
+}
+
+void configureAxisAcquisitionScenario(AxisAcquisitionBenchmarkState &acquisition,
+                                      AxisAcquisitionBindingScenario scenario,
+                                      bool sourceMonitorOpen)
+{
+    acquisition.sourceMonitorRequested.store(sourceMonitorOpen, std::memory_order_relaxed);
+    if (scenario == AxisAcquisitionBindingScenario::Automatic) return;
+    hotas::RuntimeAxisAcquisition &rz = acquisition.bindings[
+        static_cast<size_t>(hotas::PhysicalAxis::Rz)];
+    rz.sourceIndex = static_cast<std::uint8_t>(hotas::PhysicalAxis::Rz);
+    rz.flags = hotas::RuntimeAxisAcquisitionManual;
+}
+
+AxisAcquisitionBenchmarkResult benchmarkAxisAcquisition(
+    const std::vector<DIJOYSTATE2> &states, AxisAcquisitionBindingScenario scenario,
+    bool sourceMonitorOpen, int memberCount)
+{
+    std::array<AxisAcquisitionBenchmarkState, hotas::kMaximumDeviceRigMembers> members{};
+    memberCount = std::clamp(memberCount, 1, hotas::kMaximumDeviceRigMembers);
+    for (int member = 0; member < memberCount; ++member) {
+        configureAxisAcquisitionScenario(members[static_cast<size_t>(member)], scenario,
+                                         sourceMonitorOpen);
+    }
+    volatile float sink = 0.0F;
+    for (int index = 0; index < kWarmupReports; ++index) {
+        const DIJOYSTATE2 &state = states[static_cast<size_t>(index) % states.size()];
+        for (int member = 0; member < memberCount; ++member) {
+            processAxisAcquisitionReport(state, members[static_cast<size_t>(member)], sink);
+        }
+    }
+    std::vector<std::uint64_t> samples;
+    samples.reserve(kMeasuredReports);
+    gHotPathAllocations = 0;
+    gTrackHotPathAllocations = true;
+    const auto throughputStarted = Clock::now();
+    for (int index = 0; index < kMeasuredReports; ++index) {
+        const auto started = Clock::now();
+        const DIJOYSTATE2 &state = states[static_cast<size_t>(index) % states.size()];
+        for (int member = 0; member < memberCount; ++member) {
+            processAxisAcquisitionReport(state, members[static_cast<size_t>(member)], sink);
+        }
+        const auto finished = Clock::now();
+        samples.push_back(static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count()));
+    }
+    const auto throughputFinished = Clock::now();
+    gTrackHotPathAllocations = false;
+    if (sink == std::numeric_limits<float>::infinity()) std::cerr << "unexpected acquisition sink\n";
+    return {axisAcquisitionBindingLabel(scenario), sourceMonitorOpen ? "open" : "closed", memberCount,
+        static_cast<double>(kMeasuredReports)
+            / std::chrono::duration<double>(throughputFinished - throughputStarted).count(),
+        summarize(samples), gHotPathAllocations};
+}
+
+void runAxisAcquisitionBenchmarks()
+{
+    const std::vector<DIJOYSTATE2> states = makeDirectInputStates();
+    struct Scenario {
+        AxisAcquisitionBindingScenario binding;
+        bool sourceMonitorOpen;
+        int memberCount;
+    };
+    for (const Scenario scenario : {
+             Scenario{AxisAcquisitionBindingScenario::Automatic, false, 1},
+             Scenario{AxisAcquisitionBindingScenario::Automatic, true, 1},
+             Scenario{AxisAcquisitionBindingScenario::ManualFormattedRz, false, 1},
+             Scenario{AxisAcquisitionBindingScenario::ExactNativeObjectRz, false, 1},
+             Scenario{AxisAcquisitionBindingScenario::Automatic, false, 3},
+         }) {
+        const AxisAcquisitionBenchmarkResult result = benchmarkAxisAcquisition(
+            states, scenario.binding, scenario.sourceMonitorOpen, scenario.memberCount);
+        std::cout << std::fixed << std::setprecision(3)
+                  << "axis-acquisition binding=" << result.binding
+                  << " monitor=" << result.monitorState
+                  << " rig_members=" << result.memberCount
+                  << " reports/s=" << result.reportsPerSecond
+                  << " average_us=" << result.latency.averageUs
+                  << " typical_us=" << result.latency.typicalUs
+                  << " p95_us=" << result.latency.p95Us
+                  << " p99_us=" << result.latency.p99Us
+                  << " worst_us=" << result.latency.worstUs
+                  << " hot_path_allocations=" << result.hotPathAllocations << '\n';
+    }
 }
 
 std::vector<SyntheticReport> makeReports()
@@ -550,6 +827,7 @@ void printResult(std::string_view condition, const BenchmarkResult &result)
     std::cout << std::fixed << std::setprecision(3)
               << condition << ' ' << result.name
               << " reports/s=" << result.syntheticReportsPerSecond
+              << " average_us=" << result.latency.averageUs
               << " typical_us=" << result.latency.typicalUs
               << " p95_us=" << result.latency.p95Us
               << " p99_us=" << result.latency.p99Us
@@ -636,6 +914,7 @@ void printProfileControlResult(const ProfileControlBenchmarkResult &result)
 {
     std::cout << std::fixed << std::setprecision(3)
               << "profile-control " << result.name
+              << " average_us=" << result.latency.averageUs
               << " typical_us=" << result.latency.typicalUs
               << " p95_us=" << result.latency.p95Us
               << " p99_us=" << result.latency.p99Us
@@ -845,6 +1124,7 @@ void runAutomationBenchmark(int ruleCount, const std::vector<SyntheticReport> &r
     std::cout << std::fixed << std::setprecision(3)
               << (adaptiveOverlay ? "automation adaptive-overlay rules="
                                   : temporal ? "automation temporal rules=" : "automation rules=") << ruleCount
+              << " average_us=" << timing.averageUs
               << " typical_us=" << timing.typicalUs
               << " p95_us=" << timing.p95Us
               << " p99_us=" << timing.p99Us
@@ -916,6 +1196,8 @@ int runMappingHotPathBenchmark(int argc, char *argv[])
     const std::vector<SyntheticReport> reports = makeReports();
     std::cout << "Synthetic report-to-output-decision benchmark; no DirectInput device or vJoy driver call is included.\n";
     std::cout << "All curve evaluations use the production immutable 4097-sample LUT.\n";
+    std::cout << "Axis-acquisition rows use synthetic post-poll DIJOYSTATE2 reports and do not claim device or driver timing.\n";
+    runAxisAcquisitionBenchmarks();
     const bool uiModelStress = argc > 1 && std::string_view(argv[1]) == "--ui-stress";
     runSuite(uiModelStress ? "ui-model-stress" : "idle", reports, uiModelStress);
     runProfileControlBenchmarks();

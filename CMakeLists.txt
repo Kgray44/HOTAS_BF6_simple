@@ -786,6 +786,8 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/response_curve.cpp
         src/button_mapping.h
         src/button_mapping.cpp
+        src/direct_input_axis.h
+        src/direct_input_axis.cpp
         src/physical_input_monitor.h
         src/physical_input_monitor.cpp
         src/profile_model.h
@@ -796,6 +798,10 @@ if (HOTAS_BUILD_PERFORMANCE_BENCHMARK)
         src/automation_engine.cpp
     )
     target_link_libraries(mapping_hot_path_benchmark PRIVATE Qt6::Core)
+    if (WIN32)
+        target_link_libraries(mapping_hot_path_benchmark PRIVATE dinput8 dxguid)
+        target_compile_definitions(mapping_hot_path_benchmark PRIVATE NOMINMAX DIRECTINPUT_VERSION=0x0800)
+    endif()
     target_include_directories(mapping_hot_path_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     # This is a report-producing CI/local diagnostic, not a GUI executable.
     # Keep stdout attached so its latency and throughput evidence is visible.
