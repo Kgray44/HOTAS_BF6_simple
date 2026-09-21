@@ -687,11 +687,13 @@ ApplicationWindow {
                         width: ListView.view.width
                         time: modelData.time
                         checkId: modelData.checkId
+                        eventType: modelData.eventType
                         title: modelData.title
                         symbol: modelData.symbol
                         tone: modelData.tone
                         evidenceId: modelData.evidenceId
-                        onClicked: root.openEvidence(evidenceId)
+                        selected: doctorSession.selectedActivity.activityIndex === modelData.activityIndex
+                        onClicked: doctorSession.selectActivity(modelData.activityIndex)
                     }
                 }
             }
@@ -892,6 +894,7 @@ ApplicationWindow {
         border.width: 1
         radius: 2
         property var selected: doctorSession.selectedEvidence
+        property var activity: doctorSession.selectedActivity
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
@@ -901,8 +904,8 @@ ApplicationWindow {
                     Eyebrow { text: "EVIDENCE INSPECTOR"; color: Theme.textSecondary }
                     Label { text: inspectorSurface.selected.checkId || "Select a finding, diagnosis, or timeline row"; color: Theme.information; font.family: Theme.mono; font.pixelSize: root.textPx(12); elide: Text.ElideRight; Layout.fillWidth: true }
                 }
-                Doctor.DoctorButton { text: "PREV"; compact: true; enabled: inspectorSurface.selected.hasPrevious; tooltipText: "Open previous evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(-1) }
-                Doctor.DoctorButton { text: "NEXT"; compact: true; enabled: inspectorSurface.selected.hasNext; tooltipText: "Open next evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(1) }
+                Doctor.DoctorButton { text: "↶"; compact: true; iconOnly: true; enabled: inspectorSurface.selected.hasPrevious; tooltipText: "Open previous evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(-1) }
+                Doctor.DoctorButton { text: "↷"; compact: true; iconOnly: true; enabled: inspectorSurface.selected.hasNext; tooltipText: "Open next evidence record"; accessibleName: tooltipText; onClicked: doctorSession.selectAdjacentEvidence(1) }
                 Doctor.DoctorButton { text: "COPY SUMMARY"; compact: true; tooltipText: "Copy the redacted evidence summary"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Summary") }
                 Doctor.DoctorButton { text: "COPY TECH"; compact: true; tooltipText: "Copy redacted technical evidence fields"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Technical") }
                 Doctor.DoctorButton { text: "COPY ALL"; compact: true; tooltipText: "Copy complete redacted evidence"; accessibleName: tooltipText; onClicked: doctorSession.copySelectedEvidenceMode("Complete") }
@@ -910,6 +913,31 @@ ApplicationWindow {
                 Doctor.DoctorButton { text: "Close"; compact: true; onClicked: inspector.close() }
             }
             Doctor.DoctorDivider {}
+            Rectangle {
+                visible: inspectorSurface.activity.eventType && inspectorSurface.activity.eventType.length > 0
+                Layout.fillWidth: true
+                implicitHeight: activityContext.implicitHeight + 16
+                color: Theme.inset
+                border.color: Theme.separator
+                radius: 2
+                ColumnLayout {
+                    id: activityContext
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 3
+                    Eyebrow { text: "ACTIVITY CONTEXT" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 9
+                        Label { text: inspectorSurface.activity.eventType; color: Theme.information; font.family: Theme.mono; font.pixelSize: root.textPx(10) }
+                        Label { text: inspectorSurface.activity.phase; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: root.textPx(10) }
+                        Label { text: inspectorSurface.activity.status; color: Theme.tone(inspectorSurface.activity.status.toLowerCase()); font.family: Theme.mono; font.pixelSize: root.textPx(10) }
+                        Item { Layout.fillWidth: true }
+                        Label { text: inspectorSurface.activity.timestamp; color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: root.textPx(9) }
+                    }
+                    Label { text: inspectorSurface.activity.detail || inspectorSurface.activity.title; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: root.textPx(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+            }
             GridLayout { columns: root.width > 980 ? 4 : 2; columnSpacing: 18; rowSpacing: 8; Layout.fillWidth: true
                 Eyebrow { text: "SOURCE" }
                 Label { text: inspectorSurface.selected.source || "Unknown"; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: root.textPx(11); Layout.fillWidth: true; elide: Text.ElideRight }

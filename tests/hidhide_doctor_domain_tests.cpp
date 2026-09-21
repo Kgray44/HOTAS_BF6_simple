@@ -958,8 +958,22 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     QVERIFY(checkStartedEvidence);
     QCOMPARE(checkStartedRow.value(QStringLiteral("evidenceId")).toString(), checkStartedEvidence->id.value());
     QVERIFY(checkStartedRow.value(QStringLiteral("selectable")).toBool());
-    model.selectEvidence(checkStartedRow.value(QStringLiteral("evidenceId")).toString());
+    model.selectActivity(checkStartedRow.value(QStringLiteral("activityIndex")).toInt());
     QCOMPARE(model.selectedEvidence().value(QStringLiteral("id")).toString(), checkStartedEvidence->id.value());
+    QCOMPARE(model.selectedActivity().value(QStringLiteral("eventType")).toString(), QStringLiteral("CHECK STARTED"));
+    QCOMPARE(model.selectedActivity().value(QStringLiteral("checkId")).toString(), checkStartedRow.value(QStringLiteral("checkId")).toString());
+
+    const auto evidenceRecorded = std::find_if(activityRows.cbegin(), activityRows.cend(), [&checkStartedRow](const QVariant &value) {
+        const QVariantMap row = value.toMap();
+        return row.value(QStringLiteral("checkId")).toString() == checkStartedRow.value(QStringLiteral("checkId")).toString()
+            && row.value(QStringLiteral("eventType")).toString() == QStringLiteral("EVIDENCE RECORDED");
+    });
+    QVERIFY(evidenceRecorded != activityRows.cend());
+    const QVariantMap evidenceRecordedRow = evidenceRecorded->toMap();
+    QCOMPARE(evidenceRecordedRow.value(QStringLiteral("evidenceId")).toString(), checkStartedEvidence->id.value());
+    model.selectActivity(evidenceRecordedRow.value(QStringLiteral("activityIndex")).toInt());
+    QCOMPARE(model.selectedEvidence().value(QStringLiteral("id")).toString(), checkStartedEvidence->id.value());
+    QCOMPARE(model.selectedActivity().value(QStringLiteral("eventType")).toString(), QStringLiteral("EVIDENCE RECORDED"));
 
     const auto sessionCompleted = std::find_if(activityRows.cbegin(), activityRows.cend(), [](const QVariant &value) {
         return value.toMap().value(QStringLiteral("eventType")).toString() == QStringLiteral("SESSION COMPLETED");
@@ -968,6 +982,7 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     QVERIFY(!sessionCompleted->toMap().value(QStringLiteral("selectable")).toBool());
 
     model.selectEvidence(protocol->id.value());
+    QVERIFY(model.selectedActivity().isEmpty());
     model.copySelectedEvidenceMode(QStringLiteral("Summary"));
     QVERIFY(copied.contains(QStringLiteral("HD-API-002")));
     model.copySelectedEvidenceMode(QStringLiteral("Technical"));

@@ -107,6 +107,20 @@ QString iconFor(DoctorCheckStatus status)
     return QStringLiteral("?");
 }
 
+QString evidenceIdForActivity(const DoctorSession &session, const DoctorActivityEvent &event)
+{
+    if (event.evidenceId.isValid()) return event.evidenceId.value();
+    for (const EvidenceId &relatedId : event.evidenceIds) {
+        if (relatedId.isValid()) return relatedId.value();
+    }
+    if (event.checkId.isValid()) {
+        for (const EvidenceRecord &evidence : session.evidence()) {
+            if (evidence.checkId == event.checkId) return evidence.id.value();
+        }
+    }
+    return {};
+}
+
 QString toneFor(DoctorCheckStatus status)
 {
     switch (status) {
@@ -379,31 +393,17 @@ QVariantList DoctorSessionViewModel::diagnosisCards() const
 QVariantList DoctorSessionViewModel::activityRows() const
 {
     QVariantList values;
-    for (const DoctorActivityEvent &event : m_session.activity()) {
+    for (int activityIndex = 0; activityIndex < m_session.activity().size(); ++activityIndex) {
+        const DoctorActivityEvent &event = m_session.activity().at(activityIndex);
         // Check-start and phase events are emitted before their evidence is
         // retained. By presentation time the canonical check evidence exists,
         // so resolve that relationship instead of leaving a clickable row
         // pointing at an empty ID. A genuine session-only event remains
         // visibly non-navigable rather than retaining the prior Inspector
         // selection.
-        QString evidenceId = event.evidenceId.value();
-        if (evidenceId.isEmpty()) {
-            for (const EvidenceId &relatedId : event.evidenceIds) {
-                if (relatedId.isValid()) {
-                    evidenceId = relatedId.value();
-                    break;
-                }
-            }
-        }
-        if (evidenceId.isEmpty() && event.checkId.isValid()) {
-            for (const EvidenceRecord &evidence : m_session.evidence()) {
-                if (evidence.checkId == event.checkId) {
-                    evidenceId = evidence.id.value();
-                    break;
-                }
-            }
-        }
+        const QString evidenceId = evidenceIdForActivity(m_session, event);
         values.append(QVariantMap{{QStringLiteral("time"), event.timestamp.toLocalTime().toString(QStringLiteral("HH:mm:ss.zzz"))},
+        {QStringLiteral("activityIndex"), activityIndex},
         {QStringLiteral("checkId"), event.checkId.value()}, {QStringLiteral("symbol"), iconFor(event.status)}, {QStringLiteral("status"), displayName(event.status).toUpper()},
         {QStringLiteral("eventType"), displayName(event.type).toUpper()}, {QStringLiteral("phase"), displayName(event.phase)},
         {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail}, {QStringLiteral("reason"), event.reason},
@@ -415,6 +415,22 @@ QVariantList DoctorSessionViewModel::activityRows() const
         {QStringLiteral("diagnosisIds"), [&] { QStringList ids; for (const DiagnosisId &id : event.relatedDiagnosisIds) ids.append(id.value()); return ids; }()}});
     }
     return values;
+}
+
+QVariantMap DoctorSessionViewModel::selectedActivity() const
+{
+    if (m_selectedActivityIndex < 0 || m_selectedActivityIndex >= m_session.activity().size()) return {};
+    const DoctorActivityEvent &event = m_session.activity().at(m_selectedActivityIndex);
+    return {{QStringLiteral("activityIndex"), m_selectedActivityIndex},
+        {QStringLiteral("eventType"), displayName(event.type).toUpper()},
+        {QStringLiteral("phase"), displayName(event.phase)},
+        {QStringLiteral("status"), displayName(event.status).toUpper()},
+        {QStringLiteral("checkId"), event.checkId.value()},
+        {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail},
+        {QStringLiteral("reason"), event.reason}, {QStringLiteral("target"), event.target},
+        {QStringLiteral("result"), event.result}, {QStringLiteral("nextStep"), event.nextStep},
+        {QStringLiteral("timestamp"), event.timestamp.toLocalTime().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("evidenceId"), evidenceIdForActivity(m_session, event)}};
 }
 
 QVariantList DoctorSessionViewModel::evidenceRows() const
@@ -684,7 +700,18 @@ void DoctorSessionViewModel::resetWorkspaceLayout()
 }
 void DoctorSessionViewModel::selectEvidence(const QString &evidenceId)
 {
-    if (m_selectedEvidenceId == evidenceId) return;
+    if (m_selectedEvidenceId == evidenceId && m_selectedActivityIndex < 0) return;
+    m_selectedEvidenceId = evidenceId;
+    m_selectedActivityIndex = -1;
+    emit sessionChanged();
+}
+
+void DoctorSessionViewModel::selectActivity(int activityIndex)
+{
+    if (activityIndex < 0 || activityIndex >= m_session.activity().size()) return;
+    const QString evidenceId = evidenceIdForActivity(m_session, m_session.activity().at(activityIndex));
+    if (m_selectedActivityIndex == activityIndex && m_selectedEvidenceId == evidenceId) return;
+    m_selectedActivityIndex = activityIndex;
     m_selectedEvidenceId = evidenceId;
     emit sessionChanged();
 }

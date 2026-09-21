@@ -51,6 +51,7 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(QVariantList activityRows READ activityRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantList evidenceRows READ evidenceRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap selectedEvidence READ selectedEvidence NOTIFY sessionChanged)
+    Q_PROPERTY(QVariantMap selectedActivity READ selectedActivity NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap currentOperationDetails READ currentOperationDetails NOTIFY sessionChanged)
     Q_PROPERTY(bool repairPlanAvailable READ repairPlanAvailable NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap repairPlanSummary READ repairPlanSummary NOTIFY sessionChanged)
@@ -110,6 +111,7 @@ public:
     QVariantList activityRows() const;
     QVariantList evidenceRows() const;
     QVariantMap selectedEvidence() const;
+    QVariantMap selectedActivity() const;
     QVariantMap currentOperationDetails() const;
     bool repairPlanAvailable() const;
     QVariantMap repairPlanSummary() const;
@@ -145,6 +147,7 @@ public:
     Q_INVOKABLE void saveBottomDockFractions(const QVariantList &fractions);
     Q_INVOKABLE void resetWorkspaceLayout();
     Q_INVOKABLE void selectEvidence(const QString &evidenceId);
+    Q_INVOKABLE void selectActivity(int activityIndex);
     Q_INVOKABLE void selectAdjacentEvidence(int direction);
     Q_INVOKABLE void requestCancellation();
     Q_INVOKABLE void requestRerun();
@@ -191,6 +194,7 @@ private:
     QVariantList m_bottomDockFractions;
     int m_layoutResetEpoch = 0;
     QString m_selectedEvidenceId;
+    int m_selectedActivityIndex = -1;
     std::function<void()> m_cancellation;
     std::function<void()> m_rerun;
     bool m_labRepairMode = false;
