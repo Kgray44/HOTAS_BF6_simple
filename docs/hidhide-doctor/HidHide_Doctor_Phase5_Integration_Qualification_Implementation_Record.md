@@ -387,6 +387,20 @@ path has not run for this unsigned candidate.
   `LOCALAPPDATA` environment variable pointed to an unavailable `System32`
   path exited `0`; this is only a no-crash environment fixture because that
   smoke path does not prove an AppData write was attempted.
+- The bounded interactive-contention helper was exercised with the running R8
+  Doctor. Its moderate interval completed in 90.132 seconds with 8 workers at
+  a 50 ms/100 ms duty cycle and measured 21.817% of all logical CPU capacity;
+  receipt SHA-256
+  `48AAF58E43F639980844D05192B5CE0398AF6AC994FC1D29FA0D431B9A114D61`.
+  Its heavy interval completed in 90.134 seconds with 15 workers at 95 ms/100
+  ms and measured 46.247%; receipt SHA-256
+  `F10726C8FE163D9B4FAFE1A4F28F3C115BBF008D99904B4F338B76DD803C1CDF`.
+  After the heavy interval, the protected R8 process still reported
+  `Responding=True` with a 137,646,080 B working set and 148,353,024 B private
+  memory. These are narrow live-load harness facts only: no owner input,
+  first-visible-progress timing, click/render latency, cancellation, or export
+  was exercised during the intervals, so they do not qualify user-visible
+  graceful degradation.
 - The deep-helper regression now also re-seals and injects forbidden
   `command`, argument, executable, service, filter, registry-path, cache-path,
   and RunOnce-like package fields, plus a mismatched one-time nonce. Each is
