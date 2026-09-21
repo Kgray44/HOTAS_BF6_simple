@@ -23,6 +23,7 @@ substitute.
 | Launch from **Diagnostics/App Health** |  | Same paired binary and one-process behavior. |
 | Launch from **Flight Deck → Diagnostics** |  | Same paired binary and one-process behavior. |
 | Read-only scan at the current Windows scaling |  | First visible progress, completion state, and whether the window remains responsive. |
+| Interactive CPU contention: idle, moderate, and heavy |  | For each level, run `scripts/invoke-hidhide-doctor-interactive-contention.ps1` for its bounded interval, then record the JSON receipt, whether each normal read-only control reacts promptly, and any measured or observed delay. No repair, export, or device change. |
 | Activity lifecycle selection and Inspector navigation |  | For one check ID with multiple Timeline entries, select at least two distinct lifecycle rows. Each selection must update the **Activity Context** card with its own event type, phase, status, time, and detail. The canonical evidence may be shared; that is expected. Verify the compact `↶` / `↷` controls navigate evidence and retain their clear Previous/Next accessible names. |
 | Each available Windows scaling from 100% through 200% |  | Actual scaling value, readable text, no clipped controls, usable small-window behavior. |
 | Keyboard-only route |  | Tab order reaches the primary controls; Space/Enter activates the intended control; Escape closes only the transient surface. |
