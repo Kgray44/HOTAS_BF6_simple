@@ -35,20 +35,24 @@ Flickable {
     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
     function capturePresentationState() {
-        presentationStateCaptured({
+        const state = {
             contentY: contentY,
             responseView: responseView,
-            showEffective: showEffective,
-            detailsExpanded: detailsExpanded
-        });
+            showEffective: showEffective
+        };
+        // An inherited level default is not a local curve-editor choice.  Do
+        // not turn navigation away and back into a durable disclosure write.
+        if (themeManager.guidanceSectionHasExplicitPreference("curve-details"))
+            state.curveDetailsExplicit = detailsExpanded;
+        presentationStateCaptured(state);
     }
     function restorePresentationState() {
         const saved = presentationState || ({});
         contentY = Number(saved.contentY || 0);
         responseView = saved.responseView === undefined ? true : !!saved.responseView;
         showEffective = !!saved.showEffective;
-        if (saved.detailsExpanded !== undefined)
-            themeManager.setGuidanceSectionExpanded("curve-details", !!saved.detailsExpanded);
+        if (saved.curveDetailsExplicit !== undefined)
+            themeManager.setGuidanceSectionExpanded("curve-details", !!saved.curveDetailsExplicit);
     }
     function recordHistory() {
         if (!backendObject) return;
@@ -644,6 +648,7 @@ Flickable {
                         Text { text: "Compare or preview a response without changing the active curve."; color: tokens.textSecondary; font.pixelSize: tokens.scale(10) }
                     }
                     DeckButton { text: detailsExpanded ? "HIDE DETAILS" : "CURVE DETAILS"; subdued: true; onClicked: themeManager.setGuidanceSectionExpanded("curve-details", !detailsExpanded) }
+                    DeckButton { visible: themeManager.guidanceSectionHasExplicitPreference("curve-details"); text: "FOLLOW GUIDANCE"; subdued: true; onClicked: themeManager.followGuidanceLevelForSection("curve-details") }
                 }
                 GridLayout {
                     Layout.fillWidth: true

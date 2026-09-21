@@ -136,7 +136,6 @@ qt_add_qml_module(HOTASMapper
         qml/FlightDeckTheme.qml
         qml/FlightDeckDialog.qml
         qml/FlightDeckDialogFooter.qml
-        qml/FlightDeckGuidanceCallout.qml
         qml/FlightDeckGuidanceOnboarding.qml
         qml/FlightDeckSetupAssistant.qml
         qml/FlightDeckInputLearningDialog.qml
@@ -659,7 +658,6 @@ if (BUILD_TESTING)
             qml/FlightDeckTheme.qml
             qml/FlightDeckDialog.qml
             qml/FlightDeckDialogFooter.qml
-            qml/FlightDeckGuidanceCallout.qml
             qml/FlightDeckGuidanceOnboarding.qml
             qml/FlightDeckSetupAssistant.qml
             qml/FlightDeckInputLearningDialog.qml
@@ -758,10 +756,17 @@ if (BUILD_TESTING)
     # boundary.  --startup-smoke would hide the window and invalidate Popup
     # placement assertions that are part of this lifecycle suite.
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
+    # This is deliberately separate from the short route-by-route navigation
+    # probe: it enters the complete fixture and asserts actual Guided/Full
+    # editor groups and assistant decisions through verifyFlightDeckSettings.
+    add_test(NAME app_qml_guidance_qualification_tests COMMAND app_qml_startup_tests --guidance-qualification)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH};HOTAS_QML_LIFECYCLE_WATCHDOG_MS=60000"
             TIMEOUT 75)
+        set_tests_properties(app_qml_guidance_qualification_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH};HOTAS_QML_LIFECYCLE_WATCHDOG_MS=120000"
+            TIMEOUT 135)
     endif()
 
     qt_add_executable(theme_manager_tests

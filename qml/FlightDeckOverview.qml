@@ -143,14 +143,6 @@ Flickable {
         width: Math.max(0, root.width - deck.space8)
         spacing: deck.space16
 
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · SETUP STATUS"
-            guidedText: "Start with the item marked for attention, then use the single setup action to continue without changing your mapping."
-            fullTitle: "SETUP CONTEXT"
-            fullText: "Current readiness and connection evidence are expanded below."
-        }
-
         RowLayout {
             Layout.fillWidth: true
             ColumnLayout {
@@ -338,10 +330,15 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: deck.space8
                     Button {
-                        text: "EDIT SETUP"
+                        objectName: "flightDeckOverviewNextSetupAction"
+                        readonly property var nextIssue: (root.setupTruth.issues || []).length ? root.setupTruth.issues[0] : null
+                        text: nextIssue ? "REVIEW NEXT ISSUE" : (root.setupTruth.fresh ? "VIEW SETUP" : "CHECK SETUP")
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
-                        onClicked: root.navigateToDevices(root.editSetupContext())
+                        onClicked: {
+                            if (nextIssue) root.reviewIssue(nextIssue)
+                            else root.navigateToDevices(root.setupTruth.fresh ? root.editSetupContext() : "verification")
+                        }
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
@@ -484,6 +481,15 @@ Flickable {
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
+                    }
+                    Button {
+                        visible: themeManager.guidanceSectionHasExplicitPreference("overview-connection-evidence")
+                        text: "FOLLOW GUIDANCE"
+                        focusPolicy: Qt.StrongFocus
+                        implicitHeight: deck.compactControlHeight
+                        onClicked: themeManager.followGuidanceLevelForSection("overview-connection-evidence")
+                        background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                        contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }
                 ColumnLayout {

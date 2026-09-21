@@ -52,6 +52,10 @@ Flickable {
     readonly property var behaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var mappingControlChoices: backend.mappingControlActionChoices
     readonly property var nativePovChoices: backend.nativePovTargetChoices
+    readonly property bool behaviorExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("buttons-behavior")
+    }
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0
         ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "Selected controller")
     readonly property bool hasVisibleButtons: visibleButtonCount() > 0
@@ -641,6 +645,91 @@ Flickable {
                         font.pixelSize: deck.scale(9)
                     }
                 }
+                Rectangle {
+                    objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
+                    Layout.fillWidth: true
+                    implicitHeight: virtualBehaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: virtualBehaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                SectionLabel { text: "OPTIONAL RELATIONSHIPS" }
+                                Text {
+                                    text: Number(button.sourceCount || 0) + " physical source"
+                                        + (Number(button.sourceCount || 0) === 1 ? "" : "s") + " · "
+                                        + (card.automations.length ? String(card.automations.length) + " linked automation"
+                                            + (card.automations.length === 1 ? "" : "s") : "no linked automation")
+                                    color: deck.textSecondary
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            DeckButton {
+                                objectName: "flightDeckButtonsBehaviorToggle_" + card.buttonIndex
+                                text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"
+                                subdued: true
+                                onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded)
+                            }
+                        }
+                        Text {
+                            visible: !root.behaviorExpanded
+                            text: "Keep the source mapping above for normal setup. Open options to inspect each linked automation without changing its route."
+                            color: deck.textMuted
+                            font.pixelSize: deck.scale(9)
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        DeckButton {
+                            visible: themeManager.guidanceSectionHasExplicitPreference("buttons-behavior")
+                            text: "FOLLOW GUIDANCE LEVEL"
+                            subdued: true
+                            onClicked: themeManager.followGuidanceLevelForSection("buttons-behavior")
+                        }
+                    }
+                }
+                ColumnLayout {
+                    objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
+                    visible: root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space8
+                    Text {
+                        text: card.selectedOwnedSourceButton > 0
+                            ? "Selected input: Button " + card.selectedOwnedSourceButton + " on " + root.inputDeviceName
+                            : "No source from the selected controller is assigned to this output."
+                        color: deck.textMuted
+                        font.pixelSize: deck.scale(9)
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    Repeater {
+                        model: card.automations
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Automation · " + String(modelData.name || "Rule")
+                                color: deck.textSecondary
+                                font.pixelSize: deck.scale(9)
+                                elide: Text.ElideRight
+                            }
+                            DeckButton {
+                                text: "OPEN"
+                                subdued: true
+                                onClicked: root.navigateToAutomation(String(modelData.id || ""))
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -881,16 +970,70 @@ Flickable {
                         font.pixelSize: deck.scale(9)
                     }
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
-                SectionLabel { text: "PROFILE CONTROL" }
-                Text {
-                    text: "A profile control consumes this physical input while retaining its saved game route for restoration when cleared."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    wrapMode: Text.WordWrap
+                Rectangle {
+                    objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
                     Layout.fillWidth: true
+                    implicitHeight: behaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: behaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                SectionLabel { text: "OPTIONAL BEHAVIOR & RELATIONSHIPS" }
+                                Text {
+                                    text: (Boolean(button.profileControlEnabled) ? "Profile control · " + String(button.profileControlTargetName || "needs attention") : "No profile control")
+                                        + " · " + (String(button.mappingControlKey || "none") !== "none" ? "mapping control set" : "no mapping control")
+                                        + " · " + (automations.length ? String(automations.length) + " automation link" + (automations.length === 1 ? "" : "s") : "no automation links")
+                                    color: deck.textSecondary
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            DeckButton {
+                                text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"
+                                subdued: true
+                                onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded)
+                            }
+                        }
+                        Text {
+                            visible: !root.behaviorExpanded
+                            text: "The game route above is the normal setup. Open options only to make this input switch profiles, control mapping, or inspect linked automation."
+                            color: deck.textMuted
+                            font.pixelSize: deck.scale(9)
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        DeckButton {
+                            visible: themeManager.guidanceSectionHasExplicitPreference("buttons-behavior")
+                            text: "FOLLOW GUIDANCE LEVEL"
+                            subdued: true
+                            onClicked: themeManager.followGuidanceLevelForSection("buttons-behavior")
+                        }
+                    }
                 }
-                GridLayout {
+                ColumnLayout {
+                    objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
+                    visible: root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                    SectionLabel { text: "PROFILE CONTROL" }
+                    Text {
+                        text: "A profile control consumes this physical input while retaining its saved game route for restoration when cleared."
+                        color: deck.textMuted
+                        font.pixelSize: deck.scale(9)
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    GridLayout {
                     Layout.fillWidth: true
                     columns: width >= 620 ? 2 : 1
                     columnSpacing: deck.space12
@@ -927,7 +1070,7 @@ Flickable {
                         }
                     }
                 }
-                RowLayout {
+                    RowLayout {
                     visible: Boolean(button.profileControlEnabled)
                     Layout.fillWidth: true
                     Text {
@@ -946,22 +1089,22 @@ Flickable {
                         onClicked: root.navigateToProfile(String(button.profileControlTargetId || ""))
                     }
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
-                SectionLabel { text: "MAPPING CONTROL" }
-                Text {
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                    SectionLabel { text: "MAPPING CONTROL" }
+                    Text {
                     text: "This existing global control is independent of the game route above."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                     Layout.fillWidth: true
                 }
-                DeckCombo {
+                    DeckCombo {
                     objectName: "flightDeckButtonMappingControlSelector_" + card.buttonIndex
                     Layout.fillWidth: true
                     model: root.mappingControlChoices
                     currentIndex: Math.max(0, root.mappingControlChoices.indexOf(String(button.mappingControl || "None")))
                     onActivated: backend.setMappingControl(card.buttonIndex, currentText)
                 }
-                ColumnLayout {
+                    ColumnLayout {
                     visible: automations.length > 0
                     Layout.fillWidth: true
                     spacing: deck.space8
@@ -985,6 +1128,7 @@ Flickable {
                                 onClicked: root.navigateToAutomation(String(modelData.id || ""))
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1283,6 +1427,30 @@ Flickable {
                         onClicked: root.requestPovLearning(Number(card.directionAt(root.expandedPovDirection).target || 0))
                     }
                 }
+                Rectangle {
+                    objectName: "flightDeckPovBehaviorDisclosure_" + card.hatIndex + "_" + root.expandedPovDirection
+                    Layout.fillWidth: true
+                    implicitHeight: povBehaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: povBehaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "OPTIONAL PROFILE & AUTOMATION"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; Layout.fillWidth: true }
+                            DeckButton { text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"; subdued: true; onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded) }
+                        }
+                        Text { visible: !root.behaviorExpanded; text: "The POV route above remains unchanged. Open options to make this direction control a profile or inspect linked automation."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                }
+                ColumnLayout {
+                    visible: root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space12
                 GridLayout {
                     Layout.fillWidth: true
                     columns: width >= 620 ? 2 : 1
@@ -1355,6 +1523,7 @@ Flickable {
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -1364,14 +1533,6 @@ Flickable {
         x: deck.space4
         width: root.width - deck.space8
         spacing: deck.space16
-
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · BUTTON OR POV ASSIGNMENT"
-            guidedText: "Choose a source, assign the intended virtual button or POV behavior, then open Configure only when you need its optional behavior controls."
-            fullTitle: "BUTTON EDITING CONTEXT"
-            fullText: "Common assignment and direct configuration remain in the existing cards."
-        }
 
         RowLayout {
             Layout.fillWidth: true

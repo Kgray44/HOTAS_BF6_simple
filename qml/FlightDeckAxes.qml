@@ -403,6 +403,15 @@ Flickable {
         readonly property var adaptiveState: root.adaptiveStateFor(axisIndex)
         readonly property bool adaptiveEnabled: Boolean(adaptiveState.effective && adaptiveState.effective.enabled)
         readonly property var curveState: backend.curveEditorState
+        readonly property bool processingExpanded: {
+            themeManager.guidancePolicyRevision
+            return themeManager.guidanceSectionExpanded("axes-processing")
+        }
+        // Do not collapse a text edit because the owner changes the starting
+        // presentation underneath it. `focus` also preserves an edit while a
+        // desktop window is temporarily inactive, where activeFocus is false.
+        readonly property bool processingVisible: processingExpanded
+            || aliasEditor.focus || nameEditor.focus
         property bool technicalDetailsOpen: false
 
         objectName: "flightDeckAxisCard_" + axisIndex
@@ -856,7 +865,59 @@ Flickable {
                     }
 
                     Rectangle {
+                        objectName: "flightDeckAxesProcessingDisclosure_" + card.axisIndex
                         Layout.fillWidth: true
+                        implicitHeight: processingDisclosure.implicitHeight + deck.space24
+                        radius: deck.radiusCard
+                        color: deck.secondarySurface
+                        border.color: deck.border
+                        ColumnLayout {
+                            id: processingDisclosure
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space6
+                            RowLayout {
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    SettingTitle { text: "ADDITIONAL TUNING" }
+                                    Text {
+                                        text: "Limits " + root.percent(axis.outputMinimum, axis.unipolar) + " to "
+                                            + root.percent(axis.outputMaximum, axis.unipolar) + " · "
+                                            + (axis.rangeModeLabel || "Configured domain") + " · " + root.adaptiveLabel(card.axisIndex)
+                                        color: deck.textSecondary
+                                        font.pixelSize: deck.scale(10)
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                                DeckButton {
+                                    objectName: "flightDeckAxesProcessingToggle_" + card.axisIndex
+                                    text: card.processingExpanded ? "HIDE TUNING" : "SHOW TUNING"
+                                    subdued: true
+                                    onClicked: themeManager.setGuidanceSectionExpanded("axes-processing", !card.processingExpanded)
+                                }
+                            }
+                            Text {
+                                visible: !card.processingExpanded
+                                text: "Keep the route and response above for normal setup. Open tuning to change output authority, input domain, names, or Adaptive Response."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: themeManager.guidanceSectionHasExplicitPreference("axes-processing")
+                                text: "FOLLOW GUIDANCE LEVEL"
+                                subdued: true
+                                onClicked: themeManager.followGuidanceLevelForSection("axes-processing")
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: card.processingVisible
                         implicitHeight: limitsContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -922,7 +983,9 @@ Flickable {
                     }
 
                     Rectangle {
+                        objectName: "flightDeckAxesAdvancedControls_" + card.axisIndex
                         Layout.fillWidth: true
+                        visible: card.processingVisible
                         implicitHeight: advancedContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -981,6 +1044,7 @@ Flickable {
                                 }
                                 TextField {
                                     id: aliasEditor
+                                    objectName: "flightDeckAxisOutputLabel_" + card.axisIndex
                                     text: axis.outputAlias || ""
                                     placeholderText: "Optional vJoy label"
                                     selectByMouse: true
@@ -1004,6 +1068,7 @@ Flickable {
                                 }
                                 TextField {
                                     id: nameEditor
+                                    objectName: "flightDeckAxisDisplayName_" + card.axisIndex
                                     text: axis.customName || ""
                                     placeholderText: axis.hardwareLabel || "Physical axis"
                                     selectByMouse: true
@@ -1032,6 +1097,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
+                        visible: card.processingVisible
                         implicitHeight: adaptiveContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1140,14 +1206,6 @@ Flickable {
         y: deck.space12
         width: root.width - deck.space24
         spacing: deck.space12
-
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · AXIS ROUTE"
-            guidedText: "Select the physical source, confirm its virtual destination, then adjust the primary response controls. Advanced tuning remains one clear disclosure away."
-            fullTitle: "AXIS EDITING CONTEXT"
-            fullText: "Source, transform, output, and available tuning are ready for direct editing."
-        }
 
         FlightDeckCard {
             tokens: deck

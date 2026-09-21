@@ -26,6 +26,7 @@ FlightDeckDialog {
     readonly property var categories: backendObject ? (backendObject.profileCategories || []) : []
     readonly property var profiles: backendObject ? (backendObject.profiles || []) : []
     readonly property string taskIntent: String(task.intent || "")
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
 
     heading: "Guided setup"
     preferredWidth: 780
@@ -35,6 +36,28 @@ FlightDeckDialog {
     function showResult(result, fallback) {
         feedbackSuccess = Boolean(result && result.success)
         feedback = String(result && (result.message || result.title) || fallback || "")
+    }
+
+    function decisionHelpFor(stageName) {
+        if (stageName === "controllers")
+            return guidedPresentation
+                ? "Choose the physical controller you want to set up. This records the exact device for the next step; it does not activate it or change mapping."
+                : "Choose the physical controller to configure. This does not activate it or change mapping."
+        if (stageName === "purpose")
+            return guidedPresentation
+                ? "Choose the relationship before committing: create an independent Rig, add a member to an existing Rig, or make a Profile for a Rig. Existing mappings remain unchanged until the labeled commit action."
+                : "Choose the target Rig/Profile relationship, then commit the named configuration."
+        if (stageName === "connection")
+            return guidedPresentation
+                ? "Run the scoped check for this setup. Review its evidence first; any repair remains a separate, explicitly confirmed operation."
+                : "Run the scoped readiness check. Repairs remain explicitly confirmed."
+        if (stageName === "configure")
+            return guidedPresentation
+                ? "Open the exact editor you need, then return to record the physical and mapped-output result. Opening an editor changes only the view, never activation."
+                : "Open an editor or record test results; viewing an editor does not activate this setup."
+        return guidedPresentation
+            ? "Review what was created, what was tested, and what Use requested. Finish clears only this saved setup guidance, never the Rig, Profile, mapping, or activation."
+            : "Review the created setup and recorded test outcomes before finishing."
     }
 
     function openFor(intent, context) {
@@ -486,7 +509,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 spacing: root.tokens.space12
                 Text { text: "CONTROLLERS"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
-                Text { Layout.fillWidth: true; text: "Choose one physical controller. This selection is saved as guidance only; it does not activate a controller or change mapping."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
+                Text { objectName: "flightDeckSetupDecisionHelpControllers"; Layout.fillWidth: true; text: root.decisionHelpFor("controllers"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 Text { text: "PHYSICAL CONTROLLER"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: controllerChoice
@@ -517,7 +540,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 spacing: root.tokens.space12
                 Text { text: "HOW YOU'LL USE THEM"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
-                Text { Layout.fillWidth: true; text: "Choose a topology first. Nothing below changes an existing Rig, Profile, or mapping until the labeled commit action is selected."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
+                Text { objectName: "flightDeckSetupDecisionHelpPurpose"; Layout.fillWidth: true; text: root.decisionHelpFor("purpose"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 Flow {
                     Layout.fillWidth: true
                     spacing: root.tokens.space8
@@ -666,7 +689,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 spacing: root.tokens.space12
                 Text { text: "PREPARE CONNECTION"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
-                Text { Layout.fillWidth: true; text: "Run the existing scoped Setup Health check. It observes the selected Rig and its output; any repair remains its own explicit, typed workflow."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
+                Text { objectName: "flightDeckSetupDecisionHelpConnection"; Layout.fillWidth: true; text: root.decisionHelpFor("connection"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 SetupButton { objectName: "flightDeckSetupRunCheck"; text: "RUN SCOPED SETUP CHECK"; onClicked: root.runConnectionCheck() }
                 ControllerReadinessPanel {
                     id: readinessPanel
@@ -700,7 +723,7 @@ FlightDeckDialog {
                 Layout.fillWidth: true
                 spacing: root.tokens.space12
                 Text { text: "CONFIGURE / TEST"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
-                Text { Layout.fillWidth: true; text: "Open the exact editor context, then return here. Opening an editor changes only what is being viewed; it does not activate this Rig or Profile."; color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
+                Text { objectName: "flightDeckSetupDecisionHelpConfigure"; Layout.fillWidth: true; text: root.decisionHelpFor("configure"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 Flow {
                     Layout.fillWidth: true
                     spacing: root.tokens.space8
@@ -741,7 +764,7 @@ FlightDeckDialog {
                 spacing: root.tokens.space12
                 Text { text: "SETUP RESULT"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
                 Text { Layout.fillWidth: true; text: "Rig: " + String(root.task.rigId || "not created") + "\nProfile: " + String(root.task.profileId || "not selected") + "\nPhysical input: " + String((root.task.testProofs || {}).physical || "not tested") + "\nMapped output: " + String((root.task.testProofs || {}).mapped || "not tested"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
-                Text { Layout.fillWidth: true; text: "Use was requested through the existing activation transaction. Finish clears only this saved guidance and result; it does not undo Rigs, Profiles, mapping, or activation."; color: root.tokens.textMuted; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
+                Text { objectName: "flightDeckSetupDecisionHelpComplete"; Layout.fillWidth: true; text: root.decisionHelpFor("complete"); color: root.tokens.textMuted; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
                 SetupButton { objectName: "flightDeckSetupFinish"; text: "FINISH"; onClicked: { const result = backendObject.finishSetupAssistantTask(); root.showResult(result, "Setup could not be finished."); if (result && result.success) root.close() } }
             }
         }

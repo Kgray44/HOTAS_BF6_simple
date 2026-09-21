@@ -375,11 +375,11 @@ Item {
                     backendObject: backend
                     tokens: deck
                     Layout.fillWidth: true
-                    onSetupActionRequested: {
+                    onSetupActionRequested: function(intent, context) {
                         if (backend.hasSetupAssistantTask)
                             setupAssistantDialog.openForResume()
                         else
-                            setupAssistantDialog.openFor("independent", {})
+                            setupAssistantDialog.openFor(intent, context)
                     }
                 }
 

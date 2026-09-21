@@ -40,6 +40,9 @@ Flickable {
     // create/edit/activate operation below is routed through AppBackend.
     property string selectedRigId: ""
     property string handledIssueId: ""
+    // An exact target can expose its owning details while the target route is
+    // alive.  It is intentionally separate from an owner's disclosure toggle.
+    property bool virtualDetailsTemporaryReveal: false
     property var actionFeedback: ({})
     property var hidhideRepairPlan: ({})
     property bool outputCreationForNewRig: false
@@ -529,11 +532,18 @@ Flickable {
 
     function openRigOutput(outputId) {
         if (!outputId) return;
-        themeManager.setGuidanceSectionExpanded("devices-virtual-details", true);
+        virtualDetailsTemporaryReveal = themeManager.temporarilyRevealGuidanceSection("devices-virtual-details")
+            || virtualDetailsTemporaryReveal;
         Qt.callLater(function() {
             contentY = Math.max(0, Math.min(contentHeight - height,
                 virtualOutputSection.y - deck.space8));
         });
+    }
+
+    function clearVirtualDetailsTemporaryReveal() {
+        if (!virtualDetailsTemporaryReveal) return;
+        themeManager.clearTemporaryGuidanceSectionReveal("devices-virtual-details");
+        virtualDetailsTemporaryReveal = false;
     }
 
     function currentSetupIssue(issueId) {
@@ -576,7 +586,8 @@ Flickable {
         let destination = null
         if (section === "isolation") destination = isolationSection
         else if (section === "virtual-output" || type === "virtualOutput") {
-            themeManager.setGuidanceSectionExpanded("devices-virtual-details", true)
+            virtualDetailsTemporaryReveal = themeManager.temporarilyRevealGuidanceSection("devices-virtual-details")
+                || virtualDetailsTemporaryReveal
             destination = virtualOutputSection
         } else if (section === "verification") destination = verificationSection
         else if (type === "deviceRig") {
@@ -709,8 +720,12 @@ Flickable {
             contentY = Math.max(0, Math.min(contentHeight - height, target.y - deck.space8));
     }
 
-    onRequestedContextChanged: Qt.callLater(revealContext)
+    onRequestedContextChanged: {
+        if (requestedContext !== "virtual-output") clearVirtualDetailsTemporaryReveal()
+        Qt.callLater(revealContext)
+    }
     onRequestedIssueTargetChanged: {
+        clearVirtualDetailsTemporaryReveal()
         handledIssueId = ""
         Qt.callLater(revealIssueTarget)
     }
@@ -719,6 +734,8 @@ Flickable {
         Qt.callLater(revealIssueTarget)
     }
     onRigItemsChanged: normalizeRigSelection()
+    onVisibleChanged: if (!visible) clearVirtualDetailsTemporaryReveal()
+    Component.onDestruction: clearVirtualDetailsTemporaryReveal()
 
     Connections {
         target: backend
@@ -731,14 +748,6 @@ Flickable {
         y: deck.space4
         width: Math.max(0, root.width - deck.space8)
         spacing: deck.space16
-
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · DEVICES AND OUTPUTS"
-            guidedText: "Confirm the controller, its required or optional role, and its assigned Virtual Output before changing a Device Rig."
-            fullTitle: "DEVICE MANAGEMENT CONTEXT"
-            fullText: "Output and isolation technical details are expanded when untouched."
-        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -1319,6 +1328,7 @@ Flickable {
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
+                    RigButton { visible: themeManager.guidanceSectionHasExplicitPreference("devices-virtual-details"); text: "FOLLOW GUIDANCE"; subdued: true; onClicked: themeManager.followGuidanceLevelForSection("devices-virtual-details") }
                 }
                 Rectangle {
                     visible: root.virtualDetailsOpen
@@ -1473,6 +1483,7 @@ Flickable {
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                         contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
+                    RigButton { visible: themeManager.guidanceSectionHasExplicitPreference("devices-isolation-details"); text: "FOLLOW GUIDANCE"; subdued: true; onClicked: themeManager.followGuidanceLevelForSection("devices-isolation-details") }
                 }
                 Rectangle {
                     visible: root.isolationDetailsOpen

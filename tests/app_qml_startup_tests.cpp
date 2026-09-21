@@ -212,6 +212,17 @@ QQuickItem *findVisualItemByObjectName(QQuickItem *item, const QString &objectNa
     return nullptr;
 }
 
+QQuickItem *findQuickItemByObjectName(QQuickItem *item, const QString &objectName)
+{
+    if (!item) return nullptr;
+    if (item->objectName() == objectName) return item;
+    const auto children = item->childItems();
+    for (auto it = children.crbegin(); it != children.crend(); ++it) {
+        if (QQuickItem *found = findQuickItemByObjectName(*it, objectName)) return found;
+    }
+    return nullptr;
+}
+
 QQuickItem *flickableContentItem(QQuickItem *viewport)
 {
     if (!viewport) return nullptr;
@@ -3015,6 +3026,153 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     const QString guidanceExperienceBefore = themeManager.currentExperience();
     const QString guidanceAppearanceBefore = themeManager.flightDeckAppearance();
     const QString guidanceTextSizeBefore = themeManager.textSize();
+    // Qualification looks at real editable groups, rather than a header
+    // callout or page-level default.  Each page keeps the same canonical
+    // model; only the first visible presentation of optional controls changes.
+    const auto verifyActualGuidanceGroups = [&](bool expectedExpanded) {
+        if (!selectPage(surface, 0)) { qWarning() << "guidance groups could not select Axes"; return false; }
+        settlePresentation();
+        auto *axes = qobject_cast<QQuickItem *>(pageItem(surface, 0));
+        if (!axes) { qWarning() << "guidance groups missing Axes page"; return false; }
+        const QVariantMap axisFixture{{QStringLiteral("index"), 0},
+            {QStringLiteral("available"), true}, {QStringLiteral("target"), QStringLiteral("X")},
+            {QStringLiteral("label"), QStringLiteral("Pitch")},
+            {QStringLiteral("hardwareLabel"), QStringLiteral("Pitch axis")},
+            {QStringLiteral("unipolar"), false}, {QStringLiteral("outputMinimum"), -1.0},
+            {QStringLiteral("outputMaximum"), 1.0}, {QStringLiteral("rangeModeLabel"), QStringLiteral("Full range")},
+            {QStringLiteral("sourceConnected"), true}, {QStringLiteral("liveAvailable"), true}};
+        if (!axes->setProperty("axisPresentationOverride", QVariantList{axisFixture})) return false;
+        settlePresentation();
+        int axisIndex = -1;
+        for (const QVariant &entry : axes->property("axisItems").toList()) {
+            const QVariantMap axis = entry.toMap();
+            if (axis.value(QStringLiteral("available")).toBool()) {
+                axisIndex = axis.value(QStringLiteral("index")).toInt();
+                break;
+            }
+        }
+        QQmlExpression openAxis(qmlContext(axes), axes,
+            QStringLiteral("expandedAxisIndex = %1; true").arg(axisIndex));
+        if (axisIndex < 0 || !openAxis.evaluate().toBool() || openAxis.hasError()) {
+            qWarning().noquote() << "guidance groups could not configure available Axis" << axisIndex << openAxis.error().toString();
+            return false;
+        }
+        settlePresentation();
+        auto *axisDisclosure = findQuickItemByObjectName(axes,
+            QStringLiteral("flightDeckAxesProcessingDisclosure_") + QString::number(axisIndex));
+        auto *axisDetails = findQuickItemByObjectName(axes,
+            QStringLiteral("flightDeckAxesAdvancedControls_") + QString::number(axisIndex));
+        auto *axisOutputLabel = findQuickItemByObjectName(axes,
+            QStringLiteral("flightDeckAxisOutputLabel_") + QString::number(axisIndex));
+        const bool axisDisclosureVisible = axisDisclosure && axisDisclosure->isVisible();
+        const bool axisDetailsVisible = axisDetails && axisDetails->isVisible();
+        const bool axisGroupVisible = axisDisclosureVisible && axisDetails
+            && axisDetailsVisible == expectedExpanded;
+        bool focusedAxisEditorStaysVisible = expectedExpanded && axisOutputLabel;
+        if (focusedAxisEditorStaysVisible) {
+            clickFlightDeckSettingsItem(window, axes, axisOutputLabel);
+            axisOutputLabel->setFocus(true);
+            settlePresentation();
+            focusedAxisEditorStaysVisible = axisOutputLabel->hasFocus();
+        }
+        if (focusedAxisEditorStaysVisible && !themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) {
+            qWarning() << "guidance groups could not choose Guided during active Axis edit";
+            return false;
+        }
+        settlePresentation();
+        const bool focusProtected = !expectedExpanded || (focusedAxisEditorStaysVisible
+            && axisDetails && axisDetails->isVisible());
+        if (expectedExpanded && !themeManager.chooseGuidanceLevel(QStringLiteral("Full"))) {
+            qWarning() << "guidance groups could not restore Full after active Axis edit";
+            return false;
+        }
+        settlePresentation();
+        if (!axes->setProperty("axisPresentationOverride", QVariant{})) return false;
+
+        if (!selectPage(surface, 1)) { qWarning() << "guidance groups could not select Buttons"; return false; }
+        settlePresentation();
+        auto *buttons = qobject_cast<QQuickItem *>(pageItem(surface, 1));
+        if (!buttons) { qWarning() << "guidance groups missing Buttons page"; return false; }
+        const QVariantList buttonRows = buttons ? buttons->property("buttonItems").toList() : QVariantList{};
+        int buttonIndex = -1;
+        for (const QVariant &entry : buttonRows) {
+            const int candidate = entry.toMap().value(QStringLiteral("index")).toInt();
+            if (candidate > 0) { buttonIndex = candidate; break; }
+        }
+        QQmlExpression openButton(qmlContext(buttons), buttons,
+            QStringLiteral("expandedButtonIndex = %1; expandedHatIndex = -1; expandedPovDirection = -1; true")
+                .arg(buttonIndex));
+        if (buttonIndex <= 0 || !openButton.evaluate().toBool() || openButton.hasError()) {
+            qWarning().noquote() << "guidance groups could not configure Button" << buttonIndex << openButton.error().toString();
+            return false;
+        }
+        settlePresentation();
+        auto *buttonDisclosure = findQuickItemByObjectName(buttons,
+            QStringLiteral("flightDeckButtonsBehaviorDisclosure_") + QString::number(buttonIndex));
+        auto *buttonDetails = findQuickItemByObjectName(buttons,
+            QStringLiteral("flightDeckButtonsBehaviorControls_") + QString::number(buttonIndex));
+        const bool buttonDisclosureVisible = buttonDisclosure && buttonDisclosure->isVisible();
+        const bool buttonDetailsVisible = buttonDetails && buttonDetails->isVisible();
+        const bool buttonGroupVisible = buttonDisclosureVisible && buttonDetails
+            && buttonDetailsVisible == expectedExpanded;
+
+        if (!selectPage(surface, 5)) { qWarning() << "guidance groups could not select Profiles"; return false; }
+        settlePresentation();
+        auto *profilesPage = qobject_cast<QQuickItem *>(pageItem(surface, 5));
+        if (!profilesPage || backend.activeProfileId().isEmpty()
+            || !profilesPage->setProperty("selectedProfileId", backend.activeProfileId())
+            || !profilesPage->setProperty("view", QStringLiteral("profile"))) {
+            qWarning() << "guidance groups could not select Profile detail" << backend.activeProfileId();
+            return false;
+        }
+        settlePresentation();
+        auto *profileDisclosure = findQuickItemByObjectName(profilesPage,
+            QStringLiteral("flightDeckProfileAssociationDisclosure"));
+        auto *profileDetails = findQuickItemByObjectName(profilesPage,
+            QStringLiteral("flightDeckProfileAssociationDetails"));
+        const bool profileDisclosureVisible = profileDisclosure && profileDisclosure->isVisible();
+        const bool profileDetailsVisible = profileDetails && profileDetails->isVisible();
+        const bool profileGroupVisible = profileDisclosureVisible && profileDetails
+            && profileDetailsVisible == expectedExpanded;
+
+        if (!selectPage(surface, 7)) { qWarning() << "guidance groups could not select Automation"; return false; }
+        settlePresentation();
+        auto *automation = qobject_cast<QQuickItem *>(pageItem(surface, 7));
+        const QVariantMap automationFixture{
+            {QStringLiteral("id"), QStringLiteral("guidance-fixture-rule")},
+            {QStringLiteral("name"), QStringLiteral("Guidance fixture")},
+            {QStringLiteral("activationMode"), 0}, {QStringLiteral("priority"), 50},
+            {QStringLiteral("conditions"), QVariantList{QVariantMap{{QStringLiteral("type"), 0}}}},
+            {QStringLiteral("actions"), QVariantList{QVariantMap{{QStringLiteral("type"), 0}, {QStringLiteral("button"), 1}}}}};
+        if (!automation
+            || !automation->setProperty("automationPresentationOverride", QVariantList{automationFixture})
+            || !automation->setProperty("editing", true)
+            || !automation->setProperty("draft", automationFixture)) {
+            qWarning() << "guidance groups could not prepare Automation detail";
+            return false;
+        }
+        settlePresentation();
+        auto *automationDisclosure = findQuickItemByObjectName(automation,
+            QStringLiteral("flightDeckAutomationBehaviorDisclosure"));
+        auto *automationDetails = findQuickItemByObjectName(automation,
+            QStringLiteral("flightDeckAutomationBehaviorControls"));
+        const bool automationDisclosureVisible = automationDisclosure && automationDisclosure->isVisible();
+        const bool automationDetailsVisible = automationDetails && automationDetails->isVisible();
+        const bool automationGroupVisible = automationDisclosureVisible && automationDetails
+            && automationDetailsVisible == expectedExpanded;
+
+        const bool groupsValid = axisGroupVisible && buttonGroupVisible && profileGroupVisible
+            && automationGroupVisible && focusProtected;
+        if (!groupsValid) {
+            std::fprintf(stderr,
+                "Flight Deck actual guidance groups expected=%d axis=%d/%d(%d/%d) button=%d/%d(%d/%d) profile=%d/%d automation=%d/%d focus=%d\n",
+                expectedExpanded, axisDisclosureVisible, axisDetailsVisible, axisDisclosure != nullptr, axisDetails != nullptr,
+                buttonDisclosureVisible, buttonDetailsVisible, buttonDisclosure != nullptr, buttonDetails != nullptr,
+                profileDisclosureVisible, profileDetailsVisible, automationDisclosureVisible, automationDetailsVisible,
+                focusProtected);
+        }
+        return groupsValid;
+    };
     const bool guidedPointer = guided && clickFlightDeckSettingsItem(window, settings, guided);
     if (themeManager.guidanceLevel() != QStringLiteral("Guided")) {
         if (!themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) {
@@ -3038,13 +3196,30 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     const bool guidedOverviewDefaults = guidedOverview
         && !guidedOverview->property("connectionEvidenceExpanded").toBool()
         && !guidedOverview->property("additionalAttentionExpanded").toBool()
-        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedOverview), QStringLiteral("flightDeckGuidanceCallout"));
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedOverview), QStringLiteral("flightDeckOverviewNextSetupAction"));
     if (!selectPage(surface, 2)) return false;
     auto *guidedDevices = pageItem(surface, 2);
     const bool guidedDeviceDefaults = guidedDevices
         && !guidedDevices->property("virtualDetailsOpen").toBool()
         && !guidedDevices->property("isolationDetailsOpen").toBool()
-        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedDevices), QStringLiteral("flightDeckGuidanceCallout"));
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(guidedDevices), QStringLiteral("flightDeckDeviceRigRepeater"));
+    if (!guidedDevices) return false;
+    QQmlExpression openVirtualOutput(qmlContext(guidedDevices), guidedDevices,
+        QStringLiteral("openRigOutput('fixture-output'); true"));
+    const bool virtualOutputOpened = guidedDevices && openVirtualOutput.evaluate().toBool()
+        && !openVirtualOutput.hasError();
+    settlePresentation();
+    const bool temporaryDeviceReveal = virtualOutputOpened
+        && guidedDevices->property("virtualDetailsOpen").toBool()
+        && !themeManager.guidanceSectionHasExplicitPreference(QStringLiteral("devices-virtual-details"));
+    QQmlExpression clearVirtualOutput(qmlContext(guidedDevices), guidedDevices,
+        QStringLiteral("clearVirtualDetailsTemporaryReveal(); true"));
+    const bool virtualOutputCleared = temporaryDeviceReveal && clearVirtualOutput.evaluate().toBool()
+        && !clearVirtualOutput.hasError();
+    settlePresentation();
+    const bool temporaryDeviceRevealCleared = virtualOutputCleared
+        && !guidedDevices->property("virtualDetailsOpen").toBool();
+    const bool guidedActualGroups = verifyActualGuidanceGroups(false);
     if (!selectPage(surface, 4)) return false;
     settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
     full = settings ? findVisualItemByObjectName(settings, QStringLiteral("flightDeckGuidanceFull")) : nullptr;
@@ -3058,8 +3233,8 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     if (!selectPage(surface, 3)) return false;
     auto *fullDiagnostics = pageItem(surface, 3);
     const bool fullDefaults = fullDiagnostics
-        && fullDiagnostics->property("isolationDetailsExpanded").toBool()
-        && fullDiagnostics->property("eventLogExpanded").toBool();
+        && !fullDiagnostics->property("isolationDetailsExpanded").toBool()
+        && !fullDiagnostics->property("eventLogExpanded").toBool();
     if (!selectPage(surface, 9)) return false;
     auto *fullAdaptive = pageItem(surface, 9);
     const bool fullAdaptiveDefaults = fullAdaptive
@@ -3068,17 +3243,19 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
     auto *fullOverview = pageItem(surface, 8);
     const bool fullOverviewDefaults = fullOverview
         && fullOverview->property("connectionEvidenceExpanded").toBool()
-        && fullOverview->property("additionalAttentionExpanded").toBool()
-        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullOverview), QStringLiteral("flightDeckGuidanceCallout"));
+        && !fullOverview->property("additionalAttentionExpanded").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullOverview), QStringLiteral("flightDeckOverviewNextSetupAction"));
     if (!selectPage(surface, 2)) return false;
     auto *fullDevices = pageItem(surface, 2);
     const bool fullDeviceDefaults = fullDevices
         && fullDevices->property("virtualDetailsOpen").toBool()
-        && fullDevices->property("isolationDetailsOpen").toBool()
-        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullDevices), QStringLiteral("flightDeckGuidanceCallout"));
+        && !fullDevices->property("isolationDetailsOpen").toBool()
+        && findVisualItemByObjectName(qobject_cast<QQuickItem *>(fullDevices), QStringLiteral("flightDeckDeviceRigRepeater"));
+    const bool fullActualGroups = verifyActualGuidanceGroups(true);
     if (!guided || !full || !guidedPointer || !fullPointer || !guidedSettingsRetained
         || !guidedDefaults || !guidedAdaptiveDefaults || !guidedOverviewDefaults || !guidedDeviceDefaults
-        || !fullDefaults || !fullAdaptiveDefaults || !fullOverviewDefaults || !fullDeviceDefaults
+        || !temporaryDeviceRevealCleared || !guidedActualGroups
+        || !fullDefaults || !fullAdaptiveDefaults || !fullOverviewDefaults || !fullDeviceDefaults || !fullActualGroups
         || flightDeckConfigurationSnapshot(backend) != guidanceConfigurationBefore
         || backend.setupAssistantTask() != guidanceTaskBefore
         || themeManager.currentTheme() != guidanceThemeBefore
@@ -3088,10 +3265,11 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
         return failPresentationLifecycleTest(QStringLiteral(
             "Flight Deck guidance controls changed state beyond presentation defaults "
             "(guidedPointer=%1 fullPointer=%2 guided=%3 guidedAdaptive=%4 guidedOverview=%5 guidedDevices=%6 "
-            "full=%7 fullAdaptive=%8 fullOverview=%9 fullDevices=%10)")
+            "deviceDeepLink=%7 full=%8 fullAdaptive=%9 fullOverview=%10 fullDevices=%11 guidedGroups=%12 fullGroups=%13)")
             .arg(guidedPointer).arg(fullPointer).arg(guidedDefaults).arg(guidedAdaptiveDefaults)
-            .arg(guidedOverviewDefaults).arg(guidedDeviceDefaults).arg(fullDefaults).arg(fullAdaptiveDefaults)
-            .arg(fullOverviewDefaults).arg(fullDeviceDefaults));
+            .arg(guidedOverviewDefaults).arg(guidedDeviceDefaults).arg(temporaryDeviceRevealCleared)
+            .arg(fullDefaults).arg(fullAdaptiveDefaults).arg(fullOverviewDefaults).arg(fullDeviceDefaults)
+            .arg(guidedActualGroups).arg(fullActualGroups));
     }
     if (!selectPage(surface, 4)) return false;
     settings = qobject_cast<QQuickItem *>(pageItem(surface, 4));
@@ -3851,6 +4029,21 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         && backend.activeDeviceRigId() == activeRigBeforeSetup
         && backend.mappingRequested() == mappingRequestedBeforeSetup;
     const QString setupTaskId = backend.setupAssistantTask().value(QStringLiteral("id")).toString();
+    auto *setupDecisionHelp = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupDecisionHelpControllers"));
+    const bool guidedDecisionHelpShown = guidedSetupOpened && setupDecisionHelp
+        && !setupDecisionHelp->property("text").toString().isEmpty();
+    const QString guidedDecisionHelpText = setupDecisionHelp
+        ? setupDecisionHelp->property("text").toString() : QString{};
+    const bool fullDecisionPreference = themeManager.chooseGuidanceLevel(QStringLiteral("Full"));
+    settlePresentation();
+    const QString fullDecisionHelpText = setupDecisionHelp
+        ? setupDecisionHelp->property("text").toString() : QString{};
+    const bool guidedDecisionPreference = themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
+    const bool decisionHelpChangesWithPresentation = guidedDecisionHelpShown
+        && fullDecisionPreference && guidedDecisionPreference
+        && fullDecisionHelpText != guidedDecisionHelpText;
     auto *setupController = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckSetupControllerChoice"));
     const bool controllerKeyboard = guidedSetupOpened && setupController
@@ -4080,12 +4273,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     const auto *setupAction = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckContextSetupAction"));
     const bool setupActionReset = setupAction && setupAction->isVisible()
-        && setupAction->property("text").toString() == QStringLiteral("Guided setup");
+        && (setupAction->property("text").toString() == QStringLiteral("Set up first rig")
+            || setupAction->property("text").toString() == QStringLiteral("Add profile to rig")
+            || setupAction->property("text").toString() == QStringLiteral("Review setup"));
     if (!defaultContextCompact || !readableDuplicateContext || !rawIdentityDisclosedOnly
         || !detailsOverlayVisible || !detailsClosedWithFocusReturn || !noProfileReadable) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
-    if (!guidedSetupOpened || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
+    if (!guidedSetupOpened || !decisionHelpChangesWithPresentation || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
         || !readableNamePlaceholders || !copyUncheckedCaptured || !copyIndicatorSaved || !copyLabelSaved || !copyKeyboardSaved
         || !guidanceTaskRetained
         || !copyCheckedCaptured
@@ -4093,11 +4288,11 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !resumedCopyDraft || !requiredIndicatorSaved || !requiredLabelSaved || !requiredKeyboardSaved
         || !requiredDisabledVisual || !requiredDisabledSafe || !setupActionReset) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Flight Deck setup journey failed (open=%1 controller=%2 next=%3 step2=%4 placeholders=%5 "
-            "copyIndicator=%6 copyLabel=%7 copyKey=%8 guidanceTask=%9 copySource=%10 copyDisabledVisual=%11 copyDisabledSafe=%12 "
-            "copyLayout=%13 resume=%14 requiredIndicator=%15 requiredLabel=%16 requiredKey=%17 "
-            "requiredDisabledVisual=%18 requiredDisabledSafe=%19 reset=%20)")
-            .arg(guidedSetupOpened).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
+            "Flight Deck setup journey failed (open=%1 decisionHelp=%2 controller=%3 next=%4 step2=%5 placeholders=%6 "
+            "copyIndicator=%7 copyLabel=%8 copyKey=%9 guidanceTask=%10 copySource=%11 copyDisabledVisual=%12 copyDisabledSafe=%13 "
+            "copyLayout=%14 resume=%15 requiredIndicator=%16 requiredLabel=%17 requiredKey=%18 "
+            "requiredDisabledVisual=%19 requiredDisabledSafe=%20 reset=%21)")
+            .arg(guidedSetupOpened).arg(decisionHelpChangesWithPresentation).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
             .arg(readableNamePlaceholders).arg(copyIndicatorSaved).arg(copyLabelSaved).arg(copyKeyboardSaved)
             .arg(guidanceTaskRetained).arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
             .arg(resumedCopyDraft).arg(requiredIndicatorSaved).arg(requiredLabelSaved).arg(requiredKeyboardSaved)
@@ -8368,6 +8563,53 @@ bool verifySignalFlowVisualStressFixture(QObject *page, QQuickWindow *window, co
     return true;
 }
 
+bool verifyFlightDeckSignalFlowGuidance(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    if (!themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) return false;
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty()
+        ? nullptr : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QObject *surface = window ? window->findChild<QObject *>(QStringLiteral("flightDeckSurface")) : nullptr;
+    settlePresentation();
+    if (!window || !surface || !selectPage(surface, 11)) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Guidance qualification could not load Flight Deck Signal Flow"));
+    }
+    auto *page = qobject_cast<QQuickItem *>(pageItem(surface, 11));
+    if (!page) return failPresentationLifecycleTest(QStringLiteral(
+        "Guidance qualification did not receive the native Signal Flow page"));
+    QQmlExpression inspectRoute(qmlContext(page), page, QStringLiteral(
+        "inspectedRoute = graph.routes && graph.routes.length ? graph.routes[0] : ({});"
+        " Boolean(inspectedRoute && inspectedRoute.id)"));
+    const bool routeReady = page && inspectRoute.evaluate().toBool() && !inspectRoute.hasError();
+    if ((themeManager.guidanceSectionHasExplicitPreference(QStringLiteral("signal-flow-inspector-details"))
+            && !themeManager.followGuidanceLevelForSection(QStringLiteral("signal-flow-inspector-details")))
+        || !routeReady) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Guidance qualification could not prepare a native Signal Flow route inspector"));
+    }
+    settlePresentation();
+    auto *disclosure = findQuickItemByObjectName(page,
+        QStringLiteral("flightDeckSignalFlowInspectorDisclosure"));
+    auto *palette = findQuickItemByObjectName(page,
+        QStringLiteral("flightDeckSignalFlowInspectorProcessorPalette"));
+    const bool guidedPolicy = disclosure && palette && disclosure->isVisible() && !palette->isVisible();
+    if (!guidedPolicy) return failPresentationLifecycleTest(QStringLiteral(
+        "Guidance qualification did not expose the Guided Signal Flow inspector"));
+    if (!themeManager.chooseGuidanceLevel(QStringLiteral("Full"))) return false;
+    settlePresentation();
+    const bool fullPolicy = palette->isVisible();
+    if (!guidedPolicy || !fullPolicy) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Guidance qualification did not expose Signal Flow's actual inspector policy"));
+    }
+    return true;
+}
+
 bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
 {
     // This compact harness is intentionally separate from the broad visual
@@ -9099,6 +9341,33 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
         return failPresentationLifecycleTest(QStringLiteral(
             "Flight Deck Signal Flow input card return did not restore its native graph context"));
     }
+    QQmlExpression inspectGuidanceRoute(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
+        "inspectedRoute = graph.routes && graph.routes.length ? graph.routes[0] : ({}); true"));
+    const bool routeSelectedForGuidance = inspectGuidanceRoute.evaluate().toBool()
+        && !inspectGuidanceRoute.hasError();
+    if ((themeManager.guidanceSectionHasExplicitPreference(QStringLiteral("signal-flow-inspector-details"))
+            && !themeManager.followGuidanceLevelForSection(QStringLiteral("signal-flow-inspector-details")))
+        || !themeManager.chooseGuidanceLevel(QStringLiteral("Guided"))) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow could not reset the inspector presentation policy"));
+    }
+    settlePresentation();
+    auto *inspectorDisclosure = findVisualItemByObjectName(
+        qobject_cast<QQuickItem *>(flightDeckPage), QStringLiteral("flightDeckSignalFlowInspectorDisclosure"));
+    auto *processorPalette = findVisualItemByObjectName(
+        qobject_cast<QQuickItem *>(flightDeckPage), QStringLiteral("flightDeckSignalFlowInspectorProcessorPalette"));
+    const bool guidedInspectorPolicy = routeSelectedForGuidance && inspectorDisclosure && processorPalette
+        && inspectorDisclosure->isVisible() && !processorPalette->isVisible();
+    if (!themeManager.chooseGuidanceLevel(QStringLiteral("Full"))) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow could not select Full inspector presentation"));
+    }
+    settlePresentation();
+    const bool fullInspectorPolicy = processorPalette->isVisible();
+    if (!guidedInspectorPolicy || !fullInspectorPolicy) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck Signal Flow inspector did not expose the required Guided and Full control difference"));
+    }
     QQmlExpression deckPresentationControls(qmlContext(flightDeckPage), flightDeckPage, QStringLiteral(
         "(function() {"
         " rebuildWireGeometry();"
@@ -9327,6 +9596,8 @@ int main(int argc, char *argv[])
     themeManager.setCurrentExperience(QStringLiteral("Existing"));
     const bool isolatedPresentation = QCoreApplication::arguments().contains(
         QStringLiteral("--isolated-presentation"));
+    const bool guidanceQualificationOnly = QCoreApplication::arguments().contains(
+        QStringLiteral("--guidance-qualification"));
     // CTest owns this bounded route. It exercises the existing ten-page
     // Phase 0 navigation workload, which deliberately does not select Signal
     // Flow, rather than silently falling through to the broad visual matrix.
@@ -9427,6 +9698,27 @@ int main(int argc, char *argv[])
         }
         themeManager.setCurrentExperience(QStringLiteral("Existing"));
         return visualSafe ? 0 : 1;
+    }
+    if (guidanceQualificationOnly) {
+        backend.setVirtualAxisAvailabilityForTest(true);
+        if (!backend.deleteDeviceRig(QStringLiteral("fixture-rig")) || !backend.deviceRigs().isEmpty()) {
+            themeManager.setCurrentExperience(QStringLiteral("Existing"));
+            failPresentationLifecycleTest(QStringLiteral(
+                "Guidance qualification could not establish its isolated no-Rig baseline"));
+            return 1;
+        }
+        const QString guidanceRig = backend.createDeviceRig(
+            QStringLiteral("Guidance Qualification Rig"), {QStringLiteral("fixture-stick")});
+        const bool qualified = !guidanceRig.isEmpty()
+            && backend.addDeviceRigMember(guidanceRig, QStringLiteral("fixture-throttle"), false)
+            && verifyFlightDeckAxesQmlLoad(backend, themeManager)
+            && verifyFlightDeckSignalFlowGuidance(backend, themeManager)
+            && verifyFlightDeckShell(backend, themeManager, QStringLiteral("Dark"));
+        const bool released = backend.deviceRigs().isEmpty();
+        std::fprintf(stderr, "guidance_qualification=actual-editor-groups assistant-decision-help signal-flow result=%s\n",
+            qualified && released ? "PASS" : "FAIL");
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return qualified && released ? 0 : 1;
     }
     if (flightDeckPerformanceOnly) {
         backend.setVirtualAxisAvailabilityForTest(true);

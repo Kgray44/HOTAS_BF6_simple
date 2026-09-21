@@ -14,8 +14,8 @@ Rectangle {
     property var presentationOverride: null
     property bool technicalDetailsVisible: false
     // The task journal itself lives in AppBackend. This is Flight Deck's one
-    // setup entry; it resumes a task or starts neutral guidance only.
-    signal setupActionRequested()
+    // setup entry; its label and initial intent follow the current context.
+    signal setupActionRequested(string intent, var context)
 
     function contextValue(name, fallback) {
         if (presentationOverride === null || presentationOverride === undefined)
@@ -63,6 +63,13 @@ Rectangle {
         && (effectiveId !== activeId || sourceLabel !== "Manual base profile")
     readonly property bool profilesMatch: hasEditingProfile && editingId === activeId
     readonly property bool showActiveRigSummary: activeRigName.length > 0 && width >= tokens.scale(880)
+    readonly property string setupActionIntent: backendObject.hasSetupAssistantTask ? "resume"
+        : !hasActiveProfile && activeRigId.length > 0 ? "profile-for-rig"
+        : activeRigId.length === 0 ? "first-controller" : "independent"
+    readonly property string setupActionText: backendObject.hasSetupAssistantTask ? "Continue setup"
+        : setupActionIntent === "first-controller" ? "Set up first rig"
+        : setupActionIntent === "profile-for-rig" ? "Add profile to rig"
+        : "Review setup"
     readonly property string primaryEditingText: hasEditingProfile
         ? "Editing: " + editingName : "Choose a profile to edit"
     readonly property string activeProfileText: hasActiveProfile
@@ -151,14 +158,15 @@ Rectangle {
         Button {
             id: setupAction
             objectName: "flightDeckContextSetupAction"
-            text: backendObject.hasSetupAssistantTask ? "Continue setup" : "Guided setup"
+            text: root.setupActionText
             implicitHeight: tokens.compactControlHeight
             leftPadding: tokens.space8
             rightPadding: tokens.space8
             font.family: tokens.bodyFont
             font.pixelSize: tokens.bodySmall
             Accessible.name: text
-            onClicked: root.setupActionRequested()
+            onClicked: root.setupActionRequested(root.setupActionIntent,
+                root.setupActionIntent === "profile-for-rig" ? ({ rigId: root.activeRigId }) : ({}))
             contentItem: Text {
                 text: setupAction.text
                 color: tokens.textSecondary

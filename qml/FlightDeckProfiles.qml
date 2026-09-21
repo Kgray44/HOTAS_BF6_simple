@@ -77,6 +77,10 @@ Flickable {
     readonly property var selectedCategoryActivation: selectedCategoryId.length > 0
         ? backend.activationPreview(selectedCategoryId) : ({})
     readonly property bool usingPresentationFixture: (profilesPresentationOverride !== null && profilesPresentationOverride !== undefined) || (categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined)
+    readonly property bool associationExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("profiles-association")
+    }
 
     contentWidth: width
     contentHeight: profileContent.implicitHeight + deck.space24
@@ -1237,14 +1241,6 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · PROFILE LIBRARY"
-            guidedText: "Choose the profile that matches this rig and review whether it is active, automatic, or only being edited."
-            fullTitle: "PROFILE EDITING CONTEXT"
-            fullText: "Library, association, and direct-management details remain available in place."
-        }
-
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space8
@@ -2160,6 +2156,60 @@ Flickable {
                             enabled: !root.usingPresentationFixture && (backend.deviceRigs || []).length > 0
                             onActivated: backend.assignProfileDeviceRig(root.selectedProfileId, currentValue)
                         }
+                        Rectangle {
+                            objectName: "flightDeckProfileAssociationDisclosure"
+                            Layout.fillWidth: true
+                            implicitHeight: associationDisclosure.implicitHeight + deck.space16
+                            radius: deck.radiusControl
+                            color: deck.secondarySurface
+                            border.color: deck.border
+                            ColumnLayout {
+                                id: associationDisclosure
+                                anchors.fill: parent
+                                anchors.margins: deck.space8
+                                spacing: deck.space4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Text { text: "RIG ASSOCIATION"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                        Text {
+                                            text: String(root.selectedDetail.deviceRigName || "No Device Rig assigned")
+                                                + " · " + String(root.selectedDetail.outputName || "Output needs selection")
+                                                + " · " + String(root.selectedDetail.automaticSelectionMode || "preferred").replace("-", " ")
+                                            color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
+                                            font.pixelSize: deck.scale(9)
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                    DeckButton {
+                                        text: root.associationExpanded ? "HIDE DETAILS" : "SHOW DETAILS"
+                                        subdued: true
+                                        onClicked: themeManager.setGuidanceSectionExpanded("profiles-association", !root.associationExpanded)
+                                    }
+                                }
+                                Text {
+                                    visible: !root.associationExpanded
+                                    text: "Choose the Device Rig that owns this profile. Open details to review its output and automatic-selection role. Viewing or editing this association does not activate the profile."
+                                    color: deck.textMuted
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                                DeckButton {
+                                    visible: themeManager.guidanceSectionHasExplicitPreference("profiles-association")
+                                    text: "FOLLOW GUIDANCE LEVEL"
+                                    subdued: true
+                                    onClicked: themeManager.followGuidanceLevelForSection("profiles-association")
+                                }
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "flightDeckProfileAssociationDetails"
+                            visible: root.associationExpanded
+                            Layout.fillWidth: true
+                            spacing: deck.space8
                         Text {
                             text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
@@ -2221,6 +2271,7 @@ Flickable {
                                         root.navigateToPage(2)
                                 }
                             }
+                        }
                         }
                     }
                 }

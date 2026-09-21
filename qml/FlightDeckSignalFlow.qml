@@ -39,6 +39,10 @@ Item {
     property var routeExplanation: ({})
     property bool xrayMode: false
     property var wireGeometry: []
+    readonly property bool inspectorDetailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("signal-flow-inspector-details")
+    }
     // Rebuild these static indexes only when canonical graph topology changes.
     // The 10 Hz Live sampler updates a tiny lookup map rather than making
     // each painted route scan the complete telemetry list.
@@ -1274,14 +1278,6 @@ Item {
         anchors.fill: parent
         spacing: deck.sectionGap
 
-        FlightDeckGuidanceCallout {
-            tokens: deck
-            guidedTitle: "NEXT DECISION · ROUTE MAP"
-            guidedText: "Select a route to understand its source and destination, then use the existing inspector or processor controls when you need more detail."
-            fullTitle: "ROUTE EDITING CONTEXT"
-            fullText: "Configured topology, processor controls, and route inspection are ready for direct editing."
-        }
-
         RowLayout {
             Layout.fillWidth: true
             spacing: deck.space12
@@ -1803,10 +1799,32 @@ Item {
                     Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: String(root.inspectedRoute.health || "ready").toUpperCase().replace("-", " ") + " · " + String(root.inspectedRoute.healthDetail || ""); color: root.inspectedRoute.health === "ready" ? deck.healthy : root.inspectedRoute.health === "conflict" ? deck.danger : deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id && (root.signalFocus || root.liveMode)); text: "LIVE SAMPLE " + Number(root.routeLive(root.inspectedRoute).value || 0).toFixed(3) + (root.routeIsLive(root.inspectedRoute) ? " · MOVING" : " · STEADY"); color: root.routeIsLive(root.inspectedRoute) ? deck.healthy : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     DeckButton { text: "Explain route"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); Layout.fillWidth: true; onClicked: root.explainRoute() }
-                    DeckButton { text: "Open Curve Editor"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "curve")); helpText: "Open the authoritative Curve Editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("curve", root.inspectedRoute) }
-                    DeckButton { text: "Open Adaptive Response"; visible: Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "adaptive-response")); helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("adaptive-response", root.inspectedRoute) }
-                    DeckButton { text: "Processor palette"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: processorDialog.open() }
-                    DeckButton { text: "Share active processor…"; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openShareProcessorDialog() }
+                    Rectangle {
+                        objectName: "flightDeckSignalFlowInspectorDisclosure"
+                        visible: Boolean(root.inspectedRoute && root.inspectedRoute.id)
+                        Layout.fillWidth: true
+                        implicitHeight: inspectorDisclosure.implicitHeight + deck.space12
+                        radius: deck.radiusControl
+                        color: deck.secondarySurface
+                        border.color: deck.border
+                        ColumnLayout {
+                            id: inspectorDisclosure
+                            anchors.fill: parent
+                            anchors.margins: deck.space6
+                            spacing: deck.space3
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "INSPECTOR DETAILS"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; Layout.fillWidth: true }
+                                DeckButton { objectName: "flightDeckSignalFlowInspectorDetailsToggle"; text: root.inspectorDetailsExpanded ? "HIDE" : "SHOW"; onClicked: themeManager.setGuidanceSectionExpanded("signal-flow-inspector-details", !root.inspectorDetailsExpanded) }
+                            }
+                            Text { visible: !root.inspectorDetailsExpanded; text: "Open details to inspect processors or jump to the existing Curve and Adaptive editors. Disconnect stays separate below."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: deck.scale(8); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                            DeckButton { visible: themeManager.guidanceSectionHasExplicitPreference("signal-flow-inspector-details"); text: "FOLLOW GUIDANCE LEVEL"; onClicked: themeManager.followGuidanceLevelForSection("signal-flow-inspector-details") }
+                        }
+                    }
+                    DeckButton { objectName: "flightDeckSignalFlowInspectorOpenCurve"; text: "Open Curve Editor"; visible: root.inspectorDetailsExpanded && Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "curve")); helpText: "Open the authoritative Curve Editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("curve", root.inspectedRoute) }
+                    DeckButton { objectName: "flightDeckSignalFlowInspectorOpenAdaptive"; text: "Open Adaptive Response"; visible: root.inspectorDetailsExpanded && Boolean(root.inspectedRoute && root.routeHasProcessor(root.inspectedRoute, "adaptive-response")); helpText: "Open the authoritative Adaptive Response editor for this source axis and preserve this Flight Deck Signal Flow selection for return."; Layout.fillWidth: true; onClicked: root.openFullSettings("adaptive-response", root.inspectedRoute) }
+                    DeckButton { objectName: "flightDeckSignalFlowInspectorProcessorPalette"; text: "Processor palette"; visible: root.inspectorDetailsExpanded && Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: processorDialog.open() }
+                    DeckButton { visible: root.inspectorDetailsExpanded && Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Share active processor…"; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openShareProcessorDialog() }
                     DeckButton { text: "Disconnect selected"; destructive: true; helpText: "Remove this canonical route. Shortcut: Delete."; visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.disconnectSelected() }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
                     ScrollView {

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
 #include <QSettings>
+#include <QSet>
 #include <QtGlobal>
 #include <QString>
 #include <QStringList>
@@ -73,6 +75,13 @@ public:
     Q_INVOKABLE bool skipGuidanceOnboarding();
     Q_INVOKABLE bool guidanceSectionExpanded(const QString &sectionId) const;
     Q_INVOKABLE bool setGuidanceSectionExpanded(const QString &sectionId, bool expanded);
+    Q_INVOKABLE bool guidanceSectionHasExplicitPreference(const QString &sectionId) const;
+    Q_INVOKABLE bool followGuidanceLevelForSection(const QString &sectionId);
+    // Exact-target navigation may reveal a local group without converting a
+    // one-time route into a durable owner preference.  Callers clear this
+    // scoped reveal when their route or page context is complete.
+    Q_INVOKABLE bool temporarilyRevealGuidanceSection(const QString &sectionId);
+    Q_INVOKABLE bool clearTemporaryGuidanceSectionReveal(const QString &sectionId);
     static QString normalizedTheme(const QString &theme);
 
 signals:
@@ -104,6 +113,8 @@ private:
     bool m_guidanceOnboardingPending = false;
     bool m_guidanceLevelPersisted = false;
     int m_guidancePolicyRevision = 0;
+    QHash<QString, bool> m_explicitGuidanceSections;
+    QSet<QString> m_temporaryGuidanceSections;
 };
 
 } // namespace hotas

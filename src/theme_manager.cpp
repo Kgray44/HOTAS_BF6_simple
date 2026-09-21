@@ -73,6 +73,16 @@ ThemeManager::ThemeManager(const QString &settingsFilePath, QObject *parent)
         m_guidanceLevel = u"Guided"_qs;
         m_guidanceOnboardingPending = true;
     }
+
+    // Section choices are a small, presentation-only cache.  QML can ask for
+    // a policy while bindings settle without reopening the settings file on
+    // every evaluation; mapper configuration remains completely separate.
+    const QString prefix = QLatin1String(kGuidanceSectionsPrefix);
+    const QStringList keys = stored.allKeys();
+    for (const QString &key : keys) {
+        if (key.startsWith(prefix))
+            m_explicitGuidanceSections.insert(key.mid(prefix.size()), stored.value(key).toBool());
+    }
 }
 
 bool ThemeManager::isTopGun() const
@@ -253,9 +263,12 @@ bool ThemeManager::guidanceSectionExpanded(const QString &sectionId) const
 {
     const QString normalizedSection = sectionId.trimmed();
     if (normalizedSection.isEmpty()) return false;
-    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
-    const QString key = QLatin1String(kGuidanceSectionsPrefix) + normalizedSection;
-    if (stored.contains(key)) return stored.value(key).toBool();
+    // Exact-target navigation wins while it is active.  A page may then keep
+    // an active editor visible locally; once both scopes end, the owner's
+    // explicit choice or curated level default takes over again.
+    if (m_temporaryGuidanceSections.contains(normalizedSection)) return true;
+    const auto explicitChoice = m_explicitGuidanceSections.constFind(normalizedSection);
+    if (explicitChoice != m_explicitGuidanceSections.cend()) return explicitChoice.value();
     return defaultGuidanceSectionExpanded(normalizedSection);
 }
 
@@ -263,12 +276,49 @@ bool ThemeManager::setGuidanceSectionExpanded(const QString &sectionId, bool exp
 {
     const QString normalizedSection = sectionId.trimmed();
     if (normalizedSection.isEmpty()) return false;
+    const auto existing = m_explicitGuidanceSections.constFind(normalizedSection);
+    if (existing != m_explicitGuidanceSections.cend() && existing.value() == expanded) return true;
     QSettings stored(m_settingsFilePath, QSettings::IniFormat);
     const QString key = QLatin1String(kGuidanceSectionsPrefix) + normalizedSection;
-    if (stored.contains(key) && stored.value(key).toBool() == expanded) return true;
     stored.setValue(key, expanded);
     stored.sync();
     if (stored.status() != QSettings::NoError) return false;
+    m_explicitGuidanceSections.insert(normalizedSection, expanded);
+    advanceGuidancePolicyRevision();
+    return true;
+}
+
+bool ThemeManager::guidanceSectionHasExplicitPreference(const QString &sectionId) const
+{
+    return m_explicitGuidanceSections.contains(sectionId.trimmed());
+}
+
+bool ThemeManager::followGuidanceLevelForSection(const QString &sectionId)
+{
+    const QString normalizedSection = sectionId.trimmed();
+    if (normalizedSection.isEmpty() || !m_explicitGuidanceSections.contains(normalizedSection)) return false;
+    QSettings stored(m_settingsFilePath, QSettings::IniFormat);
+    stored.remove(QLatin1String(kGuidanceSectionsPrefix) + normalizedSection);
+    stored.sync();
+    if (stored.status() != QSettings::NoError) return false;
+    m_explicitGuidanceSections.remove(normalizedSection);
+    advanceGuidancePolicyRevision();
+    return true;
+}
+
+bool ThemeManager::temporarilyRevealGuidanceSection(const QString &sectionId)
+{
+    const QString normalizedSection = sectionId.trimmed();
+    if (normalizedSection.isEmpty() || m_temporaryGuidanceSections.contains(normalizedSection)) return false;
+    m_temporaryGuidanceSections.insert(normalizedSection);
+    advanceGuidancePolicyRevision();
+    return true;
+}
+
+bool ThemeManager::clearTemporaryGuidanceSectionReveal(const QString &sectionId)
+{
+    const QString normalizedSection = sectionId.trimmed();
+    if (!m_temporaryGuidanceSections.remove(normalizedSection)) return false;
     advanceGuidancePolicyRevision();
     return true;
 }
@@ -342,11 +392,24 @@ bool ThemeManager::persistGuidanceLevel(const QString &level, bool onboardingHan
 
 bool ThemeManager::defaultGuidanceSectionExpanded(const QString &sectionId) const
 {
-    Q_UNUSED(sectionId);
-    // Full surfaces advanced context sooner. Guided retains every capability
-    // behind an explicit, keyboard-accessible disclosure rather than hiding
-    // or changing it. Explicit per-section settings always win above.
-    return m_guidanceLevel == u"Full"_qs;
+    // Full is deliberately curated, not a blanket "everything open" switch.
+    // Raw identity, diagnostics traces, destructive actions, and expensive
+    // labs remain collapsed in both starting presentations. Unknown sections
+    // default conservatively so a newly-added technical panel never leaks
+    // into Full by accident.
+    if (m_guidanceLevel != u"Full"_qs) return false;
+    return sectionId == u"overview-connection-evidence"_qs
+        || sectionId == u"devices-virtual-details"_qs
+        || sectionId == u"axes-processing"_qs
+        || sectionId == u"buttons-behavior"_qs
+        || sectionId == u"profiles-association"_qs
+        || sectionId == u"curve-details"_qs
+        || sectionId == u"adaptive-advanced"_qs
+        || sectionId == u"adaptive-traces"_qs
+        || sectionId == u"automation-behavior"_qs
+        || sectionId == u"signal-flow-inspector-details"_qs
+        || sectionId == u"diagnostics-input"_qs
+        || sectionId == u"diagnostics-output"_qs;
 }
 
 void ThemeManager::advanceGuidancePolicyRevision()

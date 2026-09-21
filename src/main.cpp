@@ -347,7 +347,7 @@ int main(int argc, char *argv[])
     // receives a backend or mapping reference.
     hotas::ThemeManager themeManager;
     hotas::AppBackend backend;
-    const bool recoveryNoticePending = !startupSmoke && !nativeQualification
+    const bool recoveryNoticePending = !startupSmoke && !isolatedPresentation && !nativeQualification
         && hotas::CrashDiagnostics::previousRunWasAbnormal();
     // Connection order is intentional: shutdown waits only for the latest
     // asynchronous configuration generation before the final probe export.
