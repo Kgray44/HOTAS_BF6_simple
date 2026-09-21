@@ -9,7 +9,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-Add-Type -TypeDefinition @'
+if ($null -eq ('HidHideDoctorInteractiveContention' -as [type])) {
+    Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
 using System.Threading;
@@ -58,6 +59,7 @@ public sealed class HidHideDoctorInteractiveContention : IDisposable
     }
 }
 '@
+}
 
 $logicalProcessorCount = [Math]::Max(1, [int](Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)
 $workerCount = switch ($Level) {
