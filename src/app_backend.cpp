@@ -112,7 +112,11 @@ bool startupSmokeRequested()
 bool isolatedPresentationRequested()
 {
     return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs)
-        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0;
+        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0
+        // The standalone Axis Acquisition candidate is a review fixture, not
+        // a second mapper. It must never enumerate DirectInput, acquire vJoy,
+        // or sample foreground applications beside the installed app.
+        || qEnvironmentVariableIntValue("HOTAS_AXIS_ACQUISITION_PREVIEW") != 0;
 }
 
 bool axisAcquisitionPreviewRequested()
@@ -2578,6 +2582,25 @@ bool AppBackend::configureAxisAcquisitionFixtureForTest()
     m_worker.setAxisSourceMonitorRequested(false);
     emit stateChanged();
     return true;
+}
+
+bool AppBackend::axisAcquisitionPreviewIsHardwareIsolatedForTest() const
+{
+    return m_axisAcquisitionPreview
+        && !m_controllerDiscoveryTimer.isActive()
+        && !m_gameDetectionTimer.isActive()
+        && !m_worker.isRunning();
+}
+
+bool AppBackend::unchangedControllerInventoryIsStableForTest()
+{
+    // The first publication establishes the inventory baseline. An identical
+    // later discovery pass is the production timer's common path and must not
+    // recreate Device Rig state or schedule another activation transition.
+    applyControllerInventory(m_discoveredControllers);
+    const quint64 baselineGeneration = m_inventoryGeneration;
+    applyControllerInventory(m_discoveredControllers);
+    return m_inventoryGeneration == baselineGeneration;
 }
 
 bool AppBackend::setAxisSourceMonitorCandidateForTest(int source, qint32 value,
@@ -16311,10 +16334,11 @@ void AppBackend::resolveActivationNow()
         && decision.reason == ActivationDecisionReason::ManualOverrideExpired) {
         clearManualActivationOverride(u"Manual Override ended because the game/application context changed."_qs);
     }
-    if (!decision.valid || !decision.changed) {
-        emit stateChanged();
-        return;
-    }
+    // This resolver is also driven by background control-plane observers. A
+    // no-op decision has no new property value to publish; emitting the broad
+    // stateChanged signal here reconstructs QML model delegates and closes
+    // open Popups/TextFields despite there being no state transition.
+    if (!decision.valid || !decision.changed) return;
     if (applyActivationDecision(decision, ActivationIntent::Automatic)) {
         appendEvent(QString(u"Activation Resolver (%1): %2"_qs)
             .arg(trigger.isEmpty() ? u"state change"_qs : trigger, decision.explanation));
@@ -20467,6 +20491,10 @@ void AppBackend::refreshControllerInventory()
 void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInventory)
 {
     const bool inventoryChanged = !sameControllerInventory(m_discoveredControllers, latestInventory);
+    const bool requiresSetupReconciliation = m_setupReconnectInventoryRefreshPending
+        || m_setupSoftwareReacquisitionInventoryRefreshPending;
+    const bool requiresInventoryReconciliation = !m_controllerInventoryInitialized
+        || inventoryChanged || requiresSetupReconciliation;
     if (inventoryChanged) m_discoveredControllers = latestInventory;
     QStringList newlyDiscoveredUnverifiedIds;
     for (const DiscoveredController &controller : m_discoveredControllers) {
@@ -20479,7 +20507,7 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
         }
     }
     m_controllerInventoryInitialized = true;
-    reconcileDeviceRigInventory();
+    if (requiresInventoryReconciliation) reconcileDeviceRigInventory();
     if (m_setupReconnectInventoryRefreshPending
         && m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
         && !m_readiness.reconnectVerificationPending()
@@ -20515,11 +20543,13 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
     }
     if (m_setupTruthStartupInspectionPending) scheduleStartupSetupTruthInspection();
     else if (inventoryChanged) scheduleAutomaticSetupTruthRefresh();
-    tryAutoSwitchVerifiedController();
-    // Existing verified records from an earlier candidate are reconciled once
-    // too. A user should never need to forget/re-add a controller merely
-    // because a prior build failed to install its default HidHide rule.
-    scheduleVerifiedControllerDefaultIsolation();
+    if (requiresInventoryReconciliation) {
+        tryAutoSwitchVerifiedController();
+        // Existing verified records from an earlier candidate are reconciled once
+        // too. A user should never need to forget/re-add a controller merely
+        // because a prior build failed to install its default HidHide rule.
+        scheduleVerifiedControllerDefaultIsolation();
+    }
     if (!newlyDiscoveredUnverifiedIds.isEmpty() && !m_verificationInProgress && !m_controllerSelectionInProgress) {
         appendEvent(newlyDiscoveredUnverifiedIds.size() == 1
             ? QString(u"New controller detected: %1. Select Set Up to explicitly verify it."_qs)

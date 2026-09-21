@@ -367,6 +367,13 @@ public:
     // Installs a bounded verified-controller record and monitor snapshot for
     // acquisition/Identify Axis tests. It never enumerates user hardware.
     bool configureAxisAcquisitionFixtureForTest();
+    // Verifies that the axis-acquisition candidate never starts a DirectInput
+    // discovery timer, game probe, or MappingWorker. The fixture is in-memory
+    // only so it can be reviewed safely alongside an installed mapper.
+    bool axisAcquisitionPreviewIsHardwareIsolatedForTest() const;
+    // Replays an initial and an identical inventory publication. The second
+    // snapshot must not rebuild Device Rig readiness or advance its generation.
+    bool unchangedControllerInventoryIsStableForTest();
     bool setAxisSourceMonitorCandidateForTest(int source, qint32 value,
                                               qint32 observedMinimum, qint32 observedMaximum,
                                               quint64 changeCount, int movementMagnitude = 0);

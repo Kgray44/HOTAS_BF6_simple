@@ -1405,6 +1405,7 @@ bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
     const QVariantList configuration = backend->axisConfiguration();
     const QVariantList monitor = backend->axisSourceMonitor();
     if (!backend->axisAcquisitionPreview() || !backend->showUltraNerdControls()
+        || !backend->axisAcquisitionPreviewIsHardwareIsolatedForTest()
         || configuration.size() != hotas::kPhysicalAxisCount
         || monitor.size() != hotas::kPhysicalAxisCount) {
         std::fprintf(stderr, "axis-acquisition preview did not establish its isolated fixture\n");
@@ -1434,11 +1435,21 @@ bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
     return true;
 }
 
+bool verifyUnchangedControllerInventoryDoesNotRebuildReadiness()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->unchangedControllerInventoryIsStableForTest()) {
+        std::fprintf(stderr, "unchanged controller inventory rebuilt Device Rig readiness\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 24> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 25> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 24> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 25> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1463,6 +1474,7 @@ const std::array<std::pair<QString, StartupFixture>, 24> &startupFixtures()
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
         {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},
         {QStringLiteral("axis-acquisition-preview"), verifyAxisAcquisitionPreviewIsIsolatedAndInteractive},
+        {QStringLiteral("stable-controller-inventory"), verifyUnchangedControllerInventoryDoesNotRebuildReadiness},
     }};
     return fixtures;
 }
