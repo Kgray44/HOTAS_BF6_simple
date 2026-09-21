@@ -27,7 +27,12 @@
   `--startup-smoke` and read-only `--scan-smoke` each exited 0. Documentation
   Check run `35648806550`, HOTAS BF6 CI run `35648806540`, and isolated
   installer qualification run `35648806553` reached terminal `SUCCESS` on
-  this exact head. R8 is a pre-final owner-review stage, not the immutable
+  this exact head. Its docs-only successor
+  `b15232166ff523945394bdf1dd95c8823f84f344` then passed Documentation Check
+  `35650964667`, HOTAS BF6 CI `35650964699`, and isolated installer
+  qualification `35650964677`; the latter completed its full configured suite,
+  staging, clean install/uninstall removal, and clean/upgrade/recovery startup
+  checks. R8 is a pre-final owner-review stage, not the immutable
   final RC artifact: owner confirmation of the focused lifecycle/arrow review
   remains pending, and no repair, release, tag, or merge is authorized.
 - Current forensic-evidence candidate: `e8010fb`. Its full local CTest run at
@@ -375,6 +380,13 @@ path has not run for this unsigned candidate.
   report whose parent is a regular file fails with no report artifact. These
   exercise unavailable-root/parent handling without changing disk capacity,
   permissions, AppData, or live HidHide state; they are fixture evidence only.
+- On pre-final R8, a non-elevated real `--headless --report` attempt to a
+  unique `C:\\Windows\\System32` report path exited `3` and created no report.
+  It is a narrow actual unwritable-destination CLI result, not a native error
+  presentation or low-disk result. Separately, a `--scan-smoke` child whose
+  `LOCALAPPDATA` environment variable pointed to an unavailable `System32`
+  path exited `0`; this is only a no-crash environment fixture because that
+  smoke path does not prove an AppData write was attempted.
 - The deep-helper regression now also re-seals and injects forbidden
   `command`, argument, executable, service, filter, registry-path, cache-path,
   and RunOnce-like package fields, plus a mismatched one-time nonce. Each is
