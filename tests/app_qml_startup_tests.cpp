@@ -7455,6 +7455,7 @@ int main(int argc, char *argv[])
     // focused theme rerun when a visual failure is being diagnosed locally.
     const QString requestedTheme = qEnvironmentVariable("HOTAS_QML_TEST_THEME").trimmed();
     if (!requestedTheme.isEmpty()) themes = {requestedTheme};
+    const bool themeCoverageOnly = qEnvironmentVariableIsSet("HOTAS_QML_THEME_COVERAGE_ONLY");
     for (const QString &theme : themes) {
         themeManager.setCurrentTheme(theme);
 
@@ -7481,6 +7482,16 @@ int main(int argc, char *argv[])
         QObject *presentation = window->findChild<QObject *>(QStringLiteral("presentationLoader"));
         QObject *surface = presentation ? qvariant_cast<QObject *>(presentation->property("item")) : nullptr;
         if (!surface || !captureDevicesSnapshot(backend, surface, window, theme)) return 1;
+    }
+
+    // Each supported shell theme has an independent lifecycle contract, while
+    // the remaining workflow fixture is theme-agnostic.  CI gives every CTest
+    // process a 180-second watchdog, so the per-theme registrations set this
+    // flag to keep a complete theme pass bounded rather than letting four
+    // otherwise healthy theme passes consume one shared timeout budget.
+    if (themeCoverageOnly) {
+        themeManager.setCurrentExperience(QStringLiteral("Existing"));
+        return 0;
     }
 
     // The Devices stress deliberately leaves the user-facing editing context

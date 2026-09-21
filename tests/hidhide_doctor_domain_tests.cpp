@@ -945,12 +945,34 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     DoctorSessionViewModel model(outcome.session, QStringLiteral("fixture-review"));
     QString copied;
     model.setCopyAction([&copied](QString value) { copied = std::move(value); });
+
+    const QVariantList activityRows = model.activityRows();
+    const auto checkStarted = std::find_if(activityRows.cbegin(), activityRows.cend(), [](const QVariant &value) {
+        const QVariantMap row = value.toMap();
+        return row.value(QStringLiteral("eventType")).toString() == QStringLiteral("CHECK STARTED")
+            && !row.value(QStringLiteral("checkId")).toString().isEmpty();
+    });
+    QVERIFY(checkStarted != activityRows.cend());
+    const QVariantMap checkStartedRow = checkStarted->toMap();
+    const EvidenceRecord *checkStartedEvidence = evidenceFor(checkStartedRow.value(QStringLiteral("checkId")).toString());
+    QVERIFY(checkStartedEvidence);
+    QCOMPARE(checkStartedRow.value(QStringLiteral("evidenceId")).toString(), checkStartedEvidence->id.value());
+    QVERIFY(checkStartedRow.value(QStringLiteral("selectable")).toBool());
+    model.selectEvidence(checkStartedRow.value(QStringLiteral("evidenceId")).toString());
+    QCOMPARE(model.selectedEvidence().value(QStringLiteral("id")).toString(), checkStartedEvidence->id.value());
+
+    const auto sessionCompleted = std::find_if(activityRows.cbegin(), activityRows.cend(), [](const QVariant &value) {
+        return value.toMap().value(QStringLiteral("eventType")).toString() == QStringLiteral("SESSION COMPLETED");
+    });
+    QVERIFY(sessionCompleted != activityRows.cend());
+    QVERIFY(!sessionCompleted->toMap().value(QStringLiteral("selectable")).toBool());
+
     model.selectEvidence(protocol->id.value());
     model.copySelectedEvidenceMode(QStringLiteral("Summary"));
     QVERIFY(copied.contains(QStringLiteral("HD-API-002")));
     model.copySelectedEvidenceMode(QStringLiteral("Technical"));
     QVERIFY(copied.contains(QStringLiteral("# TECHNICAL EVIDENCE")));
-    QVERIFY(copied.contains(QStringLiteral("IOCTL")));
+    QVERIFY2(copied.contains(QStringLiteral("IOCTL")), qPrintable(copied));
     model.copySelectedEvidenceMode(QStringLiteral("Complete"));
     QVERIFY(copied.contains(QStringLiteral("HIDHIDE DOCTOR REPORT")));
     model.copySelectedEvidenceMode(QStringLiteral("JSON"));

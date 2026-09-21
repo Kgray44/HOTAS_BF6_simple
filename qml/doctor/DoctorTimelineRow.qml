@@ -12,9 +12,10 @@ AbstractButton {
     property string tone: "neutral"
     property string evidenceId: ""
     implicitHeight: 31
+    enabled: evidenceId.length > 0
     focusPolicy: Qt.StrongFocus
     Accessible.name: time + " " + checkId + " " + title
-    Accessible.description: "Open related evidence"
+    Accessible.description: enabled ? "Open related evidence" : "No retained evidence is linked to this lifecycle event"
     contentItem: RowLayout {
         anchors.leftMargin: 10
         anchors.rightMargin: 10
@@ -28,6 +29,7 @@ AbstractButton {
         radius: 1
         border.width: root.activeFocus ? 1 : 0
         border.color: Theme.focus
-        color: root.down ? Theme.pressed : root.hovered ? Theme.hover : "transparent"
+        color: !root.enabled ? "transparent" : root.down ? Theme.pressed : root.hovered ? Theme.hover : "transparent"
+        opacity: root.enabled ? 1.0 : 0.5
     }
 }

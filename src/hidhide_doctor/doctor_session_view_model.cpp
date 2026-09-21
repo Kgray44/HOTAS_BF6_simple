@@ -379,15 +379,41 @@ QVariantList DoctorSessionViewModel::diagnosisCards() const
 QVariantList DoctorSessionViewModel::activityRows() const
 {
     QVariantList values;
-    for (const DoctorActivityEvent &event : m_session.activity()) values.append(QVariantMap{{QStringLiteral("time"), event.timestamp.toLocalTime().toString(QStringLiteral("HH:mm:ss.zzz"))},
+    for (const DoctorActivityEvent &event : m_session.activity()) {
+        // Check-start and phase events are emitted before their evidence is
+        // retained. By presentation time the canonical check evidence exists,
+        // so resolve that relationship instead of leaving a clickable row
+        // pointing at an empty ID. A genuine session-only event remains
+        // visibly non-navigable rather than retaining the prior Inspector
+        // selection.
+        QString evidenceId = event.evidenceId.value();
+        if (evidenceId.isEmpty()) {
+            for (const EvidenceId &relatedId : event.evidenceIds) {
+                if (relatedId.isValid()) {
+                    evidenceId = relatedId.value();
+                    break;
+                }
+            }
+        }
+        if (evidenceId.isEmpty() && event.checkId.isValid()) {
+            for (const EvidenceRecord &evidence : m_session.evidence()) {
+                if (evidence.checkId == event.checkId) {
+                    evidenceId = evidence.id.value();
+                    break;
+                }
+            }
+        }
+        values.append(QVariantMap{{QStringLiteral("time"), event.timestamp.toLocalTime().toString(QStringLiteral("HH:mm:ss.zzz"))},
         {QStringLiteral("checkId"), event.checkId.value()}, {QStringLiteral("symbol"), iconFor(event.status)}, {QStringLiteral("status"), displayName(event.status).toUpper()},
         {QStringLiteral("eventType"), displayName(event.type).toUpper()}, {QStringLiteral("phase"), displayName(event.phase)},
         {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail}, {QStringLiteral("reason"), event.reason},
         {QStringLiteral("target"), event.target}, {QStringLiteral("result"), event.result}, {QStringLiteral("nextStep"), event.nextStep},
-        {QStringLiteral("tone"), toneFor(event.status)}, {QStringLiteral("evidenceId"), event.evidenceId.value()},
+        {QStringLiteral("tone"), toneFor(event.status)}, {QStringLiteral("evidenceId"), evidenceId},
+        {QStringLiteral("selectable"), !evidenceId.isEmpty()},
         {QStringLiteral("evidenceIds"), [&] { QStringList ids; for (const EvidenceId &id : event.evidenceIds) ids.append(id.value()); return ids; }()},
         {QStringLiteral("findingIds"), [&] { QStringList ids; for (const FindingId &id : event.relatedFindingIds) ids.append(id.value()); return ids; }()},
         {QStringLiteral("diagnosisIds"), [&] { QStringList ids; for (const DiagnosisId &id : event.relatedDiagnosisIds) ids.append(id.value()); return ids; }()}});
+    }
     return values;
 }
 

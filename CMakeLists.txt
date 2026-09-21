@@ -853,10 +853,37 @@ if (BUILD_TESTING)
     # offscreen test platform while AppBackend retains its smoke-safe hardware
     # boundary.  --startup-smoke would hide the window and invalidate Popup
     # placement assertions that are part of this lifecycle suite.
+    # Keep every supported theme under the same bounded native-QML lifecycle
+    # contract, but run each one in its own process.  The full four-theme
+    # matrix plus the shared workflow fixture can legitimately exceed one
+    # 180-second watchdog on a loaded Windows runner; splitting it preserves
+    # all coverage without converting that watchdog into an open-ended wait.
+    function(add_hotas_qml_theme_coverage_test test_name theme_name)
+        add_test(NAME ${test_name} COMMAND app_qml_startup_tests --isolated-presentation)
+        set_tests_properties(${test_name} PROPERTIES
+            TIMEOUT 180
+            RESOURCE_LOCK app_qml_presentation
+            ENVIRONMENT "HOTAS_QML_TEST_THEME=${theme_name};HOTAS_QML_THEME_COVERAGE_ONLY=1")
+        if (WIN32)
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+                "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+        endif()
+    endfunction()
+    add_hotas_qml_theme_coverage_test(app_qml_theme_legacy "Legacy")
+    add_hotas_qml_theme_coverage_test(app_qml_theme_standard "Standard")
+    add_hotas_qml_theme_coverage_test(app_qml_theme_top_gun "Top Gun")
+    add_hotas_qml_theme_coverage_test(app_qml_theme_day_ops "Day Ops")
+
+    # The shared interaction and Flight Deck workflows run once on Day Ops;
+    # that is the final existing-theme surface from the historical matrix.
     add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
+    set_tests_properties(app_qml_startup_tests PROPERTIES
+        TIMEOUT 180
+        RESOURCE_LOCK app_qml_presentation
+        ENVIRONMENT "HOTAS_QML_TEST_THEME=Day Ops")
     if (WIN32)
-        set_tests_properties(app_qml_startup_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
+        set_property(TEST app_qml_startup_tests APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")
     endif()
 
     qt_add_executable(theme_manager_tests
