@@ -115,6 +115,15 @@ bool isolatedPresentationRequested()
         || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0;
 }
 
+bool axisAcquisitionPreviewRequested()
+{
+    // main.cpp sets this only for --axis-acquisition-preview before an
+    // AppBackend exists. Keep the backend's decision process-local and
+    // explicit: no installed controller, saved preference, or auto-detection
+    // can silently turn an ordinary mapping session into a mock session.
+    return qEnvironmentVariableIntValue("HOTAS_AXIS_ACQUISITION_PREVIEW") == 1;
+}
+
 bool sameControllerInventory(const QList<DiscoveredController> &left,
                              const QList<DiscoveredController> &right)
 {
@@ -562,6 +571,7 @@ AppBackend::AppBackend(QObject *parent)
     // launches retain the unchanged hardware startup path below.
     const bool startupSmoke = startupSmokeRequested();
     const bool isolatedPresentation = isolatedPresentationRequested();
+    m_axisAcquisitionPreview = axisAcquisitionPreviewRequested();
     m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
     // Selection starts at the authoritative active Profile, then remains a
     // session-local editor choice until the user changes it. It is never a
@@ -675,6 +685,21 @@ AppBackend::AppBackend(QObject *parent)
     // active output mapping.
     m_numericTelemetryTimer.setInterval(kVisibleNumericTelemetryIntervalMs);
     m_numericTelemetryTimer.start();
+    if (m_axisAcquisitionPreview) {
+        if (installAxisAcquisitionPreview()) {
+            m_axisAcquisitionPreviewTimer.setInterval(90);
+            connect(&m_axisAcquisitionPreviewTimer, &QTimer::timeout, this,
+                    &AppBackend::advanceAxisAcquisitionPreview);
+            advanceAxisAcquisitionPreview();
+            m_axisAcquisitionPreviewTimer.start();
+            appendEvent(u"Simulated Axis Acquisition preview loaded; no physical input or vJoy output is active"_qs);
+        } else {
+            // Never leave an ambiguous partially-seeded view if the isolated
+            // fixture cannot establish a complete in-memory Device Rig.
+            m_axisAcquisitionPreview = false;
+            appendEvent(u"Axis Acquisition preview could not initialize"_qs);
+        }
+    }
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
@@ -754,7 +779,7 @@ AppBackend::AppBackend(QObject *parent)
     // normal launch path then resolves it through the passive verifier below;
     // this prevents the Overview from briefly inventing an inspection failure
     // while the sidebar is still reporting live mapper readiness.
-    if (!startupSmoke) {
+    if (!startupSmoke && !m_axisAcquisitionPreview) {
         m_setupTruthStartupInspectionPending = true;
         captureSetupTruthSnapshot();
         // HidHide Health starts as a separate passive control-plane check. It
@@ -773,7 +798,160 @@ AppBackend::AppBackend(QObject *parent)
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
-    if (!startupSmoke && !isolatedPresentation) QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+    if (!startupSmoke && !isolatedPresentation && !m_axisAcquisitionPreview)
+        QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+}
+
+bool AppBackend::installAxisAcquisitionPreview()
+{
+    // This is intentionally not a fake DirectInput device. It is a complete
+    // in-memory verified-record and Device Rig projection for reviewing the
+    // acquisition UI while no physical controller is attached. Main enables
+    // QStandardPaths test mode before construction, and this routine never
+    // persists, probes drivers, or starts MappingWorker.
+    MapperConfiguration preview = defaultConfiguration();
+    ControllerProfile *normal = findProfile(preview, normalProfileId());
+    if (!normal || preview.outputLayouts.empty()) return false;
+
+    constexpr auto kRecordId = "axis-acquisition-ui-preview-controller";
+    constexpr auto kRigId = "axis-acquisition-ui-preview-rig";
+    SavedControllerRecord record;
+    record.id = QLatin1String(kRecordId);
+    record.displayName = u"Simulated Axis Acquisition Controller · UI Preview"_qs;
+    record.lastDirectInputId = u"{axis-acquisition-ui-preview}"_qs;
+    record.productGuid = u"{axis-acquisition-ui-preview-product}"_qs;
+    record.hidInstanceId = u"HID\\SIMULATED_AXIS_ACQUISITION\\1"_qs;
+    record.hidContainerId = u"{axis-acquisition-ui-preview-container}"_qs;
+    record.axisCount = kPhysicalAxisCount;
+    record.buttonCount = 12;
+    record.povCount = 1;
+    record.capabilityFingerprint = u"SIMULATED-AXIS-ACQUISITION-PREVIEW"_qs;
+    record.lastVerified = u"SIMULATED · UI preview only · no physical verification"_qs;
+
+    const std::array<QString, kPhysicalAxisCount> standardGuids{{
+        u"GUID_XAxis"_qs, u"GUID_YAxis"_qs, u"GUID_ZAxis"_qs, u"GUID_RxAxis"_qs,
+        u"GUID_RyAxis"_qs, u"GUID_RzAxis"_qs, u"GUID_Slider"_qs, u"GUID_Slider"_qs,
+    }};
+    const std::array<quint32, kPhysicalAxisCount> standardOffsets{{0U, 4U, 8U, 12U,
+                                                                     16U, 20U, 24U, 28U}};
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
+        NativeAxisDescriptor &descriptor = record.axisDescriptors[static_cast<size_t>(index)];
+        descriptor.present = true;
+        descriptor.nativeName = axis == PhysicalAxis::Rz
+            ? u"Simulated Z Rotation (Rudder)"_qs
+            : QString(u"Simulated %1"_qs).arg(physicalAxisLabel(axis));
+        descriptor.directInputGuid = standardGuids[static_cast<size_t>(index)];
+        descriptor.directInputType = 0x1000U + static_cast<quint32>(index);
+        descriptor.directInputOffset = axis == PhysicalAxis::Rz ? 8U : standardOffsets[static_cast<size_t>(index)];
+        descriptor.directInputInstance = static_cast<quint32>(index);
+        descriptor.enumerationIndex = index;
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.requestedMinimum = 0;
+        descriptor.requestedMaximum = 65535;
+        descriptor.rangeSetAttempted = true;
+        descriptor.acquisitionSourceResolved = true;
+        descriptor.acquisitionMethod = 0;
+        descriptor.canonicalAxis = index;
+        descriptor.formattedSource = index;
+        descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+        descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+        // The preview deliberately presents the known semantic-GUID versus
+        // reported-offset situation without claiming that this mock is Saitek
+        // hardware. It lets the owner inspect the intended contradiction UI.
+        descriptor.metadataContradiction = axis == PhysicalAxis::Rz;
+        record.axes[static_cast<size_t>(index)] = true;
+    }
+    preview.savedControllers = {record};
+
+    const QString outputId = preview.outputLayouts.front().id;
+    DeviceRig rig;
+    rig.id = QLatin1String(kRigId);
+    rig.name = u"Simulated Axis Acquisition Rig · UI Preview"_qs;
+    rig.autoActivate = false;
+    rig.members = {{record.id, true, true, outputId}};
+    rig.outputs = {{outputId, true}};
+    rig.primaryOutputLayoutId = outputId;
+    rig.setupStatus = u"SIMULATED · no driver inspection"_qs;
+    preview.deviceRigs = {rig};
+
+    DeviceProfileMapping mapping;
+    mapping.controllerRecordId = record.id;
+    mapping.enabled = true;
+    normal->deviceRigId = rig.id;
+    normal->outputLayoutId = outputId;
+    normal->deviceMappings = {mapping};
+    normal->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+    preview.activeProfileId = normal->id;
+    preview.activeDeviceRigId = rig.id;
+    preview.activeControllerRecordId = record.id;
+    preview.editingDeviceRigId = rig.id;
+    preview.editingDeviceRecordIds = {record.id};
+    preview.selectedAxisIndex = static_cast<int>(PhysicalAxis::Rz);
+    preview.startMappingOnLaunch = false;
+    preview.automaticGameDetection = false;
+    if (!compileDeviceRigRuntime(preview, rig.id, normal->id).valid) return false;
+
+    m_configuration = std::move(preview);
+    m_selectedProfileId = m_configuration.activeProfileId;
+    ++m_configurationGeneration;
+    m_showUltraNerdControls = true;
+    m_axisIdentification = {};
+    m_axisSourceMonitorVisible = false;
+    m_discoveredControllers.clear();
+    DiscoveredController discovered;
+    discovered.name = record.displayName;
+    discovered.directInputId = record.lastDirectInputId;
+    discovered.productGuid = record.productGuid;
+    discovered.hidInstanceId = record.hidInstanceId;
+    discovered.hidContainerId = record.hidContainerId;
+    discovered.axes = record.axes;
+    discovered.axisDescriptors = record.axisDescriptors;
+    discovered.axisCount = record.axisCount;
+    discovered.buttonCount = record.buttonCount;
+    discovered.povCount = record.povCount;
+    discovered.connected = true;
+    m_discoveredControllers.push_back(std::move(discovered));
+    m_controllerInventoryInitialized = true;
+    m_initialInventoryResolved = true;
+    m_initialGameContextResolved = true;
+    DeviceRigStatus status;
+    status.rigId = rig.id;
+    status.health = DeviceRigHealth::Ready;
+    status.complete = true;
+    status.connectedMemberIds = {record.id};
+    m_deviceRigStatuses = {status};
+    ++m_inventoryGeneration;
+    m_worker.updateConfiguration(m_configuration);
+
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const qint32 value = source == static_cast<int>(PhysicalAxis::Rz) ? 32761 : 0;
+        m_worker.publishAxisAcquisitionPreviewSnapshot(source, value, 0, 65535,
+                                                       source == static_cast<int>(PhysicalAxis::Rz) ? 1074 : 0,
+                                                       0);
+        m_worker.publishPhysicalAxisSnapshotForTest(source,
+            source == static_cast<int>(PhysicalAxis::Rz) ? -0.001F : 0.0F);
+    }
+    return true;
+}
+
+void AppBackend::advanceAxisAcquisitionPreview()
+{
+    if (!m_axisAcquisitionPreview) return;
+    constexpr int source = static_cast<int>(PhysicalAxis::Rz);
+    constexpr int cycleLength = 128;
+    constexpr int halfCycle = cycleLength / 2;
+    const int phase = (++m_axisAcquisitionPreviewSequence) % cycleLength;
+    const int ramp = phase <= halfCycle ? phase : cycleLength - phase;
+    const qint32 raw = 32761 + static_cast<qint32>((ramp - halfCycle / 2) * 520);
+    const float normalized = std::clamp((static_cast<float>(raw) - 32767.5F) / 32767.5F,
+                                        -1.0F, 1.0F);
+    m_worker.publishAxisAcquisitionPreviewSnapshot(source, raw, 142, 65392,
+                                                   1074U + static_cast<quint64>(m_axisAcquisitionPreviewSequence),
+                                                   520);
+    m_worker.publishPhysicalAxisSnapshotForTest(source, normalized);
+    emit inputTelemetryChanged();
 }
 
 AppBackend::~AppBackend()

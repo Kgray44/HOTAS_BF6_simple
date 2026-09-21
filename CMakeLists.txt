@@ -236,6 +236,15 @@ if (WIN32)
             COMMAND "${HOTAS_WINDEPLOYQT}" --no-translations --no-compiler-runtime
                 --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml" "$<TARGET_FILE:HOTASMapper>"
             COMMENT "Deploying the Qt runtime required by the elevated HOTAS BF6 repair transaction")
+        # A plainly named, isolated candidate lets an owner open the simulated
+        # axis-acquisition flow without passing a hidden command-line flag or
+        # touching the installed HOTAS BF6 application.  It shares this
+        # target's deployed Qt runtime, and main.cpp recognizes only this
+        # exact candidate name as the opt-in preview route.
+        add_custom_command(TARGET HOTASMapper POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:HOTASMapper>"
+                "$<TARGET_FILE_DIR:HOTASMapper>/HOTAS Axis Acquisition Preview.exe"
+            COMMENT "Creating the isolated axis-acquisition preview candidate")
     else()
         message(FATAL_ERROR "windeployqt.exe was not found beside the configured Qt runtime")
     endif()

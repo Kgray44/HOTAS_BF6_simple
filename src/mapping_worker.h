@@ -351,6 +351,13 @@ public:
     // the same fixed latest-snapshot atomics DirectInput normally publishes;
     // it never enters the mapper report path or opens vJoy.
     void publishPhysicalAxisSnapshotForTest(int physicalAxis, float normalized);
+    // The explicit Axis Acquisition preview uses the same bounded snapshot
+    // shape, but is driven only by the opt-in isolated presentation route.
+    // It cannot acquire a device, invoke vJoy, or enter the report loop.
+    void publishAxisAcquisitionPreviewSnapshot(int source, qint32 value,
+                                                qint32 observedMinimum, qint32 observedMaximum,
+                                                quint64 changeCount, int movementMagnitude,
+                                                qint64 lastChangeAgeMs = 0);
     // Test-only descriptor fixture for route-editor coverage. This never
     // starts vJoy, changes a device, or runs from the report hot path.
     void publishVirtualAxisAvailabilityForTest(bool available);

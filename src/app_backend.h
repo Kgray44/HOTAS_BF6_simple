@@ -52,6 +52,9 @@ class AppBackend final : public QObject {
     // An application presentation preference only. Hiding this specialty
     // surface never alters a saved per-controller acquisition override.
     Q_PROPERTY(bool showUltraNerdControls READ showUltraNerdControls NOTIFY stateChanged)
+    // Explicit isolated-presentation fixture. It is never enabled in an
+    // ordinary launch and is exposed only so Flight Deck can label mock data.
+    Q_PROPERTY(bool axisAcquisitionPreview READ axisAcquisitionPreview CONSTANT)
     Q_PROPERTY(QVariantList axisSourceMonitor READ axisSourceMonitor NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantMap axisIdentification READ axisIdentification NOTIFY stateChanged)
     Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
@@ -306,6 +309,7 @@ public:
     QVariantList axisConfiguration() const;
     QVariantList axisTelemetry() const;
     bool showUltraNerdControls() const { return m_showUltraNerdControls; }
+    bool axisAcquisitionPreview() const { return m_axisAcquisitionPreview; }
     QVariantList axisSourceMonitor() const;
     QVariantMap axisIdentification() const { return m_axisIdentification.result; }
     QVariantList axes() const;
@@ -1076,6 +1080,8 @@ signals:
 
 private slots:
     void refreshUiSnapshot();
+    bool installAxisAcquisitionPreview();
+    void advanceAxisAcquisitionPreview();
     void finishAxisIdentification();
     void appendEvent(const QString &event);
     QString crashPresentationContext() const;
@@ -1722,6 +1728,9 @@ private:
     InputLearningState m_inputLearning;
     AxisIdentificationState m_axisIdentification;
     bool m_showUltraNerdControls = false;
+    bool m_axisAcquisitionPreview = false;
+    int m_axisAcquisitionPreviewSequence = 0;
+    QTimer m_axisAcquisitionPreviewTimer;
     // The QML panel owns this presentation intent. Identification temporarily
     // enables monitor capture but must restore this value when its bounded
     // capture window ends.

@@ -163,6 +163,17 @@ Item {
                 Layout.fillWidth: true
                 spacing: root.tokens.space10
 
+                Text {
+                    visible: backend.axisAcquisitionPreview
+                    text: "SIMULATED CONTROLLER PREVIEW · NO PHYSICAL INPUT OR VJOY OUTPUT"
+                    color: root.tokens.attention
+                    font.family: root.tokens.telemetryFont
+                    font.pixelSize: root.tokens.bodySmall
+                    font.bold: true
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+
                 TechnicalLine { label: "RESOLUTION"; value: String(root.axis.manualOverride ? "MANUAL OVERRIDE · " : "AUTOMATIC · ") + String(root.axis.resolutionConfidence || "Low") + " CONFIDENCE" }
                 TechnicalLine { label: "CANONICAL AXIS"; value: String(root.axis.canonicalAxis || root.axis.key || "Unknown") }
                 TechnicalLine { label: "NATIVE NAME"; value: String(root.axis.nativeObjectName || "Not recorded") }

@@ -1396,11 +1396,49 @@ bool verifyAxisAcquisitionIdentifyLifecycle()
     return true;
 }
 
+bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
+{
+    qputenv("HOTAS_AXIS_ACQUISITION_PREVIEW", "1");
+    auto backend = std::make_unique<hotas::AppBackend>();
+    qunsetenv("HOTAS_AXIS_ACQUISITION_PREVIEW");
+    const int rz = static_cast<int>(hotas::PhysicalAxis::Rz);
+    const QVariantList configuration = backend->axisConfiguration();
+    const QVariantList monitor = backend->axisSourceMonitor();
+    if (!backend->axisAcquisitionPreview() || !backend->showUltraNerdControls()
+        || configuration.size() != hotas::kPhysicalAxisCount
+        || monitor.size() != hotas::kPhysicalAxisCount) {
+        std::fprintf(stderr, "axis-acquisition preview did not establish its isolated fixture\n");
+        return false;
+    }
+    const QVariantMap rudder = configuration.at(rz).toMap();
+    const QVariantMap rudderMonitor = monitor.at(rz).toMap();
+    if (!rudder.value(QStringLiteral("nativeObjectName")).toString().contains(QStringLiteral("Simulated"))
+        || !rudder.value(QStringLiteral("metadataContradiction")).toBool()
+        || rudder.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || !rudderMonitor.value(QStringLiteral("available")).toBool()
+        || rudderMonitor.value(QStringLiteral("changeCount")).toULongLong() < 1074
+        || rudderMonitor.value(QStringLiteral("state")).toString() != QStringLiteral("ACTIVE")) {
+        std::fprintf(stderr, "axis-acquisition preview did not expose the expected mock rudder evidence\n");
+        return false;
+    }
+    if (!backend->saveAxisAcquisitionOverride(rz, rz, rz, QStringLiteral("direct-input"),
+                                               QStringLiteral("manual"), 0, 65535,
+                                               QStringLiteral("automatic"),
+                                               QStringLiteral("automatic"))
+        || !backend->axisConfiguration().at(rz).toMap().value(QStringLiteral("manualOverride")).toBool()
+        || !backend->resetAxisAcquisitionOverride(rz)
+        || backend->axisConfiguration().at(rz).toMap().value(QStringLiteral("manualOverride")).toBool()) {
+        std::fprintf(stderr, "axis-acquisition preview did not retain the normal manual/reset interaction\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 24> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 23> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 24> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1424,6 +1462,7 @@ const std::array<std::pair<QString, StartupFixture>, 23> &startupFixtures()
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
         {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},
+        {QStringLiteral("axis-acquisition-preview"), verifyAxisAcquisitionPreviewIsIsolatedAndInteractive},
     }};
     return fixtures;
 }

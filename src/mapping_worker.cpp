@@ -989,6 +989,37 @@ void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float n
     m_runtime.adaptivePublicationSequence[index].fetch_add(1, std::memory_order_release);
 }
 
+void MappingWorker::publishAxisAcquisitionPreviewSnapshot(int source, qint32 value,
+                                                           qint32 observedMinimum,
+                                                           qint32 observedMaximum,
+                                                           quint64 changeCount,
+                                                           int movementMagnitude,
+                                                           qint64 lastChangeAgeMs)
+{
+    if (source < 0 || source >= kPhysicalAxisCount || observedMinimum > observedMaximum) return;
+    const size_t index = static_cast<size_t>(source);
+    // The UI preview always targets member zero of its isolated, in-memory
+    // Device Rig.  Publishing both snapshots keeps the selected-device view
+    // and the all-devices view coherent without creating an input session.
+    m_runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    m_runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    const auto publish = [index, value, observedMinimum, observedMaximum, changeCount,
+                          movementMagnitude, lastChangeAgeMs](AtomicAxisSourceTelemetry &telemetry) {
+        telemetry.value[index].store(value, std::memory_order_relaxed);
+        telemetry.observedMinimum[index].store(observedMinimum, std::memory_order_relaxed);
+        telemetry.observedMaximum[index].store(observedMaximum, std::memory_order_relaxed);
+        telemetry.changeCount[index].store(changeCount, std::memory_order_relaxed);
+        telemetry.recentMovementMagnitude[index].store(movementMagnitude, std::memory_order_relaxed);
+        telemetry.lastChangeAgeMs[index].store(lastChangeAgeMs, std::memory_order_relaxed);
+        telemetry.available.store(true, std::memory_order_relaxed);
+    };
+    publish(m_runtime.axisSourceTelemetry);
+    publish(m_runtime.deviceRigMemberAxisSourceTelemetry[0]);
+    m_runtime.axisAcquisitionSource[index].store(source, std::memory_order_relaxed);
+    m_runtime.axisLiveMovementObserved[index].store(movementMagnitude != 0, std::memory_order_relaxed);
+    m_runtime.axisLastMovementAgeMs[index].store(lastChangeAgeMs, std::memory_order_relaxed);
+}
+
 void MappingWorker::publishVirtualAxisAvailabilityForTest(bool available)
 {
     m_testVirtualAxisAvailability.store(available ? 1 : 0, std::memory_order_relaxed);
