@@ -421,15 +421,33 @@ QVariantMap DoctorSessionViewModel::selectedActivity() const
 {
     if (m_selectedActivityIndex < 0 || m_selectedActivityIndex >= m_session.activity().size()) return {};
     const DoctorActivityEvent &event = m_session.activity().at(m_selectedActivityIndex);
+    QVariantMap laterCompletion;
+    if (event.type == DoctorActivityEventType::CheckStarted && event.checkId.isValid()) {
+        for (int index = m_selectedActivityIndex + 1; index < m_session.activity().size(); ++index) {
+            const DoctorActivityEvent &candidate = m_session.activity().at(index);
+            if (candidate.type != DoctorActivityEventType::CheckCompleted
+                || candidate.checkId.value() != event.checkId.value()) continue;
+            laterCompletion = {{QStringLiteral("eventType"), displayName(candidate.type).toUpper()},
+                {QStringLiteral("status"), displayName(candidate.status).toUpper()},
+                {QStringLiteral("timestamp"), candidate.timestamp.toLocalTime().toString(Qt::ISODateWithMs)}};
+            break;
+        }
+    }
     return {{QStringLiteral("activityIndex"), m_selectedActivityIndex},
         {QStringLiteral("eventType"), displayName(event.type).toUpper()},
         {QStringLiteral("phase"), displayName(event.phase)},
         {QStringLiteral("status"), displayName(event.status).toUpper()},
+        {QStringLiteral("statusLabel"), event.type == DoctorActivityEventType::CheckStarted
+            ? QStringLiteral("STATE AT START: %1").arg(displayName(event.status).toUpper())
+            : QStringLiteral("EVENT STATUS: %1").arg(displayName(event.status).toUpper())},
         {QStringLiteral("checkId"), event.checkId.value()},
         {QStringLiteral("title"), event.title}, {QStringLiteral("detail"), event.detail},
         {QStringLiteral("reason"), event.reason}, {QStringLiteral("target"), event.target},
         {QStringLiteral("result"), event.result}, {QStringLiteral("nextStep"), event.nextStep},
         {QStringLiteral("timestamp"), event.timestamp.toLocalTime().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("laterCompletionType"), laterCompletion.value(QStringLiteral("eventType")).toString()},
+        {QStringLiteral("laterCompletionStatus"), laterCompletion.value(QStringLiteral("status")).toString()},
+        {QStringLiteral("laterCompletionTimestamp"), laterCompletion.value(QStringLiteral("timestamp")).toString()},
         {QStringLiteral("evidenceId"), evidenceIdForActivity(m_session, event)}};
 }
 

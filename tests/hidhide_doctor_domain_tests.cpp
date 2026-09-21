@@ -962,6 +962,9 @@ void HidHideDoctorDomainTests::phaseFiveForensicOwnerReviewFixtureCoversAllEvide
     QCOMPARE(model.selectedEvidence().value(QStringLiteral("id")).toString(), checkStartedEvidence->id.value());
     QCOMPARE(model.selectedActivity().value(QStringLiteral("eventType")).toString(), QStringLiteral("CHECK STARTED"));
     QCOMPARE(model.selectedActivity().value(QStringLiteral("checkId")).toString(), checkStartedRow.value(QStringLiteral("checkId")).toString());
+    QCOMPARE(model.selectedActivity().value(QStringLiteral("statusLabel")).toString(), QStringLiteral("STATE AT START: RUNNING"));
+    QCOMPARE(model.selectedActivity().value(QStringLiteral("laterCompletionType")).toString(), QStringLiteral("CHECK COMPLETED"));
+    QVERIFY(!model.selectedActivity().value(QStringLiteral("laterCompletionStatus")).toString().isEmpty());
 
     const auto evidenceRecorded = std::find_if(activityRows.cbegin(), activityRows.cend(), [&checkStartedRow](const QVariant &value) {
         const QVariantMap row = value.toMap();

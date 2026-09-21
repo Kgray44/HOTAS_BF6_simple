@@ -931,11 +931,20 @@ ApplicationWindow {
                         spacing: 9
                         Label { text: inspectorSurface.activity.eventType; color: Theme.information; font.family: Theme.mono; font.pixelSize: root.textPx(10) }
                         Label { text: inspectorSurface.activity.phase; color: Theme.textMuted; font.family: Theme.ui; font.pixelSize: root.textPx(10) }
-                        Label { text: inspectorSurface.activity.status; color: Theme.tone(inspectorSurface.activity.status.toLowerCase()); font.family: Theme.mono; font.pixelSize: root.textPx(10) }
+                        Label { text: inspectorSurface.activity.statusLabel; color: Theme.tone(inspectorSurface.activity.status.toLowerCase()); font.family: Theme.mono; font.pixelSize: root.textPx(10) }
                         Item { Layout.fillWidth: true }
                         Label { text: inspectorSurface.activity.timestamp; color: Theme.textMuted; font.family: Theme.mono; font.pixelSize: root.textPx(9) }
                     }
                     Label { text: inspectorSurface.activity.detail || inspectorSurface.activity.title; color: Theme.textSecondary; font.family: Theme.ui; font.pixelSize: root.textPx(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Label {
+                        visible: inspectorSurface.activity.laterCompletionStatus && inspectorSurface.activity.laterCompletionStatus.length > 0
+                        text: inspectorSurface.activity.laterCompletionType + " \u00b7 " + inspectorSurface.activity.laterCompletionStatus + " \u00b7 " + inspectorSurface.activity.laterCompletionTimestamp
+                        color: Theme.healthy
+                        font.family: Theme.mono
+                        font.pixelSize: root.textPx(9)
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                 }
             }
             GridLayout { columns: root.width > 980 ? 4 : 2; columnSpacing: 18; rowSpacing: 8; Layout.fillWidth: true
