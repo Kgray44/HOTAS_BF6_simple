@@ -2,11 +2,20 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.7**
+**Current version: v2.6.8**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.8 — Axis acquisition controls and refresh stability
+
+Makes DirectInput axis acquisition explicit and diagnosable while preventing unchanged controller inventory polls from disrupting active editing.
+
+- GUID-first acquisition preserves a physical controller's semantic DirectInput identity when its reported state offset is contradictory, including the Saitek Pro Flight Rudder Pedals Rz case merged in PR #80.
+- The opt-in Ultra Nerd workspace adds native-object evidence, bounded live candidate-source monitoring, Identify Axis, and explicit manual acquisition overrides with a safe Automatic reset path.
+- Acquisition resolution compiles to fixed runtime bindings outside MappingWorker report processing; diagnostics and QML presentation remain outside the DirectInput-to-vJoy hot path.
+- Unchanged low-frequency controller inventory snapshots no longer rebuild Device Rig readiness or emit no-op activation state changes, so open menus and text fields remain stable during ordinary refreshes.
 
 ## v2.6.7 — Whole-app responsiveness
 

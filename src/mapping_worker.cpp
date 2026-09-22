@@ -1233,6 +1233,154 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     return result;
 }
 
+DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisition(
+    const QString &expectedDirectInputId, int durationMs)
+{
+    DirectInputAxisAcquisitionProbe result;
+    const QString expected = expectedDirectInputId.trimmed();
+    result.durationMs = std::clamp(durationMs, 1000, 30000);
+    if (expected.isEmpty()) {
+        result.diagnostic = u"No exact DirectInput controller identity was supplied."_qs;
+        return result;
+    }
+
+    LPDIRECTINPUT8W directInput = nullptr;
+    const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
+        IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
+    if (FAILED(initialized)) {
+        result.diagnostic = u"DirectInput initialization failed: "_qs + inputErrorMessage(initialized);
+        return result;
+    }
+    const auto selected = selectDeviceByPersistedId(directInput, expected);
+    if (!selected) {
+        // A stale persisted ID must never be redirected to another controller.
+        // List attached physical candidates so a later read-only capture can
+        // target an exact observed identity.
+        EnumerationContext candidates;
+        directInput->EnumDevices(DI8DEVCLASS_GAMECTRL, enumDeviceCallback, &candidates,
+                                 DIEDFL_ATTACHEDONLY);
+        QStringList attachedPhysical;
+        for (const DirectInputDevice &candidate : candidates.devices) {
+            if (!isVirtualControllerName(candidate.name)) {
+                attachedPhysical << u"%1 [%2]"_qs.arg(candidate.name, guidToString(candidate.guid));
+            }
+        }
+        directInput->Release();
+        result.diagnostic = u"The requested DirectInput controller was not visible. Attached physical controllers: "_qs
+            + (attachedPhysical.isEmpty() ? u"none"_qs : attachedPhysical.join(u"; "_qs));
+        return result;
+    }
+
+    LPDIRECTINPUTDEVICE8W device = nullptr;
+    HRESULT status = directInput->CreateDevice(selected->guid, &device, nullptr);
+    if (SUCCEEDED(status)) status = device->SetDataFormat(&c_dfDIJoystick2);
+    if (SUCCEEDED(status)) {
+        status = device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+    }
+    if (FAILED(status)) {
+        if (device) device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs
+            + inputErrorMessage(status);
+        return result;
+    }
+
+    std::array<bool, kPhysicalAxisCount> axes{};
+    std::array<bool, kMaximumPhysicalButtons> buttons{};
+    ObjectEnumerationContext objects{device, &axes, &buttons, &result.axisDescriptors, false};
+    device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+    result.bufferedConfigureResult = static_cast<qint32>(configureDirectInputBufferedEvents(device));
+    status = device->Acquire();
+    if (FAILED(status)) {
+        device->Release();
+        directInput->Release();
+        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs
+            + inputErrorMessage(status);
+        return result;
+    }
+
+    result.standardMinimum.fill(std::numeric_limits<LONG>::max());
+    result.standardMaximum.fill(std::numeric_limits<LONG>::min());
+    result.stateFieldMinimum.fill(std::numeric_limits<LONG>::max());
+    result.stateFieldMaximum.fill(std::numeric_limits<LONG>::min());
+    result.bufferedMinimum.fill(std::numeric_limits<LONG>::max());
+    result.bufferedMaximum.fill(std::numeric_limits<LONG>::min());
+    std::array<LONG, kPhysicalAxisCount> lastStandard{};
+    std::array<bool, kPhysicalAxisCount> standardKnown{};
+    std::array<LONG, kPhysicalAxisCount> lastStateField{};
+    std::array<bool, kPhysicalAxisCount> stateFieldKnown{};
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(result.durationMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        DIJOYSTATE2 state{};
+        status = device->Poll();
+        if (SUCCEEDED(status)) status = device->GetDeviceState(sizeof(state), &state);
+        if (SUCCEEDED(status)) {
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                result.stateFieldMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.stateFieldMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.stateFieldMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.stateFieldMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (stateFieldKnown[static_cast<size_t>(axis)]
+                    && lastStateField[static_cast<size_t>(axis)] != value) {
+                    ++result.stateFieldChanges[static_cast<size_t>(axis)];
+                }
+                lastStateField[static_cast<size_t>(axis)] = value;
+                stateFieldKnown[static_cast<size_t>(axis)] = true;
+            }
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                if (!axes[static_cast<size_t>(axis)]) continue;
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                result.standardMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.standardMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.standardMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.standardMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (standardKnown[static_cast<size_t>(axis)]
+                    && lastStandard[static_cast<size_t>(axis)] != value) {
+                    ++result.standardChanges[static_cast<size_t>(axis)];
+                }
+                lastStandard[static_cast<size_t>(axis)] = value;
+                standardKnown[static_cast<size_t>(axis)] = true;
+            }
+        }
+        std::array<DIDEVICEOBJECTDATA, 32> events{};
+        DWORD count = static_cast<DWORD>(events.size());
+        const HRESULT buffered = device->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), events.data(), &count, 0);
+        result.lastBufferedReadResult = static_cast<qint32>(buffered);
+        if (SUCCEEDED(buffered)) {
+            for (DWORD event = 0; event < count; ++event) {
+                int axis = -1;
+                for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+                    if (axes[static_cast<size_t>(candidate)]
+                        && result.axisDescriptors[static_cast<size_t>(candidate)].directInputOffset
+                            == events[event].dwOfs) {
+                        axis = candidate;
+                        break;
+                    }
+                }
+                if (axis < 0) continue;
+                const LONG value = static_cast<LONG>(events[event].dwData);
+                result.bufferedMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.bufferedMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.bufferedMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.bufferedMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                ++result.bufferedEvents[static_cast<size_t>(axis)];
+            }
+        }
+        QThread::msleep(4);
+    }
+
+    result.acquired = true;
+    result.name = selected->name;
+    result.directInputId = guidToString(selected->guid);
+    result.diagnostic = u"Read-only standard-state and buffered-object capture completed."_qs;
+    device->Unacquire();
+    device->Release();
+    directInput->Release();
+    return result;
+}
+
 void MappingWorker::requestStop()
 {
     m_stopRequested = true;
