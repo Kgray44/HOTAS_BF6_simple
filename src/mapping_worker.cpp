@@ -252,22 +252,19 @@ bool readBufferedAxisEvents(LPDIRECTINPUTDEVICE8W device,
     if (FAILED(result) || count == 0) return false;
     bool axisEvent = false;
     for (DWORD eventIndex = 0; eventIndex < count; ++eventIndex) {
-        // Buffered data reports the raw native offset. Resolve it against the
-        // fixed compiled descriptors rather than assuming that offset names a
-        // DIJOYSTATE2 field; a device can validly identify Rz while claiming
-        // the lZ layout offset.
-        int axis = -1;
-        for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
-            if (available[static_cast<size_t>(candidate)]
-                && descriptors[static_cast<size_t>(candidate)].directInputOffset == events[eventIndex].dwOfs) {
-                axis = candidate;
-                break;
+        // Match the buffered object against the object descriptor itself,
+        // never by treating its dwOfs as the canonical logical axis. A
+        // GUID_RzAxis / DIJOFS_Z device must still keep its Rz identity.
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            if (!available[static_cast<size_t>(axis)]
+                || descriptors[static_cast<size_t>(axis)].directInputOffset != events[eventIndex].dwOfs) {
+                continue;
             }
+            (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
+            (*known)[static_cast<size_t>(axis)] = true;
+            axisEvent = true;
+            break;
         }
-        if (axis < 0) continue;
-        (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
-        (*known)[static_cast<size_t>(axis)] = true;
-        axisEvent = true;
     }
     return axisEvent;
 }
@@ -728,17 +725,22 @@ BOOL CALLBACK enumObjectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *
     const DWORD objectType = DIDFT_GETTYPE(instance->dwType);
     if ((objectType & DIDFT_AXIS) != 0) {
         const int enumerationIndex = objects->axisCount;
-        const int index = physicalAxisIndexForDirectInputObject(*instance);
+        NativeAxisDescriptor discovered = describeDirectInputAxisObject(objects->device, *instance);
+        const int index = discovered.canonicalAxis;
         if (index >= 0) {
             (*objects->axes)[index] = true;
             if (objects->axisDescriptors) {
                 NativeAxisDescriptor &descriptor = (*objects->axisDescriptors)[static_cast<size_t>(index)];
-                descriptor = describeDirectInputAxisObject(objects->device, *instance);
-                descriptor.enumerationIndex = enumerationIndex;
+                discovered.enumerationIndex = enumerationIndex;
                 if (objects->configureAxisRanges) {
-                    configureDirectInputAxisRange(objects->device, *instance, &descriptor);
+                    configureDirectInputAxisRange(objects->device, *instance, &discovered);
                 } else {
-                    descriptor.acquisitionSourceResolved = descriptor.present;
+                    discovered.acquisitionSourceResolved = discovered.present;
+                }
+                if (!descriptor.present
+                    || (discovered.resolutionSource == AxisResolutionSource::StandardSemanticGuid
+                        && descriptor.resolutionSource != AxisResolutionSource::StandardSemanticGuid)) {
+                    descriptor = std::move(discovered);
                 }
             } else {
                 if (objects->configureAxisRanges) {
@@ -834,6 +836,21 @@ QString hidInstanceIdForDevice(LPDIRECTINPUTDEVICE8W device)
 MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
     : QThread(parent), m_configuration(std::move(configuration))
 {
+    const auto resetAxisSourceTelemetry = [](AtomicAxisSourceTelemetry &snapshot) {
+        snapshot.available.store(false, std::memory_order_relaxed);
+        for (int index = 0; index < kPhysicalAxisCount; ++index) {
+            snapshot.value[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.observedMinimum[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.observedMaximum[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.changeCount[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.recentMovementMagnitude[static_cast<size_t>(index)].store(0, std::memory_order_relaxed);
+            snapshot.lastChangeAgeMs[static_cast<size_t>(index)].store(-1, std::memory_order_relaxed);
+        }
+    };
+    resetAxisSourceTelemetry(m_runtime.axisSourceTelemetry);
+    for (AtomicAxisSourceTelemetry &snapshot : m_runtime.deviceRigMemberAxisSourceTelemetry) {
+        resetAxisSourceTelemetry(snapshot);
+    }
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         m_runtime.raw[index] = 0.0F;
         m_runtime.normalized[index] = 0.0F;
@@ -970,6 +987,37 @@ void MappingWorker::publishPhysicalAxisSnapshotForTest(int physicalAxis, float n
         std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count()),
         std::memory_order_relaxed);
     m_runtime.adaptivePublicationSequence[index].fetch_add(1, std::memory_order_release);
+}
+
+void MappingWorker::publishAxisAcquisitionPreviewSnapshot(int source, qint32 value,
+                                                           qint32 observedMinimum,
+                                                           qint32 observedMaximum,
+                                                           quint64 changeCount,
+                                                           int movementMagnitude,
+                                                           qint64 lastChangeAgeMs)
+{
+    if (source < 0 || source >= kPhysicalAxisCount || observedMinimum > observedMaximum) return;
+    const size_t index = static_cast<size_t>(source);
+    // The UI preview always targets member zero of its isolated, in-memory
+    // Device Rig.  Publishing both snapshots keeps the selected-device view
+    // and the all-devices view coherent without creating an input session.
+    m_runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    m_runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    const auto publish = [index, value, observedMinimum, observedMaximum, changeCount,
+                          movementMagnitude, lastChangeAgeMs](AtomicAxisSourceTelemetry &telemetry) {
+        telemetry.value[index].store(value, std::memory_order_relaxed);
+        telemetry.observedMinimum[index].store(observedMinimum, std::memory_order_relaxed);
+        telemetry.observedMaximum[index].store(observedMaximum, std::memory_order_relaxed);
+        telemetry.changeCount[index].store(changeCount, std::memory_order_relaxed);
+        telemetry.recentMovementMagnitude[index].store(movementMagnitude, std::memory_order_relaxed);
+        telemetry.lastChangeAgeMs[index].store(lastChangeAgeMs, std::memory_order_relaxed);
+        telemetry.available.store(true, std::memory_order_relaxed);
+    };
+    publish(m_runtime.axisSourceTelemetry);
+    publish(m_runtime.deviceRigMemberAxisSourceTelemetry[0]);
+    m_runtime.axisAcquisitionSource[index].store(source, std::memory_order_relaxed);
+    m_runtime.axisLiveMovementObserved[index].store(movementMagnitude != 0, std::memory_order_relaxed);
+    m_runtime.axisLastMovementAgeMs[index].store(lastChangeAgeMs, std::memory_order_relaxed);
 }
 
 void MappingWorker::publishVirtualAxisAvailabilityForTest(bool available)
@@ -1195,6 +1243,7 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
         result.diagnostic = u"No exact DirectInput controller identity was supplied."_qs;
         return result;
     }
+
     LPDIRECTINPUT8W directInput = nullptr;
     const HRESULT initialized = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
         IID_IDirectInput8W, reinterpret_cast<void **>(&directInput), nullptr);
@@ -1205,31 +1254,37 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
     const auto selected = selectDeviceByPersistedId(directInput, expected);
     if (!selected) {
         // A stale persisted ID must never be redirected to another controller.
-        // List only attached physical candidates so the caller can explicitly
-        // target the actual device for a subsequent read-only capture.
+        // List attached physical candidates so a later read-only capture can
+        // target an exact observed identity.
         EnumerationContext candidates;
         directInput->EnumDevices(DI8DEVCLASS_GAMECTRL, enumDeviceCallback, &candidates,
                                  DIEDFL_ATTACHEDONLY);
         QStringList attachedPhysical;
         for (const DirectInputDevice &candidate : candidates.devices) {
-            if (isVirtualControllerName(candidate.name)) continue;
-            attachedPhysical << u"%1 [%2]"_qs.arg(candidate.name, guidToString(candidate.guid));
+            if (!isVirtualControllerName(candidate.name)) {
+                attachedPhysical << u"%1 [%2]"_qs.arg(candidate.name, guidToString(candidate.guid));
+            }
         }
         directInput->Release();
         result.diagnostic = u"The requested DirectInput controller was not visible. Attached physical controllers: "_qs
             + (attachedPhysical.isEmpty() ? u"none"_qs : attachedPhysical.join(u"; "_qs));
         return result;
     }
+
     LPDIRECTINPUTDEVICE8W device = nullptr;
     HRESULT status = directInput->CreateDevice(selected->guid, &device, nullptr);
     if (SUCCEEDED(status)) status = device->SetDataFormat(&c_dfDIJoystick2);
-    if (SUCCEEDED(status)) status = device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+    if (SUCCEEDED(status)) {
+        status = device->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+    }
     if (FAILED(status)) {
         if (device) device->Release();
         directInput->Release();
-        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs + inputErrorMessage(status);
+        result.diagnostic = u"DirectInput could not configure the exact saved controller: "_qs
+            + inputErrorMessage(status);
         return result;
     }
+
     std::array<bool, kPhysicalAxisCount> axes{};
     std::array<bool, kMaximumPhysicalButtons> buttons{};
     ObjectEnumerationContext objects{device, &axes, &buttons, &result.axisDescriptors, false};
@@ -1239,9 +1294,11 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
     if (FAILED(status)) {
         device->Release();
         directInput->Release();
-        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs + inputErrorMessage(status);
+        result.diagnostic = u"DirectInput could not acquire the exact saved controller: "_qs
+            + inputErrorMessage(status);
         return result;
     }
+
     result.standardMinimum.fill(std::numeric_limits<LONG>::max());
     result.standardMaximum.fill(std::numeric_limits<LONG>::min());
     result.stateFieldMinimum.fill(std::numeric_limits<LONG>::max());
@@ -1252,7 +1309,8 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
     std::array<bool, kPhysicalAxisCount> standardKnown{};
     std::array<LONG, kPhysicalAxisCount> lastStateField{};
     std::array<bool, kPhysicalAxisCount> stateFieldKnown{};
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(result.durationMs);
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(result.durationMs);
     while (std::chrono::steady_clock::now() < deadline) {
         DIJOYSTATE2 state{};
         status = device->Poll();
@@ -1260,17 +1318,28 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
         if (SUCCEEDED(status)) {
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
                 const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
-                result.stateFieldMinimum[static_cast<size_t>(axis)] = std::min(result.stateFieldMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.stateFieldMaximum[static_cast<size_t>(axis)] = std::max(result.stateFieldMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                if (stateFieldKnown[static_cast<size_t>(axis)] && lastStateField[static_cast<size_t>(axis)] != value) ++result.stateFieldChanges[static_cast<size_t>(axis)];
+                result.stateFieldMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.stateFieldMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.stateFieldMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.stateFieldMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (stateFieldKnown[static_cast<size_t>(axis)]
+                    && lastStateField[static_cast<size_t>(axis)] != value) {
+                    ++result.stateFieldChanges[static_cast<size_t>(axis)];
+                }
                 lastStateField[static_cast<size_t>(axis)] = value;
                 stateFieldKnown[static_cast<size_t>(axis)] = true;
             }
-            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) if (axes[static_cast<size_t>(axis)]) {
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                if (!axes[static_cast<size_t>(axis)]) continue;
                 const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
-                result.standardMinimum[static_cast<size_t>(axis)] = std::min(result.standardMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.standardMaximum[static_cast<size_t>(axis)] = std::max(result.standardMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                if (standardKnown[static_cast<size_t>(axis)] && lastStandard[static_cast<size_t>(axis)] != value) ++result.standardChanges[static_cast<size_t>(axis)];
+                result.standardMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.standardMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.standardMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.standardMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                if (standardKnown[static_cast<size_t>(axis)]
+                    && lastStandard[static_cast<size_t>(axis)] != value) {
+                    ++result.standardChanges[static_cast<size_t>(axis)];
+                }
                 lastStandard[static_cast<size_t>(axis)] = value;
                 standardKnown[static_cast<size_t>(axis)] = true;
             }
@@ -1279,24 +1348,29 @@ DirectInputAxisAcquisitionProbe MappingWorker::captureExactPhysicalAxisAcquisiti
         DWORD count = static_cast<DWORD>(events.size());
         const HRESULT buffered = device->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), events.data(), &count, 0);
         result.lastBufferedReadResult = static_cast<qint32>(buffered);
-        if (SUCCEEDED(buffered)) for (DWORD event = 0; event < count; ++event) {
-            int axis = -1;
-            for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
-                if (axes[static_cast<size_t>(candidate)]
-                    && result.axisDescriptors[static_cast<size_t>(candidate)].directInputOffset == events[event].dwOfs) {
-                    axis = candidate;
-                    break;
+        if (SUCCEEDED(buffered)) {
+            for (DWORD event = 0; event < count; ++event) {
+                int axis = -1;
+                for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+                    if (axes[static_cast<size_t>(candidate)]
+                        && result.axisDescriptors[static_cast<size_t>(candidate)].directInputOffset
+                            == events[event].dwOfs) {
+                        axis = candidate;
+                        break;
+                    }
                 }
-            }
-            if (axis >= 0) {
+                if (axis < 0) continue;
                 const LONG value = static_cast<LONG>(events[event].dwData);
-                result.bufferedMinimum[static_cast<size_t>(axis)] = std::min(result.bufferedMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
-                result.bufferedMaximum[static_cast<size_t>(axis)] = std::max(result.bufferedMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.bufferedMinimum[static_cast<size_t>(axis)] = std::min(
+                    result.bufferedMinimum[static_cast<size_t>(axis)], static_cast<qint32>(value));
+                result.bufferedMaximum[static_cast<size_t>(axis)] = std::max(
+                    result.bufferedMaximum[static_cast<size_t>(axis)], static_cast<qint32>(value));
                 ++result.bufferedEvents[static_cast<size_t>(axis)];
             }
         }
         QThread::msleep(4);
     }
+
     result.acquired = true;
     result.name = selected->name;
     result.directInputId = guidToString(selected->guid);
@@ -1469,6 +1543,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     HANDLE inputEvent = nullptr;
     std::array<bool, kPhysicalAxisCount> availableAxes{};
     std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> axisAcquisitions{};
+    std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
     std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
     std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
     std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
@@ -1477,8 +1553,15 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     std::array<float, kPhysicalAxisCount> lastObservedAxisValues{};
     std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> lastAxisMovementAt{};
     std::array<bool, kPhysicalAxisCount> axisLiveMovementObserved{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorPrevious{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorMinimum{};
+    std::array<LONG, kPhysicalAxisCount> sourceMonitorMaximum{};
+    std::array<std::uint64_t, kPhysicalAxisCount> sourceMonitorChanges{};
+    std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> sourceMonitorLastChanged{};
+    bool sourceMonitorInitialized = false;
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         axisLiveMovementObserved.fill(false);
+        sourceMonitorInitialized = false;
     PhysicalInputMonitor physicalMonitor;
     MeaningfulInputEvidence meaningfulInput;
     quint64 latestMeaningfulInputSequence = 0;
@@ -1719,10 +1802,13 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         }
         availableAxes.fill(false);
         axisDescriptors = {};
+        axisAcquisitions = {};
+        manualAcquisitionApplied.fill(false);
         bufferedAxisValuesKnown.fill(false);
         axisAcquisitionMethods.fill(0);
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         axisLiveMovementObserved.fill(false);
+        sourceMonitorInitialized = false;
         availableButtons.fill(false);
         physicalMonitor.disconnect();
         meaningfulInput = {};
@@ -1734,6 +1820,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = false;
             m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = -1;
         }
+        m_runtime.axisSourceTelemetry.available.store(false, std::memory_order_relaxed);
         for (auto &button : m_runtime.buttonAvailable) button = false;
         clearPhysicalButtonSnapshot();
         controlPlaneInitialized = false;
@@ -1782,6 +1869,20 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         }
         ObjectEnumerationContext objects{device, &availableAxes, &availableButtons, &axisDescriptors};
         device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+        const SavedControllerRecord *record = nullptr;
+        if (!configuration.activeControllerRecordId.isEmpty()) {
+            const auto found = std::find_if(configuration.savedControllers.cbegin(),
+                configuration.savedControllers.cend(), [&configuration](const SavedControllerRecord &candidate) {
+                    return candidate.id == configuration.activeControllerRecordId;
+                });
+            if (found != configuration.savedControllers.cend()) record = &*found;
+        }
+        static const std::array<AxisAcquisitionOverride, kPhysicalAxisCount> noOverrides{};
+        axisAcquisitions = compileRuntimeAxisAcquisitions(axisDescriptors,
+            record ? record->axisAcquisitionOverrides : noOverrides, &manualAcquisitionApplied);
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            availableAxes[static_cast<size_t>(axis)] = axisAcquisitions[static_cast<size_t>(axis)].valid;
+        }
         // Buffered data is a preconfigured, bounded corroboration channel.
         // A failure is recorded by the absent fallback rather than changing
         // normal DIJOYSTATE2 acquisition behavior.
@@ -1807,7 +1908,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (AxisCenterResolverState &state : centerResolverStates) state = {};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             m_runtime.axisAvailable[index] = availableAxes[index];
-            m_runtime.axisAcquisitionSource[index] = availableAxes[index] ? 0 : -1;
+            m_runtime.axisAcquisitionSource[index] = availableAxes[index]
+                ? (manualAcquisitionApplied[static_cast<size_t>(index)] ? 2 : 0) : -1;
             m_runtime.axisLiveMovementObserved[index] = false;
             m_runtime.axisLastMovementAgeMs[index] = -1;
         }
@@ -2098,14 +2200,54 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
 
         PhysicalInputReport physicalReport;
         const auto observedAt = std::chrono::steady_clock::now();
+        if (m_runtime.axisSourceMonitorRequested.load(std::memory_order_relaxed)) {
+            AtomicAxisSourceTelemetry &telemetry = m_runtime.axisSourceTelemetry;
+            for (int source = 0; source < kPhysicalAxisCount; ++source) {
+                const size_t sourceIndex = static_cast<size_t>(source);
+                const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(source));
+                int movementMagnitude = 0;
+                if (!sourceMonitorInitialized) {
+                    sourceMonitorPrevious[sourceIndex] = value;
+                    sourceMonitorMinimum[sourceIndex] = value;
+                    sourceMonitorMaximum[sourceIndex] = value;
+                    sourceMonitorChanges[sourceIndex] = 0;
+                    sourceMonitorLastChanged[sourceIndex] = observedAt;
+                } else {
+                    const LONG delta = value - sourceMonitorPrevious[sourceIndex];
+                    movementMagnitude = std::abs(delta);
+                    if (delta != 0) {
+                        sourceMonitorPrevious[sourceIndex] = value;
+                        ++sourceMonitorChanges[sourceIndex];
+                        sourceMonitorLastChanged[sourceIndex] = observedAt;
+                    }
+                    sourceMonitorMinimum[sourceIndex] = std::min(sourceMonitorMinimum[sourceIndex], value);
+                    sourceMonitorMaximum[sourceIndex] = std::max(sourceMonitorMaximum[sourceIndex], value);
+                }
+                telemetry.value[sourceIndex].store(value, std::memory_order_relaxed);
+                telemetry.observedMinimum[sourceIndex].store(sourceMonitorMinimum[sourceIndex], std::memory_order_relaxed);
+                telemetry.observedMaximum[sourceIndex].store(sourceMonitorMaximum[sourceIndex], std::memory_order_relaxed);
+                telemetry.changeCount[sourceIndex].store(sourceMonitorChanges[sourceIndex], std::memory_order_relaxed);
+                telemetry.recentMovementMagnitude[sourceIndex].store(
+                    movementMagnitude, std::memory_order_relaxed);
+                telemetry.lastChangeAgeMs[sourceIndex].store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    observedAt - sourceMonitorLastChanged[sourceIndex]).count(), std::memory_order_relaxed);
+            }
+            sourceMonitorInitialized = true;
+            telemetry.available.store(true, std::memory_order_relaxed);
+        } else {
+            sourceMonitorInitialized = false;
+            m_runtime.axisSourceTelemetry.available.store(false, std::memory_order_relaxed);
+        }
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
-            if (!availableAxes[index]) continue;
-            const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
-            const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(index));
+            const RuntimeAxisAcquisition &binding = axisAcquisitions[static_cast<size_t>(index)];
+            if (!availableAxes[index] || !binding.valid) continue;
+            const LONG standardValue = directInputAxisValue(state,
+                static_cast<PhysicalAxis>(binding.sourceIndex));
             if (bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 && axisAcquisitionMethods[static_cast<size_t>(index)] == 0
-                && std::abs(normalizeDirectInputAxisValue(bufferedAxisValues[static_cast<size_t>(index)], descriptor)
-                            - normalizeDirectInputAxisValue(standardValue, descriptor)) > 0.002F) {
+                && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
+                && std::abs(normalizeRuntimeAxisAcquisition(bufferedAxisValues[static_cast<size_t>(index)], binding)
+                            - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                 // The same enumerated object reported a different live value
                 // than the standard field. Prefer the evidence-backed object
                 // channel for this acquired controller session.
@@ -2115,7 +2257,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             const LONG acquiredValue = axisAcquisitionMethods[static_cast<size_t>(index)] == 1
                     && bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 ? bufferedAxisValues[static_cast<size_t>(index)] : standardValue;
-            physicalReport.axes[index] = normalizeDirectInputAxisValue(acquiredValue, descriptor);
+            physicalReport.axes[index] = normalizeRuntimeAxisAcquisition(acquiredValue, binding);
             const float current = physicalReport.axes[index];
             if (!std::isfinite(lastObservedAxisValues[static_cast<size_t>(index)])) {
                 lastObservedAxisValues[static_cast<size_t>(index)] = current;
@@ -2671,12 +2813,20 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         HANDLE inputEvent = nullptr;
         std::array<bool, kPhysicalAxisCount> availableAxes{};
         std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+        std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> axisAcquisitions{};
+        std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
         std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
         std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
         std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
         std::array<float, kPhysicalAxisCount> lastObservedAxisValues{};
         std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> lastAxisMovementAt{};
         std::array<bool, kPhysicalAxisCount> axisLiveMovementObserved{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorPrevious{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorMinimum{};
+        std::array<LONG, kPhysicalAxisCount> sourceMonitorMaximum{};
+        std::array<std::uint64_t, kPhysicalAxisCount> sourceMonitorChanges{};
+        std::array<std::chrono::steady_clock::time_point, kPhysicalAxisCount> sourceMonitorLastChanged{};
+        bool sourceMonitorInitialized = false;
         std::array<bool, kMaximumPhysicalButtons> availableButtons{};
         PhysicalInputMonitor monitor;
         std::array<AxisHysteresisState, kPhysicalAxisCount> hysteresis{};
@@ -2767,7 +2917,17 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 [static_cast<size_t>(axis)].store(false, std::memory_order_relaxed);
             m_runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(member)]
                 [static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
+            AtomicAxisSourceTelemetry &sourceTelemetry = m_runtime.deviceRigMemberAxisSourceTelemetry[
+                static_cast<size_t>(member)];
+            sourceTelemetry.value[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.observedMinimum[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.observedMaximum[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.changeCount[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.recentMovementMagnitude[static_cast<size_t>(axis)].store(0, std::memory_order_relaxed);
+            sourceTelemetry.lastChangeAgeMs[static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
         }
+        m_runtime.deviceRigMemberAxisSourceTelemetry[static_cast<size_t>(member)].available.store(
+            false, std::memory_order_relaxed);
     }
     for (int index = 0; index < plan.memberCount; ++index) {
         inputs[static_cast<size_t>(index)].member = &plan.members[static_cast<size_t>(index)];
@@ -2808,6 +2968,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             m_runtime.deviceRigMemberAxisLastMovementAgeMs[memberIndex][static_cast<size_t>(axis)]
                 .store(-1, std::memory_order_relaxed);
         }
+        m_runtime.deviceRigMemberAxisSourceTelemetry[memberIndex].available.store(
+            false, std::memory_order_relaxed);
     };
     const auto releaseInput = [](InputSession &session) {
         if (session.device) {
@@ -2822,10 +2984,13 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         }
         session.availableAxes.fill(false);
         session.axisDescriptors = {};
+        session.axisAcquisitions = {};
+        session.manualAcquisitionApplied.fill(false);
         session.bufferedAxisValuesKnown.fill(false);
         session.axisAcquisitionMethods.fill(0);
         session.lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
         session.axisLiveMovementObserved.fill(false);
+        session.sourceMonitorInitialized = false;
         session.availableButtons.fill(false);
         session.monitor.disconnect();
         session.connected = false;
@@ -2934,6 +3099,18 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         ObjectEnumerationContext objects{device, &session.availableAxes, &session.availableButtons,
                                          &session.axisDescriptors};
         device->EnumObjects(enumObjectCallback, &objects, DIDFT_AXIS | DIDFT_BUTTON | DIDFT_POV);
+        const auto record = std::find_if(configuration.savedControllers.cbegin(),
+            configuration.savedControllers.cend(), [&session](const SavedControllerRecord &candidate) {
+                return session.member && candidate.id == session.member->controllerRecordId;
+            });
+        static const std::array<AxisAcquisitionOverride, kPhysicalAxisCount> noOverrides{};
+        session.axisAcquisitions = compileRuntimeAxisAcquisitions(session.axisDescriptors,
+            record != configuration.savedControllers.cend() ? record->axisAcquisitionOverrides : noOverrides,
+            &session.manualAcquisitionApplied);
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            session.availableAxes[static_cast<size_t>(axis)] =
+                session.axisAcquisitions[static_cast<size_t>(axis)].valid;
+        }
         configureDirectInputBufferedEvents(device);
         session.inputEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (session.inputEvent && FAILED(device->SetEventNotification(session.inputEvent))) {
@@ -3093,21 +3270,70 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                        &session.bufferedAxisValues, &session.bufferedAxisValuesKnown);
             }
             const auto observedAt = std::chrono::steady_clock::now();
+            if (m_runtime.axisSourceMonitorRequested.load(std::memory_order_relaxed)) {
+                AtomicAxisSourceTelemetry &telemetry = m_runtime.deviceRigMemberAxisSourceTelemetry[
+                    static_cast<size_t>(index)];
+                for (int source = 0; source < kPhysicalAxisCount; ++source) {
+                    const size_t sourceIndex = static_cast<size_t>(source);
+                    const LONG value = directInputAxisValue(state, static_cast<PhysicalAxis>(source));
+                    int movementMagnitude = 0;
+                    if (!session.sourceMonitorInitialized) {
+                        session.sourceMonitorPrevious[sourceIndex] = value;
+                        session.sourceMonitorMinimum[sourceIndex] = value;
+                        session.sourceMonitorMaximum[sourceIndex] = value;
+                        session.sourceMonitorChanges[sourceIndex] = 0;
+                        session.sourceMonitorLastChanged[sourceIndex] = observedAt;
+                    } else {
+                        const LONG delta = value - session.sourceMonitorPrevious[sourceIndex];
+                        movementMagnitude = std::abs(delta);
+                        if (delta != 0) {
+                            session.sourceMonitorPrevious[sourceIndex] = value;
+                            ++session.sourceMonitorChanges[sourceIndex];
+                            session.sourceMonitorLastChanged[sourceIndex] = observedAt;
+                        }
+                        session.sourceMonitorMinimum[sourceIndex] = std::min(
+                            session.sourceMonitorMinimum[sourceIndex], value);
+                        session.sourceMonitorMaximum[sourceIndex] = std::max(
+                            session.sourceMonitorMaximum[sourceIndex], value);
+                    }
+                    telemetry.value[sourceIndex].store(value, std::memory_order_relaxed);
+                    telemetry.observedMinimum[sourceIndex].store(
+                        session.sourceMonitorMinimum[sourceIndex], std::memory_order_relaxed);
+                    telemetry.observedMaximum[sourceIndex].store(
+                        session.sourceMonitorMaximum[sourceIndex], std::memory_order_relaxed);
+                    telemetry.changeCount[sourceIndex].store(
+                        session.sourceMonitorChanges[sourceIndex], std::memory_order_relaxed);
+                    telemetry.recentMovementMagnitude[sourceIndex].store(
+                        movementMagnitude, std::memory_order_relaxed);
+                    telemetry.lastChangeAgeMs[sourceIndex].store(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            observedAt - session.sourceMonitorLastChanged[sourceIndex]).count(),
+                        std::memory_order_relaxed);
+                }
+                session.sourceMonitorInitialized = true;
+                telemetry.available.store(true, std::memory_order_relaxed);
+            } else {
+                session.sourceMonitorInitialized = false;
+                m_runtime.deviceRigMemberAxisSourceTelemetry[static_cast<size_t>(index)].available.store(
+                    false, std::memory_order_relaxed);
+            }
             for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                if (session.availableAxes[static_cast<size_t>(axis)]) {
-                    const NativeAxisDescriptor &descriptor = session.axisDescriptors[static_cast<size_t>(axis)];
-                    const LONG standardValue = directInputAxisValue(state, static_cast<PhysicalAxis>(axis));
+                const RuntimeAxisAcquisition &binding = session.axisAcquisitions[static_cast<size_t>(axis)];
+                if (session.availableAxes[static_cast<size_t>(axis)] && binding.valid) {
+                    const LONG standardValue = directInputAxisValue(state,
+                        static_cast<PhysicalAxis>(binding.sourceIndex));
                     if (session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 0
-                        && std::abs(normalizeDirectInputAxisValue(
-                                        session.bufferedAxisValues[static_cast<size_t>(axis)], descriptor)
-                                    - normalizeDirectInputAxisValue(standardValue, descriptor)) > 0.002F) {
+                        && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
+                        && std::abs(normalizeRuntimeAxisAcquisition(
+                                        session.bufferedAxisValues[static_cast<size_t>(axis)], binding)
+                                    - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                         session.axisAcquisitionMethods[static_cast<size_t>(axis)] = 1;
                     }
                     const LONG acquiredValue = session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 1
                             && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         ? session.bufferedAxisValues[static_cast<size_t>(axis)] : standardValue;
-                    report.axes[static_cast<size_t>(axis)] = normalizeDirectInputAxisValue(acquiredValue, descriptor);
+                    report.axes[static_cast<size_t>(axis)] = normalizeRuntimeAxisAcquisition(acquiredValue, binding);
                     const float current = report.axes[static_cast<size_t>(axis)];
                     if (!std::isfinite(session.lastObservedAxisValues[static_cast<size_t>(axis)])) {
                         session.lastObservedAxisValues[static_cast<size_t>(axis)] = current;
@@ -3123,7 +3349,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 const bool live = available && session.axisLiveMovementObserved[static_cast<size_t>(axis)];
                 m_runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(index)]
                     [static_cast<size_t>(axis)].store(available
-                        ? session.axisAcquisitionMethods[static_cast<size_t>(axis)] : -1,
+                        ? (session.manualAcquisitionApplied[static_cast<size_t>(axis)] ? 2
+                            : session.axisAcquisitionMethods[static_cast<size_t>(axis)]) : -1,
                         std::memory_order_relaxed);
                 m_runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(index)]
                     [static_cast<size_t>(axis)].store(live, std::memory_order_relaxed);
@@ -3334,7 +3561,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     m_runtime.axisAvailable[static_cast<size_t>(axis)] = session.availableAxes[static_cast<size_t>(axis)];
                     m_runtime.axisAcquisitionSource[static_cast<size_t>(axis)] =
                         session.availableAxes[static_cast<size_t>(axis)]
-                        ? session.axisAcquisitionMethods[static_cast<size_t>(axis)] : -1;
+                        ? (session.manualAcquisitionApplied[static_cast<size_t>(axis)] ? 2
+                            : session.axisAcquisitionMethods[static_cast<size_t>(axis)]) : -1;
                     const bool live = session.axisLiveMovementObserved[static_cast<size_t>(axis)];
                     m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = live;
                     m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = live

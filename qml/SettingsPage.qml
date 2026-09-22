@@ -143,6 +143,9 @@ Flickable {
         }
         SectionLabel { label: "ADVANCED CONTROLS" }
         GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 2; columnSpacing: 13; rowSpacing: 13
+            SettingRow { Layout.fillWidth: true; title: "SHOW ULTRA NERD CONTROLS"; detail: "Show raw controller acquisition and hardware interpretation controls. These settings are normally unnecessary."
+                Toggle { checked: backend.showUltraNerdControls; onToggled: backend.setShowUltraNerdControls(checked) }
+            }
             SettingRow { Layout.fillWidth: true; title: "CURVE TRANSITION SMOOTHING"; detail: "Prevents sudden virtual-axis jumps when curves, sensitivity, profiles, precision modes, or other mappings change. Physical stick movement remains direct."
                 Toggle { checked: backend.curveTransitionSmoothingEnabled; onToggled: backend.setCurveTransitionSmoothingEnabled(checked) }
             }

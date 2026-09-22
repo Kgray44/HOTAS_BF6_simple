@@ -97,6 +97,11 @@ QJsonObject nativeAxisDescriptorToJson(const NativeAxisDescriptor &descriptor)
             {u"rangeReadResult"_qs, descriptor.rangeReadResult},
             {u"acquisitionSourceResolved"_qs, descriptor.acquisitionSourceResolved},
             {u"acquisitionMethod"_qs, descriptor.acquisitionMethod},
+            {u"canonicalAxis"_qs, descriptor.canonicalAxis},
+            {u"formattedSource"_qs, descriptor.formattedSource},
+            {u"resolutionSource"_qs, static_cast<int>(descriptor.resolutionSource)},
+            {u"resolutionConfidence"_qs, static_cast<int>(descriptor.resolutionConfidence)},
+            {u"metadataContradiction"_qs, descriptor.metadataContradiction},
             {u"relative"_qs, descriptor.relative}};
 }
 
@@ -123,9 +128,93 @@ bool nativeAxisDescriptorFromJson(const QJsonObject &json, NativeAxisDescriptor 
     restored.rangeReadResult = json.value(u"rangeReadResult"_qs).toInt(0);
     restored.acquisitionSourceResolved = json.value(u"acquisitionSourceResolved"_qs).toBool(restored.present);
     restored.acquisitionMethod = std::clamp(json.value(u"acquisitionMethod"_qs).toInt(0), 0, 1);
+    restored.canonicalAxis = std::clamp(json.value(u"canonicalAxis"_qs).toInt(-1), -1,
+                                        kPhysicalAxisCount - 1);
+    restored.formattedSource = std::clamp(json.value(u"formattedSource"_qs).toInt(-1), -1,
+                                           kPhysicalAxisCount - 1);
+    restored.resolutionSource = static_cast<AxisResolutionSource>(std::clamp(
+        json.value(u"resolutionSource"_qs).toInt(static_cast<int>(AxisResolutionSource::Unresolved)),
+        static_cast<int>(AxisResolutionSource::Unresolved), static_cast<int>(AxisResolutionSource::Manual)));
+    restored.resolutionConfidence = static_cast<AxisResolutionConfidence>(std::clamp(
+        json.value(u"resolutionConfidence"_qs).toInt(static_cast<int>(AxisResolutionConfidence::Low)),
+        static_cast<int>(AxisResolutionConfidence::Low), static_cast<int>(AxisResolutionConfidence::Manual)));
+    restored.metadataContradiction = json.value(u"metadataContradiction"_qs).toBool(false);
     restored.relative = json.value(u"relative"_qs).toBool(false);
     if (restored.present && restored.nativeMinimum > restored.nativeMaximum) return false;
     *descriptor = std::move(restored);
+    return true;
+}
+
+QJsonObject axisAcquisitionOverrideToJson(const AxisAcquisitionOverride &override)
+{
+    return {{u"enabled"_qs, override.enabled},
+            {u"target"_qs, static_cast<int>(override.target)},
+            {u"automaticTarget"_qs, override.automaticTarget},
+            {u"mode"_qs, static_cast<int>(override.mode)},
+            {u"formattedSource"_qs, override.formattedSource},
+            {u"nativeSemanticGuid"_qs, override.nativeSemanticGuid.trimmed().left(96)},
+            {u"nativeDirectInputType"_qs, static_cast<qint64>(override.nativeDirectInputType)},
+            {u"nativeDirectInputOffset"_qs, static_cast<qint64>(override.nativeDirectInputOffset)},
+            {u"nativeName"_qs, override.nativeName.trimmed().left(128)},
+            {u"rangePolicy"_qs, static_cast<int>(override.rangePolicy)},
+            {u"manualMinimum"_qs, override.manualMinimum},
+            {u"manualMaximum"_qs, override.manualMaximum},
+            {u"interpretation"_qs, static_cast<int>(override.interpretation)},
+            {u"polarity"_qs, static_cast<int>(override.polarity)}};
+}
+
+bool axisAcquisitionOverrideFromJson(const QJsonObject &json, AxisAcquisitionOverride *override)
+{
+    if (!override || json.isEmpty()) return false;
+    AxisAcquisitionOverride restored;
+    restored.enabled = json.value(u"enabled"_qs).toBool(false);
+    const int target = json.value(u"target"_qs).toInt(-1);
+    const int mode = json.value(u"mode"_qs).toInt(-1);
+    const int rangePolicy = json.value(u"rangePolicy"_qs).toInt(-1);
+    const int interpretation = json.value(u"interpretation"_qs).toInt(-1);
+    const int polarity = json.value(u"polarity"_qs).toInt(-1);
+    if (target < 0 || target >= kPhysicalAxisCount || mode < static_cast<int>(AxisAcquisitionMode::Automatic)
+        || mode > static_cast<int>(AxisAcquisitionMode::RawHidValue)
+        || rangePolicy < static_cast<int>(AxisRawRangePolicy::Automatic)
+        || rangePolicy > static_cast<int>(AxisRawRangePolicy::Manual)
+        || interpretation < static_cast<int>(AxisRawInterpretation::Automatic)
+        || interpretation > static_cast<int>(AxisRawInterpretation::Relative)
+        || polarity < static_cast<int>(AxisRawPolarity::Automatic)
+        || polarity > static_cast<int>(AxisRawPolarity::Reversed)) {
+        return false;
+    }
+    restored.target = static_cast<PhysicalAxis>(target);
+    // Older development records did not expose this choice. Treat those
+    // explicit persisted targets as manual so their meaning cannot drift.
+    restored.automaticTarget = json.value(u"automaticTarget"_qs).toBool(false);
+    restored.mode = static_cast<AxisAcquisitionMode>(mode);
+    restored.formattedSource = json.value(u"formattedSource"_qs).toInt(-1);
+    restored.nativeSemanticGuid = json.value(u"nativeSemanticGuid"_qs).toString().trimmed().left(96);
+    restored.nativeDirectInputType = static_cast<quint32>(std::max<qint64>(0,
+        json.value(u"nativeDirectInputType"_qs).toVariant().toLongLong()));
+    restored.nativeDirectInputOffset = static_cast<quint32>(std::max<qint64>(0,
+        json.value(u"nativeDirectInputOffset"_qs).toVariant().toLongLong()));
+    restored.nativeName = json.value(u"nativeName"_qs).toString().trimmed().left(128);
+    restored.rangePolicy = static_cast<AxisRawRangePolicy>(rangePolicy);
+    restored.manualMinimum = std::clamp(json.value(u"manualMinimum"_qs).toInt(-10000), -1000000, 1000000);
+    restored.manualMaximum = std::clamp(json.value(u"manualMaximum"_qs).toInt(10000), -1000000, 1000000);
+    restored.interpretation = static_cast<AxisRawInterpretation>(interpretation);
+    restored.polarity = static_cast<AxisRawPolarity>(polarity);
+    if (restored.enabled) {
+        if (restored.mode == AxisAcquisitionMode::Automatic
+            || restored.mode == AxisAcquisitionMode::RawHidValue
+            || (restored.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+                && (restored.formattedSource < -1 || restored.formattedSource >= kPhysicalAxisCount))
+            || (restored.mode == AxisAcquisitionMode::NativeDirectInputObject
+                && (restored.nativeSemanticGuid.isEmpty() || restored.nativeDirectInputType == 0))
+            || ((restored.rangePolicy == AxisRawRangePolicy::Manual
+                 || restored.rangePolicy == AxisRawRangePolicy::Observed)
+                && restored.manualMinimum >= restored.manualMaximum)
+            || restored.interpretation == AxisRawInterpretation::Relative) {
+            return false;
+        }
+    }
+    *override = std::move(restored);
     return true;
 }
 
@@ -799,18 +888,22 @@ QJsonObject savedControllerToJson(const SavedControllerRecord &record)
     QJsonArray axes;
     QJsonArray calibration;
     QJsonArray axisDescriptors;
+    QJsonArray axisAcquisitionOverrides;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         axes.append(record.axes[static_cast<size_t>(index)]);
         calibration.append(calibrationToJson(record.calibration[static_cast<size_t>(index)]));
         axisDescriptors.append(nativeAxisDescriptorToJson(
             record.axisDescriptors[static_cast<size_t>(index)]));
+        axisAcquisitionOverrides.append(axisAcquisitionOverrideToJson(
+            record.axisAcquisitionOverrides[static_cast<size_t>(index)]));
     }
     QJsonArray ownedInstances;
     for (const QString &instance : record.ownedHidHideDeviceInstances) ownedInstances.append(instance);
     return {{u"id"_qs, record.id}, {u"displayName"_qs, record.displayName},
             {u"lastDirectInputId"_qs, record.lastDirectInputId}, {u"productGuid"_qs, record.productGuid},
             {u"hidInstanceId"_qs, record.hidInstanceId}, {u"hidContainerId"_qs, record.hidContainerId}, {u"vendorId"_qs, record.vendorId},
-            {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisDescriptors"_qs, axisDescriptors}, {u"axisCount"_qs, record.axisCount},
+            {u"productId"_qs, record.productId}, {u"axes"_qs, axes}, {u"axisDescriptors"_qs, axisDescriptors},
+            {u"axisAcquisitionOverrides"_qs, axisAcquisitionOverrides}, {u"axisCount"_qs, record.axisCount},
             {u"buttonCount"_qs, record.buttonCount}, {u"povCount"_qs, record.povCount},
             {u"capabilityFingerprint"_qs, record.capabilityFingerprint}, {u"lastSeen"_qs, record.lastSeen},
             {u"lastVerified"_qs, record.lastVerified}, {u"verificationVersion"_qs, record.verificationVersion},
@@ -832,12 +925,14 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
     const QJsonArray axes = json.value(u"axes"_qs).toArray();
     const QJsonArray calibration = json.value(u"calibration"_qs).toArray();
     const QJsonArray axisDescriptors = json.value(u"axisDescriptors"_qs).toArray();
+    const QJsonArray axisAcquisitionOverrides = json.value(u"axisAcquisitionOverrides"_qs).toArray();
     if (parsed.id.isEmpty() || parsed.displayName.isEmpty() || axes.size() != kPhysicalAxisCount
         || calibration.size() != kPhysicalAxisCount
         || !controllerVjoyRequirementsFromJson(json.value(u"vjoyRequirements"_qs).toObject(), &parsed.vjoyRequirements)) {
         return false;
     }
     if (!axisDescriptors.isEmpty() && axisDescriptors.size() != kPhysicalAxisCount) return false;
+    if (!axisAcquisitionOverrides.isEmpty() && axisAcquisitionOverrides.size() != kPhysicalAxisCount) return false;
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         parsed.axes[static_cast<size_t>(index)] = axes.at(index).toBool();
         parsed.calibration[static_cast<size_t>(index)] = calibrationFromJson(calibration.at(index).toObject());
@@ -851,6 +946,11 @@ bool savedControllerFromJson(const QJsonObject &json, SavedControllerRecord *rec
             // DirectInput object metadata during inventory refresh.
             descriptor.present = true;
             descriptor.nativeName = physicalAxisLabel(static_cast<PhysicalAxis>(index));
+        }
+        if (axisAcquisitionOverrides.size() == kPhysicalAxisCount
+            && !axisAcquisitionOverrideFromJson(axisAcquisitionOverrides.at(index).toObject(),
+                                                 &parsed.axisAcquisitionOverrides[static_cast<size_t>(index)])) {
+            return false;
         }
     }
     if (json.contains(u"axisActivity"_qs)

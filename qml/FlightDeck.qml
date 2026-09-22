@@ -34,6 +34,11 @@ Item {
         ? (automationPageLoader.item ? 1 : 0)
         : currentPage === 11 ? (signalFlowPageLoader.item ? 1 : 0) : standardPageHost.loadedPageCount
 
+    Component.onCompleted: {
+        if (backend.axisAcquisitionPreview)
+            currentPage = 0
+    }
+
     function pageItem(page) {
         if (page === 7)
             return automationPageLoader.item;

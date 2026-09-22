@@ -2,7 +2,7 @@
 
 # HOTAS BF6 Simple — Features
 
-**Current version: v2.6.7**
+**Current version: v2.6.8**
 
 This document is the authoritative sectioned catalog of user-visible and engineering features in the current application. Historical changes belong in [Version_Overview.md](Version_Overview.md).
 
@@ -53,6 +53,8 @@ Physical DirectInput axes can be routed only to the selected profile layout's av
 - Centered or One-Sided axis domain selectable per profile and per axis.
 - Direct decimal Output Min/Max entry with 0.1% step adjustment.
 - Per-profile custom physical-axis names and game-facing virtual-axis aliases.
+- GUID-first DirectInput acquisition keeps a controller's semantic axis identity authoritative when its reported state offset is contradictory; unknown identities retain safe offset fallback.
+- An opt-in Ultra Nerd panel exposes per-axis native metadata, bounded live source evidence, Identify Axis, and explicit manual acquisition overrides that compile before report processing.
 - Control-plane Learn Input and Quick Map observe existing published input snapshots, use a stability re-arm between axis steps, reject ambiguous axis travel, and apply through shared route-conflict checks.
 - Axis Name and Game Output Name keep stable local drafts while live telemetry refreshes; physical names and virtual aliases remain separate persisted concepts.
 - Global Disabled Axis Value from -100.0% to +100.0% for parked unclaimed outputs.

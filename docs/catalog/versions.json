@@ -750,5 +750,16 @@
       "Flight Deck Profiles uses flattened, recycled rows and lazy construction; controlled native interaction qualification covers navigation, scrolling, keyboard editing, slider activity, persistence bursts, responsive layout, and read-only DirectInput/vJoy inspection.",
       "Owner acceptance passed cleanly across general navigation, scrolling, settings persistence, physical HOTAS and pedals, vJoy, HidHide, profile/game detection, high-load usability, Battlefield 6, Flight Deck visual review, Profiles virtualization, and V2.6.6 device, axis-acquisition, and Virtual Output workflows."
     ]
+  },
+  {
+    "version": "2.6.8",
+    "title": "Axis acquisition controls and refresh stability",
+    "summary": "Makes DirectInput axis acquisition explicit and diagnosable while preventing unchanged controller inventory polls from disrupting active editing.",
+    "highlights": [
+      "GUID-first acquisition preserves a physical controller's semantic DirectInput identity when its reported state offset is contradictory, including the Saitek Pro Flight Rudder Pedals Rz case merged in PR #80.",
+      "The opt-in Ultra Nerd workspace adds native-object evidence, bounded live candidate-source monitoring, Identify Axis, and explicit manual acquisition overrides with a safe Automatic reset path.",
+      "Acquisition resolution compiles to fixed runtime bindings outside MappingWorker report processing; diagnostics and QML presentation remain outside the DirectInput-to-vJoy hot path.",
+      "Unchanged low-frequency controller inventory snapshots no longer rebuild Device Rig readiness or emit no-op activation state changes, so open menus and text fields remain stable during ordinary refreshes."
+    ]
   }
 ]
