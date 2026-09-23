@@ -91,6 +91,10 @@ enum class AxisFormattedSourceEvidence : std::uint8_t {
     SemanticFallback,
     ReportedOffsetFallback,
     BufferedObjectCorrelation,
+    // Conflicting semantic GUID and dwOfs metadata supply two independent
+    // candidates. This is a provisional reported-state candidate, never a
+    // verified acquisition decision, until native-object evidence agrees.
+    ReportedOffsetCandidate,
 };
 
 enum class AxisAcquisitionMode : std::uint8_t {

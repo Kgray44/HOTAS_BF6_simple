@@ -1130,6 +1130,8 @@ QVariantList AppBackend::axisConfiguration() const
                 ? u"Metadata agreement"_qs
             : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::SemanticFallback
                 ? u"Native identity fallback"_qs
+            : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetCandidate
+                ? u"Reported field candidate (unverified)"_qs
             : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetFallback
                 ? u"Reported state field"_qs
             : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::BufferedObjectCorrelation

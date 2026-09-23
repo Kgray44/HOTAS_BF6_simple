@@ -144,9 +144,9 @@ bool nativeAxisDescriptorFromJson(const QJsonObject &json, NativeAxisDescriptor 
         json.value(u"formattedSourceEvidence"_qs).toInt(
             static_cast<int>(AxisFormattedSourceEvidence::Unresolved)),
         static_cast<int>(AxisFormattedSourceEvidence::Unresolved),
-        static_cast<int>(AxisFormattedSourceEvidence::BufferedObjectCorrelation)));
+        static_cast<int>(AxisFormattedSourceEvidence::ReportedOffsetCandidate)));
     // Configurations written before V2.6.9 lack source-evidence fields. They
-    // remain safe, but a contradictory semantic fallback must be re-proven
+    // remain safe, but an unverified conflict candidate must be re-proven
     // rather than treated as durable source evidence.
     restored.formattedSourceVerified = json.value(u"formattedSourceVerified"_qs).toBool(
         restored.formattedSourceEvidence == AxisFormattedSourceEvidence::MetadataAgreement

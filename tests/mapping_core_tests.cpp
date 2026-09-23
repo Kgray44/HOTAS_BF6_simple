@@ -4447,19 +4447,28 @@ void MappingCoreTests::saitekRzObjectIdentityOverridesContradictoryStateOffset()
 {
     // Fixture from the physical Saitek Pro Flight Rudder Pedals capture:
     // `Z Rotation` reports GUID_RzAxis and dwOfs=DIJOFS_Z, while movement
-    // changes DIJOYSTATE2::lRz (not lZ). Keep the raw offset as evidence but
-    // bind to the stable native-object GUID for runtime acquisition.
+    // changes DIJOYSTATE2::lRz (not lZ). Start with the reported field as an
+    // unverified candidate, then model the generic buffered correlation that
+    // verifies the separate lRz storage location.
     DIDEVICEOBJECTINSTANCEW object{};
     object.guidType = GUID_RzAxis;
     object.dwOfs = DIJOFS_Z;
     const NativeAxisDescriptor rudder = describeDirectInputAxisObject(nullptr, object);
     QCOMPARE(rudder.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
-    QCOMPARE(rudder.formattedSource, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(rudder.formattedSource, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(rudder.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!rudder.formattedSourceVerified);
+
+    NativeAxisDescriptor verifiedRudder = rudder;
+    verifiedRudder.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    verifiedRudder.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+    verifiedRudder.formattedSourceVerified = true;
 
     DIJOYSTATE2 state{};
     state.lZ = 0;
     state.lRz = 65535;
-    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(rudder.formattedSource)), 65535L);
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(verifiedRudder.formattedSource)), 65535L);
 
     object.guidType = GUID_XAxis;
     object.dwOfs = DIJOFS_RZ;
@@ -4520,10 +4529,13 @@ void MappingCoreTests::semanticDirectInputGuidWinsContradictoryReportedOffset()
         instance.dwOfs = test.offset;
         const NativeAxisDescriptor descriptor = describeDirectInputAxisObject(nullptr, instance);
         QCOMPARE(descriptor.canonicalAxis, static_cast<int>(test.expected));
-        QCOMPARE(descriptor.formattedSource, static_cast<int>(test.expected));
+        QCOMPARE(descriptor.formattedSource, physicalAxisIndexForDirectInputOffset(test.offset));
         QCOMPARE(descriptor.resolutionSource, AxisResolutionSource::StandardSemanticGuid);
         QCOMPARE(descriptor.resolutionConfidence, AxisResolutionConfidence::High);
         QVERIFY(descriptor.metadataContradiction);
+        QCOMPARE(descriptor.formattedSourceEvidence,
+                 AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+        QVERIFY(!descriptor.formattedSourceVerified);
     }
 
     // Slider GUIDs are intentionally not used as a fake Slider0/Slider1
@@ -4543,9 +4555,10 @@ void MappingCoreTests::semanticDirectInputGuidWinsContradictoryReportedOffset()
 void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
 {
     // The normal fixture agrees in both metadata channels. The Saitek fixture
-    // needs its native Rz identity to select lRz despite DIJOFS_Z. The
-    // T.Flight fixture keeps X/Y as the identities, then promotes the
-    // cross-wired formatted fields only after buffered-object proof.
+    // begins with DIJOFS_Z as an unverified candidate, then proves lRz from
+    // native events. The T.Flight fixture keeps X/Y as identities, starts
+    // with its cross-wired reported candidates, then verifies those fields
+    // through the same buffered-object correlation path.
     DIDEVICEOBJECTINSTANCEW normal{};
     normal.dwSize = sizeof(normal);
     normal.guidType = GUID_ZAxis;
@@ -4564,8 +4577,9 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     saitek.dwOfs = DIJOFS_Z;
     const NativeAxisDescriptor saitekRz = describeDirectInputAxisObject(nullptr, saitek);
     QCOMPARE(saitekRz.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
-    QCOMPARE(saitekRz.formattedSource, static_cast<int>(PhysicalAxis::Rz));
-    QCOMPARE(saitekRz.formattedSourceEvidence, AxisFormattedSourceEvidence::SemanticFallback);
+    QCOMPARE(saitekRz.formattedSource, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(saitekRz.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
     QVERIFY(!saitekRz.formattedSourceVerified);
 
     DIDEVICEOBJECTINSTANCEW tFlightX{};
@@ -4575,8 +4589,9 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     tFlightX.dwOfs = DIJOFS_Y;
     const NativeAxisDescriptor initialX = describeDirectInputAxisObject(nullptr, tFlightX);
     QCOMPARE(initialX.canonicalAxis, static_cast<int>(PhysicalAxis::X));
-    QCOMPARE(initialX.formattedSource, static_cast<int>(PhysicalAxis::X));
-    QCOMPARE(initialX.formattedSourceEvidence, AxisFormattedSourceEvidence::SemanticFallback);
+    QCOMPARE(initialX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(initialX.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
     QVERIFY(!initialX.formattedSourceVerified);
 
     DIDEVICEOBJECTINSTANCEW tFlightY{};
@@ -4586,7 +4601,21 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     tFlightY.dwOfs = DIJOFS_X;
     const NativeAxisDescriptor initialY = describeDirectInputAxisObject(nullptr, tFlightY);
     QCOMPARE(initialY.canonicalAxis, static_cast<int>(PhysicalAxis::Y));
-    QCOMPARE(initialY.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(initialY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(initialY.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!initialY.formattedSourceVerified);
+
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> initialDescriptors{};
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::X)] = initialX;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Y)] = initialY;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Z)] = normalZ;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Rz)] = saitekRz;
+    const auto initialBindings = compileRuntimeAxisAcquisitions(initialDescriptors, {});
+    QCOMPARE(initialBindings[static_cast<size_t>(PhysicalAxis::X)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Y));
+    QCOMPARE(initialBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Z));
 
     NativeAxisDescriptor verifiedX = initialX;
     verifiedX.formattedSource = static_cast<int>(PhysicalAxis::Y);
@@ -4596,21 +4625,29 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     verifiedY.formattedSource = static_cast<int>(PhysicalAxis::X);
     verifiedY.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
     verifiedY.formattedSourceVerified = true;
+    NativeAxisDescriptor verifiedRz = saitekRz;
+    verifiedRz.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    verifiedRz.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+    verifiedRz.formattedSourceVerified = true;
 
     NativeAxisDescriptor reconnectX = describeDirectInputAxisObject(nullptr, tFlightX);
     NativeAxisDescriptor reconnectY = describeDirectInputAxisObject(nullptr, tFlightY);
+    NativeAxisDescriptor reconnectRz = describeDirectInputAxisObject(nullptr, saitek);
     QVERIFY(reuseVerifiedFormattedSource(&reconnectX, verifiedX));
     QVERIFY(reuseVerifiedFormattedSource(&reconnectY, verifiedY));
+    QVERIFY(reuseVerifiedFormattedSource(&reconnectRz, verifiedRz));
     QCOMPARE(reconnectX.canonicalAxis, static_cast<int>(PhysicalAxis::X));
     QCOMPARE(reconnectX.formattedSource, static_cast<int>(PhysicalAxis::Y));
     QCOMPARE(reconnectY.canonicalAxis, static_cast<int>(PhysicalAxis::Y));
     QCOMPARE(reconnectY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(reconnectRz.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(reconnectRz.formattedSource, static_cast<int>(PhysicalAxis::Rz));
 
     std::array<NativeAxisDescriptor, kPhysicalAxisCount> descriptors{};
     descriptors[static_cast<size_t>(PhysicalAxis::X)] = reconnectX;
     descriptors[static_cast<size_t>(PhysicalAxis::Y)] = reconnectY;
     descriptors[static_cast<size_t>(PhysicalAxis::Z)] = normalZ;
-    descriptors[static_cast<size_t>(PhysicalAxis::Rz)] = saitekRz;
+    descriptors[static_cast<size_t>(PhysicalAxis::Rz)] = reconnectRz;
     const auto fixedBindings = compileRuntimeAxisAcquisitions(descriptors, {});
     QCOMPARE(fixedBindings[static_cast<size_t>(PhysicalAxis::X)].sourceIndex,
              static_cast<std::uint8_t>(PhysicalAxis::Y));
@@ -4635,10 +4672,10 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     // proves the T.Flight cross-field locations and the Saitek Rz location
     // without treating either object's reported offset as authoritative.
     QCOMPARE(uniqueCorrelatedDirectInputStateField(
-        202L, state, fixedBindings[static_cast<size_t>(PhysicalAxis::X)]),
+        202L, state, initialBindings[static_cast<size_t>(PhysicalAxis::X)]),
         static_cast<int>(PhysicalAxis::Y));
     QCOMPARE(uniqueCorrelatedDirectInputStateField(
-        606L, state, fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)]),
+        606L, state, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]),
         static_cast<int>(PhysicalAxis::Rz));
     DIJOYSTATE2 ambiguousState{};
     QCOMPARE(uniqueCorrelatedDirectInputStateField(
@@ -4649,7 +4686,7 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     changedX.dwOfs = DIJOFS_RZ;
     NativeAxisDescriptor staleX = describeDirectInputAxisObject(nullptr, changedX);
     QVERIFY(!reuseVerifiedFormattedSource(&staleX, verifiedX));
-    QCOMPARE(staleX.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(staleX.formattedSource, static_cast<int>(PhysicalAxis::Rz));
     QVERIFY(!staleX.formattedSourceVerified);
 
     MapperConfiguration configuration = defaultConfiguration();

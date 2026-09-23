@@ -240,23 +240,27 @@ NativeAxisDescriptor describeDirectInputAxisObject(LPDIRECTINPUTDEVICE8W device,
     descriptor.relative = (instance.dwType & DIDFT_RELAXIS) != 0;
     descriptor.canonicalAxis = index;
     // A semantic GUID is strong proof of native identity, but it is not
-    // universal proof of DIJOYSTATE2 storage. On metadata agreement the two
-    // answers naturally coincide. On a contradiction start from the proven
-    // semantic fallback (preserving the Saitek Rz repair) and permit bounded
-    // buffered-object evidence to promote the reported field later.
-    descriptor.formattedSource = semanticAxis >= 0 ? semanticAxis : offsetAxis;
+    // universal proof of DIJOYSTATE2 storage.  When metadata conflicts, keep
+    // the two facts independent: the reported field is an unverified
+    // candidate, never an inference from the identically named semantic GUID.
+    const bool metadataContradiction = semanticAxis >= 0 && offsetAxis >= 0
+        && semanticAxis != offsetAxis;
+    descriptor.formattedSource = metadataContradiction ? offsetAxis
+        : semanticAxis >= 0 ? semanticAxis : offsetAxis;
     descriptor.resolutionSource = semanticAxis >= 0
         ? AxisResolutionSource::StandardSemanticGuid : AxisResolutionSource::ReportedOffset;
-    descriptor.metadataContradiction = semanticAxis >= 0 && offsetAxis >= 0 && semanticAxis != offsetAxis;
-    // A known standard semantic identity remains high-confidence even when a
-    // controller's reported state offset is contradictory. The conflict is
-    // retained as evidence rather than allowed to redirect acquisition.
+    descriptor.metadataContradiction = metadataContradiction;
+    // Canonical identity remains GUID-first even when the candidate storage
+    // field is contradictory. Buffered native-object evidence decides which
+    // candidate becomes a verified source.
     descriptor.resolutionConfidence = semanticAxis >= 0
         ? AxisResolutionConfidence::High : AxisResolutionConfidence::Medium;
     descriptor.acquisitionSourceResolved = descriptor.formattedSource >= 0;
     descriptor.formattedSourceEvidence = semanticAxis >= 0 && offsetAxis >= 0
             && semanticAxis == offsetAxis
         ? AxisFormattedSourceEvidence::MetadataAgreement
+        : metadataContradiction
+            ? AxisFormattedSourceEvidence::ReportedOffsetCandidate
         : semanticAxis >= 0
             ? AxisFormattedSourceEvidence::SemanticFallback
             : AxisFormattedSourceEvidence::ReportedOffsetFallback;

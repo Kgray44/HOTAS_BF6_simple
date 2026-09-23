@@ -2317,27 +2317,30 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 // when fresh reports provide that proof.
                 && axisAcquisitionMethods[static_cast<size_t>(index)] != 3
                 && !manualAcquisitionApplied[static_cast<size_t>(index)]
-                && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
-                && std::abs(normalizeRuntimeAxisAcquisition(bufferedAxisValues[static_cast<size_t>(index)], binding)
-                            - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
+                && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0) {
                 const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
                 const int correlatedSource = uniqueCorrelatedDirectInputStateField(
                     bufferedAxisValues[static_cast<size_t>(index)], state, binding);
+                const bool candidateDisagrees = std::abs(normalizeRuntimeAxisAcquisition(
+                        bufferedAxisValues[static_cast<size_t>(index)], binding)
+                    - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F;
                 const bool fixedFieldProven = axisEvidenceCompatible[static_cast<size_t>(index)]
                     && descriptor.metadataContradiction
                     && descriptor.formattedSourceEvidence
-                        == AxisFormattedSourceEvidence::SemanticFallback
+                        == AxisFormattedSourceEvidence::ReportedOffsetCandidate
                     && !descriptor.formattedSourceVerified
-                    && correlatedSource >= 0
-                    && correlatedSource != binding.sourceIndex;
+                    && correlatedSource >= 0;
                 // Method 3 signals a proven alternate fixed field. The GUI
                 // persists it and this worker resumes direct state reads; an
                 // uncorroborated mismatch retains buffered safety fallback.
-                axisAcquisitionMethods[static_cast<size_t>(index)] = fixedFieldProven ? 3 : 1;
-                m_runtime.axisAcquisitionSource[index] = fixedFieldProven ? 3 : 1;
                 if (fixedFieldProven) {
+                    axisAcquisitionMethods[static_cast<size_t>(index)] = 3;
+                    m_runtime.axisAcquisitionSource[index] = 3;
                     m_runtime.axisResolvedFormattedSource[index].store(
                         correlatedSource, std::memory_order_relaxed);
+                } else if (candidateDisagrees) {
+                    axisAcquisitionMethods[static_cast<size_t>(index)] = 1;
+                    m_runtime.axisAcquisitionSource[index] = 1;
                 }
             }
             const LONG acquiredValue = axisAcquisitionMethods[static_cast<size_t>(index)] != 0
@@ -3436,28 +3439,28 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 3
                         && !session.manualAcquisitionApplied[static_cast<size_t>(axis)]
-                        && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
-                        && std::abs(normalizeRuntimeAxisAcquisition(
-                                        session.bufferedAxisValues[static_cast<size_t>(axis)], binding)
-                                    - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
+                        && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0) {
                         const NativeAxisDescriptor &descriptor = session.axisDescriptors[
                             static_cast<size_t>(axis)];
                         const int correlatedSource = uniqueCorrelatedDirectInputStateField(
                             session.bufferedAxisValues[static_cast<size_t>(axis)], state, binding);
+                        const bool candidateDisagrees = std::abs(normalizeRuntimeAxisAcquisition(
+                                session.bufferedAxisValues[static_cast<size_t>(axis)], binding)
+                            - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F;
                         const bool fixedFieldProven = session.axisEvidenceCompatible[
                                 static_cast<size_t>(axis)]
                             && descriptor.metadataContradiction
                             && descriptor.formattedSourceEvidence
-                                == AxisFormattedSourceEvidence::SemanticFallback
+                                == AxisFormattedSourceEvidence::ReportedOffsetCandidate
                             && !descriptor.formattedSourceVerified
-                            && correlatedSource >= 0
-                            && correlatedSource != binding.sourceIndex;
-                        session.axisAcquisitionMethods[static_cast<size_t>(axis)] =
-                            fixedFieldProven ? 3 : 1;
+                            && correlatedSource >= 0;
                         if (fixedFieldProven) {
+                            session.axisAcquisitionMethods[static_cast<size_t>(axis)] = 3;
                             m_runtime.deviceRigMemberAxisResolvedFormattedSource[
                                 static_cast<size_t>(index)][static_cast<size_t>(axis)].store(
                                 correlatedSource, std::memory_order_relaxed);
+                        } else if (candidateDisagrees) {
+                            session.axisAcquisitionMethods[static_cast<size_t>(axis)] = 1;
                         }
                     }
                     const LONG acquiredValue = session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 0
