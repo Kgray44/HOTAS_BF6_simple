@@ -150,6 +150,11 @@ struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
     // another Rig member's source or movement state.
     std::array<std::array<std::atomic_int, kPhysicalAxisCount>,
                kMaximumDeviceRigMembers> deviceRigMemberAxisAcquisitionSource{};
+    // Method 3 is a handoff to the control plane.  This carries the unique
+    // DIJOYSTATE2 field proven by a fresh buffered object event; it is not the
+    // object's reported dwOfs, which may be contradictory metadata.
+    std::array<std::array<std::atomic_int, kPhysicalAxisCount>,
+               kMaximumDeviceRigMembers> deviceRigMemberAxisResolvedFormattedSource{};
     std::array<std::array<std::atomic_bool, kPhysicalAxisCount>,
                kMaximumDeviceRigMembers> deviceRigMemberAxisLiveMovementObserved{};
     std::array<std::array<std::atomic_int64_t, kPhysicalAxisCount>,
@@ -163,6 +168,7 @@ struct AtomicRuntimeState : AtomicAdaptiveTelemetry {
     // written by the mapper and sampled by the UI; no descriptor lookup,
     // QString, or allocation enters the DirectInput report path.
     std::array<std::atomic_int, kPhysicalAxisCount> axisAcquisitionSource{};
+    std::array<std::atomic_int, kPhysicalAxisCount> axisResolvedFormattedSource{};
     std::array<std::atomic_bool, kPhysicalAxisCount> axisLiveMovementObserved{};
     std::array<std::atomic_int64_t, kPhysicalAxisCount> axisLastMovementAgeMs{};
     AtomicAxisSourceTelemetry axisSourceTelemetry{};

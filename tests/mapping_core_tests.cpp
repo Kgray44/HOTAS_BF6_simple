@@ -4631,6 +4631,19 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
         fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex)), 606L);
 
+    // Fresh buffered evidence scans every fixed DIJOYSTATE2 member.  This
+    // proves the T.Flight cross-field locations and the Saitek Rz location
+    // without treating either object's reported offset as authoritative.
+    QCOMPARE(uniqueCorrelatedDirectInputStateField(
+        202L, state, fixedBindings[static_cast<size_t>(PhysicalAxis::X)]),
+        static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(uniqueCorrelatedDirectInputStateField(
+        606L, state, fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)]),
+        static_cast<int>(PhysicalAxis::Rz));
+    DIJOYSTATE2 ambiguousState{};
+    QCOMPARE(uniqueCorrelatedDirectInputStateField(
+        0L, ambiguousState, fixedBindings[static_cast<size_t>(PhysicalAxis::X)]), -1);
+
     // A changed native layout cannot inherit a prior cross-field decision.
     DIDEVICEOBJECTINSTANCEW changedX = tFlightX;
     changedX.dwOfs = DIJOFS_RZ;

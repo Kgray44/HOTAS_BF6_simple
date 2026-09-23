@@ -3,6 +3,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace hotas {
@@ -141,6 +142,25 @@ float normalizeRuntimeAxisAcquisition(LONG value, const RuntimeAxisAcquisition &
         normalized = oneSided ? 1.0F - normalized : -normalized;
     }
     return normalized;
+}
+
+int uniqueCorrelatedDirectInputStateField(LONG bufferedValue,
+                                          const DIJOYSTATE2 &state,
+                                          const RuntimeAxisAcquisition &binding)
+{
+    if (!binding.valid) return -1;
+    const float normalizedBufferedValue = normalizeRuntimeAxisAcquisition(bufferedValue, binding);
+    int matchedSource = -1;
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const float normalizedStateValue = normalizeRuntimeAxisAcquisition(
+            directInputAxisValue(state, static_cast<PhysicalAxis>(source)), binding);
+        if (std::abs(normalizedBufferedValue - normalizedStateValue) > 0.002F) continue;
+        // Multiple equal-value fields provide no source proof.  Wait for a
+        // later event whose state is distinctive enough to be authoritative.
+        if (matchedSource >= 0) return -1;
+        matchedSource = source;
+    }
+    return matchedSource;
 }
 
 namespace {

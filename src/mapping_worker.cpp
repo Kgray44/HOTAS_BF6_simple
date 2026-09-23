@@ -243,9 +243,11 @@ bool readBufferedAxisEvents(LPDIRECTINPUTDEVICE8W device,
                             const std::array<NativeAxisDescriptor, kPhysicalAxisCount> &descriptors,
                             const std::array<bool, kPhysicalAxisCount> &available,
                             std::array<LONG, kPhysicalAxisCount> *values,
-                            std::array<bool, kPhysicalAxisCount> *known)
+                            std::array<bool, kPhysicalAxisCount> *known,
+                            std::array<bool, kPhysicalAxisCount> *changed)
 {
-    if (!device || !values || !known) return false;
+    if (!device || !values || !known || !changed) return false;
+    changed->fill(false);
     std::array<DIDEVICEOBJECTDATA, 32> events{};
     DWORD count = static_cast<DWORD>(events.size());
     const HRESULT result = device->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), events.data(), &count, 0);
@@ -262,28 +264,12 @@ bool readBufferedAxisEvents(LPDIRECTINPUTDEVICE8W device,
             }
             (*values)[static_cast<size_t>(axis)] = static_cast<LONG>(events[eventIndex].dwData);
             (*known)[static_cast<size_t>(axis)] = true;
+            (*changed)[static_cast<size_t>(axis)] = true;
             axisEvent = true;
             break;
         }
     }
     return axisEvent;
-}
-
-// Buffered object data is only a corroboration channel. When a contradictory
-// native object produces one sample that agrees with its reported fixed state
-// field (and disagrees with the semantic fallback), the control plane may
-// persist that fixed field for this exact native signature. This helper stays
-// scalar and allocation-free because it runs only on a queued input event.
-bool bufferedObjectCorroboratesFormattedSource(LONG bufferedValue,
-                                               const DIJOYSTATE2 &state,
-                                               int formattedSource,
-                                               const RuntimeAxisAcquisition &binding)
-{
-    if (formattedSource < 0 || formattedSource >= kPhysicalAxisCount) return false;
-    const LONG candidateValue = directInputAxisValue(
-        state, static_cast<PhysicalAxis>(formattedSource));
-    return std::abs(normalizeRuntimeAxisAcquisition(bufferedValue, binding)
-                    - normalizeRuntimeAxisAcquisition(candidateValue, binding)) <= 0.002F;
 }
 
 DWORD vjoyUsage(VirtualAxis axis)
@@ -925,6 +911,7 @@ MappingWorker::MappingWorker(MapperConfiguration configuration, QObject *parent)
         m_runtime.virtualValues[index] = std::numeric_limits<float>::quiet_NaN();
         m_runtime.axisAvailable[index] = false;
         m_runtime.axisAcquisitionSource[index] = -1;
+        m_runtime.axisResolvedFormattedSource[index] = -1;
         m_runtime.axisLiveMovementObserved[index] = false;
         m_runtime.axisLastMovementAgeMs[index] = -1;
         m_runtime.axisActivity[index] = static_cast<int>(m_configuration.axisActivity[index]);
@@ -1846,6 +1833,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             m_runtime.axisAvailable[static_cast<size_t>(axis)] = false;
             m_runtime.axisAcquisitionSource[static_cast<size_t>(axis)] = -1;
+            m_runtime.axisResolvedFormattedSource[static_cast<size_t>(axis)] = -1;
             m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = false;
             m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = -1;
         }
@@ -1957,6 +1945,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             m_runtime.axisAcquisitionSource[index] = availableAxes[index]
                 ? (manualAcquisitionApplied[static_cast<size_t>(index)] ? 2
                     : axisAcquisitionMethods[static_cast<size_t>(index)]) : -1;
+            m_runtime.axisResolvedFormattedSource[index] = -1;
             m_runtime.axisLiveMovementObserved[index] = false;
             m_runtime.axisLastMovementAgeMs[index] = -1;
         }
@@ -2268,9 +2257,11 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (int method : axisAcquisitionMethods) {
             bufferedSourceInUse = bufferedSourceInUse || method == 1 || method == 3;
         }
+        std::array<bool, kPhysicalAxisCount> bufferedAxisEvents{};
         if (waitResult == WAIT_OBJECT_0 || bufferedSourceInUse) {
             readBufferedAxisEvents(device, axisDescriptors, availableAxes,
-                                   &bufferedAxisValues, &bufferedAxisValuesKnown);
+                                   &bufferedAxisValues, &bufferedAxisValuesKnown,
+                                   &bufferedAxisEvents);
         }
 
         PhysicalInputReport physicalReport;
@@ -2318,7 +2309,8 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             if (!availableAxes[index] || !binding.valid) continue;
             const LONG standardValue = directInputAxisValue(state,
                 static_cast<PhysicalAxis>(binding.sourceIndex));
-            if (bufferedAxisValuesKnown[static_cast<size_t>(index)]
+            if (bufferedAxisEvents[static_cast<size_t>(index)]
+                && bufferedAxisValuesKnown[static_cast<size_t>(index)]
                 // A persisted buffered fallback is a safe starting point on
                 // reconnect, not a terminal verdict.  Let the exact same
                 // signature-bound correlation promote it to a fixed field
@@ -2329,21 +2321,24 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 && std::abs(normalizeRuntimeAxisAcquisition(bufferedAxisValues[static_cast<size_t>(index)], binding)
                             - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                 const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
-                const int reportedSource = physicalAxisIndexForDirectInputOffset(
-                    descriptor.directInputOffset);
+                const int correlatedSource = uniqueCorrelatedDirectInputStateField(
+                    bufferedAxisValues[static_cast<size_t>(index)], state, binding);
                 const bool fixedFieldProven = axisEvidenceCompatible[static_cast<size_t>(index)]
                     && descriptor.metadataContradiction
                     && descriptor.formattedSourceEvidence
                         == AxisFormattedSourceEvidence::SemanticFallback
                     && !descriptor.formattedSourceVerified
-                    && reportedSource != binding.sourceIndex
-                    && bufferedObjectCorroboratesFormattedSource(
-                        bufferedAxisValues[static_cast<size_t>(index)], state, reportedSource, binding);
+                    && correlatedSource >= 0
+                    && correlatedSource != binding.sourceIndex;
                 // Method 3 signals a proven alternate fixed field. The GUI
                 // persists it and this worker resumes direct state reads; an
                 // uncorroborated mismatch retains buffered safety fallback.
                 axisAcquisitionMethods[static_cast<size_t>(index)] = fixedFieldProven ? 3 : 1;
                 m_runtime.axisAcquisitionSource[index] = fixedFieldProven ? 3 : 1;
+                if (fixedFieldProven) {
+                    m_runtime.axisResolvedFormattedSource[index].store(
+                        correlatedSource, std::memory_order_relaxed);
+                }
             }
             const LONG acquiredValue = axisAcquisitionMethods[static_cast<size_t>(index)] != 0
                     && bufferedAxisValuesKnown[static_cast<size_t>(index)]
@@ -3005,6 +3000,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             m_runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(member)]
                 [static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
+            m_runtime.deviceRigMemberAxisResolvedFormattedSource[static_cast<size_t>(member)]
+                [static_cast<size_t>(axis)].store(-1, std::memory_order_relaxed);
             m_runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(member)]
                 [static_cast<size_t>(axis)].store(false, std::memory_order_relaxed);
             m_runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(member)]
@@ -3032,6 +3029,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
 
     const auto clearPrimarySnapshot = [&] {
         for (std::atomic_bool &axis : m_runtime.axisAvailable) axis = false;
+        for (std::atomic_int &source : m_runtime.axisAcquisitionSource) source = -1;
+        for (std::atomic_int &source : m_runtime.axisResolvedFormattedSource) source = -1;
         for (std::atomic_bool &button : m_runtime.buttonAvailable) button = false;
         for (std::atomic_int &pov : m_runtime.povValues) pov = -1;
         for (std::atomic_bool &button : m_runtime.physicalButtonPressed) button = false;
@@ -3054,6 +3053,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         }
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             m_runtime.deviceRigMemberAxisAcquisitionSource[memberIndex][static_cast<size_t>(axis)]
+                .store(-1, std::memory_order_relaxed);
+            m_runtime.deviceRigMemberAxisResolvedFormattedSource[memberIndex][static_cast<size_t>(axis)]
                 .store(-1, std::memory_order_relaxed);
             m_runtime.deviceRigMemberAxisLiveMovementObserved[memberIndex][static_cast<size_t>(axis)]
                 .store(false, std::memory_order_relaxed);
@@ -3372,9 +3373,11 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
             for (int method : session.axisAcquisitionMethods) {
                 bufferedSourceInUse = bufferedSourceInUse || method == 1 || method == 3;
             }
+            std::array<bool, kPhysicalAxisCount> bufferedAxisEvents{};
             if (bufferedEvent || bufferedSourceInUse) {
                 readBufferedAxisEvents(session.device, session.axisDescriptors, session.availableAxes,
-                                       &session.bufferedAxisValues, &session.bufferedAxisValuesKnown);
+                                       &session.bufferedAxisValues, &session.bufferedAxisValuesKnown,
+                                       &bufferedAxisEvents);
             }
             const auto observedAt = std::chrono::steady_clock::now();
             if (m_runtime.axisSourceMonitorRequested.load(std::memory_order_relaxed)) {
@@ -3429,7 +3432,8 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 if (session.availableAxes[static_cast<size_t>(axis)] && binding.valid) {
                     const LONG standardValue = directInputAxisValue(state,
                         static_cast<PhysicalAxis>(binding.sourceIndex));
-                    if (session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
+                    if (bufferedAxisEvents[static_cast<size_t>(axis)]
+                        && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 3
                         && !session.manualAcquisitionApplied[static_cast<size_t>(axis)]
                         && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
@@ -3438,20 +3442,23 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                                     - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F) {
                         const NativeAxisDescriptor &descriptor = session.axisDescriptors[
                             static_cast<size_t>(axis)];
-                        const int reportedSource = physicalAxisIndexForDirectInputOffset(
-                            descriptor.directInputOffset);
+                        const int correlatedSource = uniqueCorrelatedDirectInputStateField(
+                            session.bufferedAxisValues[static_cast<size_t>(axis)], state, binding);
                         const bool fixedFieldProven = session.axisEvidenceCompatible[
                                 static_cast<size_t>(axis)]
                             && descriptor.metadataContradiction
                             && descriptor.formattedSourceEvidence
                                 == AxisFormattedSourceEvidence::SemanticFallback
                             && !descriptor.formattedSourceVerified
-                            && reportedSource != binding.sourceIndex
-                            && bufferedObjectCorroboratesFormattedSource(
-                                session.bufferedAxisValues[static_cast<size_t>(axis)], state,
-                                reportedSource, binding);
+                            && correlatedSource >= 0
+                            && correlatedSource != binding.sourceIndex;
                         session.axisAcquisitionMethods[static_cast<size_t>(axis)] =
                             fixedFieldProven ? 3 : 1;
+                        if (fixedFieldProven) {
+                            m_runtime.deviceRigMemberAxisResolvedFormattedSource[
+                                static_cast<size_t>(index)][static_cast<size_t>(axis)].store(
+                                correlatedSource, std::memory_order_relaxed);
+                        }
                     }
                     const LONG acquiredValue = session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 0
                             && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
@@ -3686,6 +3693,9 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         session.availableAxes[static_cast<size_t>(axis)]
                         ? (session.manualAcquisitionApplied[static_cast<size_t>(axis)] ? 2
                             : session.axisAcquisitionMethods[static_cast<size_t>(axis)]) : -1;
+                    m_runtime.axisResolvedFormattedSource[static_cast<size_t>(axis)] =
+                        m_runtime.deviceRigMemberAxisResolvedFormattedSource[0]
+                            [static_cast<size_t>(axis)].load(std::memory_order_relaxed);
                     const bool live = session.axisLiveMovementObserved[static_cast<size_t>(axis)];
                     m_runtime.axisLiveMovementObserved[static_cast<size_t>(axis)] = live;
                     m_runtime.axisLastMovementAgeMs[static_cast<size_t>(axis)] = live

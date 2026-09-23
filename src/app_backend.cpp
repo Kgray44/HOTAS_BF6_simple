@@ -21465,15 +21465,18 @@ void AppBackend::refreshUiSnapshot()
                             static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
                     NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(axis)];
                     if (descriptor.present && method == 3) {
-                        const int reportedSource = physicalAxisIndexForDirectInputOffset(
-                            descriptor.directInputOffset);
-                        if (reportedSource >= 0 && reportedSource < kPhysicalAxisCount
+                        const int correlatedSource = sourceMemberIndex < 0
+                            ? m_worker.runtime().axisResolvedFormattedSource[
+                                static_cast<size_t>(axis)].load()
+                            : m_worker.runtime().deviceRigMemberAxisResolvedFormattedSource[
+                                static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
+                        if (correlatedSource >= 0 && correlatedSource < kPhysicalAxisCount
                             && (!descriptor.formattedSourceVerified
-                                || descriptor.formattedSource != reportedSource
+                                || descriptor.formattedSource != correlatedSource
                                 || descriptor.formattedSourceEvidence
                                     != AxisFormattedSourceEvidence::BufferedObjectCorrelation
                                 || descriptor.acquisitionMethod != 0)) {
-                            descriptor.formattedSource = reportedSource;
+                            descriptor.formattedSource = correlatedSource;
                             descriptor.formattedSourceEvidence =
                                 AxisFormattedSourceEvidence::BufferedObjectCorrelation;
                             descriptor.formattedSourceVerified = true;

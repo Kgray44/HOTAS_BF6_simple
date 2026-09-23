@@ -23,6 +23,14 @@ LONG directInputAxisValueAtOffset(const DIJOYSTATE2 &state, DWORD offset);
 float normalizeDirectInputAxisValue(LONG value, const NativeAxisDescriptor &descriptor);
 float normalizeRuntimeAxisAcquisition(LONG value, const RuntimeAxisAcquisition &binding);
 
+// A buffered event identifies one native DirectInput object; DIJOYSTATE2 is a
+// separate fixed storage layout.  Resolve that storage only when exactly one
+// normalized state member matches the fresh event.  A coincident or ambiguous
+// sample intentionally returns -1 rather than guessing.
+int uniqueCorrelatedDirectInputStateField(LONG bufferedValue,
+                                          const DIJOYSTATE2 &state,
+                                          const RuntimeAxisAcquisition &binding);
+
 // Capture object metadata before the mapper requests its normalized report
 // range.  This data is durable device capability evidence, never a report-path
 // lookup table.
