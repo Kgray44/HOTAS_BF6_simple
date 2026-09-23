@@ -49,6 +49,7 @@ private slots:
     void adaptiveResponseVisualizerKeepsPredictorAndSimulatorOnTheControlPlane();
     void deviceRigRuntimeRetainsDisconnectAndControlPlaneSafetyContracts();
     void setupAssistantAndOutputCreationExposeObservableContracts();
+    void evidenceResolvedAxisUiKeepsApplyAndRawTelemetryContracts();
     void hidHideDiagnosticsKeepFullCheckAndActionFeedbackObservable();
     void hidHideControlPlaneRemainsWorkerBoundAndResponsive();
 };
@@ -1427,6 +1428,24 @@ void UiReleaseContractTests::hidHideDiagnosticsKeepFullCheckAndActionFeedbackObs
         QVERIFY(page.contains(QStringLiteral("LAST VERIFIED")));
         QVERIFY(page.contains(QStringLiteral("hidhideElapsedTick")));
     }
+}
+
+void UiReleaseContractTests::evidenceResolvedAxisUiKeepsApplyAndRawTelemetryContracts()
+{
+    const QString backend = sourceFile(QStringLiteral("src/app_backend.cpp"));
+    const QString axes = sourceFile(QStringLiteral("qml/FlightDeckAxes.qml"));
+    const QString ultraNerd = sourceFile(QStringLiteral("qml/FlightDeckUltraNerdPanel.qml"));
+    QVERIFY(backend.contains(QStringLiteral("MappingWorker::probeExactPhysicalController(directInputId)")));
+    QVERIFY(backend.contains(QStringLiteral("REFRESHING CONTROLLER")));
+    QVERIFY(backend.contains(QStringLiteral("SOURCE APPLIED")));
+    QVERIFY(backend.contains(QStringLiteral("SOURCE NOT APPLIED")));
+    QVERIFY(backend.contains(QStringLiteral("BufferedObjectCorrelation")));
+    QVERIFY(axes.contains(QStringLiteral("onClicked: backend.useIdentifiedAxisSource()")));
+    QVERIFY(axes.contains(QStringLiteral("Boolean(identification.applied)")));
+    QVERIFY(axes.contains(QStringLiteral("identifyAxisDialog.close()")));
+    QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.rawValue")));
+    QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.observedRangeAvailable")));
+    QVERIFY(ultraNerd.contains(QStringLiteral("SOURCE EVIDENCE")));
 }
 
 void UiReleaseContractTests::hidHideControlPlaneRemainsWorkerBoundAndResponsive()

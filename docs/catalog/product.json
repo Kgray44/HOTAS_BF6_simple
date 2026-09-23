@@ -1,7 +1,7 @@
 {
   "name": "HOTAS BF6 Simple",
   "tagline": "A fast, low-latency Windows HOTAS mapper built around Battlefield 6 and vJoy.",
-  "summary": "HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. V2.6.8 adds GUID-first axis acquisition, an opt-in Ultra Nerd acquisition workspace, and stable controller-inventory refreshes while preserving the allocation-free mapping report path and existing device, profile, and Virtual Output behavior.",
+  "summary": "HOTAS BF6 Simple maps one or more explicitly identified DirectInput controllers into deliberate virtual controls Battlefield 6 can reliably bind through vJoy. V2.6.9 strengthens universal axis acquisition by separating a controller's native axis identity from the state field carrying its live value, resolving contradictory driver metadata from repeated native-object evidence, and preserving verified source relationships safely across reconnects. The opt-in Ultra Nerd workspace makes that source evidence visible without adding cost to the allocation-free mapping path.",
   "purpose": "The project exists to make HOTAS input practical in Battlefield 6 without placing UI work, network work, allocation-heavy logic, or persistence on the mapper hot path.",
   "principles": [
     {

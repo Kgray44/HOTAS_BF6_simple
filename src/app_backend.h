@@ -378,6 +378,9 @@ public:
                                               qint32 observedMinimum, qint32 observedMaximum,
                                               quint64 changeCount, int movementMagnitude = 0);
     void completeAxisIdentificationForTest();
+    // Replays a stale capability record and applies the same exact-controller
+    // refresh used by the UI. The test seam never opens a DirectInput device.
+    bool applyIdentifiedAxisSourceWithRefreshedCapabilitiesForTest();
     bool axisSourceMonitorRequestedForTest() const;
     // Uses the same selected-device runtime atomics as production to stress
     // the Flight Deck button presentation path without DirectInput hardware.
@@ -1132,6 +1135,7 @@ private:
     struct AxisIdentificationState {
         bool active = false;
         int targetAxis = -1;
+        QString controllerRecordId;
         std::array<quint64, kPhysicalAxisCount> baselineChanges{};
         QVariantMap result;
     };
@@ -1366,6 +1370,16 @@ private:
     bool editingScopeHasSinglePhysicalSource() const;
     const SavedControllerRecord *selectedEditingControllerRecord() const;
     QString selectedEditingControllerId() const;
+    bool applyIdentifiedAxisSourceFromProbe(const QString &recordId,
+                                            const QString &expectedDirectInputId,
+                                            int targetAxis, int formattedSource,
+                                            const DirectInputControllerProbe &probe,
+                                            QString *failure);
+    void finishIdentifiedAxisSourceRefresh(quint64 generation, const QString &recordId,
+                                           const QString &expectedDirectInputId, int targetAxis,
+                                           int formattedSource,
+                                           const DirectInputControllerProbe &probe);
+    void setAxisIdentificationApplyFailure(const QString &failure);
     DeviceProfileMapping *editingDeviceMappingForWrite();
     const DeviceProfileMapping *editingDeviceMapping() const;
     AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
@@ -1734,6 +1748,9 @@ private:
     QVariantList m_selectedButtonInputTelemetryModel;
     InputLearningState m_inputLearning;
     AxisIdentificationState m_axisIdentification;
+    // Invalidates an outstanding exact-controller capability refresh when the
+    // dialog is cancelled, restarted, or its capture completes.
+    quint64 m_axisIdentificationGeneration = 0;
     bool m_showUltraNerdControls = false;
     bool m_axisAcquisitionPreview = false;
     int m_axisAcquisitionPreviewSequence = 0;

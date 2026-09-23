@@ -56,7 +56,8 @@ BOOL CALLBACK objectCallback(const DIDEVICEOBJECTINSTANCEW *instance, VOID *cont
         const int enumerationIndex = objects->controller->axisCount;
         ++objects->controller->axisCount;
         NativeAxisDescriptor discovered = describeDirectInputAxisObject(objects->device, *instance);
-        const int index = discovered.canonicalAxis;
+        const int index = resolveUniqueDirectInputAxisSlot(
+            &discovered, &objects->controller->axisDescriptors, &objects->controller->axes);
         if (index >= 0) {
             objects->controller->axes[static_cast<size_t>(index)] = true;
             NativeAxisDescriptor &descriptor =

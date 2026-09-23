@@ -1328,11 +1328,34 @@ bool verifyAxisAcquisitionIdentifyLifecycle()
         return false;
     }
     const QVariantMap applied = backend->axisConfiguration().at(rz).toMap();
-    if (!applied.value(QStringLiteral("manualOverride")).toBool()
+    if (!backend->axisIdentification().value(QStringLiteral("applied")).toBool()
+        || backend->axisIdentification().value(QStringLiteral("status")).toString()
+            != QStringLiteral("SOURCE APPLIED")
+        || !applied.value(QStringLiteral("manualOverride")).toBool()
         || applied.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
         || !backend->resetAxisAcquisitionOverride(rz)
         || backend->axisConfiguration().at(rz).toMap().value(QStringLiteral("manualOverride")).toBool()) {
         std::fprintf(stderr, "identified manual override did not apply and reset cleanly\n");
+        return false;
+    }
+
+    // A persisted record can be stale even while the bounded monitor has
+    // correctly identified the live source. The exact-controller refresh
+    // must restore matching capabilities before committing the same override.
+    if (!backend->beginAxisIdentification(rz)
+        || !backend->setAxisSourceMonitorCandidateForTest(rz, 33000, 102, 65411, 28, 120)) {
+        std::fprintf(stderr, "stale capability axis identification fixture could not start\n");
+        return false;
+    }
+    backend->completeAxisIdentificationForTest();
+    if (backend->axisIdentification().value(QStringLiteral("selectedSource")).toInt() != rz
+        || !backend->applyIdentifiedAxisSourceWithRefreshedCapabilitiesForTest()
+        || !backend->axisIdentification().value(QStringLiteral("applied")).toBool()
+        || backend->axisIdentification().value(QStringLiteral("status")).toString()
+            != QStringLiteral("SOURCE APPLIED")
+        || backend->axisConfiguration().at(rz).toMap().value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || !backend->resetAxisAcquisitionOverride(rz)) {
+        std::fprintf(stderr, "stale DirectInput capabilities did not refresh and apply the identified source\n");
         return false;
     }
 
@@ -1357,8 +1380,8 @@ bool verifyAxisAcquisitionIdentifyLifecycle()
     }
 
     if (!backend->beginAxisIdentification(rz)
-        || !backend->setAxisSourceMonitorCandidateForTest(x, 200, 0, 65535, 10, 8)
-        || !backend->setAxisSourceMonitorCandidateForTest(rz, 32000, 102, 65411, 24, 80)) {
+        || !backend->setAxisSourceMonitorCandidateForTest(x, 200, 0, 65535, 38, 8)
+        || !backend->setAxisSourceMonitorCandidateForTest(rz, 32000, 102, 65411, 60, 80)) {
         std::fprintf(stderr, "ambiguous axis identification fixture could not advance candidates\n");
         return false;
     }
@@ -1403,19 +1426,27 @@ bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
     qunsetenv("HOTAS_AXIS_ACQUISITION_PREVIEW");
     const int rz = static_cast<int>(hotas::PhysicalAxis::Rz);
     const QVariantList configuration = backend->axisConfiguration();
+    const QVariantList telemetry = backend->axisTelemetry();
     const QVariantList monitor = backend->axisSourceMonitor();
     if (!backend->axisAcquisitionPreview() || !backend->showUltraNerdControls()
         || !backend->axisAcquisitionPreviewIsHardwareIsolatedForTest()
         || configuration.size() != hotas::kPhysicalAxisCount
+        || telemetry.size() != hotas::kPhysicalAxisCount
         || monitor.size() != hotas::kPhysicalAxisCount) {
         std::fprintf(stderr, "axis-acquisition preview did not establish its isolated fixture\n");
         return false;
     }
     const QVariantMap rudder = configuration.at(rz).toMap();
+    const QVariantMap rudderTelemetry = telemetry.at(rz).toMap();
     const QVariantMap rudderMonitor = monitor.at(rz).toMap();
     if (!rudder.value(QStringLiteral("nativeObjectName")).toString().contains(QStringLiteral("Simulated"))
         || !rudder.value(QStringLiteral("metadataContradiction")).toBool()
         || rudder.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || !rudderTelemetry.value(QStringLiteral("rawValueAvailable")).toBool()
+        || rudderTelemetry.value(QStringLiteral("rawValue")).toInt()
+            != rudderMonitor.value(QStringLiteral("value")).toInt()
+        || !rudderTelemetry.value(QStringLiteral("liveMovementObserved")).toBool()
+        || rudderTelemetry.value(QStringLiteral("lastMovementAgeMs")).toLongLong() != 0
         || !rudderMonitor.value(QStringLiteral("available")).toBool()
         || rudderMonitor.value(QStringLiteral("changeCount")).toULongLong() < 1074
         || rudderMonitor.value(QStringLiteral("state")).toString() != QStringLiteral("ACTIVE")) {

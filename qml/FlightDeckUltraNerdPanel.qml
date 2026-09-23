@@ -181,14 +181,21 @@ Item {
                 TechnicalLine { label: "REPORTED OFFSET"; value: "0x" + Number(root.axis.directInputOffset || 0).toString(16).toUpperCase() }
                 TechnicalLine { label: "RUNTIME SOURCE"; value: "DIJOYSTATE2." + String(root.axis.formattedSource || "Not resolved") }
                 TechnicalLine {
+                    label: "SOURCE EVIDENCE"
+                    value: String(root.axis.formattedSourceEvidence || "Not resolved")
+                        + (Boolean(root.axis.formattedSourceVerified) ? " · VERIFIED" : " · INITIAL FALLBACK")
+                }
+                TechnicalLine {
                     label: "METADATA"
                     value: Boolean(root.axis.metadataContradiction)
-                        ? "Offset conflicts with semantic identity · semantic GUID remains authoritative"
+                        ? "Reported field conflicts with native identity · source evidence selects runtime field"
                         : "Semantic identity and state metadata agree"
                 }
                 Text {
                     visible: Boolean(root.axis.metadataContradiction)
-                    text: "CONTRADICTION · reported offset is retained as evidence, not used as the runtime source"
+                    text: Boolean(root.axis.formattedSourceVerified)
+                        ? "RESOLVED · verified object evidence selected the fixed runtime field"
+                        : "CONTRADICTION · semantic identity is retained while a bounded object sample can verify the runtime field"
                     color: root.tokens.attention
                     font.family: root.tokens.telemetryFont
                     font.pixelSize: root.tokens.bodySmall
@@ -209,8 +216,8 @@ Item {
                 TechnicalLine { label: "RAW RANGE"; value: root.formatted(root.axis.nativeRangeMinimum) + " to " + root.formatted(root.axis.nativeRangeMaximum) }
                 TechnicalLine {
                     label: "OBSERVED RANGE"
-                    value: Boolean(root.axis.observedRangeAvailable)
-                        ? root.formatted(root.axis.observedMinimum) + " to " + root.formatted(root.axis.observedMaximum)
+                    value: Boolean(root.telemetry.observedRangeAvailable)
+                        ? root.formatted(root.telemetry.observedMinimum) + " to " + root.formatted(root.telemetry.observedMaximum)
                         : "Open source monitor to capture"
                 }
 
@@ -219,17 +226,17 @@ Item {
                     columns: width < root.tokens.scale(460) ? 2 : 4
                     columnSpacing: root.tokens.space6
                     rowSpacing: root.tokens.space6
-                    Readout { label: "RAW VALUE"; value: root.formatted(root.axis.rawValue); tone: "active" }
+                    Readout { label: "RAW VALUE"; value: root.formatted(root.telemetry.rawValue); tone: "active" }
                     Readout { label: "NORMALIZED"; value: Number(root.telemetry.calibrated || 0).toFixed(3); tone: "normal" }
                     Readout {
                         label: "LIVE STATE"
-                        value: Boolean(root.axis.liveMovementObserved) ? "LIVE" : "WAITING"
-                        tone: Boolean(root.axis.liveMovementObserved) ? "active" : "normal"
+                        value: Boolean(root.telemetry.liveMovementObserved) ? "LIVE" : "WAITING"
+                        tone: Boolean(root.telemetry.liveMovementObserved) ? "active" : "normal"
                     }
                     Readout {
                         label: "LAST MOVEMENT"
-                        value: Number(root.axis.lastMovementAgeMs) >= 0
-                            ? Math.round(Number(root.axis.lastMovementAgeMs)) + " ms" : "—"
+                        value: Number(root.telemetry.lastMovementAgeMs) >= 0
+                            ? Math.round(Number(root.telemetry.lastMovementAgeMs)) + " ms" : "—"
                         tone: "normal"
                     }
                 }
