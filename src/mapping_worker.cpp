@@ -2089,6 +2089,13 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
             availableAxes[static_cast<size_t>(axis)] =
                 axisAcquisitions[static_cast<size_t>(axis)].valid;
+            // Method 3 is a transient "proof pending commit" marker.  Once
+            // this control-plane update has compiled the persisted verified
+            // state field, resume normal direct state acquisition instead of
+            // unnecessarily retaining the sampled buffered value.
+            if (axisAcquisitionMethods[static_cast<size_t>(axis)] == 3) {
+                axisAcquisitionMethods[static_cast<size_t>(axis)] = 0;
+            }
         }
         appliedVersion = currentVersion;
         buttonDefaultsPending = false;
@@ -2312,7 +2319,11 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
             const LONG standardValue = directInputAxisValue(state,
                 static_cast<PhysicalAxis>(binding.sourceIndex));
             if (bufferedAxisValuesKnown[static_cast<size_t>(index)]
-                && axisAcquisitionMethods[static_cast<size_t>(index)] == 0
+                // A persisted buffered fallback is a safe starting point on
+                // reconnect, not a terminal verdict.  Let the exact same
+                // signature-bound correlation promote it to a fixed field
+                // when fresh reports provide that proof.
+                && axisAcquisitionMethods[static_cast<size_t>(index)] != 3
                 && !manualAcquisitionApplied[static_cast<size_t>(index)]
                 && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
                 && std::abs(normalizeRuntimeAxisAcquisition(bufferedAxisValues[static_cast<size_t>(index)], binding)
@@ -3419,7 +3430,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     const LONG standardValue = directInputAxisValue(state,
                         static_cast<PhysicalAxis>(binding.sourceIndex));
                     if (session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
-                        && session.axisAcquisitionMethods[static_cast<size_t>(axis)] == 0
+                        && session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 3
                         && !session.manualAcquisitionApplied[static_cast<size_t>(axis)]
                         && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0
                         && std::abs(normalizeRuntimeAxisAcquisition(
