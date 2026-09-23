@@ -81,6 +81,18 @@ enum class AxisResolutionConfidence : std::uint8_t {
     Manual,
 };
 
+// This evidence answers a different question from AxisResolutionSource.
+// AxisResolutionSource records what a native object *is*; this enum records
+// why a particular fixed DIJOYSTATE2 field is safe to read for that object.
+// Both facts are resolved before report processing.
+enum class AxisFormattedSourceEvidence : std::uint8_t {
+    Unresolved = 0,
+    MetadataAgreement,
+    SemanticFallback,
+    ReportedOffsetFallback,
+    BufferedObjectCorrelation,
+};
+
 enum class AxisAcquisitionMode : std::uint8_t {
     Automatic = 0,
     DirectInputFormattedSlot,
@@ -140,16 +152,19 @@ struct NativeAxisDescriptor {
     // 0 = standard DIJOYSTATE2 field. 1 = buffered DirectInput object. The
     // value is a fixed primitive consumed by the mapper, never a QML string.
     int acquisitionMethod = 0;
-    // The native object's reported state-layout offset remains technical
-    // evidence.  `formattedSource` is the independently resolved field that
-    // the mapper reads from DIJOYSTATE2.  A standard semantic GUID wins when
-    // the two contradict, which covers controllers such as the Saitek pedals
-    // that report GUID_RzAxis with DIJOFS_Z yet publish live lRz samples.
+    // Canonical identity and formatted storage are intentionally independent.
+    // The semantic GUID answers what this object is; formattedSource answers
+    // which DIJOYSTATE2 field carries its value.  A cross-slot relationship
+    // (canonical X -> formatted Y) is valid and must never rename the object.
     int canonicalAxis = -1;
     int formattedSource = -1;
     AxisResolutionSource resolutionSource = AxisResolutionSource::Unresolved;
     AxisResolutionConfidence resolutionConfidence = AxisResolutionConfidence::Low;
     bool metadataContradiction = false;
+    AxisFormattedSourceEvidence formattedSourceEvidence = AxisFormattedSourceEvidence::Unresolved;
+    // Only compatible native signatures may reuse a verified source after a
+    // reconnect. This is durable control-plane evidence, never report state.
+    bool formattedSourceVerified = false;
 };
 
 // A manual override never contains a driver handle, enumeration ordinal, or

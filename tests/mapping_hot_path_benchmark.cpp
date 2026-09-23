@@ -255,6 +255,7 @@ enum class AxisAcquisitionBindingScenario {
     Automatic,
     ManualFormattedRz,
     ExactNativeObjectRz,
+    VerifiedCrossField,
 };
 
 float percentileUs(std::vector<std::uint64_t> samples, double fraction)
@@ -406,6 +407,8 @@ std::string_view axisAcquisitionBindingLabel(AxisAcquisitionBindingScenario scen
         // the report path deliberately receives the same primitive Rz binding
         // as a validated exact-native selection.
         return "exact-native-rz";
+    case AxisAcquisitionBindingScenario::VerifiedCrossField:
+        return "verified-cross-field";
     }
     return "unknown";
 }
@@ -416,6 +419,17 @@ void configureAxisAcquisitionScenario(AxisAcquisitionBenchmarkState &acquisition
 {
     acquisition.sourceMonitorRequested.store(sourceMonitorOpen, std::memory_order_relaxed);
     if (scenario == AxisAcquisitionBindingScenario::Automatic) return;
+    if (scenario == AxisAcquisitionBindingScenario::VerifiedCrossField) {
+        // This is the persisted proof form used for a driver whose semantic
+        // X/Y object identities are stored in the opposite DIJOYSTATE2 fields.
+        // It is intentionally a pair of fixed primitive state reads: no
+        // lookup, allocation, or object enumeration can enter the report path.
+        acquisition.bindings[static_cast<size_t>(hotas::PhysicalAxis::X)].sourceIndex =
+            static_cast<std::uint8_t>(hotas::PhysicalAxis::Y);
+        acquisition.bindings[static_cast<size_t>(hotas::PhysicalAxis::Y)].sourceIndex =
+            static_cast<std::uint8_t>(hotas::PhysicalAxis::X);
+        return;
+    }
     hotas::RuntimeAxisAcquisition &rz = acquisition.bindings[
         static_cast<size_t>(hotas::PhysicalAxis::Rz)];
     rz.sourceIndex = static_cast<std::uint8_t>(hotas::PhysicalAxis::Rz);
@@ -476,6 +490,7 @@ void runAxisAcquisitionBenchmarks()
              Scenario{AxisAcquisitionBindingScenario::Automatic, true, 1},
              Scenario{AxisAcquisitionBindingScenario::ManualFormattedRz, false, 1},
              Scenario{AxisAcquisitionBindingScenario::ExactNativeObjectRz, false, 1},
+             Scenario{AxisAcquisitionBindingScenario::VerifiedCrossField, false, 1},
              Scenario{AxisAcquisitionBindingScenario::Automatic, false, 3},
          }) {
         const AxisAcquisitionBenchmarkResult result = benchmarkAxisAcquisition(

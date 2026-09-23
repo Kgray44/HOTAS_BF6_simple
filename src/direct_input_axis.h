@@ -11,6 +11,13 @@ namespace hotas {
 // decide which DIJOYSTATE2 field backs a physical axis.
 int physicalAxisIndexForDirectInputOffset(DWORD offset);
 int physicalAxisIndexForDirectInputSemanticGuid(const GUID &guid);
+// Preserve each separate physical object when a driver reuses one generic
+// semantic GUID for multiple DIJOYSTATE2 fields.  The result is deterministic
+// even when DirectInput enumerates the objects in a different order.
+int resolveUniqueDirectInputAxisSlot(
+    NativeAxisDescriptor *candidate,
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> *assigned,
+    std::array<bool, kPhysicalAxisCount> *available = nullptr);
 LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis);
 LONG directInputAxisValueAtOffset(const DIJOYSTATE2 &state, DWORD offset);
 float normalizeDirectInputAxisValue(LONG value, const NativeAxisDescriptor &descriptor);
@@ -42,5 +49,13 @@ std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> compileRuntimeAxisAcquisi
 
 bool axisAcquisitionOverrideMatchesNativeObject(const AxisAcquisitionOverride &override,
                                                 const NativeAxisDescriptor &descriptor);
+
+// Reuse a saved evidence-resolved source only when the freshly enumerated
+// native object has the same stable DirectInput signature. A changed driver
+// layout deliberately falls back to fresh automatic evidence instead.
+bool directInputAxisDescriptorSignatureMatches(const NativeAxisDescriptor &current,
+                                               const NativeAxisDescriptor &persisted);
+bool reuseVerifiedFormattedSource(NativeAxisDescriptor *current,
+                                  const NativeAxisDescriptor &persisted);
 
 } // namespace hotas

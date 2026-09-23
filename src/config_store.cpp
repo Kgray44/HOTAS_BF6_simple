@@ -102,6 +102,8 @@ QJsonObject nativeAxisDescriptorToJson(const NativeAxisDescriptor &descriptor)
             {u"resolutionSource"_qs, static_cast<int>(descriptor.resolutionSource)},
             {u"resolutionConfidence"_qs, static_cast<int>(descriptor.resolutionConfidence)},
             {u"metadataContradiction"_qs, descriptor.metadataContradiction},
+            {u"formattedSourceEvidence"_qs, static_cast<int>(descriptor.formattedSourceEvidence)},
+            {u"formattedSourceVerified"_qs, descriptor.formattedSourceVerified},
             {u"relative"_qs, descriptor.relative}};
 }
 
@@ -138,6 +140,17 @@ bool nativeAxisDescriptorFromJson(const QJsonObject &json, NativeAxisDescriptor 
     restored.resolutionConfidence = static_cast<AxisResolutionConfidence>(std::clamp(
         json.value(u"resolutionConfidence"_qs).toInt(static_cast<int>(AxisResolutionConfidence::Low)),
         static_cast<int>(AxisResolutionConfidence::Low), static_cast<int>(AxisResolutionConfidence::Manual)));
+    restored.formattedSourceEvidence = static_cast<AxisFormattedSourceEvidence>(std::clamp(
+        json.value(u"formattedSourceEvidence"_qs).toInt(
+            static_cast<int>(AxisFormattedSourceEvidence::Unresolved)),
+        static_cast<int>(AxisFormattedSourceEvidence::Unresolved),
+        static_cast<int>(AxisFormattedSourceEvidence::BufferedObjectCorrelation)));
+    // Configurations written before V2.6.9 lack source-evidence fields. They
+    // remain safe, but a contradictory semantic fallback must be re-proven
+    // rather than treated as durable source evidence.
+    restored.formattedSourceVerified = json.value(u"formattedSourceVerified"_qs).toBool(
+        restored.formattedSourceEvidence == AxisFormattedSourceEvidence::MetadataAgreement
+        || restored.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetFallback);
     restored.metadataContradiction = json.value(u"metadataContradiction"_qs).toBool(false);
     restored.relative = json.value(u"relative"_qs).toBool(false);
     if (restored.present && restored.nativeMinimum > restored.nativeMaximum) return false;

@@ -34,6 +34,67 @@ int physicalAxisIndexForDirectInputSemanticGuid(const GUID &guid)
     return -1;
 }
 
+int resolveUniqueDirectInputAxisSlot(
+    NativeAxisDescriptor *candidate,
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> *assigned,
+    std::array<bool, kPhysicalAxisCount> *available)
+{
+    if (!candidate || !candidate->present || candidate->canonicalAxis < 0
+        || candidate->canonicalAxis >= kPhysicalAxisCount) {
+        return -1;
+    }
+    const int semanticSlot = candidate->canonicalAxis;
+    if (!assigned || candidate->resolutionSource != AxisResolutionSource::StandardSemanticGuid) {
+        return semanticSlot;
+    }
+
+    // Some controllers reuse one standard semantic GUID (notably GUID_ZAxis)
+    // for several independently stored controls. Preserve the object whose
+    // reported field actually occupies the semantic slot and relocate each
+    // duplicate to its own fixed storage slot. This is a collision rule; it
+    // does not make reported offsets redefine a unique canonical identity.
+    NativeAxisDescriptor &incumbent = (*assigned)[static_cast<size_t>(semanticSlot)];
+    if (!incumbent.present
+        || incumbent.resolutionSource != AxisResolutionSource::StandardSemanticGuid) {
+        return semanticSlot;
+    }
+    const int candidateOffsetSlot = physicalAxisIndexForDirectInputOffset(candidate->directInputOffset);
+    if (candidateOffsetSlot == semanticSlot) {
+        const int incumbentOffsetSlot = physicalAxisIndexForDirectInputOffset(incumbent.directInputOffset);
+        if (incumbentOffsetSlot >= 0 && incumbentOffsetSlot < kPhysicalAxisCount
+            && incumbentOffsetSlot != semanticSlot
+            && !(*assigned)[static_cast<size_t>(incumbentOffsetSlot)].present) {
+            NativeAxisDescriptor relocated = incumbent;
+            relocated.canonicalAxis = incumbentOffsetSlot;
+            relocated.formattedSource = incumbentOffsetSlot;
+            relocated.resolutionSource = AxisResolutionSource::ReportedOffset;
+            relocated.resolutionConfidence = AxisResolutionConfidence::Medium;
+            relocated.metadataContradiction = true;
+            relocated.formattedSourceEvidence = AxisFormattedSourceEvidence::ReportedOffsetFallback;
+            relocated.formattedSourceVerified = true;
+            (*assigned)[static_cast<size_t>(incumbentOffsetSlot)] = std::move(relocated);
+            if (available) (*available)[static_cast<size_t>(incumbentOffsetSlot)] = true;
+            // The caller will now store the current semantic-slot owner.
+            // Clearing the incumbent prevents the generic semantic tie-break
+            // from retaining the earlier duplicate in the canonical slot.
+            incumbent = {};
+        }
+        return semanticSlot;
+    }
+    if (candidateOffsetSlot < 0 || candidateOffsetSlot >= kPhysicalAxisCount
+        || (*assigned)[static_cast<size_t>(candidateOffsetSlot)].present) {
+        return semanticSlot;
+    }
+    candidate->canonicalAxis = candidateOffsetSlot;
+    candidate->formattedSource = candidateOffsetSlot;
+    candidate->resolutionSource = AxisResolutionSource::ReportedOffset;
+    candidate->resolutionConfidence = AxisResolutionConfidence::Medium;
+    candidate->metadataContradiction = true;
+    candidate->formattedSourceEvidence = AxisFormattedSourceEvidence::ReportedOffsetFallback;
+    candidate->formattedSourceVerified = true;
+    return candidateOffsetSlot;
+}
+
 LONG directInputAxisValue(const DIJOYSTATE2 &state, PhysicalAxis axis)
 {
     switch (axis) {
@@ -158,6 +219,11 @@ NativeAxisDescriptor describeDirectInputAxisObject(LPDIRECTINPUTDEVICE8W device,
     descriptor.directInputInstance = DIDFT_GETINSTANCE(instance.dwType);
     descriptor.relative = (instance.dwType & DIDFT_RELAXIS) != 0;
     descriptor.canonicalAxis = index;
+    // A semantic GUID is strong proof of native identity, but it is not
+    // universal proof of DIJOYSTATE2 storage. On metadata agreement the two
+    // answers naturally coincide. On a contradiction start from the proven
+    // semantic fallback (preserving the Saitek Rz repair) and permit bounded
+    // buffered-object evidence to promote the reported field later.
     descriptor.formattedSource = semanticAxis >= 0 ? semanticAxis : offsetAxis;
     descriptor.resolutionSource = semanticAxis >= 0
         ? AxisResolutionSource::StandardSemanticGuid : AxisResolutionSource::ReportedOffset;
@@ -168,6 +234,15 @@ NativeAxisDescriptor describeDirectInputAxisObject(LPDIRECTINPUTDEVICE8W device,
     descriptor.resolutionConfidence = semanticAxis >= 0
         ? AxisResolutionConfidence::High : AxisResolutionConfidence::Medium;
     descriptor.acquisitionSourceResolved = descriptor.formattedSource >= 0;
+    descriptor.formattedSourceEvidence = semanticAxis >= 0 && offsetAxis >= 0
+            && semanticAxis == offsetAxis
+        ? AxisFormattedSourceEvidence::MetadataAgreement
+        : semanticAxis >= 0
+            ? AxisFormattedSourceEvidence::SemanticFallback
+            : AxisFormattedSourceEvidence::ReportedOffsetFallback;
+    descriptor.formattedSourceVerified = descriptor.formattedSourceEvidence
+        == AxisFormattedSourceEvidence::MetadataAgreement
+        || descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetFallback;
     if (!device) return descriptor;
 
     DIPROPRANGE range{};
@@ -241,6 +316,35 @@ bool axisAcquisitionOverrideMatchesNativeObject(const AxisAcquisitionOverride &o
         && override.nativeSemanticGuid.compare(descriptor.directInputGuid, Qt::CaseInsensitive) == 0
         && override.nativeDirectInputType == descriptor.directInputType
         && override.nativeDirectInputOffset == descriptor.directInputOffset;
+}
+
+bool directInputAxisDescriptorSignatureMatches(const NativeAxisDescriptor &current,
+                                               const NativeAxisDescriptor &persisted)
+{
+    return current.present && persisted.present
+        && current.canonicalAxis >= 0
+        && current.canonicalAxis == persisted.canonicalAxis
+        && !current.directInputGuid.isEmpty()
+        && current.directInputGuid.compare(persisted.directInputGuid, Qt::CaseInsensitive) == 0
+        && current.directInputType == persisted.directInputType
+        && current.directInputOffset == persisted.directInputOffset
+        && current.directInputInstance == persisted.directInputInstance
+        && current.relative == persisted.relative;
+}
+
+bool reuseVerifiedFormattedSource(NativeAxisDescriptor *current,
+                                  const NativeAxisDescriptor &persisted)
+{
+    if (!current || !persisted.formattedSourceVerified
+        || persisted.formattedSource < 0 || persisted.formattedSource >= kPhysicalAxisCount
+        || !directInputAxisDescriptorSignatureMatches(*current, persisted)) {
+        return false;
+    }
+    current->formattedSource = persisted.formattedSource;
+    current->formattedSourceEvidence = persisted.formattedSourceEvidence;
+    current->formattedSourceVerified = true;
+    current->acquisitionSourceResolved = true;
+    return true;
 }
 
 std::array<RuntimeAxisAcquisition, kPhysicalAxisCount> compileRuntimeAxisAcquisitions(

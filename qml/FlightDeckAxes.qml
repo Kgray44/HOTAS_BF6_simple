@@ -266,6 +266,12 @@ Flickable {
         target: backend
         function onStateChanged() {
             root.configurationRevision += 1;
+            const identification = backend.axisIdentification || {};
+            // A capability refresh is asynchronous. Close only after its
+            // durable override commit succeeds, not when the button is pressed.
+            if (identifyAxisDialog.visible && Boolean(identification.applied)) {
+                identifyAxisDialog.close();
+            }
         }
     }
 
@@ -1359,8 +1365,10 @@ Flickable {
             spacing: deck.space12
             Text {
                 text: String((backend.axisIdentification || {}).status || "CAPTURING")
-                color: String((backend.axisIdentification || {}).status || "").indexOf("STRONG") >= 0
+                color: String((backend.axisIdentification || {}).status || "") === "SOURCE APPLIED"
+                    || String((backend.axisIdentification || {}).status || "").indexOf("STRONG") >= 0
                     ? deck.healthy : String((backend.axisIdentification || {}).status || "").indexOf("NO ") === 0
+                        || String((backend.axisIdentification || {}).status || "").indexOf("NOT APPLIED") >= 0
                         ? deck.attention : deck.accent
                 font.family: deck.telemetryFont
                 font.pixelSize: deck.scale(12)
@@ -1411,15 +1419,18 @@ Flickable {
                 Button {
                     visible: !Boolean((backend.axisIdentification || {}).active)
                         && Number((backend.axisIdentification || {}).selectedSource) >= 0
-                    text: "USE THIS SOURCE"
-                    onClicked: { if (backend.useIdentifiedAxisSource()) identifyAxisDialog.close() }
+                    enabled: !Boolean((backend.axisIdentification || {}).applying)
+                    text: Boolean((backend.axisIdentification || {}).applying)
+                        ? "REFRESHING..." : "USE THIS SOURCE"
+                    onClicked: backend.useIdentifiedAxisSource()
                     contentItem: Text { text: parent.text; color: deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     background: Rectangle { radius: 5; color: parent.down ? deck.accentMuted : parent.hovered ? deck.focus : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                 }
             }
         }
         onClosed: {
-            if (Boolean((backend.axisIdentification || {}).active)) backend.cancelAxisIdentification()
+            if (Boolean((backend.axisIdentification || {}).active)
+                || Boolean((backend.axisIdentification || {}).applying)) backend.cancelAxisIdentification()
         }
     }
 
