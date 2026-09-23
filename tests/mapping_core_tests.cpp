@@ -4617,18 +4617,120 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
     QCOMPARE(initialBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
              static_cast<std::uint8_t>(PhysicalAxis::Z));
 
+    // Every promoted fixed field needs two fresh, unique correlations with
+    // different native-object values. This unit-level fixture directly
+    // models the bounded evidence record the worker owns per axis.
+    const auto persistBufferedProof = [](NativeAxisDescriptor descriptor, int source) {
+        descriptor.formattedSource = source;
+        descriptor.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+        descriptor.formattedSourceVerified = true;
+        return descriptor;
+    };
     NativeAxisDescriptor verifiedX = initialX;
-    verifiedX.formattedSource = static_cast<int>(PhysicalAxis::Y);
-    verifiedX.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
-    verifiedX.formattedSourceVerified = true;
     NativeAxisDescriptor verifiedY = initialY;
-    verifiedY.formattedSource = static_cast<int>(PhysicalAxis::X);
-    verifiedY.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
-    verifiedY.formattedSourceVerified = true;
     NativeAxisDescriptor verifiedRz = saitekRz;
-    verifiedRz.formattedSource = static_cast<int>(PhysicalAxis::Rz);
-    verifiedRz.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
-    verifiedRz.formattedSourceVerified = true;
+    DIJOYSTATE2 evidenceState{};
+    evidenceState.lX = 101;
+    evidenceState.lY = 202;
+    evidenceState.lZ = 303;
+    evidenceState.lRz = 606;
+
+    // A: one uniquely matching T.Flight X event is provisional only.
+    BufferedObjectCorrelationEvidence tFlightXEvidence;
+    const int tFlightXFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lY, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(tFlightXFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXFirst,
+                                               evidenceState.lY));
+    QVERIFY(tFlightXEvidence.hasProvisional);
+    QCOMPARE(tFlightXEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!verifiedX.formattedSourceVerified);
+    // Re-delivering the same native value is still not a second independent
+    // corroboration; only a later distinct value may promote the source.
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXFirst,
+                                               evidenceState.lY));
+
+    // B/F: a later, distinct event for the same T.Flight field verifies X -> lY.
+    evidenceState.lY = 1202;
+    const int tFlightXSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lY, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(tFlightXSecond, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXSecond,
+                                              evidenceState.lY));
+    verifiedX = persistBufferedProof(verifiedX, tFlightXSecond);
+    QCOMPARE(verifiedX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(verifiedX.formattedSourceVerified);
+
+    // F: T.Flight Y follows the same generic cross-field proof to lX.
+    BufferedObjectCorrelationEvidence tFlightYEvidence;
+    const int tFlightYFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lX, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Y)]);
+    QCOMPARE(tFlightYFirst, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightYEvidence, tFlightYFirst,
+                                               evidenceState.lX));
+    evidenceState.lX = 1101;
+    const int tFlightYSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lX, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Y)]);
+    QCOMPARE(tFlightYSecond, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(observeBufferedObjectCorrelation(&tFlightYEvidence, tFlightYSecond,
+                                              evidenceState.lX));
+    verifiedY = persistBufferedProof(verifiedY, tFlightYSecond);
+    QCOMPARE(verifiedY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(verifiedY.formattedSourceVerified);
+
+    // E: the original Saitek contradiction still resolves canonical Rz to lRz.
+    BufferedObjectCorrelationEvidence saitekEvidence;
+    const int saitekFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lRz, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QCOMPARE(saitekFirst, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(!observeBufferedObjectCorrelation(&saitekEvidence, saitekFirst,
+                                               evidenceState.lRz));
+    evidenceState.lRz = 1606;
+    const int saitekSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lRz, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QCOMPARE(saitekSecond, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(observeBufferedObjectCorrelation(&saitekEvidence, saitekSecond,
+                                              evidenceState.lRz));
+    verifiedRz = persistBufferedProof(verifiedRz, saitekSecond);
+    QCOMPARE(verifiedRz.formattedSource, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(verifiedRz.formattedSourceVerified);
+
+    // C: ambiguous samples neither advance nor erase an independent first
+    // correlation. D: a unique conflicting source replaces the provisional
+    // candidate, so neither field can falsely verify from the two samples.
+    DIJOYSTATE2 ambiguousState{};
+    ambiguousState.lY = 701;
+    BufferedObjectCorrelationEvidence ambiguousEvidence;
+    const int unambiguousFirst = uniqueCorrelatedDirectInputStateField(
+        ambiguousState.lY, ambiguousState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(unambiguousFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&ambiguousEvidence, unambiguousFirst,
+                                               ambiguousState.lY));
+    ambiguousState.lY = 702;
+    ambiguousState.lRx = 702;
+    QCOMPARE(uniqueCorrelatedDirectInputStateField(
+        702L, ambiguousState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]), -1);
+    QVERIFY(!observeBufferedObjectCorrelation(&ambiguousEvidence, -1, 702L));
+    QCOMPARE(ambiguousEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(ambiguousEvidence.firstNativeValue, 701L);
+
+    DIJOYSTATE2 conflictingState{};
+    conflictingState.lY = 8001;
+    conflictingState.lRx = 16002;
+    BufferedObjectCorrelationEvidence conflictingEvidence;
+    const int conflictingFirst = uniqueCorrelatedDirectInputStateField(
+        conflictingState.lY, conflictingState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(conflictingFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&conflictingEvidence, conflictingFirst,
+                                               conflictingState.lY));
+    const int conflictingSecond = uniqueCorrelatedDirectInputStateField(
+        conflictingState.lRx, conflictingState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(conflictingSecond, static_cast<int>(PhysicalAxis::Rx));
+    QVERIFY(!observeBufferedObjectCorrelation(&conflictingEvidence, conflictingSecond,
+                                               conflictingState.lRx));
+    QCOMPARE(conflictingEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Rx));
+    QCOMPARE(conflictingEvidence.firstNativeValue, 16002L);
+    QVERIFY(!initialX.formattedSourceVerified);
 
     NativeAxisDescriptor reconnectX = describeDirectInputAxisObject(nullptr, tFlightX);
     NativeAxisDescriptor reconnectY = describeDirectInputAxisObject(nullptr, tFlightY);
@@ -4667,19 +4769,6 @@ void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
         fixedBindings[static_cast<size_t>(PhysicalAxis::Y)].sourceIndex)), 101L);
     QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
         fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex)), 606L);
-
-    // Fresh buffered evidence scans every fixed DIJOYSTATE2 member.  This
-    // proves the T.Flight cross-field locations and the Saitek Rz location
-    // without treating either object's reported offset as authoritative.
-    QCOMPARE(uniqueCorrelatedDirectInputStateField(
-        202L, state, initialBindings[static_cast<size_t>(PhysicalAxis::X)]),
-        static_cast<int>(PhysicalAxis::Y));
-    QCOMPARE(uniqueCorrelatedDirectInputStateField(
-        606L, state, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]),
-        static_cast<int>(PhysicalAxis::Rz));
-    DIJOYSTATE2 ambiguousState{};
-    QCOMPARE(uniqueCorrelatedDirectInputStateField(
-        0L, ambiguousState, fixedBindings[static_cast<size_t>(PhysicalAxis::X)]), -1);
 
     // A changed native layout cannot inherit a prior cross-field decision.
     DIDEVICEOBJECTINSTANCEW changedX = tFlightX;

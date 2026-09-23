@@ -31,6 +31,23 @@ int uniqueCorrelatedDirectInputStateField(LONG bufferedValue,
                                           const DIJOYSTATE2 &state,
                                           const RuntimeAxisAcquisition &binding);
 
+// A contradictory DirectInput object needs two independent, fresh buffered
+// observations before its formatted DIJOYSTATE2 state member is durable. This
+// is deliberately fixed-size report-loop state: it retains one provisional
+// field/value pair and has no ownership, allocation, or timer semantics.
+struct BufferedObjectCorrelationEvidence {
+    int provisionalSource = -1;
+    LONG firstNativeValue = 0;
+    bool hasProvisional = false;
+};
+
+// Record one already-unique correlation. Returns true only when a later
+// correlation names the same state field and carries a distinct native event
+// value. An ambiguous/invalid field contributes no evidence; a conflicting
+// unique field restarts the bounded provisional record.
+bool observeBufferedObjectCorrelation(BufferedObjectCorrelationEvidence *evidence,
+                                      int uniqueFormattedSource, LONG nativeValue);
+
 // Capture object metadata before the mapper requests its normalized report
 // range.  This data is durable device capability evidence, never a report-path
 // lookup table.

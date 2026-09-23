@@ -1559,6 +1559,9 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
     std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
     std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
     std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
+    // One bounded provisional correlation per native object. It is consulted
+    // only for a newly queued buffered event, never by ordinary state reads.
+    std::array<BufferedObjectCorrelationEvidence, kPhysicalAxisCount> bufferedCorrelationEvidence{};
     std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
     // Established at enumeration. A buffered proof may promote a source only
     // when the saved native signature still matches the open DirectInput object.
@@ -1820,6 +1823,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         axisAcquisitions = {};
         manualAcquisitionApplied.fill(false);
         bufferedAxisValuesKnown.fill(false);
+        bufferedCorrelationEvidence = {};
         axisAcquisitionMethods.fill(0);
         axisEvidenceCompatible.fill(false);
         lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -2025,6 +2029,10 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         }
         auto prepared = preparedConfigurationCopy();
         configuration = std::move(prepared.first);
+        // A configuration mutation may replace a manual/automatic acquisition
+        // contract. Never combine its new bindings with provisional evidence
+        // captured for the previous control-plane state.
+        bufferedCorrelationEvidence = {};
         for (int index = 0; index < kPhysicalAxisCount; ++index) {
             fixedAxes[static_cast<size_t>(index)] = configuration.axisActivity[static_cast<size_t>(index)]
                 == PhysicalAxisActivity::Fixed;
@@ -2254,8 +2262,15 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
         // newly queued data (or after a prior source resolution selected it).
         // The common state path remains one fixed-field read per axis.
         bool bufferedSourceInUse = false;
-        for (int method : axisAcquisitionMethods) {
-            bufferedSourceInUse = bufferedSourceInUse || method == 1 || method == 3;
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            const size_t index = static_cast<size_t>(axis);
+            bufferedSourceInUse = bufferedSourceInUse
+                || axisAcquisitionMethods[index] == 1
+                || axisAcquisitionMethods[index] == 3
+                // If event notifications are unavailable, keep draining the
+                // bounded buffer while a first unique correlation awaits a
+                // second, distinct confirmation.
+                || bufferedCorrelationEvidence[index].hasProvisional;
         }
         std::array<bool, kPhysicalAxisCount> bufferedAxisEvents{};
         if (waitResult == WAIT_OBJECT_0 || bufferedSourceInUse) {
@@ -2316,6 +2331,7 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 // signature-bound correlation promote it to a fixed field
                 // when fresh reports provide that proof.
                 && axisAcquisitionMethods[static_cast<size_t>(index)] != 3
+                && !axisDescriptors[static_cast<size_t>(index)].formattedSourceVerified
                 && !manualAcquisitionApplied[static_cast<size_t>(index)]
                 && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0) {
                 const NativeAxisDescriptor &descriptor = axisDescriptors[static_cast<size_t>(index)];
@@ -2324,15 +2340,20 @@ void MappingWorker::runSingleDevice(IDirectInput8W *directInput)
                 const bool candidateDisagrees = std::abs(normalizeRuntimeAxisAcquisition(
                         bufferedAxisValues[static_cast<size_t>(index)], binding)
                     - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F;
-                const bool fixedFieldProven = axisEvidenceCompatible[static_cast<size_t>(index)]
+                const bool evidenceEligible = axisEvidenceCompatible[static_cast<size_t>(index)]
                     && descriptor.metadataContradiction
                     && descriptor.formattedSourceEvidence
                         == AxisFormattedSourceEvidence::ReportedOffsetCandidate
-                    && !descriptor.formattedSourceVerified
-                    && correlatedSource >= 0;
+                    && !descriptor.formattedSourceVerified;
+                const bool fixedFieldProven = evidenceEligible
+                    && observeBufferedObjectCorrelation(
+                        &bufferedCorrelationEvidence[static_cast<size_t>(index)],
+                        correlatedSource, bufferedAxisValues[static_cast<size_t>(index)]);
                 // Method 3 signals a proven alternate fixed field. The GUI
-                // persists it and this worker resumes direct state reads; an
-                // uncorroborated mismatch retains buffered safety fallback.
+                // persists it and this worker resumes direct state reads. A
+                // single match is provisional; only two distinct, consistent
+                // native events can reach this branch. An uncorroborated
+                // mismatch retains buffered safety fallback.
                 if (fixedFieldProven) {
                     axisAcquisitionMethods[static_cast<size_t>(index)] = 3;
                     m_runtime.axisAcquisitionSource[index] = 3;
@@ -2906,6 +2927,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         std::array<bool, kPhysicalAxisCount> manualAcquisitionApplied{};
         std::array<LONG, kPhysicalAxisCount> bufferedAxisValues{};
         std::array<bool, kPhysicalAxisCount> bufferedAxisValuesKnown{};
+        std::array<BufferedObjectCorrelationEvidence, kPhysicalAxisCount> bufferedCorrelationEvidence{};
         std::array<int, kPhysicalAxisCount> axisAcquisitionMethods{};
         std::array<bool, kPhysicalAxisCount> axisEvidenceCompatible{};
         std::array<float, kPhysicalAxisCount> lastObservedAxisValues{};
@@ -3083,6 +3105,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
         session.axisAcquisitions = {};
         session.manualAcquisitionApplied.fill(false);
         session.bufferedAxisValuesKnown.fill(false);
+        session.bufferedCorrelationEvidence = {};
         session.axisAcquisitionMethods.fill(0);
         session.axisEvidenceCompatible.fill(false);
         session.lastObservedAxisValues.fill(std::numeric_limits<float>::quiet_NaN());
@@ -3373,8 +3396,12 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                 ResetEvent(session.inputEvent);
             }
             bool bufferedSourceInUse = false;
-            for (int method : session.axisAcquisitionMethods) {
-                bufferedSourceInUse = bufferedSourceInUse || method == 1 || method == 3;
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                const size_t axisIndex = static_cast<size_t>(axis);
+                bufferedSourceInUse = bufferedSourceInUse
+                    || session.axisAcquisitionMethods[axisIndex] == 1
+                    || session.axisAcquisitionMethods[axisIndex] == 3
+                    || session.bufferedCorrelationEvidence[axisIndex].hasProvisional;
             }
             std::array<bool, kPhysicalAxisCount> bufferedAxisEvents{};
             if (bufferedEvent || bufferedSourceInUse) {
@@ -3438,6 +3465,7 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                     if (bufferedAxisEvents[static_cast<size_t>(axis)]
                         && session.bufferedAxisValuesKnown[static_cast<size_t>(axis)]
                         && session.axisAcquisitionMethods[static_cast<size_t>(axis)] != 3
+                        && !session.axisDescriptors[static_cast<size_t>(axis)].formattedSourceVerified
                         && !session.manualAcquisitionApplied[static_cast<size_t>(axis)]
                         && (binding.flags & RuntimeAxisAcquisitionAllowBufferedEvidence) != 0) {
                         const NativeAxisDescriptor &descriptor = session.axisDescriptors[
@@ -3447,13 +3475,17 @@ void MappingWorker::runDeviceRig(IDirectInput8W *directInput)
                         const bool candidateDisagrees = std::abs(normalizeRuntimeAxisAcquisition(
                                 session.bufferedAxisValues[static_cast<size_t>(axis)], binding)
                             - normalizeRuntimeAxisAcquisition(standardValue, binding)) > 0.002F;
-                        const bool fixedFieldProven = session.axisEvidenceCompatible[
+                        const bool evidenceEligible = session.axisEvidenceCompatible[
                                 static_cast<size_t>(axis)]
                             && descriptor.metadataContradiction
                             && descriptor.formattedSourceEvidence
                                 == AxisFormattedSourceEvidence::ReportedOffsetCandidate
-                            && !descriptor.formattedSourceVerified
-                            && correlatedSource >= 0;
+                            && !descriptor.formattedSourceVerified;
+                        const bool fixedFieldProven = evidenceEligible
+                            && observeBufferedObjectCorrelation(
+                                &session.bufferedCorrelationEvidence[static_cast<size_t>(axis)],
+                                correlatedSource,
+                                session.bufferedAxisValues[static_cast<size_t>(axis)]);
                         if (fixedFieldProven) {
                             session.axisAcquisitionMethods[static_cast<size_t>(axis)] = 3;
                             m_runtime.deviceRigMemberAxisResolvedFormattedSource[

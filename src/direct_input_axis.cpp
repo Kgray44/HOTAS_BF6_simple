@@ -163,6 +163,29 @@ int uniqueCorrelatedDirectInputStateField(LONG bufferedValue,
     return matchedSource;
 }
 
+bool observeBufferedObjectCorrelation(BufferedObjectCorrelationEvidence *evidence,
+                                      int uniqueFormattedSource, LONG nativeValue)
+{
+    if (!evidence || uniqueFormattedSource < 0
+        || uniqueFormattedSource >= kPhysicalAxisCount) {
+        // Ambiguous events deliberately leave prior, independently collected
+        // evidence untouched: they neither prove nor disprove a field.
+        return false;
+    }
+    if (!evidence->hasProvisional
+        || evidence->provisionalSource != uniqueFormattedSource) {
+        // A different unique field is contradictory evidence. Start over
+        // from that new field rather than combining unrelated samples.
+        evidence->provisionalSource = uniqueFormattedSource;
+        evidence->firstNativeValue = nativeValue;
+        evidence->hasProvisional = true;
+        return false;
+    }
+    // Repeated data can be the same buffered report delivered again. It is
+    // not independent corroboration unless the native object value changed.
+    return evidence->firstNativeValue != nativeValue;
+}
+
 namespace {
 
 QString guidString(const GUID &guid)
