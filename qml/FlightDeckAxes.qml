@@ -264,8 +264,10 @@ Flickable {
 
     Connections {
         target: backend
-        function onStateChanged() {
+        function onAxisConfigurationChanged() {
             root.configurationRevision += 1;
+        }
+        function onStateChanged() {
             const identification = backend.axisIdentification || {};
             // A capability refresh is asynchronous. Close only after its
             // durable override commit succeeds, not when the button is pressed.

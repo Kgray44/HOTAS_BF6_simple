@@ -16,7 +16,20 @@ public:
         qint64 syncNs = 0;
     };
 
+    // Read-only truth about the persisted payload accompanies the normal
+    // configuration result. Setup verification uses it to distinguish a
+    // missing record from an invalid/fallback reload without changing normal
+    // ConfigStore migration behavior.
+    struct LoadResult {
+        MapperConfiguration configuration;
+        bool documentValid = false;
+        bool configurationValid = false;
+        int schemaVersion = 0;
+        bool migrationPersisted = false;
+    };
+
     static MapperConfiguration load();
+    static LoadResult loadDetailed();
     static bool save(const MapperConfiguration &configuration);
     // ConfigStore remains the synchronous low-level writer. The coordinator
     // uses this timed form from its own serial control-plane thread; callers

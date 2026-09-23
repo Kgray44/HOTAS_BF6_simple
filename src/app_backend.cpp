@@ -660,6 +660,8 @@ AppBackend::AppBackend(QObject *parent)
     m_uiPerformanceInstrumentationEnabled = qEnvironmentVariableIntValue("HOTAS_ENABLE_UI_PERFORMANCE_INSTRUMENTATION") != 0;
     if (m_uiPerformanceInstrumentationEnabled) {
         connect(this, &AppBackend::stateChanged, this, [this] { ++m_stateChangedNotifications; });
+        connect(this, &AppBackend::axisConfigurationChanged, this,
+                [this] { ++m_axisConfigurationChangedNotifications; });
         connect(this, &AppBackend::telemetryChanged, this, [this] { ++m_telemetryChangedNotifications; });
         connect(this, &AppBackend::inputTelemetryChanged, this, [this] { ++m_inputTelemetryChangedNotifications; });
         connect(this, &AppBackend::buttonTelemetryChanged, this, [this] { ++m_buttonTelemetryChangedNotifications; });
@@ -1033,6 +1035,7 @@ void AppBackend::flushPersistenceForShutdown()
 
 QVariantList AppBackend::axisConfiguration() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_axisConfigurationGetterCalls;
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const ControllerProfile &profile = currentProfile();
@@ -1252,6 +1255,7 @@ QVariantList AppBackend::axisConfiguration() const
 
 QVariantList AppBackend::axisTelemetry() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_axisTelemetryGetterCalls;
     QVariantList result;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
@@ -2197,6 +2201,51 @@ const AtomicAdaptiveTelemetry *AppBackend::adaptiveTelemetrySource(QString *reco
     return nullptr;
 }
 
+QList<AppBackend::RuntimeAxisEvidenceOwner> AppBackend::runtimeAxisEvidenceOwners() const
+{
+    QList<RuntimeAxisEvidenceOwner> owners;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(
+            m_configuration, rig->id, m_configuration.activeProfileId);
+        if (!compiled.valid) return owners;
+        for (int memberIndex = 0; memberIndex < compiled.memberCount; ++memberIndex) {
+            if (!runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)].load(
+                    std::memory_order_relaxed)) {
+                continue;
+            }
+            const QString &recordId = compiled.members[static_cast<size_t>(memberIndex)].controllerRecordId;
+            if (!recordId.isEmpty() && savedControllerRecord(recordId)) {
+                owners.append({recordId, memberIndex});
+            }
+        }
+        return owners;
+    }
+
+    if (!runtime.physicalConnected.load(std::memory_order_relaxed)) return owners;
+    const DeviceSnapshot session = m_worker.deviceSnapshot();
+    PhysicalControllerCapabilities observed;
+    observed.directInputId = session.id;
+    observed.hidInstanceId = session.hidInstanceId;
+    observed.hidContainerId = session.hidContainerId;
+    if (observed.directInputId.isEmpty()) return owners;
+
+    QString exactRecordId;
+    for (const SavedControllerRecord &record : m_configuration.savedControllers) {
+        PhysicalControllerCapabilities saved;
+        saved.directInputId = record.lastDirectInputId;
+        saved.hidInstanceId = record.hidInstanceId;
+        saved.hidContainerId = record.hidContainerId;
+        if (!ControllerReadinessService::samePhysicalController(saved, observed)) continue;
+        // A session may not be attributed to an ambiguous saved identity. This
+        // is deliberately stricter than matching by name, VID/PID, or ordinal.
+        if (!exactRecordId.isEmpty()) return {};
+        exactRecordId = record.id;
+    }
+    if (!exactRecordId.isEmpty()) owners.append({exactRecordId, -1});
+    return owners;
+}
+
 QVariantMap AppBackend::adaptiveResponseTelemetry() const
 {
     const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
@@ -2661,6 +2710,208 @@ bool AppBackend::configureAxisAcquisitionFixtureForTest()
     m_worker.setAxisSourceMonitorRequested(false);
     emit stateChanged();
     return true;
+}
+
+bool AppBackend::configureStandaloneAxisEvidenceFixtureForTest()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    MapperConfiguration candidate = defaultConfiguration();
+    candidate.savedControllers.clear();
+    candidate.deviceRigs.clear();
+    candidate.activeDeviceRigId.clear();
+    candidate.editingDeviceRigId.clear();
+    candidate.editingDeviceRecordIds.clear();
+
+    SavedControllerRecord record;
+    record.id = QLatin1String(kRecordId);
+    record.displayName = u"T.Flight Axis Evidence Fixture"_qs;
+    record.lastDirectInputId = u"{standalone-axis-evidence}"_qs;
+    record.productGuid = u"{standalone-axis-evidence-product}"_qs;
+    record.hidInstanceId = u"HID\\STANDALONE_AXIS_EVIDENCE\\1"_qs;
+    record.hidContainerId = u"{standalone-axis-evidence-container}"_qs;
+    record.axisCount = 2;
+    record.buttonCount = 15;
+    record.povCount = 1;
+    for (int axis = 0; axis < 2; ++axis) {
+        const size_t index = static_cast<size_t>(axis);
+        NativeAxisDescriptor &descriptor = record.axisDescriptors[index];
+        descriptor.present = true;
+        descriptor.nativeName = QString(u"Fixture %1"_qs)
+            .arg(physicalAxisLabel(static_cast<PhysicalAxis>(axis)));
+        descriptor.directInputGuid = axis == static_cast<int>(PhysicalAxis::X)
+            ? u"GUID_XAxis"_qs : u"GUID_YAxis"_qs;
+        descriptor.directInputType = 0x1000U + static_cast<quint32>(axis);
+        // Mirror the real T.Flight cross-field shape: native X reports Y's
+        // slot and native Y reports X's slot. Buffered evidence later proves
+        // those formatted sources without any vendor-specific branch.
+        descriptor.directInputOffset = axis == static_cast<int>(PhysicalAxis::X) ? 4U : 0U;
+        descriptor.directInputInstance = static_cast<quint32>(axis);
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.canonicalAxis = axis;
+        descriptor.formattedSource = axis;
+        descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+        descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+        record.axes[index] = true;
+    }
+    candidate.savedControllers.push_back(record);
+    candidate.activeControllerRecordId = record.id;
+    candidate.preferredDeviceId = record.lastDirectInputId;
+
+    DiscoveredController discovered;
+    discovered.name = record.displayName;
+    discovered.directInputId = record.lastDirectInputId;
+    discovered.productGuid = record.productGuid;
+    discovered.hidInstanceId = record.hidInstanceId;
+    discovered.hidContainerId = record.hidContainerId;
+    discovered.axes = record.axes;
+    discovered.axisDescriptors = record.axisDescriptors;
+    discovered.axisCount = record.axisCount;
+    discovered.buttonCount = record.buttonCount;
+    discovered.povCount = record.povCount;
+    discovered.connected = true;
+
+    if (!ConfigStore::save(candidate)) return false;
+    m_configuration = std::move(candidate);
+    m_discoveredControllers = {discovered};
+    m_controllerInventoryInitialized = true;
+    ++m_configurationGeneration;
+    m_worker.updateConfiguration(m_configuration);
+    m_worker.setDeviceSnapshotForTest({record.displayName, record.lastDirectInputId,
+                                       record.hidInstanceId, record.hidContainerId});
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    runtime.physicalReportsSinceAcquisition.store(1, std::memory_order_relaxed);
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        const size_t index = static_cast<size_t>(axis);
+        runtime.axisAcquisitionSource[index].store(-1, std::memory_order_relaxed);
+        runtime.axisResolvedFormattedSource[index].store(-1, std::memory_order_relaxed);
+    }
+    reconcileDeviceRigInventory();
+    rebuildControllerUiModel();
+    emit axisConfigurationChanged();
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::configureDeviceRigAxisEvidenceFixtureForTest()
+{
+    constexpr auto kPrimaryId = "activation-transaction-controller";
+    constexpr auto kSecondaryId = "multi-controller-xbox";
+    if (!configureMultiControllerRigFixtureForTest()) return false;
+    for (const QString &recordId : {QLatin1String(kPrimaryId), QLatin1String(kSecondaryId)}) {
+        auto record = std::find_if(m_configuration.savedControllers.begin(),
+            m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
+                return candidate.id == recordId;
+            });
+        if (record == m_configuration.savedControllers.end()) return false;
+        record->axisCount = 2;
+        for (int axis = 0; axis < 2; ++axis) {
+            const size_t index = static_cast<size_t>(axis);
+            NativeAxisDescriptor &descriptor = record->axisDescriptors[index];
+            descriptor.present = true;
+            descriptor.nativeName = QString(u"%1 %2"_qs).arg(record->displayName,
+                physicalAxisLabel(static_cast<PhysicalAxis>(axis)));
+            descriptor.directInputGuid = axis == static_cast<int>(PhysicalAxis::X)
+                ? u"GUID_XAxis"_qs : u"GUID_YAxis"_qs;
+            descriptor.directInputType = 0x2000U + static_cast<quint32>(axis);
+            descriptor.directInputOffset = axis == static_cast<int>(PhysicalAxis::X) ? 4U : 0U;
+            descriptor.directInputInstance = static_cast<quint32>(axis);
+            descriptor.nativeMinimum = 0;
+            descriptor.nativeMaximum = 65535;
+            descriptor.canonicalAxis = axis;
+            descriptor.formattedSource = axis;
+            descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+            descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+            record->axes[index] = true;
+        }
+    }
+    // All Devices is deliberate: proof ownership must not require an editor
+    // selection, even when the active mapping topology is a multi-member Rig.
+    m_configuration.editingDeviceRigId.clear();
+    m_configuration.editingDeviceRecordIds.clear();
+    if (!ConfigStore::save(m_configuration)) return false;
+    ++m_configurationGeneration;
+    m_worker.updateConfiguration(m_configuration);
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    for (int member = 0; member < 2; ++member) {
+        runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(member)].store(
+            true, std::memory_order_relaxed);
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            const size_t index = static_cast<size_t>(axis);
+            runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(member)][index].store(
+                -1, std::memory_order_relaxed);
+            runtime.deviceRigMemberAxisResolvedFormattedSource[static_cast<size_t>(member)][index].store(
+                -1, std::memory_order_relaxed);
+        }
+    }
+    emit axisConfigurationChanged();
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::publishRuntimeAxisEvidenceForTest(const QString &recordId, int canonicalAxis,
+                                                   int formattedSource)
+{
+    if (!validAxis(canonicalAxis) || !validAxis(formattedSource)
+        || !savedControllerRecord(recordId)) {
+        return false;
+    }
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    int memberIndex = -1;
+    if (const DeviceRig *rig = activeDeviceRig()) {
+        const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(
+            m_configuration, rig->id, m_configuration.activeProfileId);
+        if (!compiled.valid) return false;
+        for (int index = 0; index < compiled.memberCount; ++index) {
+            if (compiled.members[static_cast<size_t>(index)].controllerRecordId == recordId) {
+                memberIndex = index;
+                break;
+            }
+        }
+        if (memberIndex < 0) return false;
+        runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)].store(
+            true, std::memory_order_relaxed);
+        runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(memberIndex)]
+            [static_cast<size_t>(canonicalAxis)].store(3, std::memory_order_relaxed);
+        runtime.deviceRigMemberAxisResolvedFormattedSource[static_cast<size_t>(memberIndex)]
+            [static_cast<size_t>(canonicalAxis)].store(formattedSource, std::memory_order_relaxed);
+        return true;
+    }
+
+    const QList<RuntimeAxisEvidenceOwner> owners = runtimeAxisEvidenceOwners();
+    if (owners.size() != 1 || owners.front().recordId != recordId || owners.front().memberIndex != -1) {
+        return false;
+    }
+    runtime.physicalConnected.store(true, std::memory_order_relaxed);
+    runtime.axisAcquisitionSource[static_cast<size_t>(canonicalAxis)].store(3,
+        std::memory_order_relaxed);
+    runtime.axisResolvedFormattedSource[static_cast<size_t>(canonicalAxis)].store(formattedSource,
+        std::memory_order_relaxed);
+    return true;
+}
+
+bool AppBackend::persistRuntimeAxisEvidenceForTest()
+{
+    refreshUiSnapshot();
+    if (!m_persistence) return false;
+    return m_persistence->flushLatest(kPersistenceTransactionTimeoutMs).durable();
+}
+
+QVariantMap AppBackend::persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const
+{
+    if (!validAxis(canonicalAxis)) return {};
+    const MapperConfiguration persisted = ConfigStore::load();
+    const auto record = std::find_if(persisted.savedControllers.cbegin(), persisted.savedControllers.cend(),
+        [&recordId](const SavedControllerRecord &candidate) { return candidate.id == recordId; });
+    if (record == persisted.savedControllers.cend()) return {};
+    const NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(canonicalAxis)];
+    return {{u"found"_qs, true}, {u"formattedSource"_qs, descriptor.formattedSource},
+            {u"evidence"_qs, static_cast<int>(descriptor.formattedSourceEvidence)},
+            {u"verified"_qs, descriptor.formattedSourceVerified},
+            {u"acquisitionMethod"_qs, descriptor.acquisitionMethod},
+            {u"lastVerified"_qs, record->lastVerified}};
 }
 
 bool AppBackend::axisAcquisitionPreviewIsHardwareIsolatedForTest() const
@@ -3401,6 +3652,7 @@ bool AppBackend::completeControllerVerificationConvergenceForTest()
     proof.connected = true;
     proof.inputReportsReceived = true;
     proof.axes = discovered->axes;
+    proof.axisDescriptors = discovered->axisDescriptors;
     proof.buttons = discovered->buttonCount;
     proof.povs = discovered->povCount;
 
@@ -7516,6 +7768,7 @@ bool AppBackend::setEditingDeviceContext(const QString &rigId, const QStringList
     emit inputTelemetryChanged();
     emit buttonTelemetryChanged();
     emit deviceRigsChanged();
+    emit axisConfigurationChanged();
     emit stateChanged();
     return true;
 }
@@ -15906,6 +16159,7 @@ bool AppBackend::selectProfileForEditing(const QString &profileId)
     rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit selectedProfileChanged();
+    emit axisConfigurationChanged();
     emit inputTelemetryChanged();
     emit buttonTelemetryChanged();
     // Editors consume stateChanged, while the mapper does not: this is an
@@ -19918,6 +20172,7 @@ ControllerDiagnosticsSnapshot AppBackend::controllerDiagnosticsSnapshot() const
             activeOutputLayout() && layout.id == activeOutputLayout()->id, layout.hidhideManaged, hidden});
     }
     diagnostics.selectedHidInstance = diagnostics.physical.hidInstanceId;
+    diagnostics.verificationDurabilityReadback = m_lastVerificationDurabilityReadback;
     return diagnostics;
 }
 
@@ -20130,7 +20385,29 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     found->lastSeen = timestamp;
     found->lastVerified = timestamp;
 
-    if (!persistConfigurationTransaction(candidate, kPersistenceTransactionTimeoutMs)) {
+    if (!m_persistence) {
+        return reject(u"HOTAS BF6 proved the selected controller but its persistence service was unavailable. No controller, HidHide, or vJoy setting was changed."_qs);
+    }
+    const ConfigPersistenceCoordinator::FlushResult transaction =
+        m_persistence->requestAndFlushExact(candidate, kPersistenceTransactionTimeoutMs);
+    struct ExactPersistenceRelease final {
+        ConfigPersistenceCoordinator *coordinator = nullptr;
+        quint64 generation = 0;
+        ~ExactPersistenceRelease()
+        {
+            if (coordinator) coordinator->completeExact(generation);
+        }
+    } release{m_persistence.get(), transaction.generation};
+    recordPersistenceProbeTelemetry();
+    if (!transaction.durable()) {
+        m_lastVerificationDurabilityReadback = QStringList{
+            QString(u"Record expected: %1"_qs).arg(recordId),
+            u"Record found: NOT READ"_qs,
+            u"Config parse: NOT READ"_qs,
+            QString(u"Persistence generation: %1"_qs).arg(transaction.generation),
+            QString(u"Durable generation: %1"_qs).arg(transaction.durableGeneration),
+            QString(u"Persistence result: %1"_qs).arg(static_cast<int>(transaction.status)),
+        }.join(u'\n');
         return reject(u"HOTAS BF6 proved the selected controller but could not save its verification record. No controller, HidHide, or vJoy setting was changed."_qs);
     }
 
@@ -20138,7 +20415,8 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     // session. Read the durable record back before allowing this commit to
     // affect Rig eligibility; otherwise the next CHECK can be the first
     // consumer to see the verified identity.
-    const MapperConfiguration persisted = ConfigStore::load();
+    const ConfigStore::LoadResult loaded = ConfigStore::loadDetailed();
+    const MapperConfiguration &persisted = loaded.configuration;
     const auto persistedRecord = std::find_if(persisted.savedControllers.cbegin(),
                                               persisted.savedControllers.cend(),
         [&recordId](const SavedControllerRecord &record) { return record.id == recordId; });
@@ -20148,10 +20426,65 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
         persistedIdentity.hidInstanceId = persistedRecord->hidInstanceId;
         persistedIdentity.hidContainerId = persistedRecord->hidContainerId;
     }
-    if (persistedRecord == persisted.savedControllers.cend()
-        || persistedRecord->lastVerified != timestamp
-        || !ControllerReadinessService::samePhysicalController(persistedIdentity, observedProof)) {
-        return reject(u"HOTAS BF6 saved controller verification but could not read back the exact verified record. The setup session will keep the previous readiness state."_qs);
+    const auto identityAuthority = [&persistedIdentity, &observedProof] {
+        if (!persistedIdentity.hidContainerId.isEmpty() && !observedProof.hidContainerId.isEmpty())
+            return u"HID container"_qs;
+        if (!persistedIdentity.hidInstanceId.isEmpty() && !observedProof.hidInstanceId.isEmpty())
+            return u"HID instance"_qs;
+        return u"DirectInput"_qs;
+    };
+    const bool recordFound = persistedRecord != persisted.savedControllers.cend();
+    const QString persistedTimestamp = recordFound ? persistedRecord->lastVerified : QString{};
+    const bool timestampMatches = recordFound && persistedTimestamp == timestamp;
+    const bool directInputMatches = recordFound
+        && persistedIdentity.directInputId.compare(observedProof.directInputId, Qt::CaseInsensitive) == 0;
+    const bool instanceUsed = !persistedIdentity.hidInstanceId.isEmpty()
+        && !observedProof.hidInstanceId.isEmpty();
+    const bool instanceMatches = instanceUsed
+        && ControllerReadinessService::normalizeDeviceInstanceId(persistedIdentity.hidInstanceId)
+            == ControllerReadinessService::normalizeDeviceInstanceId(observedProof.hidInstanceId);
+    const bool containerUsed = !persistedIdentity.hidContainerId.isEmpty()
+        && !observedProof.hidContainerId.isEmpty();
+    const bool containerMatches = containerUsed
+        && persistedIdentity.hidContainerId.compare(observedProof.hidContainerId, Qt::CaseInsensitive) == 0;
+    const bool identityMatches = recordFound
+        && ControllerReadinessService::samePhysicalController(persistedIdentity, observedProof);
+    m_lastVerificationDurabilityReadback = QStringList{
+        QString(u"Record expected: %1"_qs).arg(recordId),
+        QString(u"Record found: %1"_qs).arg(recordFound ? u"YES"_qs : u"NO"_qs),
+        QString(u"Timestamp expected: %1"_qs).arg(timestamp),
+        QString(u"Timestamp persisted: %1"_qs).arg(persistedTimestamp),
+        QString(u"Timestamp match: %1"_qs).arg(timestampMatches ? u"YES"_qs : u"NO"_qs),
+        QString(u"DirectInput ID expected: %1"_qs).arg(observedProof.directInputId),
+        QString(u"DirectInput ID persisted: %1"_qs).arg(persistedIdentity.directInputId),
+        QString(u"DirectInput match: %1"_qs).arg(directInputMatches ? u"YES"_qs : u"NO"_qs),
+        QString(u"HID instance expected: %1"_qs).arg(observedProof.hidInstanceId),
+        QString(u"HID instance persisted: %1"_qs).arg(persistedIdentity.hidInstanceId),
+        QString(u"Normalized HID instance match: %1"_qs).arg(instanceUsed
+            ? (instanceMatches ? u"YES"_qs : u"NO"_qs) : u"NOT USED"_qs),
+        QString(u"HID container expected: %1"_qs).arg(observedProof.hidContainerId),
+        QString(u"HID container persisted: %1"_qs).arg(persistedIdentity.hidContainerId),
+        QString(u"Container match: %1"_qs).arg(containerUsed
+            ? (containerMatches ? u"YES"_qs : u"NO"_qs) : u"NOT USED"_qs),
+        QString(u"Identity authority used: %1"_qs).arg(identityAuthority()),
+        QString(u"Config schema: %1"_qs).arg(loaded.schemaVersion),
+        QString(u"Config parse: %1"_qs).arg(loaded.documentValid && loaded.configurationValid
+            ? u"VALID"_qs : u"INVALID"_qs),
+        QString(u"Persistence generation: %1"_qs).arg(transaction.generation),
+        QString(u"Durable generation: %1"_qs).arg(transaction.durableGeneration),
+    }.join(u'\n');
+    if (!loaded.documentValid || !loaded.configurationValid) {
+        return reject(u"HOTAS BF6 saved controller verification but the configuration reload was invalid. The setup session will keep the previous readiness state."_qs);
+    }
+    if (!recordFound) {
+        return reject(u"HOTAS BF6 saved controller verification but the verified record was missing on read-back. The setup session will keep the previous readiness state."_qs);
+    }
+    if (!timestampMatches) {
+        return reject(u"HOTAS BF6 saved controller verification but its verification timestamp did not match on read-back. The setup session will keep the previous readiness state."_qs);
+    }
+    if (!identityMatches) {
+        return reject(QString(u"HOTAS BF6 saved controller verification but its %1 identity did not match on read-back. The setup session will keep the previous readiness state."_qs)
+            .arg(identityAuthority()));
     }
     m_configuration = std::move(candidate);
     ++m_configurationGeneration;
@@ -20161,6 +20494,7 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     // ActivationContext path that a physical removal/arrival would refresh.
     reconcileDeviceRigInventory();
     rebuildControllerUiModel();
+    emit axisConfigurationChanged();
     appendEvent(QString(u"Exact controller verification committed without changing the active rig: %1"_qs)
         .arg(recordId));
     scheduleAutomaticSetupTruthRefresh();
@@ -20844,6 +21178,7 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
         emit controllerSetupRequested(newlyDiscoveredUnverifiedIds);
     }
     if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();
+    if (inventoryChanged) emit axisConfigurationChanged();
 }
 
 void AppBackend::reconcileDeviceRigInventory()
@@ -21441,64 +21776,67 @@ void AppBackend::refreshUiSnapshot()
     // presentation allocation is performed during DirectInput-to-vJoy work.
     sampleCalibrationControlPlane();
     processInputLearning();
-    // A fallback source becomes durable only after the mapper has observed a
-    // contradiction for this exact selected controller. This GUI-side commit
-    // is deliberately outside the report loop: the worker writes a small
-    // atomic method value, and this bounded presentation tick persists it.
-    const QString acquisitionRecordId = selectedEditingControllerId();
-    if (!acquisitionRecordId.isEmpty()) {
-        int sourceMemberIndex = -1;
-        const AtomicAdaptiveTelemetry *source = adaptiveTelemetrySource(nullptr, &sourceMemberIndex);
-        const bool sourceConnected = source && (sourceMemberIndex < 0
-            ? m_worker.runtime().physicalConnected.load(std::memory_order_relaxed)
-            : m_worker.runtime().deviceRigMemberPhysicalConnected[
-                static_cast<size_t>(sourceMemberIndex)].load(std::memory_order_relaxed));
-        if (sourceConnected) {
-            auto record = std::find_if(m_configuration.savedControllers.begin(),
-                m_configuration.savedControllers.end(), [&acquisitionRecordId](const SavedControllerRecord &candidate) {
-                    return candidate.id == acquisitionRecordId;
-                });
-            bool changed = false;
-            if (record != m_configuration.savedControllers.end()) {
-                for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
-                    const int method = sourceMemberIndex < 0
-                        ? m_worker.runtime().axisAcquisitionSource[static_cast<size_t>(axis)].load()
-                        : m_worker.runtime().deviceRigMemberAxisAcquisitionSource[
-                            static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
-                    NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(axis)];
-                    if (descriptor.present && method == 3) {
-                        const int correlatedSource = sourceMemberIndex < 0
-                            ? m_worker.runtime().axisResolvedFormattedSource[
-                                static_cast<size_t>(axis)].load()
-                            : m_worker.runtime().deviceRigMemberAxisResolvedFormattedSource[
-                                static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
-                        if (correlatedSource >= 0 && correlatedSource < kPhysicalAxisCount
-                            && (!descriptor.formattedSourceVerified
-                                || descriptor.formattedSource != correlatedSource
-                                || descriptor.formattedSourceEvidence
-                                    != AxisFormattedSourceEvidence::BufferedObjectCorrelation
-                                || descriptor.acquisitionMethod != 0)) {
-                            descriptor.formattedSource = correlatedSource;
-                            descriptor.formattedSourceEvidence =
-                                AxisFormattedSourceEvidence::BufferedObjectCorrelation;
-                            descriptor.formattedSourceVerified = true;
-                            descriptor.acquisitionMethod = 0;
-                            descriptor.acquisitionSourceResolved = true;
-                            changed = true;
-                        }
-                    } else if (descriptor.present && method == 1
-                               && descriptor.acquisitionMethod != 1) {
-                        descriptor.acquisitionMethod = 1;
-                        descriptor.acquisitionSourceResolved = true;
-                        changed = true;
-                    }
+    // Automatic source proof belongs to the worker session that produced it,
+    // not to the page or the Selected Device/editor context. This bounded
+    // control-plane tick reads fixed atomics only; it never enters the
+    // DirectInput -> MappingWorker -> vJoy report path.
+    MapperConfiguration evidenceCandidate = m_configuration;
+    QStringList evidenceOwnerIds;
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    for (const RuntimeAxisEvidenceOwner &owner : runtimeAxisEvidenceOwners()) {
+        auto record = std::find_if(evidenceCandidate.savedControllers.begin(),
+            evidenceCandidate.savedControllers.end(), [&owner](const SavedControllerRecord &candidate) {
+                return candidate.id == owner.recordId;
+            });
+        if (record == evidenceCandidate.savedControllers.end()) continue;
+        bool ownerChanged = false;
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            const size_t axisIndex = static_cast<size_t>(axis);
+            const int method = owner.memberIndex < 0
+                ? runtime.axisAcquisitionSource[axisIndex].load(std::memory_order_relaxed)
+                : runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(owner.memberIndex)]
+                    [axisIndex].load(std::memory_order_relaxed);
+            NativeAxisDescriptor &descriptor = record->axisDescriptors[axisIndex];
+            if (descriptor.present && method == 3) {
+                const int correlatedSource = owner.memberIndex < 0
+                    ? runtime.axisResolvedFormattedSource[axisIndex].load(std::memory_order_relaxed)
+                    : runtime.deviceRigMemberAxisResolvedFormattedSource[
+                        static_cast<size_t>(owner.memberIndex)][axisIndex].load(std::memory_order_relaxed);
+                if (correlatedSource >= 0 && correlatedSource < kPhysicalAxisCount
+                    && (!descriptor.formattedSourceVerified
+                        || descriptor.formattedSource != correlatedSource
+                        || descriptor.formattedSourceEvidence
+                            != AxisFormattedSourceEvidence::BufferedObjectCorrelation
+                        || descriptor.acquisitionMethod != 0)) {
+                    descriptor.formattedSource = correlatedSource;
+                    descriptor.formattedSourceEvidence =
+                        AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+                    descriptor.formattedSourceVerified = true;
+                    descriptor.acquisitionMethod = 0;
+                    descriptor.acquisitionSourceResolved = true;
+                    ownerChanged = true;
                 }
+            } else if (descriptor.present && method == 1 && descriptor.acquisitionMethod != 1) {
+                descriptor.acquisitionMethod = 1;
+                descriptor.acquisitionSourceResolved = true;
+                ownerChanged = true;
             }
-            if (changed && ConfigStore::save(m_configuration)) {
-                ++m_configurationGeneration;
-                m_worker.updateConfiguration(m_configuration);
-                appendEvent(u"DirectInput acquisition evidence saved for the selected controller"_qs);
-            }
+        }
+        if (ownerChanged) evidenceOwnerIds.append(owner.recordId);
+    }
+    if (!evidenceOwnerIds.isEmpty() && m_persistence) {
+        const ConfigPersistenceCoordinator::RequestReceipt persistence =
+            m_persistence->request(evidenceCandidate);
+        recordPersistenceProbeTelemetry();
+        if (persistence.generation != 0) {
+            m_configuration = std::move(evidenceCandidate);
+            ++m_configurationGeneration;
+            m_worker.updateConfiguration(m_configuration);
+            emit axisConfigurationChanged();
+            appendEvent(QString(u"DirectInput acquisition evidence queued for %1 exact controller%2"_qs)
+                .arg(evidenceOwnerIds.size()).arg(evidenceOwnerIds.size() == 1 ? QString{} : u"s"_qs));
+        } else {
+            appendEvent(u"DirectInput acquisition evidence was not queued because configuration persistence stopped."_qs);
         }
     }
     const bool selectedAxisChanged = fallBackToAvailableAxis();
@@ -21684,7 +22022,12 @@ QVariantMap AppBackend::uiPerformanceCounters() const
                 QVariant::fromValue(m_selectedButtonTelemetryPublishes)},
             {u"profileGetterCalls"_qs, QVariant::fromValue(m_profileGetterCalls)},
             {u"categoryGetterCalls"_qs, QVariant::fromValue(m_categoryGetterCalls)},
+            {u"axisConfigurationGetterCalls"_qs,
+                QVariant::fromValue(m_axisConfigurationGetterCalls)},
+            {u"axisTelemetryGetterCalls"_qs, QVariant::fromValue(m_axisTelemetryGetterCalls)},
             {u"stateChanged"_qs, QVariant::fromValue(m_stateChangedNotifications)},
+            {u"axisConfigurationChanged"_qs,
+                QVariant::fromValue(m_axisConfigurationChangedNotifications)},
             {u"telemetryChanged"_qs, QVariant::fromValue(m_telemetryChangedNotifications)},
             {u"inputTelemetryChanged"_qs, QVariant::fromValue(m_inputTelemetryChangedNotifications)},
             {u"buttonTelemetryChanged"_qs, QVariant::fromValue(m_buttonTelemetryChangedNotifications)},
@@ -21712,7 +22055,10 @@ void AppBackend::resetUiPerformanceCounters()
     m_selectedButtonTelemetryPublishes = 0;
     m_profileGetterCalls = 0;
     m_categoryGetterCalls = 0;
+    m_axisConfigurationGetterCalls = 0;
+    m_axisTelemetryGetterCalls = 0;
     m_stateChangedNotifications = 0;
+    m_axisConfigurationChangedNotifications = 0;
     m_telemetryChangedNotifications = 0;
     m_inputTelemetryChangedNotifications = 0;
     m_buttonTelemetryChangedNotifications = 0;
@@ -21992,6 +22338,7 @@ void AppBackend::persistAndApply()
     rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit selectedProfileChanged();
+    emit axisConfigurationChanged();
     emit inputTelemetryChanged();
     emit buttonTelemetryChanged();
     emit stateChanged();
@@ -22019,6 +22366,7 @@ bool AppBackend::persistVirtualOutputDescriptorEdit()
     rebuildButtonUiModel();
     emit selectedAxisCurveChanged();
     emit selectedProfileChanged();
+    emit axisConfigurationChanged();
     emit inputTelemetryChanged();
     emit buttonTelemetryChanged();
     emit stateChanged();

@@ -352,6 +352,10 @@ public:
     // Startup-test-only mutation of the bounded published UI snapshot. The
     // production worker exposes only the const observer above.
     AtomicRuntimeState &runtimeForTest() { return m_runtime; }
+    // Installs a synthetic acquisition identity for AppBackend control-plane
+    // tests. It never enumerates DirectInput, changes a device, or enters the
+    // mapping report path.
+    void setDeviceSnapshotForTest(const DeviceSnapshot &snapshot) { setDeviceSnapshot(snapshot); }
 #endif
     // Deterministic test seam for the UI-side live-input contract. It writes
     // the same fixed latest-snapshot atomics DirectInput normally publishes;

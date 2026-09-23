@@ -2,6 +2,7 @@
 
 #include <QMutex>
 #include <QMutexLocker>
+#include <QElapsedTimer>
 #include <QTest>
 #include <QThread>
 #include <QWaitCondition>
@@ -9,6 +10,8 @@
 #include <atomic>
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <thread>
 #include <vector>
 
 namespace hotas {
@@ -34,6 +37,7 @@ class ConfigPersistenceCoordinatorTests final : public QObject {
 private slots:
     void burstCoalescesAndNewestSnapshotWins();
     void stalePendingGenerationIsNeverWritten();
+    void exactTransactionCannotBeSupersededByOrdinarySnapshots();
     void failedWriteDoesNotAdvanceDurabilityAndLaterRequestRecovers();
     void shutdownFlushTimesOutBoundedlyThenStopsWithoutThreadLeak();
 };
@@ -128,6 +132,79 @@ void ConfigPersistenceCoordinatorTests::stalePendingGenerationIsNeverWritten()
     const auto stats = coordinator.statistics();
     QCOMPARE(stats.superseded, quint64{1});
     QCOMPARE(stats.durableGeneration, generation12.generation);
+    QVERIFY(coordinator.stop(1000));
+}
+
+void ConfigPersistenceCoordinatorTests::exactTransactionCannotBeSupersededByOrdinarySnapshots()
+{
+    QMutex gateMutex;
+    QWaitCondition firstWriteStarted;
+    QWaitCondition releaseFirstWrite;
+    bool firstStarted = false;
+    bool release = false;
+    std::vector<int> writtenAxes;
+    ConfigPersistenceCoordinator coordinator([&](const MapperConfiguration &configuration) {
+        QMutexLocker locker(&gateMutex);
+        writtenAxes.push_back(configuration.selectedAxisIndex);
+        if (!firstStarted) {
+            firstStarted = true;
+            firstWriteStarted.wakeAll();
+            while (!release) releaseFirstWrite.wait(&gateMutex);
+        }
+        return successfulWrite();
+    });
+
+    coordinator.request(configurationWithAxis(10));
+    {
+        QMutexLocker locker(&gateMutex);
+        QVERIFY(firstWriteStarted.wait(&gateMutex, 1000));
+    }
+    // This is an ordinary stale snapshot waiting behind the in-flight write.
+    // The exact verification candidate must discard it instead of letting its
+    // later durability advance stand in for the candidate itself.
+    coordinator.request(configurationWithAxis(11));
+
+    std::optional<ConfigPersistenceCoordinator::FlushResult> exactResult;
+    std::thread exactRequest([&] {
+        exactResult = coordinator.requestAndFlushExact(configurationWithAxis(12), 2000);
+    });
+    QElapsedTimer queued;
+    queued.start();
+    while (coordinator.statistics().latestRequestedGeneration < 3 && queued.elapsed() < 1000)
+        QThread::msleep(1);
+    QCOMPARE(coordinator.statistics().latestRequestedGeneration, quint64{3});
+
+    // A new ordinary request is allowed, but transaction priority means it
+    // cannot write ahead of the exact candidate or invalidate its read-back.
+    coordinator.request(configurationWithAxis(13));
+    {
+        QMutexLocker locker(&gateMutex);
+        release = true;
+        releaseFirstWrite.wakeAll();
+    }
+    exactRequest.join();
+
+    QVERIFY(exactResult.has_value());
+    QVERIFY(exactResult->durable());
+    QCOMPARE(exactResult->generation, quint64{3});
+    {
+        QMutexLocker locker(&gateMutex);
+        QVERIFY(writtenAxes.size() >= 2);
+        QCOMPARE(writtenAxes.at(0), 10);
+        QCOMPARE(writtenAxes.at(1), 12);
+        // The ordinary post-transaction request must wait until the exact
+        // caller has completed its read-back; otherwise it could overwrite
+        // the record between durability acknowledgement and ConfigStore::load.
+        QCOMPARE(writtenAxes.size(), size_t{2});
+    }
+    coordinator.completeExact(exactResult->generation);
+    const auto final = coordinator.flushLatest(2000);
+    QVERIFY(final.durable());
+    {
+        QMutexLocker locker(&gateMutex);
+        QCOMPARE(writtenAxes.back(), 13);
+        QVERIFY(std::find(writtenAxes.cbegin(), writtenAxes.cend(), 11) == writtenAxes.cend());
+    }
     QVERIFY(coordinator.stop(1000));
 }
 
