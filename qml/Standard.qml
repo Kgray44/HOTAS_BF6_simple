@@ -39,6 +39,12 @@ Page {
     // Flight Deck owns one native Overview composition while this established
     // host continues to own every route, dialog, and backend command.
     property bool flightDeckMode: false
+    // A Flight Deck basic page can ask the shell to continue an exact
+    // advanced target in Full without manufacturing a second navigation owner.
+    signal flightDeckFullAccessRequested(int page, var context)
+    // Flight Deck pages keep their established signals, but their host routes
+    // every destination through the shell's Guided/Full policy.
+    signal flightDeckNavigationRequested(int page, var context)
     property var flightDeckReadiness: null
     property string flightDeckDevicesContext: ""
     // A durable AppIssue payload is the Flight Deck handoff contract. It is
@@ -1576,7 +1582,7 @@ Page {
             FlightDeckOverview {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "overview" }) }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2
@@ -1638,7 +1644,7 @@ Page {
             id: flightDeckSettingsComponent
             FlightDeckSettings {
                 anchors.fill: parent
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "settings" }) }
             }
         }
         Loader {
@@ -1694,21 +1700,21 @@ Page {
                 presentationState: root.flightDeckProfilesPresentationState
                 onProfileCreationRequestConsumed: root.flightDeckProfileCreationRequest = ({})
                 onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "profiles" }) }
                 onNavigateToDeviceRig: function(rigId) {
                     // This is a presentation deep link only.  FlightDeckDevices
                     // establishes its ordinary editing/view context and never
                     // calls activateDeviceRig while opening the target.
                     root.flightDeckDevicesContext = "rig:" + rigId
-                    root.currentPage = 2
+                    root.flightDeckNavigationRequested(2, { source: "profiles", rigId: rigId })
                 }
                 onNavigateToAutomation: function(automationId) {
                     root.flightDeckAutomationContext = automationId
-                    root.currentPage = 7
+                    root.flightDeckNavigationRequested(7, { source: "profiles", automationId: automationId })
                 }
                 onNavigateToAdaptiveProfile: function(profileId) {
                     root.flightDeckAdaptiveProfileContext = profileId
-                    root.currentPage = 9
+                    root.flightDeckNavigationRequested(9, { source: "profiles", profileId: profileId })
                 }
                 Component.onCompleted: {
                     if (root.flightDeckProfileContext.length > 0) {
@@ -1973,7 +1979,7 @@ Page {
             FlightDeckAxes {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "axes" }) }
                 onRequestAxisLearning: function(target) { root.openFlightDeckAxisLearning(target) }
                 onRequestQuickMap: root.openFlightDeckQuickAxisMap()
             }
@@ -1983,14 +1989,14 @@ Page {
             FlightDeckButtons {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "buttons" }) }
                 onNavigateToProfile: function(profileId) {
                     root.flightDeckProfileContext = profileId
-                    root.currentPage = 5
+                    root.flightDeckNavigationRequested(5, { source: "buttons", profileId: profileId })
                 }
                 onNavigateToAutomation: function(automationId) {
                     root.flightDeckAutomationContext = automationId
-                    root.currentPage = 7
+                    root.flightDeckNavigationRequested(7, { source: "buttons", automationId: automationId })
                 }
                 onRequestButtonLearning: root.openFlightDeckButtonLearning()
                 onRequestQuickMap: root.openFlightDeckQuickMap()
@@ -2106,7 +2112,10 @@ Page {
                 requestedContext: root.flightDeckDevicesContext
                 requestedIssueTarget: root.flightDeckIssueTarget
                 notificationCenter: root.notificationCenter
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "devices" }) }
+                onRequestFullAccess: function(context) {
+                    root.flightDeckFullAccessRequested(2, context)
+                }
                 onRequestProfileWorkflow: function(rigId, mode) {
                     root.flightDeckProfileCreationRequest = {
                         rigId: String(rigId || ""),
@@ -2590,7 +2599,7 @@ Page {
             FlightDeckDiagnostics {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "diagnostics" }) }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2

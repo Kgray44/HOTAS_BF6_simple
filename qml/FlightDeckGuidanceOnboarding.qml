@@ -43,8 +43,8 @@ FlightDeckDialog {
             spacing: deck.space12
 
             Repeater {
-                model: [{ level: "Guided", summary: "Start with short explanations and reveal advanced detail when you ask for it." },
-                        { level: "Full", summary: "Start with complete controls and technical detail open for review." }]
+                model: [{ level: "Guided", summary: "Use the six everyday setup pages: overview, devices, axes, buttons, profiles, and settings. Advanced editors stay in Full." },
+                        { level: "Full", summary: "Use the complete application, including every editor, technical control, and diagnostic view." }]
                 delegate: Button {
                     id: choiceButton
                     required property var modelData

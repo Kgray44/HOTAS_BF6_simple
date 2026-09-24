@@ -51,12 +51,14 @@ Flickable {
     property var notificationCenter: null
     property var forgetConsequences: ({})
     signal navigateToPage(int page)
+    signal requestFullAccess(var context)
     // The shell routes this presentation request to the one canonical
     // Profile Library/create dialog. It carries no runtime activation.
     signal requestProfileWorkflow(string rigId, string mode)
 
     readonly property bool wide: width >= 1040
     readonly property bool medium: width >= 760
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     readonly property var state: readinessModel ? readinessModel.currentState : ({})
     // The compact cards are projections of the same typed snapshot used by
     // the central dialog. They never infer repairability from their labels.
@@ -526,12 +528,18 @@ Flickable {
         // This establishes the canonical editing context but deliberately
         // does not make the Rig active at runtime.
         backend.setEditingDeviceContext(selectedRigId, []);
+        if (guidedPresentation)
+            return true;
         Qt.callLater(function() { rigDetailsDialog.open(); });
         return true;
     }
 
     function openRigOutput(outputId) {
         if (!outputId) return;
+        if (guidedPresentation) {
+            requestFullAccess({ section: "virtual-output", outputId: String(outputId) });
+            return false;
+        }
         virtualDetailsTemporaryReveal = themeManager.temporarilyRevealGuidanceSection("devices-virtual-details")
             || virtualDetailsTemporaryReveal;
         Qt.callLater(function() {
@@ -586,6 +594,10 @@ Flickable {
         let destination = null
         if (section === "isolation") destination = isolationSection
         else if (section === "virtual-output" || type === "virtualOutput") {
+            if (guidedPresentation) {
+                requestFullAccess({ section: "virtual-output", outputId: objectId });
+                return
+            }
             virtualDetailsTemporaryReveal = themeManager.temporarilyRevealGuidanceSection("devices-virtual-details")
                 || virtualDetailsTemporaryReveal
             destination = virtualOutputSection
@@ -698,8 +710,19 @@ Flickable {
             const rigId = requestedContext.slice(4);
             openRigDetails(rigId);
             target = rigsSection;
-        } else if (requestedContext === "virtual-output") target = virtualOutputSection;
-        else if (requestedContext === "isolation") target = isolationSection;
+        } else if (requestedContext === "virtual-output") {
+            if (guidedPresentation) {
+                requestFullAccess({ section: "virtual-output" });
+                return
+            }
+            target = virtualOutputSection;
+        } else if (requestedContext === "isolation") {
+            if (guidedPresentation) {
+                requestFullAccess({ section: "isolation" });
+                return
+            }
+            target = isolationSection;
+        }
         else if (requestedContext === "verification") target = verificationSection;
         else if (requestedContext === "controllers") target = controllersSection;
         else if (requestedContext === "input-test" || requestedContext.indexOf("input-test:") === 0) {
@@ -861,6 +884,7 @@ Flickable {
                 }
 
                 GridLayout {
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
                     columns: root.wide ? 4 : (root.medium ? 2 : 1)
                     columnSpacing: deck.space12
@@ -1071,7 +1095,7 @@ Flickable {
                                 contentItem: Text { text: parent.text; color: parent.enabled ? deck.accent : deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                             }
                             Button {
-                                visible: controllerCard.controller.verified && controllerCard.controller.id
+                                visible: !root.guidedPresentation && controllerCard.controller.verified && controllerCard.controller.id
                                 objectName: "flightDeckControllerForget_" + controllerCard.controller.id
                                 text: "FORGET"
                                 focusPolicy: Qt.StrongFocus
@@ -1183,7 +1207,7 @@ Flickable {
                             }
                         }
                         Text {
-                            visible: (rig.outputs || []).length > 0
+                            visible: !root.guidedPresentation && (rig.outputs || []).length > 0
                             text: "RIG PRIMARY OUTPUT  ·  " + (rig.outputs || []).map(function(output) {
                                 return (output.primary ? "PRIMARY · " : "") + String(output.name || "Virtual Output")
                                     + " · vJoy " + String(output.deviceId || "?");
@@ -1209,6 +1233,7 @@ Flickable {
                             spacing: deck.space8
                             RigButton {
                                 objectName: "flightDeckOpenRig_" + String(rig.id || "")
+                                visible: !root.guidedPresentation
                                 text: "OPEN DETAILS"
                                 subdued: true
                                 onClicked: root.openRigDetails(String(rig.id || ""))
@@ -1216,7 +1241,7 @@ Flickable {
                             Item { Layout.fillWidth: true }
                             RigButton {
                                 objectName: "flightDeckActivateRig_" + String(rig.id || "")
-                                text: rig.configured ? "ACTIVE" : "SET ACTIVE"
+                                text: rig.configured ? "ACTIVE" : (root.guidedPresentation ? "USE" : "SET ACTIVE")
                                 enabled: !!rig.enabled && !rig.configured
                                 onClicked: root.activateRig(rig)
                             }
@@ -1226,15 +1251,17 @@ Flickable {
                             Layout.fillWidth: true
                             spacing: deck.space8
                             RigButton {
-                                text: "CREATE BLANK PROFILE"
+                                text: root.guidedPresentation ? "CREATE PROFILE" : "CREATE BLANK PROFILE"
                                 onClicked: root.openUnmappedRigProfileWorkflow(rig, "blank")
                             }
                             RigButton {
+                                visible: !root.guidedPresentation
                                 text: "COPY CURRENT PROFILE"
                                 subdued: true
                                 onClicked: root.openUnmappedRigProfileWorkflow(rig, "copy")
                             }
                             RigButton {
+                                visible: !root.guidedPresentation
                                 text: "CHOOSE PROFILE"
                                 subdued: true
                                 onClicked: root.openUnmappedRigProfileWorkflow(rig, "choose")
@@ -1246,10 +1273,11 @@ Flickable {
             }
         }
 
-        Item { id: virtualOutputSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
+        Item { id: virtualOutputSection; visible: !root.guidedPresentation; Layout.fillWidth: true; Layout.preferredHeight: visible ? 1 : 0 }
+        Text { visible: !root.guidedPresentation; text: "VIRTUAL OUTPUT"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
             objectName: "flightDeckVirtualOutput"
+            visible: !root.guidedPresentation
             tokens: deck
             Layout.fillWidth: true
             implicitHeight: virtualOutputContent.implicitHeight + deck.space32
@@ -1357,9 +1385,10 @@ Flickable {
             }
         }
 
-        Item { id: isolationSection; Layout.fillWidth: true; Layout.preferredHeight: 1 }
-        Text { text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
+        Item { id: isolationSection; visible: !root.guidedPresentation; Layout.fillWidth: true; Layout.preferredHeight: visible ? 1 : 0 }
+        Text { visible: !root.guidedPresentation; text: "DEVICE ISOLATION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); font.bold: true; Layout.fillWidth: true }
         FlightDeckCard {
+            visible: !root.guidedPresentation
             objectName: "flightDeckDeviceIsolation"
             tokens: deck
             Layout.fillWidth: true
@@ -1553,6 +1582,7 @@ Flickable {
             }
         }
         FlightDeckCard {
+            visible: !root.guidedPresentation
             tokens: deck
             contentPadding: deck.cardPaddingCompact
             Layout.fillWidth: true

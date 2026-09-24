@@ -28,7 +28,7 @@ FlightDeckDialog {
     readonly property string taskIntent: String(task.intent || "")
     readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
 
-    heading: "Guided setup"
+    heading: guidedPresentation ? "Basic setup" : "Setup"
     preferredWidth: 780
     tone: feedbackSuccess ? "informational" : "attention"
     closePolicy: Popup.CloseOnEscape
@@ -41,22 +41,22 @@ FlightDeckDialog {
     function decisionHelpFor(stageName) {
         if (stageName === "controllers")
             return guidedPresentation
-                ? "Choose the physical controller you want to set up. This records the exact device for the next step; it does not activate it or change mapping."
+                ? "Choose the controller for this setup. This records your choice; it does not activate it or change mapping."
                 : "Choose the physical controller to configure. This does not activate it or change mapping."
         if (stageName === "purpose")
             return guidedPresentation
-                ? "Choose the relationship before committing: create an independent Rig, add a member to an existing Rig, or make a Profile for a Rig. Existing mappings remain unchanged until the labeled commit action."
+                ? "Create a setup or add this controller to one you already use. Existing mappings stay unchanged until the labeled save action."
                 : "Choose the target Rig/Profile relationship, then commit the named configuration."
         if (stageName === "connection")
             return guidedPresentation
-                ? "Run the scoped check for this setup. Review its evidence first; any repair remains a separate, explicitly confirmed operation."
+                ? "Check this setup before you map. Repairs always ask for confirmation."
                 : "Run the scoped readiness check. Repairs remain explicitly confirmed."
         if (stageName === "configure")
             return guidedPresentation
-                ? "Open the exact editor you need, then return to record the physical and mapped-output result. Opening an editor changes only the view, never activation."
+                ? "Map the controls you need, test them, then use this setup when it is ready."
                 : "Open an editor or record test results; viewing an editor does not activate this setup."
         return guidedPresentation
-            ? "Review what was created, what was tested, and what Use requested. Finish clears only this saved setup guidance, never the Rig, Profile, mapping, or activation."
+            ? "Review the setup and tests. Finish clears this guide only; it never removes your setup or mapping."
             : "Review the created setup and recorded test outcomes before finishing."
     }
 
@@ -442,7 +442,12 @@ FlightDeckDialog {
                     anchors.margins: root.tokens.space8
                     spacing: root.tokens.space4
                     Repeater {
-                        model: [
+                        model: root.guidedPresentation ? [
+                            { key: "controllers", label: "1  CONTROLLERS" },
+                            { key: "purpose", label: "2  SETUP" },
+                            { key: "connection", label: "3  CHECK" },
+                            { key: "configure", label: "4  MAP & TEST" }
+                        ] : [
                             { key: "controllers", label: "1  CONTROLLERS" },
                             { key: "purpose", label: "2  HOW YOU'LL USE THEM" },
                             { key: "connection", label: "3  PREPARE CONNECTION" },
@@ -539,15 +544,15 @@ FlightDeckDialog {
                 visible: !root.replacementChoiceVisible && root.stage === "purpose"
                 Layout.fillWidth: true
                 spacing: root.tokens.space12
-                Text { text: "HOW YOU'LL USE THEM"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
+                Text { text: root.guidedPresentation ? "SETUP" : "HOW YOU'LL USE THEM"; color: root.tokens.textPrimary; font.family: root.tokens.displayFont; font.pixelSize: root.tokens.section; font.bold: true }
                 Text { objectName: "flightDeckSetupDecisionHelpPurpose"; Layout.fillWidth: true; text: root.decisionHelpFor("purpose"); color: root.tokens.textSecondary; font.pixelSize: root.tokens.body; wrapMode: Text.WordWrap }
                 Flow {
                     Layout.fillWidth: true
                     spacing: root.tokens.space8
                     SetupButton { objectName: "flightDeckSetupIntentFirst"; text: "FIRST CONTROLLER"; subdued: root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("first-controller") }
-                    SetupButton { objectName: "flightDeckSetupIntentIndependent"; text: "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent"; onClicked: root.chooseIntent("independent") }
-                    SetupButton { objectName: "flightDeckSetupIntentShared"; text: "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
-                    SetupButton { objectName: "flightDeckSetupIntentProfile"; text: "PROFILE FOR EXISTING RIG"; subdued: root.taskIntent !== "profile-for-rig"; onClicked: root.chooseIntent("profile-for-rig") }
+                    SetupButton { objectName: "flightDeckSetupIntentIndependent"; text: root.guidedPresentation ? "CREATE A SETUP" : "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent"; onClicked: root.chooseIntent("independent") }
+                    SetupButton { objectName: "flightDeckSetupIntentShared"; text: root.guidedPresentation ? "USE WITH CURRENT SETUP" : "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
+                    SetupButton { objectName: "flightDeckSetupIntentProfile"; visible: !root.guidedPresentation; text: "PROFILE FOR EXISTING RIG"; subdued: root.taskIntent !== "profile-for-rig"; onClicked: root.chooseIntent("profile-for-rig") }
                 }
                 Text { visible: root.taskIntent === "issue"; Layout.fillWidth: true; text: "This issue handoff begins with review. Select the safe topology that matches the current controller and continue."; color: root.tokens.attention; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
                 Text { visible: root.taskIntent === "add-to-rig" || root.taskIntent === "profile-for-rig"; text: "DEVICE RIG"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
@@ -592,7 +597,7 @@ FlightDeckDialog {
                     implicitHeight: root.tokens.controlHeight
                     background: Rectangle { radius: root.tokens.radiusControl; color: root.tokens.secondarySurface; border.width: 1; border.color: parent.activeFocus ? root.tokens.focus : root.tokens.border }
                 }
-                Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: "VIRTUAL OUTPUT"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: root.guidedPresentation ? "CONTROLLER OUTPUT" : "VIRTUAL OUTPUT"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: outputChoice
                     objectName: "flightDeckSetupOutputChoice"
@@ -603,7 +608,7 @@ FlightDeckDialog {
                     textRole: "name"
                     onActivated: root.savePurposeDraft()
                 }
-                Text { visible: root.taskIntent !== "add-to-rig"; text: "PROFILE CATEGORY"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                Text { visible: root.taskIntent !== "add-to-rig"; text: root.guidedPresentation ? "PROFILE GROUP" : "PROFILE CATEGORY"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: categoryChoice
                     objectName: "flightDeckSetupCategoryChoice"

@@ -21,6 +21,7 @@ Flickable {
     property var presentationState: ({})
     readonly property bool narrow: width < 760
     readonly property bool compact: width < 980
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     readonly property var outputLayouts: backend.virtualOutputLayouts
     property string guidanceSaveError: ""
 
@@ -597,12 +598,12 @@ Flickable {
         SettingsGroup {
             objectName: "flightDeckSettingsGuidanceGroup"
             title: "Setup guidance"
-            detail: "Guided and Full change only explanations and default disclosure. Every profile, Device Rig, editor, repair path, and advanced setting remains available."
+            detail: "Guided keeps everyday setup and mapping focused. Full contains the complete engineering workspace. Your setup and mappings are unchanged when you switch."
             SettingsRow {
                 title: "GUIDANCE LEVEL"
                 detail: themeManager.guidanceLevel === "Guided"
-                    ? "Guided starts with concise next steps. Use Show details wherever you want more context."
-                    : "Full starts with complete technical context and advanced detail expanded."
+                    ? "Basic controls for everyday setup and mapping. Switch to Full for advanced editing and diagnostics."
+                    : "Complete editors, analysis, diagnostics, and management tools."
                 last: guidanceSaveError.length === 0
                 RowLayout {
                     spacing: deck.space8
@@ -638,6 +639,7 @@ Flickable {
             SettingsRow {
                 title: "START MAPPING AUTOMATICALLY"
                 detail: "Starts only after a valid physical input and vJoy output are available."
+                last: root.guidedPresentation
                 DeckToggle {
                     objectName: "flightDeckSettingsStartMappingToggle"
                     checked: backend.startMappingOnLaunch
@@ -645,6 +647,7 @@ Flickable {
                 }
             }
             SettingsRow {
+                visible: !root.guidedPresentation
                 title: "AUTOMATIC GAME CATEGORY"
                 detail: "Low-frequency foreground executable detection selects a matching category and restores its last-used profile."
                 DeckToggle {
@@ -654,6 +657,7 @@ Flickable {
                 }
             }
             SettingsRow {
+                visible: !root.guidedPresentation
                 title: "CONFIGURED GAMES AND PROFILES"
                 detail: "Manage executable associations, automatic category behavior, and profiles in the native Profiles workspace."
                 last: true
@@ -694,9 +698,11 @@ Flickable {
 
         SectionHeading {
             title: "Advanced"
+            visible: !root.guidedPresentation
         }
         SettingsGroup {
             objectName: "flightDeckSettingsMappingDefaultsGroup"
+            visible: !root.guidedPresentation
             title: "Mapping defaults"
             detail: "These are global fallback preferences. Detailed controller mappings stay in Axes and Buttons."
             SettingsRow {
@@ -793,6 +799,7 @@ Flickable {
 
         SettingsGroup {
             objectName: "flightDeckSettingsVirtualOutputGroup"
+            visible: !root.guidedPresentation
             title: "Virtual output"
             detail: displayValue("vjoyStatus", backend.vjoyStatusSeverity === "ready" ? "Current required virtual output capabilities are available to the mapper." : backend.vjoyStatus)
             SettingsRow {
@@ -904,6 +911,7 @@ Flickable {
 
         SettingsGroup {
             objectName: "flightDeckSettingsHidHideGroup"
+            visible: !root.guidedPresentation
             title: "Device hiding"
             detail: backend.hidhideAvailable ? (backend.hidhideMapperAllowed ? "HidHide access is available to HOTAS BF6." : "HidHide needs review before using isolation.") : "HidHide is optional and unavailable in this session."
             SettingsRow {
@@ -929,6 +937,7 @@ Flickable {
 
         SettingsGroup {
             objectName: "flightDeckSettingsMaintenanceGroup"
+            visible: !root.guidedPresentation
             title: "Maintenance"
             detail: "Destructive actions state their exact scope before they run."
             SettingsRow {

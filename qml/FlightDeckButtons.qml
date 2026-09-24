@@ -15,6 +15,7 @@ Flickable {
     property var povPresentationOverride: null
     property var povInputsPresentationOverride: null
     property var automationPresentationOverride: null
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     property string inputDeviceNameOverride: ""
     property int expandedButtonIndex: -1
     property int expandedHatIndex: -1
@@ -551,7 +552,9 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: 2
                     Text {
-                        text: String(button.targetLabel || "vJoy Button " + buttonIndex)
+                        text: root.guidedPresentation
+                            ? String(button.targetLabel || "Button " + buttonIndex).replace(/^vJoy\s+/i, "")
+                            : String(button.targetLabel || "vJoy Button " + buttonIndex)
                         color: deck.textPrimary
                         font.pixelSize: deck.scale(13)
                         font.bold: true
@@ -567,7 +570,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: card.automations.length > 0
+                        visible: !root.guidedPresentation && card.automations.length > 0
                         text: "Automation · " + card.automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -638,7 +641,7 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: card.virtualPressed ? "vJoy output is pressed"
+                        text: card.virtualPressed ? (root.guidedPresentation ? "Output is pressed" : "vJoy output is pressed")
                             : (Boolean(card.selectedInputLive.pressed) ? "Selected input is pressed" : "")
                         color: deck.healthy
                         font.family: deck.telemetryFont
@@ -647,6 +650,7 @@ Flickable {
                 }
                 Rectangle {
                     objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
                     implicitHeight: virtualBehaviorDisclosure.implicitHeight + deck.space16
                     radius: deck.radiusControl
@@ -698,7 +702,7 @@ Flickable {
                 }
                 ColumnLayout {
                     objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
-                    visible: root.behaviorExpanded
+                    visible: !root.guidedPresentation && root.behaviorExpanded
                     Layout.fillWidth: true
                     spacing: deck.space8
                     Text {
@@ -819,7 +823,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: Boolean(button.profileControlEnabled) && Number(button.target) > 0
+                        visible: !root.guidedPresentation && Boolean(button.profileControlEnabled) && Number(button.target) > 0
                         text: "Saved game route · " + String(button.targetLabel)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
@@ -827,7 +831,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: automations.length > 0
+                        visible: !root.guidedPresentation && automations.length > 0
                         text: "Automation · " + automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -847,12 +851,12 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space8
                 SummaryChip {
-                    visible: Boolean(button.profileControlEnabled)
+                    visible: !root.guidedPresentation && Boolean(button.profileControlEnabled)
                     label: String(button.profileControlMode || "Profile").toUpperCase()
                     tone: button.profileControlTargetAvailable ? "healthy" : "attention"
                 }
                 SummaryChip {
-                    visible: String(button.mappingControlKey || "none") !== "none"
+                    visible: !root.guidedPresentation && String(button.mappingControlKey || "none") !== "none"
                     label: "MAPPING CONTROL"
                     tone: "informational"
                 }
@@ -948,7 +952,9 @@ Flickable {
                     }
                 }
                 Text {
-                    text: "Physical control → existing vJoy button route. Changes apply through the current profile command path."
+                        text: root.guidedPresentation
+                            ? "Physical control to game button. Changes apply to the current profile."
+                            : "Physical control → existing vJoy button route. Changes apply through the current profile command path."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                     wrapMode: Text.WordWrap
@@ -964,7 +970,8 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: Number(button.target) > 0 && virtualPressed ? "vJoy output is pressed" : ""
+                        text: Number(button.target) > 0 && virtualPressed
+                            ? (root.guidedPresentation ? "Output is pressed" : "vJoy output is pressed") : ""
                         color: deck.healthy
                         font.family: deck.telemetryFont
                         font.pixelSize: deck.scale(9)
@@ -972,6 +979,7 @@ Flickable {
                 }
                 Rectangle {
                     objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
                     implicitHeight: behaviorDisclosure.implicitHeight + deck.space16
                     radius: deck.radiusControl
@@ -1021,7 +1029,7 @@ Flickable {
                 }
                 ColumnLayout {
                     objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
-                    visible: root.behaviorExpanded
+                    visible: !root.guidedPresentation && root.behaviorExpanded
                     Layout.fillWidth: true
                     spacing: deck.space12
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
@@ -1340,6 +1348,7 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: 2
                     Text {
+                        visible: !root.guidedPresentation
                         text: "NATIVE vJOY POV"
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -1347,7 +1356,8 @@ Flickable {
                         font.bold: true
                     }
                     Text {
-                        text: String(hat.nativeTargetLabel || "Off") + " · " + String(hat.nativeStatus || "OFF")
+                    visible: !root.guidedPresentation
+                    text: String(hat.nativeTargetLabel || "Off") + " · " + String(hat.nativeStatus || "OFF")
                         color: hat.nativeAvailable || !hat.nativeEnabled ? deck.textMuted : deck.attention
                         font.family: deck.telemetryFont
                         font.pixelSize: deck.scale(9)
@@ -1356,6 +1366,7 @@ Flickable {
                     }
                 }
                 DeckButton {
+                    visible: !root.guidedPresentation
                     text: hat.nativeEnabled ? "DISABLE POV" : "ENABLE POV"
                     subdued: true
                     enabled: hat.nativeEnabled || root.nativePovChoices.length > 0
@@ -1366,6 +1377,7 @@ Flickable {
             DeckCombo {
                 id: nativePovSelector
                 objectName: "flightDeckNativePovSelector_" + card.hatIndex
+                visible: !root.guidedPresentation
                 Layout.fillWidth: true
                 model: root.nativePovChoices
                 textRole: "label"
@@ -1376,7 +1388,7 @@ Flickable {
                     root.nativeChoiceKey(currentIndex))
             }
             Text {
-                visible: root.nativePovChoices.length === 0
+                visible: !root.guidedPresentation && root.nativePovChoices.length === 0
                 text: "The selected vJoy device exposes no native POV target. Direction routes above remain available."
                 color: deck.attention
                 font.pixelSize: deck.scale(9)
@@ -1394,7 +1406,9 @@ Flickable {
                     text: "HAT " + card.hatIndex + " · " + String(povDetail.selectedDirection.label || "DIRECTION").toUpperCase()
                 }
                 Text {
-                    text: "Physical POV direction → existing vJoy button route."
+                    text: root.guidedPresentation
+                        ? "Physical POV direction to the selected game button."
+                        : "Physical POV direction → existing vJoy button route."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                 }
@@ -1414,7 +1428,9 @@ Flickable {
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
-                        text: "Learn a physical hat direction for the current vJoy button route."
+                        text: root.guidedPresentation
+                            ? "Learn a physical hat direction for the selected game button."
+                            : "Learn a physical hat direction for the current vJoy button route."
                         color: deck.textMuted
                         font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
@@ -1429,6 +1445,7 @@ Flickable {
                 }
                 Rectangle {
                     objectName: "flightDeckPovBehaviorDisclosure_" + card.hatIndex + "_" + root.expandedPovDirection
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
                     implicitHeight: povBehaviorDisclosure.implicitHeight + deck.space16
                     radius: deck.radiusControl
@@ -1448,7 +1465,7 @@ Flickable {
                     }
                 }
                 ColumnLayout {
-                    visible: root.behaviorExpanded
+                    visible: !root.guidedPresentation && root.behaviorExpanded
                     Layout.fillWidth: true
                     spacing: deck.space12
                 GridLayout {

@@ -33,6 +33,7 @@ Flickable {
     property var presentationState: ({})
     property string draggedProfileId: ""
     property string dragTargetCategoryId: ""
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     // Temporary presentation priority from an active/unmapped Rig's
     // "Choose Profile" action. It never persists or changes category order.
     property string compatibleRigId: ""
@@ -247,9 +248,11 @@ Flickable {
                     return leftCompatible ? -1 : 1;
                 });
             }
-            rows.push({ type: "category", categoryId: categoryId, profileId: "", category: category,
-                text: String(category.name || "Unnamed category"),
-                secondary: Number(category.profileCount !== undefined ? category.profileCount : members.length) + " profiles" });
+            if (!guidedPresentation) {
+                rows.push({ type: "category", categoryId: categoryId, profileId: "", category: category,
+                    text: String(category.name || "Unnamed category"),
+                    secondary: Number(category.profileCount !== undefined ? category.profileCount : members.length) + " profiles" });
+            }
             for (let memberIndex = 0; memberIndex < members.length; ++memberIndex) {
                 const profile = members[memberIndex];
                 if (!profileMatchesFilter(profile))
@@ -452,6 +455,12 @@ Flickable {
         return false;
     }
     function openCategory(id) {
+        if (guidedPresentation) {
+            selectedCategoryId = String(id || "");
+            selectedProfileId = "";
+            view = "library";
+            return;
+        }
         selectedCategoryId = String(id || "");
         selectedProfileId = "";
         view = "category";
@@ -459,6 +468,11 @@ Flickable {
     }
     function openProfile(id) {
         const requestedId = String(id || "");
+        if (guidedPresentation) {
+            selectLibraryProfile(requestedId);
+            view = "library";
+            return;
+        }
         if (!usingPresentationFixture && !backend.selectProfileForEditing(requestedId))
             return;
         selectedProfileId = requestedId;
@@ -578,6 +592,11 @@ Flickable {
     }
 
     onCategoriesChanged: rebuildLibraryPresentation()
+    onGuidedPresentationChanged: {
+        rebuildLibraryPresentation()
+        if (guidedPresentation && view !== "library")
+            view = "library"
+    }
     onProfilesChanged: {
         rebuildLibraryPresentation()
         refreshSelectedDetail()
@@ -1271,7 +1290,7 @@ Flickable {
             }
             DeckButton {
                 objectName: "flightDeckNewCategory"
-                visible: root.view === "library"
+                visible: !root.guidedPresentation && root.view === "library"
                 text: "+ CATEGORY"
                 subdued: true
                 enabled: !root.usingPresentationFixture
@@ -1322,7 +1341,7 @@ Flickable {
                             Layout.fillWidth: true
                             FilterButton { text: "ALL"; filterValue: "all" }
                             FilterButton { text: "ACTIVE"; filterValue: "active" }
-                            FilterButton { text: "GAME"; filterValue: "associated" }
+                            FilterButton { visible: !root.guidedPresentation; text: "GAME"; filterValue: "associated" }
                         }
                         DeckField { id: profileSearch; objectName: "flightDeckProfileSearch"; Layout.fillWidth: true; placeholderText: "Search categories and profiles…"; text: root.searchText; onTextEdited: root.searchText = text }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
@@ -1367,7 +1386,7 @@ Flickable {
                         }
                         Rectangle {
                             Layout.fillWidth: true
-                            visible: root.draggedProfileId.length > 0
+                            visible: !root.guidedPresentation && root.draggedProfileId.length > 0
                             implicitHeight: 42
                             radius: deck.radiusControl
                             color: root.dragTargetCategoryId === "__new_category__" ? deck.accentMuted : deck.secondarySurface
@@ -1406,7 +1425,7 @@ Flickable {
                         Text { visible: root.categories.length === 0; text: "Create a category, then add a profile to define a controller setup."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
-                            DeckButton { objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
+                            DeckButton { visible: !root.guidedPresentation; objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
                             DeckButton { objectName: "flightDeckProfilesTransfer"; text: "IMPORT / EXPORT"; subdued: true; onClicked: transferDialog.openTransfer("import", "profile", "", "") }
                         }
                     }
@@ -1445,10 +1464,11 @@ Flickable {
                             Repeater {
                                 model: [
                                     { label: "AXES", value: Number(root.selectedDetail.mappedAxes || 0) + " configured" },
-                                    { label: "BUTTONS & HATS", value: Number(root.selectedDetail.mappedButtons || 0) + " buttons · " + Number(root.selectedDetail.mappedPovs || 0) + " POV" },
+                                    { label: "BUTTONS & HATS", value: Number(root.selectedDetail.mappedButtons || 0) + " buttons · " + Number(root.selectedDetail.mappedPovs || 0) + " POV" }
+                                ].concat(root.guidedPresentation ? [] : [
                                     { label: "ADAPTIVE RESPONSE", value: Number(root.selectedDetail.adaptiveProfileOverrideAxes || 0) > 0 ? "Custom response" : "Inherited response" },
                                     { label: "AUTOMATION", value: Number(root.selectedDetail.automationCount || 0) + " relationship" + (Number(root.selectedDetail.automationCount || 0) === 1 ? "" : "s") }
-                                ]
+                                ])
                                 delegate: Rectangle {
                                     required property var modelData
                                     Layout.fillWidth: true
@@ -1471,10 +1491,11 @@ Flickable {
                         RowLayout {
                             visible: root.selectedProfileId.length
                             Layout.fillWidth: true
-                            DeckButton { text: root.selectedDetail.active ? "ACTIVE NOW" : "ACTIVATE"; enabled: !root.selectedDetail.active && !!root.selectedDetail.enabled && !root.usingPresentationFixture; onClicked: root.activateProfile(root.selectedProfileId) }
-                            DeckButton { text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
+                            DeckButton { text: root.selectedDetail.active ? "ACTIVE NOW" : (root.guidedPresentation ? "USE" : "ACTIVATE"); enabled: !root.selectedDetail.active && !!root.selectedDetail.enabled && !root.usingPresentationFixture; onClicked: root.activateProfile(root.selectedProfileId) }
+                            DeckButton { visible: !root.guidedPresentation; text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
                             Item { Layout.fillWidth: true }
-                            DeckButton { text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                            DeckButton { visible: !root.guidedPresentation; text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                            DeckButton { visible: root.guidedPresentation && root.selectedProfileId.length > 0; text: "MORE"; subdued: true; onClicked: guidedProfileMenu.open() }
                         }
                         RowLayout {
                             visible: !root.selectedProfileId.length && root.selectedCategoryId.length
@@ -2117,8 +2138,10 @@ Flickable {
 
                 SectionLabel {
                     label: "DEVICE RIG & AUTOMATIC ACTIVATION"
+                    visible: !root.guidedPresentation
                 }
                 FlightDeckCard {
+                    visible: !root.guidedPresentation
                     tokens: deck
                     Layout.fillWidth: true
                     implicitHeight: activationProfileContent.implicitHeight + deck.space24
@@ -2645,6 +2668,25 @@ Flickable {
         }
         Item {
             Layout.preferredHeight: deck.space12
+        }
+    }
+
+    Menu {
+        id: guidedProfileMenu
+        MenuItem {
+            text: "Rename"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture && !root.selectedDetail.protected
+            onTriggered: { renameProfileDialog.profileId = root.selectedProfileId; renameProfileDialog.name = root.selectedDetail.name; renameProfileDialog.open() }
+        }
+        MenuItem {
+            text: "Duplicate"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture
+            onTriggered: { duplicateProfileDialog.profileId = root.selectedProfileId; duplicateProfileDialog.name = root.selectedDetail.name + " Copy"; duplicateProfileDialog.categoryId = root.selectedDetail.categoryId; duplicateProfileDialog.open() }
+        }
+        MenuItem {
+            text: "Export"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture
+            onTriggered: transferDialog.openTransfer("export", "profile", root.selectedProfileId, "")
         }
     }
 

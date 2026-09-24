@@ -165,6 +165,26 @@
 - Offscreen captures with replacement-box glyphs are structural evidence only. They do **not** establish native Windows typography, native pointer acceptance, physical controller acquisition, vJoy/HidHide behavior, UAC, game visibility, or owner acceptance.
 - The final owner-review candidate is staged separately from the owner’s existing review process at `C:\hotas-builds\usability-setup-guidance\Release\HOTAS BF6 Pass C Integrated Review.exe` (SHA-256 `3ABEC99E3079E2B36EC362C06F570E435A2A65B7976E81AC0D5F9CC7931CB18D`). It must use isolated settings and a normal Windows launch; no owner configuration, mapping, driver state, or running executable is replaced.
 
+## Pass C Guided Basic Mode override (2026-09-21; unmerged)
+
+This owner override supersedes the earlier Pass C statements that described Guided as a disclosure policy or kept advanced pages reachable in that mode. Guided is now an essentials-only workspace. Full remains the complete application; neither mode switch writes configuration, activates a Rig, repairs a driver, changes mapping, or replaces the persisted setup task.
+
+| Surface | Visible in Guided | Full-only | Shared recovery / behavior |
+| --- | --- | --- | --- |
+| Navigation | Overview, Devices & setup, Axes, Buttons, Profiles, Settings | Curve editor, Adaptive Response, Automation, Signal Flow, Diagnostics | A direct/deep/saved request keeps its exact target and presents **Open in Full**; it never silently changes mode. Switching Full to Guided while on an expert page lands on the nearest basic page without configuration mutation. |
+| Overview | Setup, controller, profile, output summary; mapping state; one prioritized issue; physical test and change-setup actions | Connection/evidence and extra technical review | Setup issues still use their canonical re-resolved targets. |
+| Devices & setup | Friendly controller cards, Device Rig membership/status, safe setup and physical test paths | vJoy/output administration, HidHide/isolation, technical/deletion/toolbox actions | A requested output/isolation review opens the exact Full target after explicit confirmation. |
+| Axes | Source/learn, destination, enabled state, reverse, deadzone, sensitivity, and test feedback | Curve editor, limits/range/hysteresis/alias, mixers, Adaptive Response, technical identity | Existing mapping commands and selected-axis context remain canonical. A custom-processing summary can request Full. |
+| Buttons / POVs | Source, destination, enabled route, learn/test feedback | Profile triggers, control rules, merge/mixer details, Automation, native-POV administration | Existing button/POV mapping commands remain canonical. |
+| Profiles | Current Rig/profile context, profile list, use/create/rename/duplicate/import/export | Category administration, game associations, policy/internal relationships, Automation/Response editors | Profile import/export and normal basic setup are retained; detailed editors stay in Full. |
+| Settings | Guided/Full mode, appearance, text size/reduced motion, ordinary startup, update/about/help paths | Developer/performance/output/HidHide/game-detection/reset controls | ThemeManager remains the sole mode preference owner. |
+| Setup assistant | Compact four-step **Basic setup** decisions and existing task/recovery/repair-confirmation/result behavior | Existing-profile-only advanced topology choice | It preserves the same task ID, draft, exact controller/Rig/Profile context, and accepted checkbox controls across a mode change. |
+
+The focused QML qualification now asserts the six-item Guided allowlist; hidden Axis/Button/Profile/Devices/Settings controls; safe Full-only Signal Flow recovery with the exact target; fallback on a Full-to-Guided switch; and unchanged canonical configuration/task snapshots. The established pointer/keyboard setup journey remains the proof for controller selection, Step 2 task preservation, both checkbox roles, test/result handling, Dark/Light, and larger text.
+
+- On 2026-09-24, the cached Release target rebuilt successfully. The focused `app_qml_guidance_qualification_tests` passed in 32.85 seconds after the final cleanup. The single complete Release CTest run passed all 19 registered tests, including the 30.70-second Guided qualification and the synthetic `mapping_hot_path_benchmark`, which reported zero hot-path allocations in every listed scenario.
+- A separate normal-Windows, `--isolated-presentation` review executable is staged after the successful build. Its launch proves only that candidate can start with the shipped Qt runtime beside it; native visual and owner acceptance remain outstanding.
+
 ## Matched synthetic mapper benchmark
 
 The comparison used the same Release benchmark executable and command shape against accepted `v2.6.6` baseline `bdedc52848ec18ddc4f6a387776526dcde1c7ce5` and this candidate. It is synthetic: no DirectInput device, vJoy driver, HID/HidHide state, or UI interaction participates.

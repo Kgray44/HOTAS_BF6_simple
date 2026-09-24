@@ -9,6 +9,7 @@ Flickable {
     objectName: "flightDeckAxes"
 
     property var readinessModel
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     // Test-only visual seams. Production always reads the published backend
     // axis snapshot and selected-controller identity.
     property var axisPresentationOverride: null
@@ -410,8 +411,9 @@ Flickable {
         // Do not collapse a text edit because the owner changes the starting
         // presentation underneath it. `focus` also preserves an edit while a
         // desktop window is temporarily inactive, where activeFocus is false.
-        readonly property bool processingVisible: processingExpanded
+        readonly property bool processingVisible: !root.guidedPresentation && (processingExpanded
             || aliasEditor.focus || nameEditor.focus
+        )
         property bool technicalDetailsOpen: false
 
         objectName: "flightDeckAxisCard_" + axisIndex
@@ -639,7 +641,7 @@ Flickable {
                                     Layout.fillWidth: true
                                     readonly property var choices: backend.virtualAxisChoiceDetailsForSource(card.axisIndex)
                                     Text {
-                                        text: "OUTPUT · vJoy " + backend.vjoyDeviceId
+                                        text: root.guidedPresentation ? "OUTPUT" : "OUTPUT · vJoy " + backend.vjoyDeviceId
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
                                         font.pixelSize: deck.scale(8)
@@ -659,7 +661,7 @@ Flickable {
                                 }
                             }
                             Rectangle {
-                                visible: Boolean(card.sharedOutput.mixed)
+                                visible: !root.guidedPresentation && Boolean(card.sharedOutput.mixed)
                                 Layout.fillWidth: true
                                 implicitHeight: sharedContent.implicitHeight + deck.space16
                                 radius: deck.radiusControl
@@ -685,6 +687,20 @@ Flickable {
                                         }
                                     }
                                 }
+                            }
+                            Text {
+                                visible: root.guidedPresentation && Boolean(card.sharedOutput.mixed)
+                                Layout.fillWidth: true
+                                text: "Custom processing is active for this output. Open in Full to change shared routing."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: root.guidedPresentation && Boolean(card.sharedOutput.mixed)
+                                text: "OPEN IN FULL"
+                                subdued: true
+                                onClicked: root.navigateToPage(11)
                             }
                             RowLayout {
                                 Layout.fillWidth: true
@@ -807,6 +823,7 @@ Flickable {
                                 wrapMode: Text.WordWrap
                             }
                             RowLayout {
+                                visible: !root.guidedPresentation
                                 Layout.fillWidth: true
                                 SettingTitle {
                                     text: "RESPONSE CURVE"
@@ -814,6 +831,7 @@ Flickable {
                                 }
                                 DeckCombo {
                                     id: curveSelector
+                                    visible: !root.guidedPresentation
                                     model: ["Linear", "J-Curve", "S-Curve", "Advanced", "Custom", "Personal"]
                                     currentIndex: Math.max(0, model.indexOf(String(card.curveState.family || "Linear")))
                                     Layout.fillWidth: true
@@ -823,6 +841,7 @@ Flickable {
                                     }
                                 }
                                 DeckButton {
+                                    visible: !root.guidedPresentation
                                     text: "EDIT"
                                     subdued: true
                                     Layout.preferredWidth: 58
@@ -832,11 +851,27 @@ Flickable {
                                     }
                                 }
                             }
+                            Text {
+                                visible: root.guidedPresentation
+                                    && ["Linear", "J-Curve", "S-Curve"].indexOf(String(card.curveState.family || "Linear")) < 0
+                                Layout.fillWidth: true
+                                text: "Custom processing is active. Open in Full to edit its curve."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: root.guidedPresentation
+                                    && ["Linear", "J-Curve", "S-Curve"].indexOf(String(card.curveState.family || "Linear")) < 0
+                                text: "OPEN IN FULL"
+                                subdued: true
+                                onClicked: { backend.setSelectedAxis(card.axisIndex); root.navigateToPage(6) }
+                            }
                             RowLayout {
                                 visible: String(card.curveState.family || "") === "J-Curve" || String(card.curveState.family || "") === "S-Curve"
                                 Layout.fillWidth: true
                                 SettingTitle {
-                                    text: "CURVE STRENGTH"
+                                    text: root.guidedPresentation ? "SENSITIVITY" : "CURVE STRENGTH"
                                     Layout.preferredWidth: 108
                                 }
                                 DeckSlider {
@@ -855,7 +890,9 @@ Flickable {
                                 }
                             }
                             Text {
-                                text: "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
+                                text: root.guidedPresentation
+                                    ? "Sensitivity changes use the existing response control."
+                                    : "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
                                 color: deck.textMuted
                                 font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
@@ -866,6 +903,7 @@ Flickable {
 
                     Rectangle {
                         objectName: "flightDeckAxesProcessingDisclosure_" + card.axisIndex
+                        visible: !root.guidedPresentation
                         Layout.fillWidth: true
                         implicitHeight: processingDisclosure.implicitHeight + deck.space24
                         radius: deck.radiusCard
@@ -917,7 +955,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        visible: card.processingVisible
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: limitsContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -985,7 +1023,7 @@ Flickable {
                     Rectangle {
                         objectName: "flightDeckAxesAdvancedControls_" + card.axisIndex
                         Layout.fillWidth: true
-                        visible: card.processingVisible
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: advancedContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1097,7 +1135,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        visible: card.processingVisible
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: adaptiveContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1139,6 +1177,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
+                        visible: !root.guidedPresentation
                         implicitHeight: technicalContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface

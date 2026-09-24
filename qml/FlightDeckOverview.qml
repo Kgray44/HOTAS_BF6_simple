@@ -26,6 +26,7 @@ Flickable {
     // readiness presentation while Devices shows the same rig's session.
     readonly property var setupTruth: backend.setupTruthSnapshot || ({})
     readonly property var hidhideHealth: backend.hidhideHealth || ({})
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
 
     function editSetupContext() {
         const rigId = String(setupTruth.setupTargetRigId || backend.activeDeviceRigId || "")
@@ -57,8 +58,8 @@ Flickable {
     readonly property var setupPhysical: setupGroup("physical")
     readonly property var setupOutput: setupGroup("vjoy")
     readonly property var setupIsolation: setupGroup("isolation")
-    // Full exposes current setup context sooner; Guided keeps the same facts
-    // behind an explicit, persistent disclosure.
+    // Evidence remains available in Full. Basic stays focused on the one
+    // actionable setup item and the physical/control checks above.
     readonly property bool connectionEvidenceExpanded: {
         themeManager.guidancePolicyRevision
         return themeManager.guidanceSectionExpanded("overview-connection-evidence")
@@ -299,6 +300,7 @@ Flickable {
                     color: deck.divider
                 }
                 RowLayout {
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
                     spacing: deck.space12
                     Text {
@@ -431,7 +433,8 @@ Flickable {
                     contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
                 Repeater {
-                    model: root.additionalAttentionExpanded ? (root.setupTruth.issues || []).slice(1) : []
+                    model: !root.guidedPresentation && root.additionalAttentionExpanded
+                        ? (root.setupTruth.issues || []).slice(1) : []
                     delegate: Text {
                         required property var modelData
                         Layout.fillWidth: true
@@ -444,6 +447,7 @@ Flickable {
 
         FlightDeckCard {
             objectName: "flightDeckConnectionEvidence"
+            visible: !root.guidedPresentation
             tokens: deck
             Layout.fillWidth: true
             implicitHeight: connectionContent.implicitHeight + contentPadding * 2
