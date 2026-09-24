@@ -377,12 +377,17 @@ public:
     bool configureDeviceRigAxisEvidenceFixtureForTest();
     bool publishRuntimeAxisEvidenceForTest(const QString &recordId, int canonicalAxis,
                                            int formattedSource);
+    // Performs exactly one normal control-plane evidence persistence attempt.
+    // The startup suite uses the false result from a forced writer failure to
+    // prove that verified in-memory evidence remains intact before recovery.
+    bool attemptRuntimeAxisEvidencePersistenceForTest();
     bool persistRuntimeAxisEvidenceForTest();
     // Makes the next bounded automatic-evidence save attempts fail. This
     // startup-test seam proves that the GUI control plane retries a proof
     // after an asynchronous writer failure; it is not compiled into product
     // binaries and never affects device discovery or MappingWorker.
     void setAutomaticAxisEvidencePersistenceFailuresForTest(int failures);
+    QVariantMap inMemoryAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const;
     QVariantMap persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const;
     // Verifies that the axis-acquisition candidate never starts a DirectInput
     // discovery timer, game probe, or MappingWorker. The fixture is in-memory
@@ -1312,6 +1317,7 @@ private:
         quint64 generation = 0;
         int retryCount = 0;
         qint64 retryNotBeforeMs = 0;
+        bool retryLimitReported = false;
     };
     bool automaticAxisEvidenceIsDurable(
         const PendingAutomaticAxisEvidencePersistence &pending) const;

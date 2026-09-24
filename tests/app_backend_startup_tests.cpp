@@ -1546,6 +1546,14 @@ bool verifyAutomaticAxisEvidencePersistenceRecovery()
     // durable record for a fresh ConfigStore consumer.
     backend->setAutomaticAxisEvidencePersistenceFailuresForTest(1);
     if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "forced automatic evidence persistence failure was not observed\n");
+        return false;
+    }
+    const QVariantMap ramOnly = backend->inMemoryAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    const QVariantMap stillOnDisk = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    if (!hasVerifiedBufferedEvidence(ramOnly, y)
+        || stillOnDisk.value(QStringLiteral("verified")).toBool()
         || !backend->persistRuntimeAxisEvidenceForTest()
         || !hasVerifiedBufferedEvidence(
             backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)) {
@@ -1624,11 +1632,42 @@ bool verifyAxisConfigurationNotificationIgnoresSetupStatus()
     return configurationCommit.value(QStringLiteral("axisConfigurationChanged")).toULongLong() >= 1;
 }
 
+bool verifyAxisTelemetryPublicationDoesNotRebuildConfiguration()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int rz = static_cast<int>(hotas::PhysicalAxis::Rz);
+    if (!backend->configureAxisAcquisitionFixtureForTest()) return false;
+    backend->resetUiPerformanceCounters();
+    if (!backend->setAxisSourceMonitorCandidateForTest(rz, 32123, 102, 65411, 60, 80)
+        || !backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "axis telemetry publication fixture did not advance\n");
+        return false;
+    }
+    const QVariantMap configuration = backend->axisConfiguration().at(rz).toMap();
+    const QVariantMap telemetry = backend->axisTelemetry().at(rz).toMap();
+    const QVariantMap counters = backend->uiPerformanceCounters();
+    if (configuration.contains(QStringLiteral("rawValue"))
+        || configuration.contains(QStringLiteral("observedMinimum"))
+        || configuration.contains(QStringLiteral("liveMovementObserved"))
+        || counters.value(QStringLiteral("axisConfigurationChanged")).toULongLong() != 0
+        || counters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() < 1
+        || telemetry.value(QStringLiteral("rawValue")).toInt() != 32123
+        || telemetry.value(QStringLiteral("observedMinimum")).toInt() != 102
+        || telemetry.value(QStringLiteral("observedMaximum")).toInt() != 65411
+        || !telemetry.value(QStringLiteral("observedRangeAvailable")).toBool()
+        || !telemetry.value(QStringLiteral("liveMovementObserved")).toBool()
+        || telemetry.value(QStringLiteral("lastMovementAgeMs")).toLongLong() != 0) {
+        std::fprintf(stderr, "live axis telemetry rebuilt configuration or lost its runtime values\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 29> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 30> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 29> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 30> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1658,6 +1697,7 @@ const std::array<std::pair<QString, StartupFixture>, 29> &startupFixtures()
         {QStringLiteral("axis-evidence-persistence-recovery"), verifyAutomaticAxisEvidencePersistenceRecovery},
         {QStringLiteral("rig-axis-evidence"), verifyDeviceRigAxisEvidenceIgnoresEditorSelection},
         {QStringLiteral("axis-configuration-notification"), verifyAxisConfigurationNotificationIgnoresSetupStatus},
+        {QStringLiteral("axis-telemetry-notification"), verifyAxisTelemetryPublicationDoesNotRebuildConfiguration},
     }};
     return fixtures;
 }

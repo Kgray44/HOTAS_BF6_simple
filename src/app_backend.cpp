@@ -102,6 +102,11 @@ constexpr int kForegroundGameStableMs = 450;
 constexpr int kRequiredDeviceDisconnectGraceMs = 3500;
 constexpr int kPersistenceTransactionTimeoutMs = 2500;
 constexpr int kPersistenceShutdownTimeoutMs = 2000;
+// Automatic acquisition proof must remain asynchronous. One immediate retry
+// handles a transient writer fault; the remaining bounded retries protect the
+// GUI and disk from a persistent failure while leaving the proof pending for
+// a later ordinary configuration save.
+constexpr int kAutomaticEvidencePersistenceRetryLimit = 3;
 
 bool startupSmokeRequested()
 {
@@ -2272,6 +2277,13 @@ void AppBackend::recoverAutomaticAxisEvidencePersistence()
     const bool failed = statistics.lastFailedGeneration >= pending.generation;
     const bool durableButMissing = statistics.durableGeneration >= pending.generation;
     if (!failed && !durableButMissing) return;
+    if (pending.retryCount >= kAutomaticEvidencePersistenceRetryLimit) {
+        if (!pending.retryLimitReported) {
+            appendEvent(u"Automatic DirectInput acquisition evidence remains pending durability; the next configuration save will include it."_qs);
+            pending.retryLimitReported = true;
+        }
+        return;
+    }
     const qint64 nowMs = m_axisEvidencePersistenceClock.elapsed();
     if (nowMs < pending.retryNotBeforeMs) return;
 
@@ -2959,12 +2971,17 @@ bool AppBackend::publishRuntimeAxisEvidenceForTest(const QString &recordId, int 
 
 bool AppBackend::persistRuntimeAxisEvidenceForTest()
 {
-    if (!m_persistence) return false;
     // The second control-plane tick mirrors the regular UI snapshot timer:
     // it sees a completed failed asynchronous write and queues recovery.
     // Normal success still returns after the first bounded flush.
-    refreshUiSnapshot();
-    if (m_persistence->flushLatest(kPersistenceTransactionTimeoutMs).durable()) return true;
+    if (attemptRuntimeAxisEvidencePersistenceForTest()) return true;
+    if (!attemptRuntimeAxisEvidencePersistenceForTest()) return false;
+    return true;
+}
+
+bool AppBackend::attemptRuntimeAxisEvidencePersistenceForTest()
+{
+    if (!m_persistence) return false;
     refreshUiSnapshot();
     return m_persistence->flushLatest(kPersistenceTransactionTimeoutMs).durable();
 }
@@ -2992,6 +3009,21 @@ void AppBackend::setAutomaticAxisEvidencePersistenceFailuresForTest(int failures
         });
     m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
     m_pendingAutomaticAxisEvidencePersistence.reset();
+}
+
+QVariantMap AppBackend::inMemoryAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const
+{
+    if (!validAxis(canonicalAxis)) return {};
+    const auto record = std::find_if(m_configuration.savedControllers.cbegin(),
+        m_configuration.savedControllers.cend(),
+        [&recordId](const SavedControllerRecord &candidate) { return candidate.id == recordId; });
+    if (record == m_configuration.savedControllers.cend()) return {};
+    const NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(canonicalAxis)];
+    return {{u"found"_qs, true}, {u"formattedSource"_qs, descriptor.formattedSource},
+            {u"evidence"_qs, static_cast<int>(descriptor.formattedSourceEvidence)},
+            {u"verified"_qs, descriptor.formattedSourceVerified},
+            {u"acquisitionMethod"_qs, descriptor.acquisitionMethod},
+            {u"lastVerified"_qs, record->lastVerified}};
 }
 
 QVariantMap AppBackend::persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const
@@ -3044,6 +3076,10 @@ bool AppBackend::setAxisSourceMonitorCandidateForTest(int source, qint32 value,
     telemetry.recentMovementMagnitude[index].store(movementMagnitude, std::memory_order_relaxed);
     telemetry.lastChangeAgeMs[index].store(0, std::memory_order_relaxed);
     telemetry.available.store(true, std::memory_order_relaxed);
+    runtime.deviceRigMemberAxisLiveMovementObserved[0][index].store(
+        movementMagnitude != 0, std::memory_order_relaxed);
+    runtime.deviceRigMemberAxisLastMovementAgeMs[0][index].store(
+        movementMagnitude != 0 ? 0 : -1, std::memory_order_relaxed);
     return true;
 }
 
