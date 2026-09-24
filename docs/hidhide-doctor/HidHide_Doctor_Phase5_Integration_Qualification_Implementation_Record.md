@@ -10,31 +10,32 @@
 - Earlier qualification-evidence baseline: `7ee23194e18e8bbd80ce143e11052800669ce19c`.
   Those earlier checks are historical evidence only and are not substituted for
   a later PR head.
-- Current activity-lifecycle selection candidate:
-  `a5e35072e6915d0465bd1f5d57518b580ad46735`. It makes each Activity row
-  identify its lifecycle event, retains the selected event context beside the
-  canonical evidence, and gives the Inspector compact accessible curved-arrow
-  evidence navigation. A fresh full local CTest run against
+- Current activity-lifecycle selection and history-state clarity candidate:
+  `5742670f6d31fd6f5de40a797982f563b2176828`. Its earlier parent
+  `a5e35072e6915d0465bd1f5d57518b580ad46735` makes each Activity row identify
+  its lifecycle event, retains the selected event context beside canonical
+  evidence, and gives the Inspector compact accessible curved-arrow evidence
+  navigation. The current change keeps historical events immutable while
+  labelling a selected `CHECK STARTED` record as `STATE AT START: RUNNING` and,
+  when retained, shows the later `CHECK COMPLETED` outcome and timestamp. A
+  full local CTest run against
   `C:\hotas-builds\hidhide-doctor-phase5-addendum1` passed all 22 registered
-  tests with the explicit 180-second per-test bound. Its pre-final R8 stage is
-  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R8`: all 1,387 payload files
+  tests in 351.66 seconds. Its pre-final R9 stage is
+  `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R9`: all 1,387 payload files
   agree by path, byte count, and SHA-256 with its component manifest; the
   manifest SHA-256 is
-  `6E27E706B3E155271FA6D452AB914A5781FD4C445B278E7B189FC7FE5E5F7720` and
+  `12E0229FA5F8177DB44AE0BB1D5578BD7A3CD3F7084E5D35F702727745C4BEE7` and
   `HidHide Doctor.exe` SHA-256 is
-  `B3DFFAE6E5EEC3999A235D42F6E577E857560E278C85B0C7A20DA38CCEB585FB`.
+  `1A7B94CCCED3B5A99AB4CB9D9AA9A273C0BB66E1A0613F9C4D93E067794178A5`.
   Mapper, Doctor, and helper report 2.6.2 and `NotSigned`; staged
   `--startup-smoke` and read-only `--scan-smoke` each exited 0. Documentation
-  Check run `35648806550`, HOTAS BF6 CI run `35648806540`, and isolated
-  installer qualification run `35648806553` reached terminal `SUCCESS` on
-  this exact head. Its docs-only successor
-  `b15232166ff523945394bdf1dd95c8823f84f344` then passed Documentation Check
-  `35650964667`, HOTAS BF6 CI `35650964699`, and isolated installer
-  qualification `35650964677`; the latter completed its full configured suite,
-  staging, clean install/uninstall removal, and clean/upgrade/recovery startup
-  checks. R8 is a pre-final owner-review stage, not the immutable
-  final RC artifact: owner confirmation of the focused lifecycle/arrow review
-  remains pending, and no repair, release, tag, or merge is authorized.
+  Check run `35670342281`, HOTAS BF6 CI run `35670342247`, and isolated
+  installer qualification run `35670342241` reached terminal `SUCCESS` on
+  this exact head. The owner then selected a historical `CHECK STARTED` record
+  with a later completion and reported that everything looked good. This is a
+  narrow native confirmation of the history-label wording only; it is not a
+  full multi-row/arrow-navigation, accessibility, DPI, hardware, repair, or
+  final-RC review. No repair, release, tag, or merge is authorized.
 - Current forensic-evidence candidate: `e8010fb`. Its full local CTest run at
   `C:\hotas-builds\hidhide-doctor-phase5-addendum1` passed all 18 registered
   tests with a 180-second CTest timeout; `app_qml_startup_tests` completed in
