@@ -6603,6 +6603,7 @@ Item {
                                         model: processorNode.channelPairs
                                         delegate: Rectangle {
                                             required property var modelData
+                                            required property int index
                                             width: processorCardContent.width
                                             height: 24
                                             radius: deck.radiusControl
