@@ -21915,6 +21915,7 @@ void AppBackend::refreshUiSnapshot()
     MapperConfiguration evidenceCandidate = m_configuration;
     QStringList evidenceOwnerIds;
     QHash<QString, QSet<int>> evidenceAxesByRecord;
+    bool automaticEvidenceQueued = false;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     for (const RuntimeAxisEvidenceOwner &owner : runtimeAxisEvidenceOwners()) {
         auto record = std::find_if(evidenceCandidate.savedControllers.begin(),
@@ -21969,6 +21970,7 @@ void AppBackend::refreshUiSnapshot()
             pending.axesByRecord = std::move(evidenceAxesByRecord);
             pending.generation = persistence.generation;
             m_pendingAutomaticAxisEvidencePersistence = std::move(pending);
+            automaticEvidenceQueued = true;
             ++m_configurationGeneration;
             m_worker.updateConfiguration(m_configuration);
             emit axisConfigurationChanged();
@@ -21978,7 +21980,10 @@ void AppBackend::refreshUiSnapshot()
             appendEvent(u"DirectInput acquisition evidence was not queued because configuration persistence stopped."_qs);
         }
     }
-    recoverAutomaticAxisEvidencePersistence();
+    // Do not consume a just-queued generation in this same UI tick. The
+    // writer owns its asynchronous completion boundary; a later snapshot
+    // observes success or failure and can then perform bounded recovery.
+    if (!automaticEvidenceQueued) recoverAutomaticAxisEvidencePersistence();
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
