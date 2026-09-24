@@ -25,6 +25,12 @@ Item {
     property var presentationState: ({})
     property bool presentationRestored: false
     property var graph: backendObject ? backendObject.signalFlowGraph : ({})
+    // This is a presentation-only projection rebuilt at canonical graph
+    // revision boundaries. Hover, selection, card drag, pan, and zoom only
+    // read it; they never walk the full graph to rediscover an endpoint or
+    // route relationship.
+    property var presentationIndex: ({})
+    property int presentationIndexRebuildCount: 0
     property var source: ({})
     property var inspectedRoute: ({})
     // Ports are selections in their own right.  This remains a view of the
@@ -51,6 +57,10 @@ Item {
     property bool workspaceRestored: false
     property var workspaceAnnotations: []
     property var inspectedAnnotation: ({})
+    // Spatial annotation attachment is a transient presentation affordance.
+    // A release converts it into existing workspace metadata only; it never
+    // changes graph topology or runtime state.
+    property var annotationSnapPreview: ({})
     property string blockLibraryQuery: ""
     // This is the backend's canonical insertable-type catalog. It is never
     // derived from a selected wire or from processor instances already in
@@ -392,11 +402,16 @@ Item {
         inspectorContentAnimation.restart()
     }
     function node(kind) {
+        const indexed = presentationIndexForGraph().firstNodeByKind || ({})
+        if (indexed[String(kind || "")]) return indexed[String(kind || "")]
         const nodes = graph.nodes || []
         for (let i = 0; i < nodes.length; ++i) if (nodes[i].kind === kind) return nodes[i]
         return ({})
     }
     function routeForId(id) {
+        const indexed = presentationIndexForGraph().routeById || ({})
+        const found = indexed[String(id || "")]
+        if (found) return found
         const routes = graph.routes || []
         for (let index = 0; index < routes.length; ++index)
             if (String(routes[index].id || "") === String(id || "")) return routes[index]
@@ -411,6 +426,9 @@ Item {
     function routeForProcessorNode(nodeData) {
         if (!nodeData || String(nodeData.kind || "") !== "processor") return ({})
         const processorId = String(nodeData.objectId || "")
+        const indexed = presentationIndexForGraph().routesByProcessorId || ({})
+        const indexedRoutes = indexed[processorId] || []
+        if (indexedRoutes.length > 0) return indexedRoutes[0]
         const routes = graph.routes || []
         for (let index = 0; index < routes.length; ++index) {
             const details = routes[index].processorDetails || []
@@ -641,7 +659,7 @@ Item {
             : routeForProcessorNode(inspectedNode)
         const axis = axisForRoute(route)
         if (axis < 0 || axis >= 8) {
-            notice = "Full settings are available only for an axis route. Select the Curve or Adaptive Response processor again."
+            notice = "Full settings require a current axis route. Select a route-backed processor or port and try again."
             noticeError = true
             return false
         }
@@ -660,12 +678,14 @@ Item {
     }
     function openNodeSettings(nodeData) {
         if (!nodeData || nodeData.kind !== "processor") return false
-        if (nodeData.semantic !== "curve" && nodeData.semantic !== "adaptive-response") {
-            notice = "This processor is summarized here. Its focused settings remain on the Axes page."
-            noticeError = false
-            return false
-        }
-        return openFullSettings(nodeData.semantic, routeForProcessorNode(nodeData))
+        const semantic = String(nodeData.semantic || "").toLowerCase()
+        const route = routeForProcessorNode(nodeData)
+        // Curve and Adaptive Response have their own authoritative editors.
+        // Every other configurable axis processor must still lead somewhere
+        // useful: the same source-owned Axes editor in the exact controller /
+        // profile context, never a toast that merely names another page.
+        return openFullSettings(semantic === "curve" || semantic === "adaptive-response"
+            ? semantic : "axis", route)
     }
     function openCardSettings(nodeData) {
         if (!nodeData || (nodeData.kind !== "input" && nodeData.kind !== "output")) return false
@@ -681,6 +701,25 @@ Item {
     function inputNodes() { return (graph.nodes || []).filter(function(item) { return item.kind === "input" }) }
     function portsForNode(nodeData) { return nodeData && nodeData.ports ? nodeData.ports : [] }
     function routesForPort(port, isOutput) {
+        if (!port) return []
+        const index = presentationIndexForGraph()
+        const table = isOutput ? (index.routesByDestinationEndpoint || ({}))
+            : (index.routesBySourceEndpoint || ({}))
+        const keys = [String(port.endpointId || ""), String(port.id || "")]
+        const indexed = []
+        const seen = ({})
+        for (let keyIndex = 0; keyIndex < keys.length; ++keyIndex) {
+            const matching = table[keys[keyIndex]] || []
+            for (let routeIndex = 0; routeIndex < matching.length; ++routeIndex) {
+                const route = matching[routeIndex]
+                const routeId = String(route && route.id || "")
+                if (routeId && !seen[routeId]) {
+                    seen[routeId] = true
+                    indexed.push(route)
+                }
+            }
+        }
+        if (indexed.length > 0) return indexed
         const matches = []
         const routes = graph.routes || []
         for (let i = 0; i < routes.length; ++i) {
@@ -694,6 +733,9 @@ Item {
     }
     function portOwner(port) {
         if (!port) return ({})
+        const owners = presentationIndexForGraph().ownerByEndpoint || ({})
+        const byEndpoint = owners[String(port.endpointId || "")] || owners[String(port.id || "")]
+        if (byEndpoint) return byEndpoint
         const ownerId = String(port.ownerNodeId || "")
         const candidates = graph.nodes || []
         for (let index = 0; index < candidates.length; ++index) {
@@ -736,9 +778,24 @@ Item {
         const owner = portOwner(port)
         const direction = destination ? "Output" : "Input"
         const health = port.available ? "configuration valid" : "offline / unavailable"
-        return String(owner.label || "Signal Flow") + "\n" + String(port.label || port.technicalLabel || "Port")
+        const routes = routesForPort(port, destination)
+        let topology = destination ? "No canonical source" : "No canonical destination"
+        if (routes.length > 0) {
+            const first = routes[0]
+            const processors = first.processors && first.processors.length
+                ? " through " + first.processors.join(" → ") : ""
+            topology = destination
+                ? "← " + String(first.sourceLabel || "Source") + processors
+                : "→ " + (first.processors && first.processors.length
+                    ? first.processors.join(" → ") + " → " : "")
+                    + String(first.destinationLabel || "Destination")
+            if (routes.length > 1) topology += " · +" + (routes.length - 1) + " more"
+        }
+        return String(port.label || port.technicalLabel || "Signal Flow port")
             + "\n" + String(port.kind || "other").toUpperCase() + " · " + direction
-            + "\n" + portTopologySummary(port) + " · " + health
+            + "\n" + topology
+            + "\n" + routes.length + " route" + (routes.length === 1 ? "" : "s")
+            + " · " + health
     }
     function routeHasProblem(route) { return String(route.health || "ready") !== "ready" }
     function portMatchesState(port, isOutput, state) {
@@ -801,6 +858,11 @@ Item {
         return false
     }
     function cardGroupRouteCount(nodeData, group, destination) {
+        const index = presentationIndexForGraph()
+        const indexedCounts = index.groupRouteCounts || ({})
+        const indexKey = nodeIdentity(nodeData) + "|" + String(group || "")
+            + "|" + (destination ? "destination" : "source")
+        if (indexedCounts[indexKey] !== undefined) return Number(indexedCounts[indexKey] || 0)
         const seen = ({})
         const cardPorts = portsForNode(nodeData)
         for (let index = 0; index < cardPorts.length; ++index) {
@@ -1702,8 +1764,88 @@ Item {
     function nodeStorageIdentity(nodeData) {
         return String(nodeData && (nodeData.objectId || nodeData.id) || "")
     }
+    function rebuildPresentationIndex() {
+        const index = ({ "revision": Number(graph && graph.revision || 0), "graphSource": graph,
+            "nodesById": ({}), "firstNodeByKind": ({}), "ownerByEndpoint": ({}),
+            "routeById": ({}), "routesBySourceEndpoint": ({}),
+            "routesByDestinationEndpoint": ({}), "routesByProcessorId": ({}),
+            "segmentById": ({}), "groupRouteCounts": ({}) })
+        const append = function(table, key, value) {
+            const normalized = String(key || "")
+            if (!normalized.length) return
+            if (!table[normalized]) table[normalized] = []
+            table[normalized].push(value)
+        }
+        const nodes = graph && graph.nodes || []
+        for (let nodeIndex = 0; nodeIndex < nodes.length; ++nodeIndex) {
+            const nodeData = nodes[nodeIndex] || ({})
+            const identity = nodeIdentity(nodeData)
+            const storage = nodeStorageIdentity(nodeData)
+            if (identity) index.nodesById[identity] = nodeData
+            if (storage) index.nodesById[storage] = nodeData
+            const kind = String(nodeData.kind || "")
+            if (kind && !index.firstNodeByKind[kind]) index.firstNodeByKind[kind] = nodeData
+            const ports = nodeData.ports || []
+            for (let portIndex = 0; portIndex < ports.length; ++portIndex) {
+                const port = ports[portIndex] || ({})
+                const endpoint = String(port.endpointId || "")
+                const legacy = String(port.id || "")
+                if (endpoint) index.ownerByEndpoint[endpoint] = nodeData
+                if (legacy) index.ownerByEndpoint[legacy] = nodeData
+            }
+        }
+        const routes = graph && graph.routes || []
+        for (let routeIndex = 0; routeIndex < routes.length; ++routeIndex) {
+            const route = routes[routeIndex] || ({})
+            const routeId = String(route.id || "")
+            if (routeId) index.routeById[routeId] = route
+            append(index.routesBySourceEndpoint, route.sourceEndpointId, route)
+            append(index.routesBySourceEndpoint, route.sourcePortId, route)
+            append(index.routesByDestinationEndpoint, route.destinationEndpointId, route)
+            append(index.routesByDestinationEndpoint, route.destinationPortId, route)
+            const processorDetails = route.processorDetails || []
+            for (let detailIndex = 0; detailIndex < processorDetails.length; ++detailIndex)
+                append(index.routesByProcessorId, processorDetails[detailIndex] && processorDetails[detailIndex].id, route)
+            const segments = route.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segment = segments[segmentIndex] || ({})
+                const segmentId = String(segment.id || "")
+                if (segmentId) index.segmentById[segmentId] = ({ "route": route, "segment": segment })
+            }
+        }
+        for (let nodeIndex = 0; nodeIndex < nodes.length; ++nodeIndex) {
+            const nodeData = nodes[nodeIndex] || ({})
+            const destination = String(nodeData.kind || "") === "output"
+            const counts = ({})
+            const ports = nodeData.ports || []
+            for (let portIndex = 0; portIndex < ports.length; ++portIndex) {
+                const port = ports[portIndex] || ({})
+                const group = String(port.group || "Controls")
+                const table = destination ? index.routesByDestinationEndpoint : index.routesBySourceEndpoint
+                const matches = table[String(port.endpointId || "")] || table[String(port.id || "")] || []
+                if (!counts[group]) counts[group] = ({})
+                for (let routeIndex = 0; routeIndex < matches.length; ++routeIndex)
+                    counts[group][String(matches[routeIndex].id || routeIndex)] = true
+            }
+            for (const group in counts)
+                index.groupRouteCounts[nodeIdentity(nodeData) + "|" + group + "|"
+                    + (destination ? "destination" : "source")] = Object.keys(counts[group]).length
+        }
+        presentationIndex = index
+        presentationIndexRebuildCount += 1
+        return index
+    }
+    function presentationIndexForGraph() {
+        const current = presentationIndex || ({})
+        if (!current.nodesById || current.graphSource !== graph
+                || Number(current.revision || -1) !== Number(graph && graph.revision || 0))
+            return rebuildPresentationIndex()
+        return current
+    }
     function nodeForId(id) {
         const wanted = String(id || "")
+        const indexed = presentationIndexForGraph().nodesById || ({})
+        if (indexed[wanted]) return indexed[wanted]
         const nodes = graph.nodes || []
         for (let index = 0; index < nodes.length; ++index) {
             const candidate = nodes[index]
@@ -1915,6 +2057,8 @@ Item {
         if (port && port.ownerNodeId) return String(port.ownerNodeId)
         const endpoint = String(port && (port.endpointId || port.id) || "")
         if (!endpoint) return ""
+        const owner = (presentationIndexForGraph().ownerByEndpoint || ({}))[endpoint]
+        if (owner) return nodeIdentity(owner)
         const nodes = graph.nodes || []
         for (let nodeIndex = 0; nodeIndex < nodes.length; ++nodeIndex) {
             const ports = nodes[nodeIndex].ports || []
@@ -3399,6 +3543,101 @@ Item {
         }
         return ({ "x": Number(entry.x || 0), "y": Number(entry.y || 0) })
     }
+    function annotationAttachmentMissing(entry) {
+        if (!entry) return false
+        const objectId = String(entry.attachedObjectId || "")
+        if (objectId.length > 0) return !nodeForId(objectId).id
+        const routeId = String(entry.attachedRouteId || "")
+        return routeId.length > 0 && !routeForId(routeId).id
+    }
+    function annotationSnapTargetAt(entry, x, y) {
+        if (!entry) return ({})
+        const centerX = Number(x || 0) + Number(entry.width || 240) * 0.5
+        const centerY = Number(y || 0) + Number(entry.height || 132) * 0.5
+        const threshold = 28
+        const hysteresis = 8
+        let best = ({})
+        let retained = ({})
+        const consider = function(candidate) {
+            if (!candidate || !isFinite(Number(candidate.distance))) return
+            const key = String(candidate.key || "")
+            if (key === String(annotationSnapPreview && annotationSnapPreview.key || "")) retained = candidate
+            if (!best.key || Number(candidate.distance) < Number(best.distance)) best = candidate
+        }
+        const nodes = graph.nodes || []
+        for (let nodeIndex = 0; nodeIndex < nodes.length; ++nodeIndex) {
+            const nodeData = nodes[nodeIndex] || ({})
+            const nodeId = nodeIdentity(nodeData)
+            if (!nodeId) continue
+            const position = nodePosition(nodeData, Number(nodeData.x || 0), Number(nodeData.y || 0))
+            const left = Number(position.x || 0)
+            const top = Number(position.y || 0)
+            const right = left + graphCardWidth(nodeData)
+            const bottom = top + graphCardHeight(nodeData)
+            const nearestX = Math.max(left, Math.min(right, centerX))
+            const nearestY = Math.max(top, Math.min(bottom, centerY))
+            consider(({ "key": "node:" + nodeId, "kind": "node", "objectId": nodeId,
+                "targetX": left, "targetY": top, "width": right - left, "height": bottom - top,
+                "distance": Math.hypot(centerX - nearestX, centerY - nearestY) }))
+        }
+        const geometry = wireGeometry || []
+        for (let entryIndex = 0; entryIndex < geometry.length; ++entryIndex) {
+            const wire = geometry[entryIndex] || ({})
+            const segments = wire.segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const points = segments[segmentIndex].points || []
+                for (let pointIndex = 1; pointIndex < points.length; ++pointIndex) {
+                    const from = points[pointIndex - 1]
+                    const to = points[pointIndex]
+                    const dx = Number(to.x) - Number(from.x)
+                    const dy = Number(to.y) - Number(from.y)
+                    const lengthSquared = dx * dx + dy * dy
+                    const ratio = lengthSquared > 0 ? Math.max(0, Math.min(1,
+                        ((centerX - Number(from.x)) * dx + (centerY - Number(from.y)) * dy) / lengthSquared)) : 0
+                    const targetX = Number(from.x) + dx * ratio
+                    const targetY = Number(from.y) + dy * ratio
+                    consider(({ "key": "route:" + String(wire.routeId || ""), "kind": "route",
+                        "routeId": String(wire.routeId || ""), "targetX": targetX, "targetY": targetY,
+                        "distance": Math.hypot(centerX - targetX, centerY - targetY) }))
+                }
+            }
+        }
+        if (retained.key && Number(retained.distance) <= threshold + hysteresis
+                && (!best.key || Number(retained.distance) <= Number(best.distance) + 6)) return retained
+        return best.key && Number(best.distance) <= threshold ? best : ({})
+    }
+    function updateAnnotationSnapPreview(entry, x, y) {
+        const candidate = annotationSnapTargetAt(entry, x, y)
+        annotationSnapPreview = candidate.key ? Object.assign({ "annotationId": String(entry.id || "") }, candidate) : ({})
+        return annotationSnapPreview
+    }
+    function beginAnnotationMove(entry) {
+        if (!entry || !entry.id) return ({ "x": 0, "y": 0 })
+        const displayed = annotationPosition(entry)
+        if (entry.attachedObjectId || entry.attachedRouteId)
+            updateAnnotation(entry.id, { "x": Number(displayed.x), "y": Number(displayed.y),
+                "attachedObjectId": "", "attachedRouteId": "" }, false)
+        annotationSnapPreview = ({})
+        return displayed
+    }
+    function completeAnnotationMove(entry, x, y, contentOrigins, originX, originY) {
+        if (!entry || !entry.id) return false
+        moveAnnotation(entry.id, Number(x), Number(y), contentOrigins, false, originX, originY)
+        const target = annotationSnapPreview || ({})
+        if (String(target.annotationId || "") === String(entry.id || "")) {
+            if (target.kind === "node" && target.objectId) {
+                updateAnnotation(entry.id, { "x": Number(x) - Number(target.targetX),
+                    "y": Number(y) - Number(target.targetY), "attachedObjectId": String(target.objectId),
+                    "attachedRouteId": "" }, false)
+            } else if (target.kind === "route" && target.routeId) {
+                updateAnnotation(entry.id, { "x": Number(x) - Number(target.targetX),
+                    "y": Number(y) - Number(target.targetY), "attachedObjectId": "",
+                    "attachedRouteId": String(target.routeId) }, false)
+            }
+        }
+        annotationSnapPreview = ({})
+        return persistAnnotations()
+    }
     function addAnnotation(kind, x, y) {
         if (kind !== "note" && kind !== "group") return false
         const id = kind + ":" + Date.now().toString(36) + ":" + Math.floor(Math.random() * 100000).toString(36)
@@ -3954,6 +4193,11 @@ Item {
     }
 
     onGraphChanged: {
+        // Build this immutable-for-the-revision presentation cache before any
+        // selection or delegate binding reads a route/owner relationship.
+        // Workspace-only graph echoes retain the same revision and therefore
+        // do not reconstruct it.
+        presentationIndexForGraph()
         const nextRoutes = graph.routes || []
         const topologyChanged = routeTopologySignature(nextRoutes) !== renderedRouteTopologySignature()
         if (armedLibraryEntry && armedLibraryEntry.type === "processor")
@@ -5760,7 +6004,8 @@ Item {
                                     ? Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.20)
                                     : Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.94)
                                 border.width: String(root.inspectedAnnotation.id || "") === String(modelData.id || "") ? 2 : 1
-                                border.color: modelData.kind === "group" ? deck.graphLabel : deck.border
+                                border.color: String(root.annotationSnapPreview.annotationId || "") === String(modelData.id || "")
+                                    ? deck.focus : modelData.kind === "group" ? deck.graphLabel : deck.border
                                 clip: true
                                 Column {
                                     anchors.fill: parent; anchors.margins: deck.space8; spacing: deck.space4
@@ -5789,7 +6034,8 @@ Item {
                                             property var contentOrigins: ({})
                                             onPressed: function(mouse) {
                                                 startX = mouse.x; startY = mouse.y
-                                                originX = Number(modelData.x || 0); originY = Number(modelData.y || 0)
+                                                const displayed = root.beginAnnotationMove(modelData)
+                                                originX = Number(displayed.x || 0); originY = Number(displayed.y || 0)
                                                 contentOrigins = root.annotationContentOrigins(modelData)
                                                 root.inspectedAnnotation = modelData; root.inspectorOpen = true; root.ensureInspectorPosition()
                                             }
@@ -5797,8 +6043,12 @@ Item {
                                                 if (!pressed) return
                                                 root.moveAnnotation(modelData.id, originX + mouse.x - startX,
                                                     originY + mouse.y - startY, contentOrigins, false, originX, originY)
+                                                root.updateAnnotationSnapPreview(modelData,
+                                                    originX + mouse.x - startX, originY + mouse.y - startY)
                                             }
-                                            onReleased: root.persistAnnotations()
+                                            onReleased: root.completeAnnotationMove(modelData,
+                                                originX + mouse.x - startX, originY + mouse.y - startY,
+                                                contentOrigins, originX, originY)
                                         }
                                     }
                                     TextArea {
@@ -5829,6 +6079,32 @@ Item {
                                     }
                                     onReleased: root.persistAnnotations()
                                 }
+                            }
+                        }
+                        Item {
+                            // A spatial attachment guide is deliberately quiet: it appears
+                            // only within the hysteresis envelope while an annotation is
+                            // being moved, and stays outside route topology/hit testing.
+                            id: annotationSnapGuide
+                            z: 4
+                            visible: Boolean(root.annotationSnapPreview && root.annotationSnapPreview.key)
+                            x: Number(root.annotationSnapPreview.targetX || 0)
+                            y: Number(root.annotationSnapPreview.targetY || 0)
+                            width: root.annotationSnapPreview.kind === "node"
+                                ? Number(root.annotationSnapPreview.width || 0) : 12
+                            height: root.annotationSnapPreview.kind === "node"
+                                ? Number(root.annotationSnapPreview.height || 0) : 12
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: root.annotationSnapPreview.kind === "node" ? deck.radiusCard : width * 0.5
+                                color: "transparent"; border.width: 1; border.color: deck.focus; opacity: 0.72
+                            }
+                            Text {
+                                visible: parent.visible
+                                anchors.left: parent.right; anchors.leftMargin: deck.space4
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.annotationSnapPreview.kind === "route" ? "Attach to route" : "Attach to block"
+                                color: deck.focus; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true
                             }
                         }
                         // The ghost and guide stay under the freely moving card. They make a
@@ -5880,18 +6156,12 @@ Item {
                                 ? Math.min(130, root.graphCardHeight(root.armedLibraryEntry.node || ({})))
                                 : root.armedLibraryEntry && root.armedLibraryEntry.type === "processor" ? 76 : 56
                             opacity: 0.82
-                            Rectangle {
-                                anchors.fill: parent; radius: deck.radiusCard
-                                color: root.armedLibraryEntry && root.armedLibraryEntry.type === "annotation"
-                                    ? Qt.rgba(deck.elevatedSurface.r, deck.elevatedSurface.g, deck.elevatedSurface.b, 0.88)
-                                    : deck.secondarySurface
-                                border.width: 2; border.color: deck.focus
-                            }
-                            Column {
-                                anchors.fill: parent; anchors.margins: deck.space8; spacing: deck.space4
-                                Text { width: parent.width; text: String(root.armedLibraryEntry && root.armedLibraryEntry.label || "Block"); color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight }
-                                Text { width: parent.width; text: root.armedLibraryEntry && root.armedLibraryEntry.type === "processor" ? "PROCESSOR · DROP ON ROUTE" : root.armedLibraryEntry && root.armedLibraryEntry.type === "node" ? "EXISTING CANONICAL BLOCK" : "PRESENTATION ONLY"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight }
-                                Text { visible: root.armedLibraryEntry && root.armedLibraryEntry.type === "processor"; width: parent.width; text: String(root.armedLibraryEntry.detail || "Canonical processor") + " · drop onto a highlighted compatible signal route"; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 8; wrapMode: Text.WordWrap }
+                            SignalFlowBlockPresentation {
+                                anchors.fill: parent
+                                tokens: deck
+                                block: root.armedLibraryEntry
+                                placementGhost: true
+                                highlighted: true
                             }
                         }
                         // One interaction layer tests the same cached paths that Canvas paints.
@@ -6874,7 +7144,7 @@ Item {
                             // than this Repeater on the first open. Keep a numeric zero
                             // placeholder for that turn rather than assigning undefined
                             // to a live native delegate width.
-                            width: Number(blockLibraryList.availableWidth || 0); spacing: deck.space5
+                            width: Number(blockLibraryList.availableWidth || 0); spacing: deck.space4
                             readonly property var entries: root.libraryEntries()
                             readonly property bool categoryStart: index === 0 || entries[index - 1].category !== modelData.category
                             Text {
@@ -6887,15 +7157,14 @@ Item {
                                 font.bold: true
                                 topPadding: parent.categoryStart && index > 0 ? deck.space6 : 0
                             }
-                            Rectangle {
+                            SignalFlowBlockPresentation {
                                 id: libraryBlockCard
                                 objectName: "signalFlowLibraryCard:" + String(modelData.type || "") + ":" + String(modelData.id || "")
+                                tokens: deck
+                                block: modelData
                                 width: parent.width
                                 height: modelData.type === "node" ? 68 : modelData.type === "processor" ? 76 : 56
-                                radius: deck.radiusCard
-                                color: libraryBlockHover.hovered || root.blockLibrarySelectionIndex === index ? deck.selected : deck.secondarySurface
-                                border.width: root.blockLibrarySelectionIndex === index ? 2 : 1
-                                border.color: root.blockLibrarySelectionIndex === index ? deck.focus : deck.border
+                                highlighted: libraryBlockHover.hovered || root.blockLibrarySelectionIndex === index
                                 clip: false
                                 Drag.active: libraryBlockDrag.active
                                 Drag.source: libraryBlockCard
@@ -6903,56 +7172,6 @@ Item {
                                 Drag.hotSpot.x: width * 0.5; Drag.hotSpot.y: height * 0.5
                                 property string processorKind: String(modelData.id || "")
                                 property var libraryEntry: modelData
-                                Item {
-                                    anchors.fill: parent
-                                    anchors.margins: deck.space10
-                                    Rectangle {
-                                        visible: modelData.type !== "annotation"
-                                        width: 10; height: 10; radius: 5
-                                        x: modelData.type === "node" && modelData.kind === "virtual-output" ? parent.width - width * 0.5 : -width * 0.5
-                                        y: parent.height * 0.5 - height * 0.5
-                                        color: modelData.kind === "virtual-output" ? deck.healthy : deck.informational
-                                        border.width: 2; border.color: deck.elevatedSurface
-                                    }
-                                    Rectangle {
-                                        visible: modelData.type === "processor"
-                                        width: 10; height: 10; radius: 5
-                                        x: -width * 0.5; y: parent.height - height * 0.5
-                                        color: deck.informational; border.width: 2; border.color: deck.elevatedSurface
-                                    }
-                                    Rectangle {
-                                        visible: modelData.type === "processor"
-                                        width: 10; height: 10; radius: 5
-                                        x: parent.width - width * 0.5; y: parent.height - height * 0.5
-                                        color: deck.healthy; border.width: 2; border.color: deck.elevatedSurface
-                                    }
-                                    Text {
-                                        width: parent.width - (modelData.type === "node" ? 0 : 14)
-                                        anchors.left: parent.left; anchors.top: parent.top
-                                        text: String(modelData.label || "Block")
-                                        color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        width: parent.width - 6
-                                        anchors.left: parent.left; anchors.top: parent.top; anchors.topMargin: 19
-                                        text: modelData.type === "node" ? (modelData.kind === "physical-input" ? "PHYSICAL INPUT · ON CANVAS" : "VIRTUAL OUTPUT · ON CANVAS")
-                                            : modelData.type === "processor" ? String(modelData.detail || "Canonical processor") : "PRESENTATION ONLY"
-                                        color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        visible: modelData.type === "processor"
-                                        width: parent.width - 12
-                                        anchors.left: parent.left; anchors.bottom: parent.bottom
-                                        text: "INPUT  ─────────  OUTPUT"
-                                        color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true; elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        visible: modelData.type !== "processor"
-                                        anchors.right: parent.right; anchors.bottom: parent.bottom
-                                        text: "DRAG"
-                                        color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true
-                                    }
-                                }
                                 HoverHandler { id: libraryBlockHover }
                                 TapHandler { onTapped: { root.blockLibrarySelectionIndex = index; root.armLibraryEntry(modelData) } }
                                 DragHandler {
@@ -7266,6 +7485,15 @@ Item {
             DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: "Expand all sections"; Layout.fillWidth: true; onClicked: root.setAllGroups(root.inspectedNode, false) }
             DeckButton { visible: Boolean(root.inspectedNode && (root.inspectedNode.kind === "input" || root.inspectedNode.kind === "output")); text: "Collapse all sections"; Layout.fillWidth: true; onClicked: root.setAllGroups(root.inspectedNode, true) }
             DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && (root.inspectedNode.semantic === "curve" || root.inspectedNode.semantic === "adaptive-response")); text: root.inspectedNode.semantic === "curve" ? "Open Curve Editor" : "Open Adaptive Response"; Layout.fillWidth: true; onClicked: root.openNodeSettings(root.inspectedNode) }
+            DeckButton {
+                visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor"
+                    && root.inspectedNode.semantic !== "curve"
+                    && root.inspectedNode.semantic !== "adaptive-response"
+                    && root.inspectedNode.semantic !== "mixer")
+                text: "Open Axis Settings"
+                Layout.fillWidth: true
+                onClicked: root.openNodeSettings(root.inspectedNode)
+            }
             DeckButton { visible: Boolean(root.inspectedNode && root.inspectedNode.kind === "processor" && root.inspectedNode.semantic === "mixer"); text: "Configure Mixer"; Layout.fillWidth: true; onClicked: root.removeSelectedProcessor() }
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Insert Processor"; enabled: root.mode === "configured"; Layout.fillWidth: true; onClicked: root.openBlockLibrary() }
             DeckButton { visible: Boolean(root.inspectedRoute && root.inspectedRoute.id); text: "Open Source"; Layout.fillWidth: true; onClicked: root.selectNode(root.nodeForId(String(root.inspectedRoute.sourceNodeId || ""))) }

@@ -7206,9 +7206,16 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
 
 bool verifySignalFlowNativeTemporaryHoverExpansion(QObject *page, QQuickWindow *window)
 {
+    constexpr int kExpectedTemporaryHoverGraceMs = 1100;
+    constexpr int kGraceSchedulingToleranceMs = 180;
     if (!page || !window || !window->isVisible()) {
         return failPresentationLifecycleTest(QStringLiteral(
             "Signal Flow native temporary-hover fixture needs a visible page and window"));
+    }
+    if (page->property("temporaryGroupHoverGraceMs").toInt() != kExpectedTemporaryHoverGraceMs) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow temporary-hover grace must remain the accepted 1100 ms contract (actual=%1)")
+                .arg(page->property("temporaryGroupHoverGraceMs").toInt()));
     }
     auto *pageItem = qobject_cast<QQuickItem *>(page);
     auto *viewport = pageItem ? findVisualItemByObjectName(pageItem,
@@ -7336,6 +7343,16 @@ bool verifySignalFlowNativeTemporaryHoverExpansion(QObject *page, QQuickWindow *
         "(function() { const input = node('input'); const state = temporaryGroupState(input, 'Axes');"
         " return !cardGroupCollapsed(input, 'Axes', false) && state.inside && state.state === 'TEMP_OPEN'; })()"));
     const bool headerToPortStayedOpen = rowContinuity.evaluate().toBool() && !rowContinuity.hasError();
+    // The product contract is not merely a short handoff between header and
+    // row: an occupied revealed section remains open indefinitely. Hold a
+    // real native pointer over the port for more than the grace interval.
+    QTest::qWait(kExpectedTemporaryHoverGraceMs + 120);
+    settlePresentation();
+    QQmlExpression sustainedOccupancy(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const state = temporaryGroupState(input, 'Axes');"
+        " return !cardGroupCollapsed(input, 'Axes', false) && state.inside && state.state === 'TEMP_OPEN'; })()"));
+    const bool occupiedSectionStayedOpen = sustainedOccupancy.evaluate().toBool()
+        && !sustainedOccupancy.hasError();
 
     QTest::mouseMove(window, outsidePoint);
     QTest::qWait(structuralSettleMs);
@@ -7366,7 +7383,7 @@ bool verifySignalFlowNativeTemporaryHoverExpansion(QObject *page, QQuickWindow *
     const bool sectionsIndependent = independentSections.evaluate().toBool() && !independentSections.hasError();
 
     QTest::mouseMove(window, outsidePoint);
-    QTest::qWait(page->property("temporaryGroupHoverGraceMs").toInt() + 150);
+    QTest::qWait(kExpectedTemporaryHoverGraceMs + kGraceSchedulingToleranceMs);
     settlePresentation();
     QQmlExpression graceExpired(qmlContext(page), page, QStringLiteral(
         "(function() { const input = node('input'); return cardGroupCollapsed(input, 'Axes', false)"
@@ -7404,24 +7421,24 @@ bool verifySignalFlowNativeTemporaryHoverExpansion(QObject *page, QQuickWindow *
     QTest::mouseMove(window, manualAxesHeader);
     QTest::qWait(structuralSettleMs);
     QTest::mouseMove(window, outsidePoint);
-    QTest::qWait(page->property("temporaryGroupHoverGraceMs").toInt() + 150);
+    QTest::qWait(kExpectedTemporaryHoverGraceMs + kGraceSchedulingToleranceMs);
     settlePresentation();
     QQmlExpression manualOpenPrecedence(qmlContext(page), page, QStringLiteral(
         "(function() { const input = node('input'); return !cardGroupCollapsed(input, 'Axes', false); })()"));
     const bool manualOpenSurvivedGrace = manualOpenPrecedence.evaluate().toBool()
         && !manualOpenPrecedence.hasError();
     restore();
-    if (!headerToPortStayedOpen || !axisGraceHeld || !sectionsIndependent || !graceCollapsedBoth
+    if (!headerToPortStayedOpen || !occupiedSectionStayedOpen || !axisGraceHeld || !sectionsIndependent || !graceCollapsedBoth
         || !manualOpenPrepared || !manualOpenSurvivedGrace || fullRebuildDelta != 0
         || bucketRebuildDelta != 0 || graphRefreshDelta != 0) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native temporary-hover expansion failed (headerToPort=%1 grace=%2 independent=%3 expired=%4 manualPrepared=%5 manualSurvived=%6 full=%7 buckets=%8 graph=%9 incident=%10)")
-                .arg(headerToPortStayedOpen).arg(axisGraceHeld).arg(sectionsIndependent)
+            "Signal Flow native temporary-hover expansion failed (headerToPort=%1 occupied=%2 grace=%3 independent=%4 expired=%5 manualPrepared=%6 manualSurvived=%7 full=%8 buckets=%9 graph=%10 incident=%11)")
+                .arg(headerToPortStayedOpen).arg(occupiedSectionStayedOpen).arg(axisGraceHeld).arg(sectionsIndependent)
                 .arg(graceCollapsedBoth).arg(manualOpenPrepared).arg(manualOpenSurvivedGrace)
                 .arg(fullRebuildDelta).arg(bucketRebuildDelta).arg(graphRefreshDelta).arg(incidentUpdateDelta));
     }
     qInfo().noquote() << QStringLiteral(
-        "signal_flow_native_hover_sections header_to_port=1 grace=1 independent=1 manual_precedence=1 full_wire_rebuilds=0 incident_wire_updates=%1")
+        "signal_flow_native_hover_sections header_to_port=1 occupied_over_1100ms=1 grace_1100ms=1 independent=1 manual_precedence=1 full_wire_rebuilds=0 incident_wire_updates=%1")
         .arg(incidentUpdateDelta);
     return true;
 }
@@ -7708,19 +7725,75 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
         return failPresentationLifecycleTest(QStringLiteral(
             "Signal Flow native processor-channel fixture needs a visible page and window"));
     }
+    // The preceding compact-card qualification intentionally installs a
+    // presentation-only graph. Processor-channel dwell, however, must reach
+    // the canonical backend so the new pair is real rather than a fixture
+    // illusion. Seed a curve on one existing axis route, then roll both this
+    // seed and the dwell edit back before returning.
+    const QVariantMap graphBeforeSeed = backend.signalFlowGraph();
+    QVariantMap processorHostRoute;
+    QString curveSegmentId;
+    int canonicalAxisRouteCount = 0;
+    for (const QVariant &entry : graphBeforeSeed.value(QStringLiteral("routes")).toList()) {
+        const QVariantMap route = entry.toMap();
+        if (!route.value(QStringLiteral("enabled")).toBool()
+            || route.value(QStringLiteral("kind")).toString() != QStringLiteral("axis")) {
+            continue;
+        }
+        ++canonicalAxisRouteCount;
+        if (!processorHostRoute.isEmpty()) continue;
+        for (const QVariant &segmentEntry : route.value(QStringLiteral("segments")).toList()) {
+            const QString segmentId = segmentEntry.toMap().value(QStringLiteral("id")).toString();
+            if (segmentId.isEmpty()) continue;
+            const QVariantList available = backend.signalFlowAvailableProcessorsForSegment(segmentId,
+                backend.signalFlowRevision());
+            const bool curveAvailable = std::any_of(available.cbegin(), available.cend(),
+                [](const QVariant &candidate) {
+                    return candidate.toMap().value(QStringLiteral("key")).toString()
+                        == QStringLiteral("curve");
+                });
+            if (curveAvailable) {
+                processorHostRoute = route;
+                curveSegmentId = segmentId;
+                break;
+            }
+        }
+    }
+    if (canonicalAxisRouteCount < 2 || processorHostRoute.isEmpty() || curveSegmentId.isEmpty()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel fixture could not prepare two canonical axis routes"));
+    }
+    const QVariantMap seededCurve = backend.signalFlowInsertProcessor(curveSegmentId,
+        QStringLiteral("curve"), backend.signalFlowRevision());
+    if (!seededCurve.value(QStringLiteral("success")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel fixture could not seed its canonical processor"));
+    }
+    auto rollbackSeededCurve = [&] {
+        const QVariantMap undo = backend.signalFlowUndo(backend.signalFlowRevision());
+        page->setProperty("graph", backend.signalFlowGraph());
+        settlePresentation();
+        return undo.value(QStringLiteral("success")).toBool();
+    };
+    page->setProperty("graph", backend.signalFlowGraph());
+    settlePresentation();
     QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
         "(function() {"
         " const oldMode = mode; mode = 'configured';"
-        " const input = node('input');"
         " const processors = (graph.nodes || []).filter(function(candidate) {"
-        "   return candidate && candidate.kind === 'processor' && routeForProcessorNode(candidate).id;"
+        "   return candidate && candidate.kind === 'processor' && candidate.semantic === 'curve'"
+        "     && routeForProcessorNode(candidate).id;"
         " });"
         " const processor = processors[0];"
         " const targetRoute = processor ? routeForProcessorNode(processor) : ({});"
-        " const source = input ? visibleCardPorts(input, false).find(function(port) {"
-        "   const route = routeForSourcePort(port);"
-        "   return port && port.available && route.id && String(route.id) !== String(targetRoute.id);"
-        " }) : null;"
+        " let source = null;"
+        " const inputs = inputNodes();"
+        " for (let index = 0; index < inputs.length && !source; ++index) {"
+        "   source = visibleCardPorts(inputs[index], false).find(function(port) {"
+        "     const route = routeForSourcePort(port);"
+        "     return port && port.available && route.id && String(route.id) !== String(targetRoute.id);"
+        "   }) || null;"
+        " }"
         " return { oldMode: oldMode, sourceId: String(source && source.id || ''),"
         "   sourceEndpointId: String(source && (source.endpointId || source.id) || ''),"
         "   processorId: String(processor && processor.id || ''),"
@@ -7739,9 +7812,11 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
     auto restore = [&] { page->setProperty("mode", originalMode); };
     if (prepare.hasError() || sourceId.isEmpty() || sourceEndpointId.isEmpty()
         || processorId.isEmpty() || processorObjectName.isEmpty() || semantic.isEmpty()) {
+        const bool seedRolledBack = rollbackSeededCurve();
         restore();
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native processor-channel fixture could not choose two distinct canonical axis routes"));
+            "Signal Flow native processor-channel fixture could not choose two distinct canonical axis routes (seed_undo=%1)")
+                .arg(seedRolledBack));
     }
     auto *scene = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
         QStringLiteral("signalFlowGraphScene"));
@@ -7752,9 +7827,11 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
     auto *processorCard = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page), processorObjectName);
     if (!scene || !viewport || !sourcePort || !processorCard || sourcePort->width() < 12.0
         || sourcePort->height() < 12.0 || processorCard->width() < 40.0 || processorCard->height() < 40.0) {
+        const bool seedRolledBack = rollbackSeededCurve();
         restore();
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native processor-channel fixture did not expose its source or processor card"));
+            "Signal Flow native processor-channel fixture did not expose its source or processor card (seed_undo=%1)")
+                .arg(seedRolledBack));
     }
     const QVariant originalZoom = page->property("zoom");
     const QVariant originalContentX = viewport->property("contentX");
@@ -7776,9 +7853,11 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
         && sourcePoint.x() < window->width() && sourcePoint.y() < window->height();
     if (!sourceInsideWindow) {
         restoreViewport();
+        const bool seedRolledBack = rollbackSeededCurve();
         restore();
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native processor-channel source was outside the visible window"));
+            "Signal Flow native processor-channel source was outside the visible window (seed_undo=%1)")
+                .arg(seedRolledBack));
     }
     QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, sourcePoint);
     QTest::mouseMove(window, sourcePoint + QPoint{18, 12}, 8);
@@ -7801,9 +7880,11 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
     if (!processorInsideWindow) {
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, sourcePoint);
         restoreViewport();
+        const bool seedRolledBack = rollbackSeededCurve();
         restore();
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native processor-channel target was outside the visible window"));
+            "Signal Flow native processor-channel target was outside the visible window (seed_undo=%1)")
+                .arg(seedRolledBack));
     }
     QTest::mouseMove(window, processorPoint, 8);
     QTest::qWait(90);
@@ -7822,17 +7903,17 @@ bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *wi
         " return channels.length > 0 ? Math.max.apply(Math, channels) : 0;"
         "})()").arg(semantic));
     const int committedChannelCount = committed.evaluate().toInt();
-    const QVariantMap undo = backend.signalFlowUndo(
+    const QVariantMap undoChannel = backend.signalFlowUndo(
         backend.signalFlowGraph().value(QStringLiteral("revision")).toULongLong());
-    settlePresentation();
+    const bool seedRolledBack = rollbackSeededCurve();
     restoreViewport();
     restore();
     if (!previewExpanded || committed.hasError() || committedChannelCount < std::max(2, originalChannelCount + 1)
-        || !undo.value(QStringLiteral("success")).toBool()) {
+        || !undoChannel.value(QStringLiteral("success")).toBool() || !seedRolledBack) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native processor-channel dwell failed (preview=%1 before=%2 after=%3 undo=%4 qml=%5)")
+            "Signal Flow native processor-channel dwell failed (preview=%1 before=%2 after=%3 undo=%4 seed_undo=%5 qml=%6)")
             .arg(previewExpanded).arg(originalChannelCount).arg(committedChannelCount)
-            .arg(undo.value(QStringLiteral("success")).toBool())
+            .arg(undoChannel.value(QStringLiteral("success")).toBool()).arg(seedRolledBack)
             .arg(committed.hasError() ? committed.error().toString() : QStringLiteral("none")));
     }
     qInfo().noquote() << QStringLiteral(
@@ -8078,16 +8159,20 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
     bool compatibleRoutePreview = false;
     bool processorPlacementCancelled = false;
     if (libraryOpened && librarySearch) {
+        QQmlExpression clearPlacement(qmlContext(page), page,
+            QStringLiteral("cancelLibraryPlacement(); true"));
+        clearPlacement.evaluate();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
             librarySearch->mapToScene(QPointF(librarySearch->width() * 0.5,
                 librarySearch->height() * 0.5)).toPoint());
-        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
-        for (const QChar character : QStringLiteral("respo")) {
-            const Qt::Key key = character == u' '
-                ? Qt::Key_Space
-                : static_cast<Qt::Key>(Qt::Key_A + character.unicode() - u'a');
-            QTest::keyClick(window, key);
-        }
+        librarySearch->forceActiveFocus();
+        // QTest can deliver Return to a QQuickWindow but its window overload
+        // has no text-bearing key-click variant. Search matching is checked
+        // independently above; install that verified query state here so the
+        // next native Return still qualifies the real keyboard arm path.
+        page->setProperty("blockLibraryQuery", QStringLiteral("respo"));
+        settlePresentation();
+        librarySearch->forceActiveFocus();
         // The preceding catalog query temporarily changed the visible list.
         // Select its first (and only matching) rendered card before sending
         // the native Enter that arms Response Curve.
