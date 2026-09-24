@@ -2805,6 +2805,13 @@ bool AppBackend::configureDeviceRigAxisEvidenceFixtureForTest()
                 return candidate.id == recordId;
             });
         if (record == m_configuration.savedControllers.end()) return false;
+        // This focused ownership fixture needs both Rig members to compile
+        // into the active runtime. The broader multi-controller fixture
+        // intentionally starts the optional member unverified; establish its
+        // synthetic verification fact here without changing that fixture.
+        if (record->lastVerified.isEmpty()) {
+            record->lastVerified = u"2026-09-24T00:00:00Z"_qs;
+        }
         record->axisCount = 2;
         for (int axis = 0; axis < 2; ++axis) {
             const size_t index = static_cast<size_t>(axis);
@@ -2825,6 +2832,17 @@ bool AppBackend::configureDeviceRigAxisEvidenceFixtureForTest()
             descriptor.resolutionConfidence = AxisResolutionConfidence::High;
             record->axes[index] = true;
         }
+        auto discovered = std::find_if(m_discoveredControllers.begin(), m_discoveredControllers.end(),
+            [&record](const DiscoveredController &candidate) {
+                return candidate.directInputId == record->lastDirectInputId;
+            });
+        if (discovered == m_discoveredControllers.end()) return false;
+        // Test verification consumes the same discovered native-object proof
+        // as production; keep the fixture's live discovery record in step
+        // with the canonical descriptor record it just established.
+        discovered->axes = record->axes;
+        discovered->axisDescriptors = record->axisDescriptors;
+        discovered->axisCount = record->axisCount;
     }
     // All Devices is deliberate: proof ownership must not require an editor
     // selection, even when the active mapping topology is a multi-member Rig.
@@ -3785,6 +3803,7 @@ bool AppBackend::commitExactControllerVerificationForTest(const QString &recordI
     proof.connected = true;
     proof.inputReportsReceived = true;
     proof.axes = discovered->axes;
+    proof.axisDescriptors = discovered->axisDescriptors;
     proof.buttons = discovered->buttonCount;
     proof.povs = discovered->povCount;
     QString failure;
