@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <utility>
 
@@ -979,8 +980,32 @@ bool verifyMultiControllerMemberIsolation()
     // blocker; restoring Optional returns the existing Rig to Ready without
     // requiring a new global setup pass.
     if (!backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), true)
-        || rigState().value(QStringLiteral("complete")).toBool()
-        || !backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), false)
+        || rigState().value(QStringLiteral("complete")).toBool()) {
+        std::fprintf(stderr, "optional member readiness was not isolated from the required Rig state\n");
+        return false;
+    }
+    QVariantMap exactOptionalIssue;
+    for (const QVariant &entry : backend->setupTruthSnapshot().value(QStringLiteral("issues")).toList()) {
+        const QVariantMap issue = entry.toMap();
+        if (issue.value(QStringLiteral("code")).toString() == QStringLiteral("PhysicalDeviceUnverified")
+            && issue.value(QStringLiteral("affectedObjectId")).toString() == QLatin1String(kOptionalRecordId)) {
+            exactOptionalIssue = issue;
+            break;
+        }
+    }
+    const QVariantMap exactOptionalTarget = exactOptionalIssue.value(QStringLiteral("navigationTarget")).toMap();
+    if (exactOptionalIssue.isEmpty()
+        || exactOptionalIssue.value(QStringLiteral("affectedObjectType")).toString()
+            != QStringLiteral("physicalDevice")
+        || exactOptionalTarget.value(QStringLiteral("page")).toInt() != 10
+        || exactOptionalTarget.value(QStringLiteral("objectType")).toString()
+            != QStringLiteral("physicalDevice")
+        || exactOptionalTarget.value(QStringLiteral("objectId")).toString()
+            != QLatin1String(kOptionalRecordId)) {
+        std::fprintf(stderr, "setup truth did not publish the exact structured optional-controller review target\n");
+        return false;
+    }
+    if (!backend->setDeviceRigMemberRequired(QLatin1String(kRigId), QLatin1String(kOptionalRecordId), false)
         || !rigState().value(QStringLiteral("complete")).toBool()) {
         std::fprintf(stderr, "optional member readiness was not isolated from the required Rig state\n");
         return false;
@@ -1282,6 +1307,16 @@ bool verifySelectedProfileEditorContext()
     }
     backend->setActivationFaultInjectionsForTest({});
 
+    const auto profileEffective = [&backend](const QString &id) {
+        for (const QVariant &entry : backend->profiles()) {
+            const QVariantMap profile = entry.toMap();
+            if (profile.value(QStringLiteral("id")).toString() == id)
+                return profile.value(QStringLiteral("effective")).toBool()
+                    && profile.value(QStringLiteral("effectiveSource")).toString()
+                        != QStringLiteral("Manual base profile");
+        }
+        return false;
+    };
     if (!backend->activateProfile(helicopterProfileId)
         || backend->activeProfileId() != helicopterProfileId
         || backend->selectedProfileId() != helicopterProfileId
@@ -1297,6 +1332,462 @@ bool verifySelectedProfileEditorContext()
         std::fprintf(stderr, "selected Profile did not remain independent of manual and automatic activation\n");
         return false;
     }
+    // The context strip must use canonical IDs, not names: Active A,
+    // Editing B, and an override Effective B are three distinct facts even
+    // when the effective Profile happens to equal the editor selection.
+    if (!backend->activateProfile(helicopterProfileId)
+        || !backend->selectProfileForEditing(precisionProfileId)
+        || !backend->setEffectiveProfileOverrideForTest(precisionProfileId, 3)
+        || backend->activeProfileId() != helicopterProfileId
+        || backend->selectedProfileId() != precisionProfileId
+        || !profileEffective(precisionProfileId)
+        || backend->selectProfileForEditing(QStringLiteral("missing-profile"))
+        || backend->selectedProfileId() != precisionProfileId) {
+        std::fprintf(stderr, "selected, active, and effective Profile identities were not independently retained\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyFullConflictHandoffScope()
+{
+    constexpr auto kRigId = "activation-transaction-rig";
+    constexpr auto kOutputId = "activation-transaction-output";
+    constexpr auto kControllerId = "activation-transaction-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString normalId = hotas::normalProfileId();
+    const QString precisionId = hotas::precisionProfileId();
+    if (!backend->configureRigOwnedOutputFixtureForTest()
+        || !backend->selectProfileForEditing(normalId)
+        || !backend->setEditingDeviceContext(QLatin1String(kRigId), {QLatin1String(kControllerId)})
+        || !backend->setMapping(0, QStringLiteral("Axis 1"), true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the normal Profile axis collision\n");
+        return false;
+    }
+    const QVariantMap normalAxisCollision = backend->axisMappingCollision(1, QStringLiteral("Axis 1"));
+    if (!normalAxisCollision.value(QStringLiteral("exists")).toBool()
+        || normalAxisCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || normalAxisCollision.value(QStringLiteral("rigId")).toString() != QLatin1String(kRigId)
+        || normalAxisCollision.value(QStringLiteral("outputLayoutId")).toString() != QLatin1String(kOutputId)
+        || normalAxisCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || normalAxisCollision.value(QStringLiteral("sourceIndex")).toInt() != 0) {
+        std::fprintf(stderr, "full conflict handoff did not publish the normal Profile collision scope\n");
+        return false;
+    }
+
+    // A second Profile deliberately has the same local source and output.
+    // The saved handoff must still restore Normal, never choose Precision by
+    // the matching local axis index or virtual destination.
+    if (!backend->selectProfileForEditing(precisionId)
+        || !backend->setEditingDeviceContext(QLatin1String(kRigId), {QLatin1String(kControllerId)})
+        || !backend->setMapping(0, QStringLiteral("Axis 1"), true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the matching precision route\n");
+        return false;
+    }
+    const QString activeProfileBefore = backend->activeProfileId();
+    const QString activeRigBefore = backend->activeDeviceRigId();
+    const int vjoyBefore = backend->vjoyDeviceId();
+    const QVariantMap prepared = backend->prepareFullConflictEditorContext(
+        normalId, QLatin1String(kRigId), QLatin1String(kOutputId), QLatin1String(kControllerId));
+    const QVariantMap restoredAxisCollision = backend->axisMappingCollision(1, QStringLiteral("Axis 1"));
+    if (!prepared.value(QStringLiteral("success")).toBool()
+        || backend->selectedProfileId() != normalId
+        || backend->editingDeviceRigId() != QLatin1String(kRigId)
+        || !backend->selectedDeviceIsSpecific()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->vjoyDeviceId() != vjoyBefore
+        || restoredAxisCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || restoredAxisCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || restoredAxisCollision.value(QStringLiteral("sourceIndex")).toInt() != 0) {
+        std::fprintf(stderr, "full conflict handoff did not restore the exact saved axis editor scope without runtime mutation\n");
+        return false;
+    }
+
+    if (!backend->assignSelectedDeviceButtonToVirtualOutput(1, 1, true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the button collision owner\n");
+        return false;
+    }
+    const QVariantMap buttonCollision = backend->buttonMappingCollision(2, 1);
+    if (!buttonCollision.value(QStringLiteral("exists")).toBool()
+        || buttonCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || buttonCollision.value(QStringLiteral("rigId")).toString() != QLatin1String(kRigId)
+        || buttonCollision.value(QStringLiteral("outputLayoutId")).toString() != QLatin1String(kOutputId)
+        || buttonCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || buttonCollision.value(QStringLiteral("sourceIndex")).toInt() != 1) {
+        std::fprintf(stderr, "full conflict handoff did not publish the button owner scope\n");
+        return false;
+    }
+
+    // Removal/output changes are rejected before they can select a related
+    // editor. The failed retry keeps the last validated selection intact.
+    const QVariantMap rejected = backend->prepareFullConflictEditorContext(
+        normalId, QLatin1String(kRigId), QStringLiteral("removed-output"), QLatin1String(kControllerId));
+    if (rejected.value(QStringLiteral("success")).toBool()
+        || backend->selectedProfileId() != normalId
+        || backend->editingDeviceRigId() != QLatin1String(kRigId)
+        || !backend->selectedDeviceIsSpecific()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->vjoyDeviceId() != vjoyBefore) {
+        std::fprintf(stderr, "a stale Full conflict handoff changed editor or runtime state instead of being rejected\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyReadOnlyPhysicalInputTest()
+{
+    constexpr auto kPrimaryRecordId = "activation-transaction-controller";
+    constexpr auto kRecordId = "multi-controller-xbox";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureMultiControllerRigFixtureForTest()
+        || !backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {0, 1, 5})
+        || !backend->selectControllerForEditing(QLatin1String(kRecordId))
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.25F, false, -1, 5)) {
+        std::fprintf(stderr, "read-only input fixture could not be configured\n");
+        return false;
+    }
+    const QString activeProfileBefore = backend->activeProfileId();
+    const QString selectedProfileBefore = backend->selectedProfileId();
+    const QString activeRigBefore = backend->activeDeviceRigId();
+    const QString editingRigBefore = backend->editingDeviceRigId();
+    const int outputBefore = backend->vjoyDeviceId();
+    const bool mappingRequestedBefore = backend->mappingRequested();
+
+    const QVariantMap result = backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId));
+    const QVariantMap test = backend->readOnlyPhysicalInputTest();
+    const QVariantList initialAxes = test.value(QStringLiteral("axes")).toList();
+    const bool hasXyRz = initialAxes.size() == 3
+        && initialAxes.at(0).toMap().value(QStringLiteral("index")).toInt() == 0
+        && initialAxes.at(0).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("X Axis")
+        && initialAxes.at(1).toMap().value(QStringLiteral("index")).toInt() == 1
+        && initialAxes.at(1).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Y Axis")
+        && initialAxes.at(2).toMap().value(QStringLiteral("index")).toInt() == 5
+        && initialAxes.at(2).toMap().value(QStringLiteral("label")).toString() == QStringLiteral("Z Rotation")
+        && std::abs(initialAxes.at(2).toMap().value(QStringLiteral("value")).toDouble() + 0.25) < 0.001;
+    const QVariantList axisConfiguration = backend->axisConfiguration();
+    const bool rzIsDisabledAndUnmapped = axisConfiguration.size() > 5
+        && axisConfiguration.at(5).toMap().value(QStringLiteral("available")).toBool()
+        && axisConfiguration.at(5).toMap().value(QStringLiteral("target")).toString() == QStringLiteral("Disabled");
+    if (!result.value(QStringLiteral("success")).toBool()
+        || !test.value(QStringLiteral("active")).toBool()
+        || test.value(QStringLiteral("session")).toString() != QStringLiteral("active-rig-member")
+        || !test.value(QStringLiteral("available")).toBool()
+        || test.value(QStringLiteral("recordId")).toString() != QLatin1String(kRecordId)
+        || test.value(QStringLiteral("axisCount")).toInt() <= 0
+        || !test.value(QStringLiteral("reportAvailable")).toBool()
+        || !test.value(QStringLiteral("reportFresh")).toBool()
+        || !hasXyRz || !rzIsDisabledAndUnmapped
+        || test.value(QStringLiteral("state")).toString().isEmpty()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->selectedProfileId() != selectedProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->editingDeviceRigId() != editingRigBefore
+        || backend->vjoyDeviceId() != outputBefore
+        || backend->mappingRequested() != mappingRequestedBefore) {
+        std::fprintf(stderr,
+                     "read-only input evidence failed: success=%d active=%d session=%s available=%d record=%s "
+                     "axisCount=%d axes=%lld sparseEvidence=%d disabledRz=%d state=%s profileStable=%d selectedStable=%d rigStable=%d "
+                     "editingStable=%d outputStable=%d mappingStable=%d\n",
+                     result.value(QStringLiteral("success")).toBool(),
+                     test.value(QStringLiteral("active")).toBool(),
+                     test.value(QStringLiteral("session")).toString().toUtf8().constData(),
+                     test.value(QStringLiteral("available")).toBool(),
+                     test.value(QStringLiteral("recordId")).toString().toUtf8().constData(),
+                     test.value(QStringLiteral("axisCount")).toInt(),
+                     static_cast<long long>(test.value(QStringLiteral("axes")).toList().size()),
+                     hasXyRz, rzIsDisabledAndUnmapped,
+                     test.value(QStringLiteral("state")).toString().toUtf8().constData(),
+                     backend->activeProfileId() == activeProfileBefore,
+                     backend->selectedProfileId() == selectedProfileBefore,
+                     backend->activeDeviceRigId() == activeRigBefore,
+                     backend->editingDeviceRigId() == editingRigBefore,
+                     backend->vjoyDeviceId() == outputBefore,
+                     backend->mappingRequested() == mappingRequestedBefore);
+        return false;
+    }
+
+    // The active Rig has two physical members. Changing the primary must not
+    // advance this optional controller's test or borrow its button/POV/axis
+    // values; only a publication from the requested record can do so.
+    if (!backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kPrimaryRecordId),
+                                                               0.75F, true, 9000)) {
+        std::fprintf(stderr, "primary input fixture could not publish\n");
+        return false;
+    }
+    const QVariantMap afterOtherController = backend->readOnlyPhysicalInputTest();
+    const QVariantList otherAxes = afterOtherController.value(QStringLiteral("axes")).toList();
+    const auto axisValueForSlot = [&otherAxes](int slot) {
+        for (const QVariant &entry : otherAxes) {
+            const QVariantMap axis = entry.toMap();
+            if (axis.value(QStringLiteral("index")).toInt() == slot)
+                return axis.value(QStringLiteral("value")).toDouble();
+        }
+        return 99.0;
+    };
+    const double optionalRzBefore = axisValueForSlot(5);
+    if (afterOtherController.value(QStringLiteral("inputDetected")).toBool()
+        || std::abs(optionalRzBefore + 0.25) > 0.001
+        || afterOtherController.value(QStringLiteral("buttons")).toList().isEmpty()
+        || afterOtherController.value(QStringLiteral("buttons")).toList().front().toMap()
+               .value(QStringLiteral("pressed")).toBool()) {
+        std::fprintf(stderr, "read-only input test borrowed another controller's state\n");
+        return false;
+    }
+
+    if (!backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId),
+                                                               0.80F, true, 18000)) {
+        std::fprintf(stderr, "requested input fixture could not publish\n");
+        return false;
+    }
+    const QVariantMap afterRequestedController = backend->readOnlyPhysicalInputTest();
+    if (!afterRequestedController.value(QStringLiteral("inputDetected")).toBool()
+        || afterRequestedController.value(QStringLiteral("buttons")).toList().isEmpty()
+        || !afterRequestedController.value(QStringLiteral("buttons")).toList().front().toMap()
+               .value(QStringLiteral("pressed")).toBool()
+        || afterRequestedController.value(QStringLiteral("povs")).toList().isEmpty()
+        || afterRequestedController.value(QStringLiteral("povs")).toList().front().toMap()
+               .value(QStringLiteral("value")).toInt() != 18000) {
+        std::fprintf(stderr, "read-only input test did not publish exact controller state\n");
+        return false;
+    }
+
+    backend->stopReadOnlyPhysicalInputTest();
+    // Sparse controllers may expose only Rz or only Slider1. Neither case
+    // may be compacted into X, and disabled/unmapped input remains visible
+    // because this test reads the exact member telemetry rather than routes.
+    if (!backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {5})
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), 0.60F, false, -1, 5)
+        || !backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId)).value(QStringLiteral("success")).toBool()) {
+        std::fprintf(stderr, "Rz-only read-only input fixture could not start\n");
+        return false;
+    }
+    const QVariantList rzOnlyAxes = backend->readOnlyPhysicalInputTest().value(QStringLiteral("axes")).toList();
+    if (rzOnlyAxes.size() != 1
+        || rzOnlyAxes.front().toMap().value(QStringLiteral("index")).toInt() != 5
+        || rzOnlyAxes.front().toMap().value(QStringLiteral("label")).toString() != QStringLiteral("Z Rotation")
+        || std::abs(rzOnlyAxes.front().toMap().value(QStringLiteral("value")).toDouble() - 0.60) > 0.001) {
+        std::fprintf(stderr, "Rz-only input was compacted, relabeled, or lost its canonical value\n");
+        return false;
+    }
+    backend->stopReadOnlyPhysicalInputTest();
+    if (!backend->setReadOnlyPhysicalInputAxisSlotsForTest(QLatin1String(kRecordId), {7})
+        || !backend->publishReadOnlyPhysicalInputSnapshotForTest(QLatin1String(kRecordId), -0.40F, false, -1, 7)
+        || !backend->startReadOnlyPhysicalInputTest(QLatin1String(kRecordId)).value(QStringLiteral("success")).toBool()) {
+        std::fprintf(stderr, "Slider1-only read-only input fixture could not start\n");
+        return false;
+    }
+    const QVariantList sliderOnlyAxes = backend->readOnlyPhysicalInputTest().value(QStringLiteral("axes")).toList();
+    if (sliderOnlyAxes.size() != 1
+        || sliderOnlyAxes.front().toMap().value(QStringLiteral("index")).toInt() != 7
+        || sliderOnlyAxes.front().toMap().value(QStringLiteral("label")).toString() != QStringLiteral("Slider 1")
+        || std::abs(sliderOnlyAxes.front().toMap().value(QStringLiteral("value")).toDouble() + 0.40) > 0.001) {
+        std::fprintf(stderr, "Slider1-only input was compacted, relabeled, or lost its canonical value\n");
+        return false;
+    }
+    backend->stopReadOnlyPhysicalInputTest();
+    if (backend->readOnlyPhysicalInputTest().value(QStringLiteral("active")).toBool()) {
+        std::fprintf(stderr, "read-only input test did not clear its transient observation state\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyPersistentSetupAssistantCoordinator()
+{
+    constexpr auto kControllerId = "activation-transaction-controller";
+    constexpr auto kOutputId = "activation-transaction-output";
+    const QString expectedRigName = QStringLiteral("Pass B Coordinator Rig");
+    const QString expectedProfileName = QStringLiteral("Pass B Coordinator Profile");
+    QString createdProfileId;
+    QString createdRigId;
+    QString activeProfileBefore;
+    QString activeRigBefore;
+    bool mappingRequestedBefore = false;
+
+    {
+        auto backend = std::make_unique<hotas::AppBackend>();
+        backend->clearSetupAssistantTaskForTest();
+        if (!backend->configureSetupTruthReadyToActivateFixtureForTest()) {
+            std::fprintf(stderr, "setup coordinator fixture could not be configured\n");
+            return false;
+        }
+        activeProfileBefore = backend->activeProfileId();
+        activeRigBefore = backend->activeDeviceRigId();
+        mappingRequestedBefore = backend->mappingRequested();
+        const QString categoryId = backend->profileDetail(activeProfileBefore)
+            .value(QStringLiteral("categoryId")).toString();
+        // Keep two real stable choices in the task journal. This guards the
+        // UI contract where a later draft edit must never resurrect the first
+        // output/category after an explicit B selection.
+        const QString alternateOutputId = backend->createVirtualOutputLayout(
+            QStringLiteral("Pass C selection B output"), backend->suggestedVirtualOutputDeviceId(),
+            QStringLiteral("full-8-axis"));
+        const QString alternateCategoryName = QStringLiteral("Pass C selection B category");
+        const bool alternateCategoryCreated = backend->createProfileCategory(alternateCategoryName);
+        QString alternateCategoryId;
+        for (const QVariant &entry : backend->profileCategories()) {
+            const QVariantMap category = entry.toMap();
+            if (category.value(QStringLiteral("name")).toString() == alternateCategoryName) {
+                alternateCategoryId = category.value(QStringLiteral("id")).toString();
+                break;
+            }
+        }
+        if (alternateOutputId.isEmpty() || !alternateCategoryCreated || alternateCategoryId.isEmpty()) {
+            std::fprintf(stderr, "setup task selection fixture could not create two stable choices\n");
+            return false;
+        }
+        const QVariantMap started = backend->beginSetupAssistantTask(
+            QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"),
+                                               QLatin1String(kControllerId)}});
+        const QString taskId = backend->setupAssistantTask().value(QStringLiteral("id")).toString();
+        if (!started.value(QStringLiteral("success")).toBool() || !backend->hasSetupAssistantTask()
+            || backend->setupAssistantTask().value(QStringLiteral("stage")).toString()
+                != QStringLiteral("controllers")
+            || backend->activeProfileId() != activeProfileBefore
+            || backend->activeDeviceRigId() != activeRigBefore
+            || backend->mappingRequested() != mappingRequestedBefore) {
+            std::fprintf(stderr, "setup task start changed canonical activation state\n");
+            return false;
+        }
+        const QVariantMap switched = backend->chooseSetupAssistantIntent(QStringLiteral("first-controller"));
+        const QVariantMap restoredIntent = backend->chooseSetupAssistantIntent(QStringLiteral("independent"));
+        if (!switched.value(QStringLiteral("success")).toBool()
+            || !restoredIntent.value(QStringLiteral("success")).toBool()
+            || backend->setupAssistantTask().value(QStringLiteral("id")).toString() != taskId
+            || backend->setupAssistantTask().value(QStringLiteral("stage")).toString() != QStringLiteral("purpose")) {
+            std::fprintf(stderr, "setup path selection replaced the current task instead of preserving it\n");
+            return false;
+        }
+        const QVariantMap savedChoiceA = backend->updateSetupAssistantTask({
+            {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
+            {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
+            {QStringLiteral("categoryId"), categoryId},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        const QVariantMap selectedChoiceB = backend->updateSetupAssistantTask({
+            {QStringLiteral("outputLayoutId"), alternateOutputId},
+            {QStringLiteral("categoryId"), alternateCategoryId},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        // This is the save a name edit makes after the selector event. It
+        // intentionally contains no output/category field.
+        const QVariantMap savedChoice = backend->updateSetupAssistantTask({
+            {QStringLiteral("rigNameDraft"), expectedRigName},
+            {QStringLiteral("profileNameDraft"), expectedProfileName},
+            {QStringLiteral("requiredMembershipDraft"), true},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        const QVariantMap selectionAfterDraft = backend->setupAssistantTask();
+        if (!savedChoiceA.value(QStringLiteral("success")).toBool()
+            || !selectedChoiceB.value(QStringLiteral("success")).toBool()
+            || !savedChoice.value(QStringLiteral("success")).toBool()
+            || selectionAfterDraft.value(QStringLiteral("outputLayoutId")).toString() != alternateOutputId
+            || selectionAfterDraft.value(QStringLiteral("categoryId")).toString() != alternateCategoryId) {
+            std::fprintf(stderr, "setup task name edit restored an older output/category selection\n");
+            return false;
+        }
+        const QVariantMap committed = backend->commitSetupAssistantRigAndProfile(
+            expectedRigName, expectedProfileName, QLatin1String(kControllerId),
+            alternateOutputId, alternateCategoryId);
+        if (!committed.value(QStringLiteral("success")).toBool()
+            || backend->activeProfileId() != activeProfileBefore
+            || backend->activeDeviceRigId() != activeRigBefore
+            || backend->mappingRequested() != mappingRequestedBefore) {
+            std::fprintf(stderr, "setup task commit activated a Rig, Profile, or mapping unexpectedly\n");
+            return false;
+        }
+        const QVariantMap task = backend->setupAssistantTask();
+        createdProfileId = task.value(QStringLiteral("profileId")).toString();
+        createdRigId = task.value(QStringLiteral("rigId")).toString();
+        if (createdProfileId.isEmpty() || createdRigId.isEmpty()
+            || task.value(QStringLiteral("stage")).toString() != QStringLiteral("connection")
+            || task.value(QStringLiteral("operationRefs")).toList().size() != 2
+            || task.value(QStringLiteral("rigNameDraft")).toString() != expectedRigName
+            || task.value(QStringLiteral("profileNameDraft")).toString() != expectedProfileName
+            || task.value(QStringLiteral("outputLayoutId")).toString() != alternateOutputId
+            || task.value(QStringLiteral("categoryId")).toString() != alternateCategoryId
+            || backend->profileDetail(createdProfileId).value(QStringLiteral("deviceRigId")).toString()
+                != createdRigId
+            || backend->profileDetail(createdProfileId).value(QStringLiteral("categoryId")).toString()
+                != alternateCategoryId) {
+            std::fprintf(stderr, "setup task did not retain and commit the explicit B selections\n");
+            return false;
+        }
+        const QVariantMap competing = backend->beginSetupAssistantTask(QStringLiteral("first-controller"));
+        if (!competing.value(QStringLiteral("requiresChoice")).toBool()
+            || competing.value(QStringLiteral("canReplace")).toBool()
+            || !backend->saveSetupAssistantForLater().value(QStringLiteral("success")).toBool()) {
+            std::fprintf(stderr, "setup task did not protect committed work from implicit replacement\n");
+            return false;
+        }
+    }
+
+    // The task journal survives a backend restart, but only as guidance. A
+    // stale reference becomes a review requirement rather than a command.
+    auto restored = std::make_unique<hotas::AppBackend>();
+    if (!restored->hasSetupAssistantTask()
+        || restored->setupAssistantTask().value(QStringLiteral("rigId")).toString() != createdRigId
+        || !restored->resumeSetupAssistantTask().value(QStringLiteral("success")).toBool()
+        || !restored->deleteProfile(createdProfileId)
+        || !restored->resumeSetupAssistantTask().value(QStringLiteral("success")).toBool()
+        || !restored->setupAssistantTask().value(QStringLiteral("revalidationRequired")).toBool()
+        || !restored->setupAssistantTask().value(QStringLiteral("invalidatedStages")).toStringList()
+                .contains(QStringLiteral("configure"))) {
+        std::fprintf(stderr, "setup task persistence or stale-reference protection failed\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
+
+    // The Profile-for-Rig path must honor the visible selected Rig, not the
+    // first Rig in configuration order.
+    const QString exactCategory = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("categoryId")).toString();
+    const QVariantMap exactStarted = restored->beginSetupAssistantTask(QStringLiteral("profile-for-rig"), {
+        {QStringLiteral("rigId"), createdRigId}, {QStringLiteral("categoryId"), exactCategory}});
+    const QVariantMap exactCommitted = restored->commitSetupAssistantRigAndProfile(
+        QString{}, QStringLiteral("Pass B Exact Target Profile"), QString{}, QString{}, exactCategory,
+        QString{}, createdRigId);
+    const QString exactProfileId = restored->setupAssistantTask().value(QStringLiteral("profileId")).toString();
+    if (!exactStarted.value(QStringLiteral("success")).toBool()
+        || !exactCommitted.value(QStringLiteral("success")).toBool()
+        || restored->profileDetail(exactProfileId).value(QStringLiteral("deviceRigId")).toString() != createdRigId) {
+        std::fprintf(stderr, "setup task Profile-for-Rig did not retain its exact selected target\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
+
+    // A failed second operation must retain the planned Rig ID. Retrying the
+    // Profile with corrected input is recovery, not a request for another
+    // Device Rig.
+    const QString recoveryCategory = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("categoryId")).toString();
+    const QString duplicateProfileName = restored->profileDetail(restored->activeProfileId())
+        .value(QStringLiteral("name")).toString();
+    const QVariantMap recoveryStarted = restored->beginSetupAssistantTask(
+        QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)}});
+    restored->updateSetupAssistantTask({
+        {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
+        {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
+        {QStringLiteral("categoryId"), recoveryCategory},
+        {QStringLiteral("stage"), QStringLiteral("purpose")},
+    });
+    const QVariantMap partial = restored->commitSetupAssistantRigAndProfile(
+        QStringLiteral("Pass B Recovery Rig"), duplicateProfileName, QLatin1String(kControllerId),
+        QLatin1String(kOutputId), recoveryCategory);
+    const QString recoveredRigId = restored->setupAssistantTask().value(QStringLiteral("rigId")).toString();
+    const QVariantMap recovered = restored->commitSetupAssistantRigAndProfile(
+        QStringLiteral("Pass B Recovery Rig"), QStringLiteral("Pass B Recovery Profile"),
+        QLatin1String(kControllerId), QLatin1String(kOutputId), recoveryCategory);
+    if (!recoveryStarted.value(QStringLiteral("success")).toBool() || partial.value(QStringLiteral("success")).toBool()
+        || recoveredRigId.isEmpty() || !recovered.value(QStringLiteral("success")).toBool()
+        || restored->setupAssistantTask().value(QStringLiteral("rigId")).toString() != recoveredRigId
+        || restored->setupAssistantTask().value(QStringLiteral("operationRefs")).toList().size() != 2) {
+        std::fprintf(stderr, "setup task partial-commit retry did not reuse its planned Device Rig\n");
+        return false;
+    }
+    restored->clearSetupAssistantTaskForTest();
     return true;
 }
 
@@ -1478,9 +1969,9 @@ bool verifyUnchangedControllerInventoryDoesNotRebuildReadiness()
 
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 25> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 28> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 25> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 28> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1503,6 +1994,9 @@ const std::array<std::pair<QString, StartupFixture>, 25> &startupFixtures()
         {QStringLiteral("hidhide-health-actions"), verifyHidHideHealthActionFeedbackContracts},
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
+        {QStringLiteral("full-conflict-handoff"), verifyFullConflictHandoffScope},
+        {QStringLiteral("read-only-input"), verifyReadOnlyPhysicalInputTest},
+        {QStringLiteral("setup-task-coordinator"), verifyPersistentSetupAssistantCoordinator},
         {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},
         {QStringLiteral("axis-acquisition-preview"), verifyAxisAcquisitionPreviewIsIsolatedAndInteractive},
         {QStringLiteral("stable-controller-inventory"), verifyUnchangedControllerInventoryDoesNotRebuildReadiness},

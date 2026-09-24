@@ -273,6 +273,13 @@ struct DirectInputControllerProbe {
     QString hidContainerId;
     std::array<bool, kPhysicalAxisCount> axes{};
     std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    // This is a one-report, read-only snapshot for Device setup.  Unlike the
+    // mapper's runtime atomics it is never consumed by the report hot path;
+    // it exists so an unassigned controller can be inspected without being
+    // selected for mapping or attached to a Device Rig.
+    std::array<float, kPhysicalAxisCount> normalizedAxes{};
+    std::array<bool, kMaximumPhysicalButtons> buttonPressed{};
+    std::array<int, kMaximumPhysicalPovs> povValues{};
     int axisCount = 0;
     int buttonCount = 0;
     int povCount = 0;

@@ -1157,6 +1157,7 @@ bool MappingWorker::selectPhysicalController(const QString &expectedDirectInputI
 DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QString &expectedDirectInputId)
 {
     DirectInputControllerProbe result;
+    result.povValues.fill(-1);
     const QString expected = expectedDirectInputId.trimmed();
     if (expected.isEmpty()) {
         result.diagnostic = u"No exact DirectInput controller identity was supplied for setup proof."_qs;
@@ -1238,6 +1239,21 @@ DirectInputControllerProbe MappingWorker::probeExactPhysicalController(const QSt
     result.buttonCount = std::min(objects.buttonCount, kMaximumPhysicalButtons);
     result.povCount = objects.povCount;
     result.unsupportedAxisCount = objects.unsupportedAxisCount;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (!result.axes[static_cast<size_t>(axis)]) continue;
+        const NativeAxisDescriptor &descriptor = result.axisDescriptors[static_cast<size_t>(axis)];
+        result.normalizedAxes[static_cast<size_t>(axis)] = normalizeDirectInputAxisValue(
+            directInputAxisValueAtOffset(state, descriptor.directInputOffset), descriptor);
+    }
+    for (int button = 0; button < result.buttonCount; ++button) {
+        result.buttonPressed[static_cast<size_t>(button)] =
+            (state.rgbButtons[static_cast<size_t>(button)] & 0x80U) != 0;
+    }
+    for (int pov = 0; pov < result.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+        const DWORD raw = state.rgdwPOV[static_cast<size_t>(pov)];
+        result.povValues[static_cast<size_t>(pov)] = raw != kVjoyPovCentered && raw < 36000UL
+            ? static_cast<int>(raw) : -1;
+    }
     result.diagnostic = u"Exact DirectInput controller acquired and returned a live state report."_qs;
     device->Unacquire();
     device->Release();

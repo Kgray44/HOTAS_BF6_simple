@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
+#include <QSettings>
+#include <QSet>
 #include <QtGlobal>
 #include <QString>
 #include <QStringList>
@@ -27,6 +30,14 @@ class ThemeManager final : public QObject {
     Q_PROPERTY(qreal textScale READ textScale NOTIFY textSizeChanged)
     Q_PROPERTY(QStringList textSizeChoices READ textSizeChoices CONSTANT)
     Q_PROPERTY(QStringList experienceChoices READ experienceChoices CONSTANT)
+    // Guidance is a small presentation preference.  It never publishes a
+    // MapperConfiguration, changes a Profile/Rig, or dispatches a backend
+    // command.  The policy revision lets QML retain a local explicit choice
+    // while reacting to a level/default change without rebuilding a page.
+    Q_PROPERTY(QString guidanceLevel READ guidanceLevel NOTIFY guidanceLevelChanged)
+    Q_PROPERTY(QStringList guidanceChoices READ guidanceChoices CONSTANT)
+    Q_PROPERTY(bool guidanceOnboardingPending READ guidanceOnboardingPending NOTIFY guidanceOnboardingChanged)
+    Q_PROPERTY(int guidancePolicyRevision READ guidancePolicyRevision NOTIFY guidancePolicyChanged)
     // The existing theme family and the alternate Flight Deck shell are
     // combined here only for presentation selection, never mapper state.
     Q_PROPERTY(QString currentPresentationId READ currentPresentationId NOTIFY presentationChanged)
@@ -45,6 +56,10 @@ public:
     qreal textScale() const;
     QStringList textSizeChoices() const;
     QStringList experienceChoices() const;
+    QString guidanceLevel() const { return m_guidanceLevel; }
+    QStringList guidanceChoices() const;
+    bool guidanceOnboardingPending() const { return m_guidanceOnboardingPending; }
+    int guidancePolicyRevision() const { return m_guidancePolicyRevision; }
     QString currentPresentationId() const;
     QVariantList presentationChoices() const;
 
@@ -53,6 +68,20 @@ public:
     Q_INVOKABLE void setFlightDeckAppearance(const QString &appearance);
     Q_INVOKABLE void setTextSize(const QString &size);
     Q_INVOKABLE void selectPresentation(const QString &presentationId);
+    // Use this explicit command from QML when a chooser needs to know whether
+    // its small presentation preference was durably saved.  On a write
+    // failure, the in-memory value is deliberately left unchanged.
+    Q_INVOKABLE bool chooseGuidanceLevel(const QString &level);
+    Q_INVOKABLE bool skipGuidanceOnboarding();
+    Q_INVOKABLE bool guidanceSectionExpanded(const QString &sectionId) const;
+    Q_INVOKABLE bool setGuidanceSectionExpanded(const QString &sectionId, bool expanded);
+    Q_INVOKABLE bool guidanceSectionHasExplicitPreference(const QString &sectionId) const;
+    Q_INVOKABLE bool followGuidanceLevelForSection(const QString &sectionId);
+    // Exact-target navigation may reveal a local group without converting a
+    // one-time route into a durable owner preference.  Callers clear this
+    // scoped reveal when their route or page context is complete.
+    Q_INVOKABLE bool temporarilyRevealGuidanceSection(const QString &sectionId);
+    Q_INVOKABLE bool clearTemporaryGuidanceSectionReveal(const QString &sectionId);
     static QString normalizedTheme(const QString &theme);
 
 signals:
@@ -61,17 +90,31 @@ signals:
     void flightDeckAppearanceChanged();
     void textSizeChanged();
     void presentationChanged();
+    void guidanceLevelChanged();
+    void guidanceOnboardingChanged();
+    void guidancePolicyChanged();
 
 private:
     QString normalizedExperience(const QString &experience) const;
     static QString normalizedFlightDeckAppearance(const QString &appearance);
     static QString normalizedTextSize(const QString &size);
+    static QString normalizedGuidanceLevel(const QString &level);
+    bool hasEstablishedInstallation(const QSettings &stored) const;
+    bool persistGuidanceLevel(const QString &level, bool onboardingHandled);
+    bool defaultGuidanceSectionExpanded(const QString &sectionId) const;
+    void advanceGuidancePolicyRevision();
 
     QString m_settingsFilePath;
     QString m_currentTheme;
     QString m_currentExperience;
     QString m_flightDeckAppearance;
     QString m_textSize;
+    QString m_guidanceLevel;
+    bool m_guidanceOnboardingPending = false;
+    bool m_guidanceLevelPersisted = false;
+    int m_guidancePolicyRevision = 0;
+    QHash<QString, bool> m_explicitGuidanceSections;
+    QSet<QString> m_temporaryGuidanceSections;
 };
 
 } // namespace hotas

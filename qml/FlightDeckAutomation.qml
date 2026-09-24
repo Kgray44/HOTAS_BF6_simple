@@ -38,6 +38,10 @@ Flickable {
     readonly property var directionLabels: ["Up", "Up-Right", "Right", "Down-Right", "Down", "Down-Left", "Left", "Up-Left"]
     readonly property var conditionTypes: ["All the time", "Axis is above", "Axis is below", "Axis is between", "Axis is outside range", "Button is held", "Button is not held", "POV points direction", "POV is not pointing direction", "Selected profile is", "Active profile is", "Button is pressed", "Button is released", "Button is pressed multiple times", "Button is held for a while", "Axis crosses above", "Axis crosses below"]
     readonly property var actionTypes: ["Press and hold virtual button", "Toggle virtual button", "Use profile while active", "Switch to profile", "Change axis sensitivity", "Adjust axis output", "Limit axis output", "Force axis output", "Mix one axis into another", "Make one axis follow another", "Tap virtual button", "Turn mapping on", "Turn mapping off", "Toggle mapping", "Temporarily enable Adaptive Response", "Temporarily disable Adaptive Response", "Apply Adaptive Response preset"]
+    readonly property bool behaviorExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("automation-behavior")
+    }
 
     contentWidth: width
     contentHeight: automationContent.implicitHeight + deck.space24
@@ -1526,9 +1530,60 @@ Flickable {
             }
 
             FlightDeckCard {
+                objectName: "flightDeckAutomationBehaviorDisclosure"
                 tokens: deck
                 Layout.fillWidth: true
-                implicitHeight: behaviorContent.implicitHeight + deck.space32
+                implicitHeight: automationBehaviorDisclosure.implicitHeight + deck.space24
+                color: deck.secondarySurface
+                ColumnLayout {
+                    id: automationBehaviorDisclosure
+                    anchors.fill: parent
+                    anchors.margins: deck.space12
+                    spacing: deck.space6
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            SectionLabel { label: "RULE BEHAVIOR & OPTIONS" }
+                            Text {
+                                text: ["Apply while conditions are active", "Toggle on trigger", "Run briefly after trigger"][Math.max(0, Math.min(2, Number(root.draft.activationMode || 0)))]
+                                    + " · priority " + Number(root.draft.priority || 50)
+                                color: deck.textSecondary
+                                font.pixelSize: deck.scale(10)
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        DeckButton {
+                            objectName: "flightDeckAutomationBehaviorDisclosureToggle"
+                            text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"
+                            subdued: true
+                            onClicked: themeManager.setGuidanceSectionExpanded("automation-behavior", !root.behaviorExpanded)
+                        }
+                    }
+                    Text {
+                        visible: !root.behaviorExpanded
+                        text: "Set the common WHEN and DO above first. Open options only to change how long the rule runs or how it resolves against another rule."
+                        color: deck.textMuted
+                        font.pixelSize: deck.scale(9)
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    DeckButton {
+                        visible: themeManager.guidanceSectionHasExplicitPreference("automation-behavior")
+                        text: "FOLLOW GUIDANCE LEVEL"
+                        subdued: true
+                        onClicked: themeManager.followGuidanceLevelForSection("automation-behavior")
+                    }
+                }
+            }
+
+            FlightDeckCard {
+                objectName: "flightDeckAutomationBehaviorControls"
+                tokens: deck
+                visible: root.behaviorExpanded
+                Layout.fillWidth: true
+                implicitHeight: visible ? behaviorContent.implicitHeight + deck.space32 : 0
                 ColumnLayout {
                     id: behaviorContent
                     anchors.fill: parent

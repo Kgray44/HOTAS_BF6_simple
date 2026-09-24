@@ -18,6 +18,10 @@ private slots:
     void flightDeckExperienceIsProductionSelectableAndDoesNotTouchMapperPayload();
     void presentationChoicesCentralizeAllFiveExperiences();
     void textSizeDefaultsPersistsAndDoesNotTouchMapperPayload();
+    void guidanceFirstUsePersistsAndExistingInstallStaysNonIntrusive();
+    void guidancePolicyPreservesExplicitSectionsAndMapperPayload();
+    void guidanceSectionProvenanceUsesCuratedDefaultsAndTemporaryReveals();
+    void guidancePersistenceFailureLeavesTheVisibleSelectionUntouched();
 };
 
 void ThemeManagerTests::missingPresentationDefaultsToFlightDeck()
@@ -30,9 +34,16 @@ void ThemeManagerTests::missingPresentationDefaultsToFlightDeck()
     QCOMPARE(manager.currentPresentationId(), u"flight-deck"_qs);
     QVERIFY(!manager.isTopGun());
     QVERIFY(!manager.isDayOps());
+    QCOMPARE(manager.guidanceLevel(), u"Guided"_qs);
+    QVERIFY(manager.guidanceOnboardingPending());
     QCOMPARE(manager.themeChoices(), QStringList({u"Legacy"_qs, u"Standard"_qs, u"Top Gun"_qs,
                                                   u"Day Ops"_qs}));
     QVERIFY(!manager.themeChoices().contains(u"Flight Deck"_qs));
+    {
+        const QSettings firstUseSettings(directory.filePath(u"settings.ini"_qs), QSettings::IniFormat);
+        QVERIFY(!firstUseSettings.contains(u"presentation/uxExperience"_qs));
+        QVERIFY(!firstUseSettings.contains(u"presentation/guidanceLevel"_qs));
+    }
 
     // Older builds persisted only the theme key.  It remains a user-selected
     // existing presentation, rather than being overridden by the new default.
@@ -46,6 +57,8 @@ void ThemeManagerTests::missingPresentationDefaultsToFlightDeck()
     QCOMPARE(existing.currentTheme(), u"Day Ops"_qs);
     QCOMPARE(existing.currentExperience(), u"Existing"_qs);
     QCOMPARE(existing.currentPresentationId(), u"theme:Day Ops"_qs);
+    QCOMPARE(existing.guidanceLevel(), u"Full"_qs);
+    QVERIFY(!existing.guidanceOnboardingPending());
 }
 
 void ThemeManagerTests::selectionPersistsAndNormalizes()
@@ -178,6 +191,133 @@ void ThemeManagerTests::textSizeDefaultsPersistsAndDoesNotTouchMapperPayload()
     const QSettings settings(path, QSettings::IniFormat);
     QCOMPARE(settings.value(u"presentation/textSize"_qs).toString(), u"Extra Large"_qs);
     QCOMPARE(settings.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
+}
+
+void ThemeManagerTests::guidanceFirstUsePersistsAndExistingInstallStaysNonIntrusive()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString freshPath = directory.filePath(u"fresh.ini"_qs);
+    hotas::ThemeManager fresh(freshPath);
+    QCOMPARE(fresh.guidanceLevel(), u"Guided"_qs);
+    QVERIFY(fresh.guidanceOnboardingPending());
+    QVERIFY(!fresh.chooseGuidanceLevel(u"unknown"_qs));
+    QVERIFY(fresh.chooseGuidanceLevel(u" full "_qs));
+    QCOMPARE(fresh.guidanceLevel(), u"Full"_qs);
+    QVERIFY(!fresh.guidanceOnboardingPending());
+
+    hotas::ThemeManager restored(freshPath);
+    QCOMPARE(restored.guidanceLevel(), u"Full"_qs);
+    QVERIFY(!restored.guidanceOnboardingPending());
+    const int persistedRevision = restored.guidancePolicyRevision();
+    QVERIFY(restored.chooseGuidanceLevel(u"Full"_qs));
+    QCOMPARE(restored.guidancePolicyRevision(), persistedRevision);
+    {
+        const QSettings saved(freshPath, QSettings::IniFormat);
+        QCOMPARE(saved.value(u"presentation/guidanceLevel"_qs).toString(), u"Full"_qs);
+        QCOMPARE(saved.value(u"presentation/guidanceOnboardingVersion"_qs).toInt(), 1);
+    }
+
+    const QString skippedPath = directory.filePath(u"skipped.ini"_qs);
+    hotas::ThemeManager skipped(skippedPath);
+    QVERIFY(skipped.skipGuidanceOnboarding());
+    QCOMPARE(skipped.guidanceLevel(), u"Guided"_qs);
+    QVERIFY(!skipped.guidanceOnboardingPending());
+
+    const QString upgradePath = directory.filePath(u"upgrade.ini"_qs);
+    {
+        QSettings existing(upgradePath, QSettings::IniFormat);
+        existing.setValue(u"mapper/config"_qs, QByteArrayLiteral("existing-mapper"));
+        existing.setValue(u"profiles/active"_qs, QByteArrayLiteral("existing-profile"));
+        existing.sync();
+    }
+    hotas::ThemeManager upgrade(upgradePath);
+    QCOMPARE(upgrade.guidanceLevel(), u"Full"_qs);
+    QVERIFY(!upgrade.guidanceOnboardingPending());
+    const QSettings preserved(upgradePath, QSettings::IniFormat);
+    QCOMPARE(preserved.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("existing-mapper"));
+    QCOMPARE(preserved.value(u"profiles/active"_qs).toByteArray(), QByteArrayLiteral("existing-profile"));
+    QVERIFY(!preserved.contains(u"presentation/guidanceLevel"_qs));
+}
+
+void ThemeManagerTests::guidancePolicyPreservesExplicitSectionsAndMapperPayload()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(u"settings.ini"_qs);
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(u"mapper/config"_qs, QByteArrayLiteral("mapping-payload"));
+        settings.sync();
+    }
+    hotas::ThemeManager manager(path);
+    QCOMPARE(manager.guidanceLevel(), u"Full"_qs);
+    QVERIFY(manager.guidanceSectionExpanded(u"axes-processing"_qs));
+    QVERIFY(!manager.guidanceSectionExpanded(u"unknown-technical-section"_qs));
+    const int firstRevision = manager.guidancePolicyRevision();
+    QVERIFY(manager.setGuidanceSectionExpanded(u"axes-processing"_qs, false));
+    QVERIFY(manager.guidanceSectionHasExplicitPreference(u"axes-processing"_qs));
+    QVERIFY(!manager.guidanceSectionExpanded(u"axes-processing"_qs));
+    QVERIFY(manager.guidancePolicyRevision() > firstRevision);
+    QVERIFY(manager.chooseGuidanceLevel(u"Guided"_qs));
+    QVERIFY(!manager.guidanceSectionExpanded(u"axes-processing"_qs));
+    QVERIFY(manager.chooseGuidanceLevel(u"Full"_qs));
+    QVERIFY(!manager.guidanceSectionExpanded(u"axes-processing"_qs));
+
+    hotas::ThemeManager restored(path);
+    QCOMPARE(restored.guidanceLevel(), u"Full"_qs);
+    QVERIFY(!restored.guidanceSectionExpanded(u"axes-processing"_qs));
+    const QSettings saved(path, QSettings::IniFormat);
+    QCOMPARE(saved.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
+    QCOMPARE(saved.value(u"presentation/guidanceSections/axes-processing"_qs).toBool(), false);
+}
+
+void ThemeManagerTests::guidanceSectionProvenanceUsesCuratedDefaultsAndTemporaryReveals()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(u"settings.ini"_qs);
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        settings.setValue(u"mapper/config"_qs, QByteArrayLiteral("mapping-payload"));
+        settings.sync();
+    }
+    hotas::ThemeManager manager(path);
+    QCOMPARE(manager.guidanceLevel(), u"Full"_qs);
+    QVERIFY(manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+    QVERIFY(!manager.guidanceSectionHasExplicitPreference(u"devices-virtual-details"_qs));
+    QVERIFY(manager.temporarilyRevealGuidanceSection(u"devices-virtual-details"_qs));
+    QVERIFY(manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+    QVERIFY(!manager.guidanceSectionHasExplicitPreference(u"devices-virtual-details"_qs));
+    QVERIFY(manager.clearTemporaryGuidanceSectionReveal(u"devices-virtual-details"_qs));
+    QVERIFY(manager.setGuidanceSectionExpanded(u"devices-virtual-details"_qs, false));
+    QVERIFY(!manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+    QVERIFY(manager.temporarilyRevealGuidanceSection(u"devices-virtual-details"_qs));
+    QVERIFY(manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+    QVERIFY(manager.clearTemporaryGuidanceSectionReveal(u"devices-virtual-details"_qs));
+    QVERIFY(!manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+    QVERIFY(manager.followGuidanceLevelForSection(u"devices-virtual-details"_qs));
+    QVERIFY(!manager.guidanceSectionHasExplicitPreference(u"devices-virtual-details"_qs));
+    QVERIFY(manager.guidanceSectionExpanded(u"devices-virtual-details"_qs));
+
+    const QSettings saved(path, QSettings::IniFormat);
+    QVERIFY(!saved.contains(u"presentation/guidanceSections/devices-virtual-details"_qs));
+    QCOMPARE(saved.value(u"mapper/config"_qs).toByteArray(), QByteArrayLiteral("mapping-payload"));
+}
+
+void ThemeManagerTests::guidancePersistenceFailureLeavesTheVisibleSelectionUntouched()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    // An existing directory cannot be synchronized as an INI file. This
+    // yields an isolated write failure without touching the user store.
+    const QString inaccessiblePath = directory.path();
+    hotas::ThemeManager manager(inaccessiblePath);
+    QCOMPARE(manager.guidanceLevel(), u"Guided"_qs);
+    QVERIFY(manager.guidanceOnboardingPending());
+    QVERIFY(!manager.chooseGuidanceLevel(u"Full"_qs));
+    QCOMPARE(manager.guidanceLevel(), u"Guided"_qs);
+    QVERIFY(manager.guidanceOnboardingPending());
 }
 
 QTEST_APPLESS_MAIN(ThemeManagerTests)

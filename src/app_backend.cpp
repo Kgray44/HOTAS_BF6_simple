@@ -100,6 +100,7 @@ constexpr int kTrayHiddenGameDetectionIntervalMs = 7500;
 constexpr int kForegroundGameProbeIntervalMs = 250;
 constexpr int kForegroundGameStableMs = 450;
 constexpr int kRequiredDeviceDisconnectGraceMs = 3500;
+constexpr auto kSetupAssistantTaskSettingsKey = "setupAssistant/task-v1";
 constexpr int kPersistenceTransactionTimeoutMs = 2500;
 constexpr int kPersistenceShutdownTimeoutMs = 2000;
 
@@ -594,6 +595,9 @@ AppBackend::AppBackend(QObject *parent)
     m_adaptiveResponseSimulatorRecording.resize(3000);
     QSettings settings;
     m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
+    // Retain the durable Pass B setup task independently of the accepted
+    // upstream presentation preference.
+    loadSetupAssistantTask();
     m_showUltraNerdControls = settings.value(u"presentation/showUltraNerdControls"_qs, false).toBool();
     if (m_readiness.hasPendingRecovery()) {
         ControllerReadinessPlan pending;
@@ -617,6 +621,14 @@ AppBackend::AppBackend(QObject *parent)
         if (refreshButtonUiModelRuntimeState()) emit buttonTelemetryChanged();
     });
     connect(&m_numericTelemetryTimer, &QTimer::timeout, this, &AppBackend::refreshNumericTelemetry);
+    // An unassigned controller is sampled only after the owner explicitly
+    // opens its input inspector.  The timer never runs discovery or mapper
+    // work and refuses to overlap bounded DirectInput probes.
+    m_readOnlyPhysicalInputTestProbeTimer.setInterval(250);
+    connect(&m_readOnlyPhysicalInputTestProbeTimer, &QTimer::timeout, this,
+            &AppBackend::requestReadOnlyPhysicalInputProbe);
+    // Keep the accepted upstream Identify Axis session independent of the
+    // read-only input inspector timer above.
     m_axisIdentificationTimer.setSingleShot(true);
     connect(&m_axisIdentificationTimer, &QTimer::timeout, this,
             &AppBackend::finishAxisIdentification);
@@ -1008,6 +1020,12 @@ AppBackend::~AppBackend()
     }
     if (m_gameDetectionThread) {
         QThread *thread = m_gameDetectionThread;
+        thread->disconnect(this);
+        thread->wait(5000);
+        delete thread;
+    }
+    if (m_readOnlyPhysicalInputTestProbeThread) {
+        QThread *thread = m_readOnlyPhysicalInputTestProbeThread;
         thread->disconnect(this);
         thread->wait(5000);
         delete thread;
@@ -2444,6 +2462,14 @@ void AppBackend::setVirtualAxisAvailabilityForTest(bool available)
     emit stateChanged();
 }
 
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::setVjoyReadyForTest(bool ready)
+{
+    m_worker.runtimeForTest().vjoyReady = ready;
+    emit stateChanged();
+}
+#endif
+
 QVariantList AppBackend::runtimeAxisRoutesForTest() const
 {
     QVariantList routes;
@@ -3484,6 +3510,7 @@ bool AppBackend::configureMultiControllerRigFixtureForTest()
     discovered.hidInstanceId = optional.hidInstanceId;
     discovered.hidContainerId = optional.hidContainerId;
     discovered.axes = optional.axes;
+    discovered.axisDescriptors = optional.axisDescriptors;
     discovered.axisCount = optional.axisCount;
     discovered.buttonCount = optional.buttonCount;
     discovered.povCount = optional.povCount;
@@ -3507,6 +3534,92 @@ bool AppBackend::configureMultiControllerRigFixtureForTest()
     m_setupTruthCheckSnapshot = m_setupTruthSnapshot;
     emit deviceRigsChanged();
     emit stateChanged();
+    return true;
+}
+
+bool AppBackend::setEffectiveProfileOverrideForTest(const QString &profileId, int physicalButton)
+{
+    const QString requestedId = profileId.trimmed();
+    const auto profile = std::find_if(m_configuration.profiles.cbegin(), m_configuration.profiles.cend(),
+        [&requestedId](const ControllerProfile &candidate) { return candidate.id == requestedId; });
+    if (profile == m_configuration.profiles.cend()) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.effectiveProfileIndex = static_cast<int>(std::distance(m_configuration.profiles.cbegin(), profile));
+    runtime.profileOverrideMode = static_cast<int>(ProfileTriggerMode::Hold);
+    runtime.profileOverrideButton = std::max(1, physicalButton);
+    runtime.profileOverridePovHat = -1;
+    runtime.profileOverridePovDirection = -1;
+    runtime.profileOverrideAutomationRule = -1;
+    publishProfilePresentationIfChanged();
+    return true;
+}
+
+bool AppBackend::setReadOnlyPhysicalInputAxisSlotsForTest(const QString &recordId,
+                                                          const QList<int> &axisSlots)
+{
+    const QString targetId = recordId.trimmed();
+    auto saved = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&targetId](const SavedControllerRecord &candidate) {
+            return candidate.id == targetId;
+        });
+    if (saved == m_configuration.savedControllers.end()) return false;
+    const QString directInputId = saved->lastDirectInputId;
+    auto discovered = std::find_if(m_discoveredControllers.begin(), m_discoveredControllers.end(),
+        [&directInputId](const DiscoveredController &candidate) {
+            return candidate.directInputId == directInputId;
+        });
+    if (discovered == m_discoveredControllers.end()) return false;
+
+    // The empty descriptors exercise the persisted legacy shape. Axis slots,
+    // rather than an ordinal count, are still exact controller capability
+    // evidence and must remain canonical in every presentation.
+    saved->axes.fill(false);
+    saved->axisDescriptors.fill({});
+    for (const int slot : axisSlots) {
+        if (slot < 0 || slot >= kPhysicalAxisCount) return false;
+        saved->axes[static_cast<size_t>(slot)] = true;
+    }
+    saved->axisCount = static_cast<int>(std::count(saved->axes.cbegin(), saved->axes.cend(), true));
+    discovered->axes = saved->axes;
+    discovered->axisDescriptors = saved->axisDescriptors;
+    discovered->axisCount = saved->axisCount;
+
+    // Keep these sparse slots intentionally disabled and unmapped. Input
+    // inspection observes the raw member telemetry; it must not depend on a
+    // mapper route to display an exact physical capability.
+    for (ControllerProfile &profile : m_configuration.profiles) {
+        if (DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, targetId)) {
+            for (int slot = 0; slot < kPhysicalAxisCount; ++slot) {
+                mapping->axes[static_cast<size_t>(slot)].target = VirtualAxis::Disabled;
+            }
+        }
+    }
+    return true;
+}
+
+bool AppBackend::publishReadOnlyPhysicalInputSnapshotForTest(const QString &recordId,
+                                                             float axisValue, bool buttonPressed,
+                                                             int povValue, int axisSlot)
+{
+    const int memberIndex = activeRigMemberIndexForRecord(recordId.trimmed());
+    if (memberIndex < 0 || axisSlot < 0 || axisSlot >= kPhysicalAxisCount) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    AtomicAdaptiveTelemetry &source = memberIndex == 0
+        ? static_cast<AtomicAdaptiveTelemetry &>(runtime)
+        : runtime.deviceRigMemberAdaptive[static_cast<size_t>(memberIndex)];
+    source.physicalConnected = true;
+    source.raw[static_cast<size_t>(axisSlot)] = axisValue;
+    source.normalized[static_cast<size_t>(axisSlot)] = axisValue;
+    if (memberIndex == 0) {
+        runtime.physicalConnected = true;
+        runtime.physicalButtonPressed[0] = buttonPressed;
+        runtime.povValues[0] = povValue;
+    }
+    runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)] = true;
+    runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(memberIndex)][0] = buttonPressed;
+    runtime.deviceRigMemberPovValues[static_cast<size_t>(memberIndex)][0] = povValue;
+    runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].fetch_add(
+        1, std::memory_order_relaxed);
     return true;
 }
 
@@ -6494,6 +6607,12 @@ void AppBackend::refreshSelectedRigOutputReadiness()
 QString AppBackend::createDeviceRig(const QString &name, const QStringList &controllerRecordIds,
                                     const QString &outputLayoutId)
 {
+    return createDeviceRigWithId(name, controllerRecordIds, outputLayoutId, {});
+}
+
+QString AppBackend::createDeviceRigWithId(const QString &name, const QStringList &controllerRecordIds,
+                                          const QString &outputLayoutId, const QString &requestedId)
+{
     const QString trimmedName = name.trimmed().left(64);
     if (trimmedName.isEmpty() || controllerRecordIds.isEmpty()
         || controllerRecordIds.size() > kMaximumDeviceRigMembers) return {};
@@ -6506,8 +6625,10 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
         : outputLayoutId.trimmed();
     if (!findOutputLayout(m_configuration, selectedOutput)) return {};
     QSet<QString> uniqueIds;
+    const QString exactId = requestedId.trimmed();
+    if (!exactId.isEmpty() && findDeviceRig(m_configuration, exactId)) return {};
     DeviceRig rig;
-    rig.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rig.id = exactId.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : exactId;
     rig.name = trimmedName;
     rig.primaryOutputLayoutId = selectedOutput;
     rig.isDefault = m_configuration.deviceRigs.empty();
@@ -6539,6 +6660,14 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
 QVariantMap AppBackend::createDeviceRigResult(const QString &name,
                                               const QStringList &controllerRecordIds,
                                               const QString &outputLayoutId)
+{
+    return createDeviceRigResultWithId(name, controllerRecordIds, outputLayoutId, {});
+}
+
+QVariantMap AppBackend::createDeviceRigResultWithId(const QString &name,
+                                                     const QStringList &controllerRecordIds,
+                                                     const QString &outputLayoutId,
+                                                     const QString &requestedId)
 {
     const auto result = [](bool success, const QString &title, const QString &message,
                            const QString &objectId = {}, const QString &nextAction = {}) {
@@ -6623,7 +6752,7 @@ QVariantMap AppBackend::createDeviceRigResult(const QString &name,
     }
     m_configuration.savedControllers.insert(m_configuration.savedControllers.end(),
         std::make_move_iterator(newRecords.begin()), std::make_move_iterator(newRecords.end()));
-    const QString rigId = createDeviceRig(trimmedName, recordIds, selectedOutput);
+    const QString rigId = createDeviceRigWithId(trimmedName, recordIds, selectedOutput, requestedId);
     if (rigId.isEmpty()) {
         m_configuration.savedControllers.erase(std::remove_if(m_configuration.savedControllers.begin(),
             m_configuration.savedControllers.end(), [&createdRecordIds](const SavedControllerRecord &record) {
@@ -7095,6 +7224,10 @@ bool AppBackend::setDeviceRigMemberRequired(const QString &rigId, const QString 
     member->required = required;
     m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
     persistAndApply();
+    // Required/optional membership changes the current Setup Health issue
+    // target. Refresh its frozen projection with the same transaction so a
+    // review action cannot carry a stale member classification.
+    captureSetupTruthSnapshot();
     emit deviceRigsChanged();
     return true;
 }
@@ -7526,6 +7659,45 @@ bool AppBackend::setSelectedDeviceContext(const QString &rigId,
     return setEditingDeviceContext(rigId, controllerRecordIds);
 }
 
+QVariantMap AppBackend::prepareFullConflictEditorContext(const QString &profileId,
+                                                         const QString &rigId,
+                                                         const QString &outputLayoutId,
+                                                         const QString &controllerRecordId)
+{
+    const QString requestedProfileId = profileId.trimmed();
+    const QString requestedRigId = rigId.trimmed();
+    const QString requestedOutputId = outputLayoutId.trimmed();
+    const QString requestedControllerId = controllerRecordId.trimmed();
+    const auto reject = [](const QString &message) {
+        return QVariantMap{{u"success"_qs, false}, {u"message"_qs, message}};
+    };
+    const ControllerProfile *profile = findProfile(m_configuration, requestedProfileId);
+    const DeviceRig *rig = findDeviceRig(m_configuration, requestedRigId);
+    const VirtualOutputLayout *output = findOutputLayout(m_configuration, requestedOutputId);
+    const SavedControllerRecord *controller = savedControllerRecord(requestedControllerId);
+    if (!profile || !rig || !output || !controller) {
+        return reject(u"The original Profile, Device Rig, output, or controller is no longer available."_qs);
+    }
+    if (profile->deviceRigId != rig->id
+        || deviceRigPrimaryOutputLayoutId(*rig) != output->id) {
+        return reject(u"The original Profile, Device Rig, and primary Virtual Output no longer describe one editing scope."_qs);
+    }
+    const bool memberExists = std::any_of(rig->members.cbegin(), rig->members.cend(),
+        [&requestedControllerId](const DeviceRigMember &member) {
+            return member.enabled && member.controllerRecordId == requestedControllerId;
+        });
+    if (!memberExists) {
+        return reject(u"The original controller is no longer an enabled member of that Device Rig."_qs);
+    }
+    if (!selectProfileForEditing(profile->id)
+        || !setEditingDeviceContext(rig->id, {controller->id})) {
+        return reject(u"The original editor context could not be restored without changing runtime setup."_qs);
+    }
+    return QVariantMap{{u"success"_qs, true}, {u"profileId"_qs, profile->id},
+                       {u"rigId"_qs, rig->id}, {u"outputLayoutId"_qs, output->id},
+                       {u"controllerRecordId"_qs, controller->id}};
+}
+
 bool AppBackend::selectControllerForEditing(const QString &recordId)
 {
     const QString targetId = recordId.trimmed();
@@ -7553,6 +7725,7 @@ bool AppBackend::focusIssueTarget(const QString &objectType, const QString &obje
     const QString type = objectType.trimmed();
     const QString id = objectId.trimmed();
     if (type == u"deviceRig"_qs) return setEditingDeviceContext(id, {});
+    if (type == u"profile"_qs) return selectProfileForEditing(id);
     if (id.isEmpty()) return false;
 
     // Signal Flow uses durable identities in the same AppIssue contract as
@@ -8479,6 +8652,741 @@ QString AppBackend::setupAssistantScopeId() const
     return m_setupAssistantScopeId;
 }
 
+QVariantMap AppBackend::setupAssistantTask() const
+{
+    return m_setupAssistantTask;
+}
+
+bool AppBackend::hasSetupAssistantTask() const
+{
+    return !m_setupAssistantTask.isEmpty();
+}
+
+void AppBackend::loadSetupAssistantTask()
+{
+    QSettings settings;
+    const QByteArray encoded = settings.value(QLatin1String(kSetupAssistantTaskSettingsKey)).toByteArray();
+    if (encoded.isEmpty()) return;
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(encoded, &parseError);
+    const QVariantMap restored = document.isObject() ? document.object().toVariantMap() : QVariantMap{};
+    const QString intent = restored.value(u"intent"_qs).toString();
+    const bool knownIntent = intent == u"first-controller"_qs || intent == u"independent"_qs
+        || intent == u"add-to-rig"_qs || intent == u"profile-for-rig"_qs || intent == u"issue"_qs;
+    if (parseError.error != QJsonParseError::NoError || restored.value(u"version"_qs).toInt() != 1
+        || restored.value(u"id"_qs).toString().trimmed().isEmpty() || !knownIntent) {
+        // A setup journal is disposable guidance, not configuration.  A
+        // corrupt or obsolete journal must never be interpreted as an action
+        // against controller, profile, driver, or mapper state.
+        settings.remove(QLatin1String(kSetupAssistantTaskSettingsKey));
+        return;
+    }
+    m_setupAssistantTask = restored;
+    reconcileSetupAssistantTask(true);
+}
+
+bool AppBackend::persistSetupAssistantTask()
+{
+    QSettings settings;
+    if (m_setupAssistantTask.isEmpty()) {
+        settings.remove(QLatin1String(kSetupAssistantTaskSettingsKey));
+    } else {
+        settings.setValue(QLatin1String(kSetupAssistantTaskSettingsKey),
+                          QJsonDocument::fromVariant(m_setupAssistantTask).toJson(QJsonDocument::Compact));
+    }
+    settings.sync();
+    return settings.status() == QSettings::NoError;
+}
+
+void AppBackend::publishSetupAssistantTask()
+{
+    emit setupAssistantTaskChanged();
+    emit stateChanged();
+}
+
+QVariantMap AppBackend::reconcileSetupAssistantTask(bool persistChanges)
+{
+    if (m_setupAssistantTask.isEmpty()) return {};
+    const QVariantMap before = m_setupAssistantTask;
+    QStringList invalidated;
+    const QString controllerId = m_setupAssistantTask.value(u"controllerRecordId"_qs).toString().trimmed();
+    const QString rigId = m_setupAssistantTask.value(u"rigId"_qs).toString().trimmed();
+    const QString profileId = m_setupAssistantTask.value(u"profileId"_qs).toString().trimmed();
+    const QString outputId = m_setupAssistantTask.value(u"outputLayoutId"_qs).toString().trimmed();
+    if (!controllerId.isEmpty() && !savedControllerRecord(controllerId)
+        && !discoveredController(controllerId)) invalidated.append(u"controllers"_qs);
+    if (!rigId.isEmpty() && !findDeviceRig(m_configuration, rigId)) invalidated.append(u"purpose"_qs);
+    if (!profileId.isEmpty() && !findProfile(m_configuration, profileId)) invalidated.append(u"configure"_qs);
+    if (!outputId.isEmpty() && !findOutputLayout(m_configuration, outputId)) invalidated.append(u"purpose"_qs);
+
+    // A task is a record of exact relationships, not a loose collection of
+    // display names.  Detect topology, output, source, and identity changes
+    // even when all selected IDs still exist.
+    const QVariantMap stored = m_setupAssistantTask.value(u"fingerprints"_qs).toMap();
+    const QVariantMap current = setupAssistantTaskFingerprints(m_setupAssistantTask);
+    const auto changed = [&stored, &current](const QString &key) {
+        return stored.contains(key) && stored.value(key) != current.value(key);
+    };
+    if (changed(u"controller"_qs)) invalidated.append(u"controllers"_qs);
+    if (changed(u"rig"_qs)) invalidated.append(u"purpose"_qs);
+    if (changed(u"output"_qs) || changed(u"category"_qs) || changed(u"copySource"_qs))
+        invalidated.append(u"purpose"_qs);
+    if (changed(u"profile"_qs)) invalidated.append(u"configure"_qs);
+
+    // If a process stopped after a canonical operation but before the task
+    // journal was advanced, recover the planned exact object instead of
+    // creating another topology on Retry.
+    const QVariantMap pending = m_setupAssistantTask.value(u"pendingOperation"_qs).toMap();
+    if (!pending.isEmpty()) {
+        const QString type = pending.value(u"type"_qs).toString();
+        const QString id = pending.value(u"id"_qs).toString();
+        const bool exists = type == u"deviceRig"_qs ? findDeviceRig(m_configuration, id) != nullptr
+            : type == u"profile"_qs ? findProfile(m_configuration, id) != nullptr : false;
+        if (exists) {
+            QVariantList operations = m_setupAssistantTask.value(u"operationRefs"_qs).toList();
+            bool recorded = false;
+            for (const QVariant &entry : operations) {
+                const QVariantMap operation = entry.toMap();
+                recorded = recorded || (operation.value(u"type"_qs).toString() == type
+                    && operation.value(u"id"_qs).toString() == id);
+            }
+            if (!recorded) operations.append(QVariantMap{{u"type"_qs, type}, {u"id"_qs, id},
+                {u"status"_qs, u"recovered"_qs}});
+            m_setupAssistantTask.insert(u"operationRefs"_qs, operations);
+            if (type == u"deviceRig"_qs) m_setupAssistantTask.insert(u"rigId"_qs, id);
+            if (type == u"profile"_qs) m_setupAssistantTask.insert(u"profileId"_qs, id);
+            m_setupAssistantTask.remove(u"pendingOperation"_qs);
+        }
+    }
+    invalidated.removeDuplicates();
+    m_setupAssistantTask.insert(u"invalidatedStages"_qs, invalidated);
+    m_setupAssistantTask.insert(u"revalidationRequired"_qs, !invalidated.isEmpty());
+    m_setupAssistantTask.insert(u"fingerprints"_qs, current);
+    if (before != m_setupAssistantTask) {
+        if (persistChanges) persistSetupAssistantTask();
+        publishSetupAssistantTask();
+    }
+    return m_setupAssistantTask;
+}
+
+QVariantMap AppBackend::setupAssistantTaskFingerprints(const QVariantMap &task) const
+{
+    QVariantMap result;
+    const QString controllerId = task.value(u"controllerRecordId"_qs).toString().trimmed();
+    if (const SavedControllerRecord *record = savedControllerRecord(controllerId)) {
+        result.insert(u"controller"_qs, QString(u"%1|%2|%3|%4|%5|%6"_qs).arg(record->id,
+            record->lastDirectInputId, record->productGuid, record->hidInstanceId,
+            record->capabilityFingerprint).arg(record->axisCount).arg(record->buttonCount));
+    } else if (const DiscoveredController *discovered = discoveredController(controllerId)) {
+        result.insert(u"controller"_qs, QString(u"%1|%2|%3|%4|%5"_qs).arg(discovered->directInputId,
+            discovered->productGuid, discovered->hidInstanceId).arg(discovered->axisCount).arg(discovered->buttonCount));
+    }
+    const QString rigId = task.value(u"rigId"_qs).toString().trimmed();
+    if (const DeviceRig *rig = findDeviceRig(m_configuration, rigId)) {
+        QStringList members;
+        for (const DeviceRigMember &member : rig->members) members.append(QString(u"%1:%2:%3:%4"_qs)
+            .arg(member.controllerRecordId).arg(member.required).arg(member.enabled).arg(member.preferredOutputLayoutId));
+        members.sort();
+        result.insert(u"rig"_qs, rig->id + u"|"_qs + rig->primaryOutputLayoutId + u"|"_qs + members.join(u","_qs));
+    }
+    const QString outputId = task.value(u"outputLayoutId"_qs).toString().trimmed();
+    if (const VirtualOutputLayout *output = findOutputLayout(m_configuration, outputId)) {
+        result.insert(u"output"_qs, QString(u"%1|%2|%3|%4|%5"_qs).arg(output->id)
+            .arg(output->requirements.deviceId).arg(output->requirements.buttons)
+            .arg(output->requirements.continuousPovs).arg(output->requirements.discretePovs));
+    }
+    const QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    if (const ControllerProfile *profile = findProfile(m_configuration, profileId)) {
+        result.insert(u"profile"_qs, profile->id + u"|"_qs + profile->deviceRigId + u"|"_qs
+            + profile->categoryId + u"|"_qs + profile->outputLayoutId);
+    }
+    const QString categoryId = task.value(u"categoryId"_qs).toString().trimmed();
+    if (const ProfileCategory *category = findProfileCategory(m_configuration, categoryId))
+        result.insert(u"category"_qs, category->id + u"|"_qs + category->name);
+    const QString sourceId = task.value(u"copyProfileId"_qs).toString().trimmed();
+    if (const ControllerProfile *source = findProfile(m_configuration, sourceId))
+        result.insert(u"copySource"_qs, source->id + u"|"_qs + source->categoryId + u"|"_qs + source->deviceRigId);
+    return result;
+}
+
+QStringList AppBackend::setupTaskAffectedProfileNames(const QString &rigId) const
+{
+    QStringList result;
+    const QString requestedRigId = rigId.trimmed();
+    for (const ControllerProfile &profile : m_configuration.profiles) {
+        if (profile.deviceRigId == requestedRigId) result.append(profileDisplayName(profile.id));
+    }
+    return result;
+}
+
+bool AppBackend::setupTaskCanCommit(QString *reason) const
+{
+    if (m_setupAssistantTask.isEmpty()) {
+        if (reason) *reason = u"Start or resume setup before committing a change."_qs;
+        return false;
+    }
+    if (m_setupAssistantTask.value(u"revalidationRequired"_qs).toBool()) {
+        if (reason) *reason = u"The saved setup needs review because a selected item changed or was removed."_qs;
+        return false;
+    }
+    if (m_setupAssistantTask.value(u"repairOperation"_qs).toMap().value(u"state"_qs).toString()
+        == u"applying"_qs) {
+        if (reason) *reason = u"Wait for the approved repair to finish before committing another setup change."_qs;
+        return false;
+    }
+    return true;
+}
+
+QVariantMap AppBackend::beginSetupAssistantTask(const QString &intent, const QVariantMap &context)
+{
+    const QString requestedIntent = intent.trimmed();
+    const bool knownIntent = requestedIntent == u"first-controller"_qs || requestedIntent == u"independent"_qs
+        || requestedIntent == u"add-to-rig"_qs || requestedIntent == u"profile-for-rig"_qs
+        || requestedIntent == u"issue"_qs;
+    if (!knownIntent) {
+        return actionResult(false, u"Setup could not start"_qs,
+                            u"Choose a supported setup path from Flight Deck."_qs);
+    }
+    if (!m_setupAssistantTask.isEmpty()) {
+        const QVariantMap current = reconcileSetupAssistantTask(true);
+        QVariantMap result = actionResult(false, u"Setup is already in progress"_qs,
+                                          u"Resume the saved setup or explicitly replace its uncommitted choices."_qs);
+        result.insert(u"requiresChoice"_qs, true);
+        result.insert(u"task"_qs, current);
+        result.insert(u"canReplace"_qs, current.value(u"operationRefs"_qs).toList().isEmpty());
+        return result;
+    }
+
+    QVariantMap task{{u"version"_qs, 1},
+                     {u"id"_qs, QUuid::createUuid().toString(QUuid::WithoutBraces)},
+                     {u"intent"_qs, requestedIntent},
+                     {u"state"_qs, u"active"_qs},
+                     {u"stage"_qs, u"controllers"_qs},
+                     {u"operationRefs"_qs, QVariantList{}},
+                     {u"invalidatedStages"_qs, QStringList{}},
+                     {u"revalidationRequired"_qs, false},
+                     {u"createdAtUtc"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
+                     {u"observedConfigurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)}};
+    const QStringList contextKeys{u"controllerRecordId"_qs, u"rigId"_qs, u"profileId"_qs,
+                                  u"outputLayoutId"_qs, u"categoryId"_qs, u"copyProfileId"_qs,
+                                  u"issueId"_qs, u"returnPage"_qs};
+    for (const QString &key : contextKeys) {
+        if (!context.contains(key)) continue;
+        if (key == u"returnPage"_qs) task.insert(key, context.value(key).toInt());
+        else task.insert(key, context.value(key).toString().trimmed());
+    }
+    if (!task.value(u"rigId"_qs).toString().isEmpty()) task.insert(u"stage"_qs, u"purpose"_qs);
+    m_setupAssistantTask = task;
+    reconcileSetupAssistantTask(false);
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Setup started"_qs,
+                                      u"Your choices are saved separately until you explicitly create or use them."_qs);
+    result.insert(u"task"_qs, m_setupAssistantTask);
+    return result;
+}
+
+QVariantMap AppBackend::resumeSetupAssistantTask()
+{
+    if (m_setupAssistantTask.isEmpty()) {
+        return actionResult(false, u"No saved setup"_qs,
+                            u"Start setup from Overview, Devices, Profiles, or an app issue."_qs);
+    }
+    m_setupAssistantTask.insert(u"state"_qs, u"active"_qs);
+    const QVariantMap task = reconcileSetupAssistantTask(false);
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Setup resumed"_qs,
+                                      task.value(u"revalidationRequired"_qs).toBool()
+                                          ? u"Review the changed selection before continuing."_qs
+                                          : u"Continue from the saved setup stage."_qs);
+    result.insert(u"task"_qs, task);
+    return result;
+}
+
+QVariantMap AppBackend::replaceUncommittedSetupAssistantTask(const QString &intent,
+                                                               const QVariantMap &context)
+{
+    if (!m_setupAssistantTask.isEmpty() && !m_setupAssistantTask.value(u"operationRefs"_qs).toList().isEmpty()) {
+        return actionResult(false, u"Saved setup has committed work"_qs,
+                            u"Resume it or dismiss its guidance; its created Rig or Profile is intentionally retained."_qs);
+    }
+    m_setupAssistantTask.clear();
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    return beginSetupAssistantTask(intent, context);
+}
+
+QVariantMap AppBackend::chooseSetupAssistantIntent(const QString &intent)
+{
+    const QString requested = intent.trimmed();
+    const bool known = requested == u"first-controller"_qs || requested == u"independent"_qs
+        || requested == u"add-to-rig"_qs || requested == u"profile-for-rig"_qs;
+    if (!known || m_setupAssistantTask.isEmpty()) {
+        return actionResult(false, u"Setup path is unavailable"_qs,
+                            u"Start or resume setup before choosing how to use the controller."_qs);
+    }
+    if (m_setupAssistantTask.value(u"intent"_qs).toString() == requested)
+        return actionResult(true, u"Setup path unchanged"_qs,
+                            u"Your saved choices and current task are unchanged."_qs);
+    if (!m_setupAssistantTask.value(u"operationRefs"_qs).toList().isEmpty()) {
+        QVariantMap result = actionResult(false, u"This setup already has saved work"_qs,
+            u"Finish this task, or start a separate setup task for a different topology. Existing Rigs and Profiles are retained."_qs);
+        result.insert(u"requiresSeparateTask"_qs, true);
+        return result;
+    }
+    m_setupAssistantTask.insert(u"intent"_qs, requested);
+    m_setupAssistantTask.insert(u"stage"_qs, u"purpose"_qs);
+    m_setupAssistantTask.remove(u"revalidationRequired"_qs);
+    m_setupAssistantTask.remove(u"invalidatedStages"_qs);
+    if (!persistSetupAssistantTask()) {
+        return actionResult(false, u"Setup choices were not saved"_qs,
+                            u"The setup journal could not be written, so no configuration was changed."_qs);
+    }
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Setup path selected"_qs,
+        u"This is still the same setup task. Your controller choice and drafts were preserved."_qs);
+    result.insert(u"task"_qs, m_setupAssistantTask);
+    return result;
+}
+
+QVariantMap AppBackend::updateSetupAssistantTask(const QVariantMap &changes)
+{
+    if (m_setupAssistantTask.isEmpty()) {
+        return actionResult(false, u"No setup is in progress"_qs,
+                            u"Start or resume setup before changing its selections."_qs);
+    }
+    static const QSet<QString> allowed{u"stage"_qs, u"controllerRecordId"_qs, u"rigId"_qs,
+                                       u"profileId"_qs, u"outputLayoutId"_qs, u"categoryId"_qs,
+                                       u"copyProfileId"_qs, u"issueId"_qs, u"returnPage"_qs,
+                                       u"rigNameDraft"_qs, u"profileNameDraft"_qs,
+                                       u"copyExistingDraft"_qs, u"requiredMembershipDraft"_qs};
+    static const QSet<QString> stages{u"controllers"_qs, u"purpose"_qs, u"connection"_qs,
+                                      u"configure"_qs, u"complete"_qs};
+    bool selectionChanged = false;
+    for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
+        if (!allowed.contains(it.key())) continue;
+        if (it.key() == u"stage"_qs) {
+            const QString stage = it.value().toString().trimmed();
+            if (!stages.contains(stage)) continue;
+            m_setupAssistantTask.insert(it.key(), stage);
+        } else if (it.key() == u"returnPage"_qs) {
+            m_setupAssistantTask.insert(it.key(), it.value().toInt());
+        } else if (it.key() == u"copyExistingDraft"_qs || it.key() == u"requiredMembershipDraft"_qs) {
+            m_setupAssistantTask.insert(it.key(), it.value().toBool());
+        } else {
+            m_setupAssistantTask.insert(it.key(), it.value().toString().trimmed());
+        }
+        selectionChanged = selectionChanged || it.key() == u"controllerRecordId"_qs
+            || it.key() == u"rigId"_qs || it.key() == u"profileId"_qs
+            || it.key() == u"outputLayoutId"_qs || it.key() == u"categoryId"_qs
+            || it.key() == u"copyProfileId"_qs;
+    }
+    if (selectionChanged) {
+        m_setupAssistantTask.remove(u"revalidationRequired"_qs);
+        m_setupAssistantTask.remove(u"invalidatedStages"_qs);
+        // A deliberate selection edit establishes a new exact relationship;
+        // stage navigation and draft typing never erase an external stale
+        // relationship warning.
+        m_setupAssistantTask.remove(u"fingerprints"_qs);
+    }
+    const QVariantMap task = reconcileSetupAssistantTask(false);
+    if (!persistSetupAssistantTask()) {
+        return actionResult(false, u"Setup choices were not saved"_qs,
+                            u"The setup journal could not be written, so no configuration was changed."_qs);
+    }
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Setup choices saved"_qs,
+                                      u"No controller, profile, output, or mapping state changed."_qs);
+    result.insert(u"task"_qs, task);
+    return result;
+}
+
+QVariantMap AppBackend::commitSetupAssistantRigAndProfile(const QString &rigName,
+                                                            const QString &profileName,
+                                                            const QString &controllerRecordId,
+                                                            const QString &outputLayoutId,
+                                                            const QString &categoryId,
+                                                            const QString &copyProfileId,
+                                                            const QString &targetRigId)
+{
+    const QVariantMap reconciled = reconcileSetupAssistantTask(true);
+    QString reason;
+    if (!setupTaskCanCommit(&reason)) return actionResult(false, u"Setup is not ready to commit"_qs, reason);
+    const QString intent = reconciled.value(u"intent"_qs).toString();
+    if (intent != u"first-controller"_qs && intent != u"independent"_qs
+        && intent != u"profile-for-rig"_qs) {
+        return actionResult(false, u"This setup path does not create a Profile"_qs,
+                            u"Choose a first, independent, or existing-Rig Profile setup path."_qs);
+    }
+    const QString selectedCategoryId = categoryId.trimmed();
+    if (!findProfileCategory(m_configuration, selectedCategoryId)) {
+        return actionResult(false, u"Profile category is unavailable"_qs,
+                            u"Choose a current Profile category before creating anything."_qs);
+    }
+    const QString sourceProfileId = copyProfileId.trimmed();
+    if (!sourceProfileId.isEmpty() && !findProfile(m_configuration, sourceProfileId)) {
+        return actionResult(false, u"Source Profile is unavailable"_qs,
+                            u"Choose a current Profile to copy, or start from a blank Profile."_qs);
+    }
+
+    QVariantMap task = reconciled;
+    QString rigId = targetRigId.trimmed().isEmpty()
+        ? task.value(u"rigId"_qs).toString().trimmed() : targetRigId.trimmed();
+    const bool needsNewRig = intent == u"first-controller"_qs || intent == u"independent"_qs;
+    QVariantList operations = task.value(u"operationRefs"_qs).toList();
+    // A partial commit already owns this task's Rig. Retry must use that
+    // canonical ID, not create a second Rig merely because the intent began
+    // as an independent setup.
+    if (needsNewRig && !findDeviceRig(m_configuration, rigId)) {
+        const QString selectedControllerId = controllerRecordId.trimmed();
+        if (selectedControllerId.isEmpty()) {
+            return actionResult(false, u"Choose a controller first"_qs,
+                                u"Select the physical controller that belongs in this Device Rig."_qs);
+        }
+        const QString selectedOutputId = outputLayoutId.trimmed();
+        if (!selectedOutputId.isEmpty() && !findOutputLayout(m_configuration, selectedOutputId)) {
+            return actionResult(false, u"Virtual output is unavailable"_qs,
+                                u"Choose a current virtual output before creating the Device Rig."_qs);
+        }
+        const QVariantMap pending = task.value(u"pendingOperation"_qs).toMap();
+        const QString plannedRigId = pending.value(u"type"_qs).toString() == u"deviceRig"_qs
+            ? pending.value(u"id"_qs).toString() : QUuid::createUuid().toString(QUuid::WithoutBraces);
+        task.insert(u"rigNameDraft"_qs, rigName.trimmed());
+        task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+        task.insert(u"controllerRecordId"_qs, selectedControllerId);
+        task.insert(u"outputLayoutId"_qs, selectedOutputId);
+        task.insert(u"categoryId"_qs, selectedCategoryId);
+        task.insert(u"copyProfileId"_qs, sourceProfileId);
+        task.insert(u"pendingOperation"_qs, QVariantMap{{u"type"_qs, u"deviceRig"_qs},
+            {u"id"_qs, plannedRigId}});
+        m_setupAssistantTask = task;
+        if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+            u"The planned Device Rig could not be journaled, so no Device Rig was created."_qs);
+        publishSetupAssistantTask();
+        const QVariantMap rigResult = createDeviceRigResultWithId(rigName, {selectedControllerId},
+                                                                    selectedOutputId, plannedRigId);
+        if (!rigResult.value(u"success"_qs).toBool()) return rigResult;
+        rigId = rigResult.value(u"affectedObjectId"_qs).toString();
+        operations.append(QVariantMap{{u"type"_qs, u"deviceRig"_qs}, {u"id"_qs, rigId},
+                                      {u"status"_qs, u"created"_qs}});
+        // A newly discovered controller is accepted by createDeviceRigResult
+        // through its DirectInput identity, then receives a durable record.
+        // From this point forward the task must hold that canonical saved ID
+        // so editor context and resume stay exact across inventory refreshes.
+        const DeviceRig *createdRig = findDeviceRig(m_configuration, rigId);
+        task.insert(u"controllerRecordId"_qs, createdRig && !createdRig->members.empty()
+            ? createdRig->members.front().controllerRecordId : selectedControllerId);
+        task.insert(u"outputLayoutId"_qs, selectedOutputId);
+        task.remove(u"pendingOperation"_qs);
+    }
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId);
+    if (!rig) {
+        return actionResult(false, u"Device Rig is unavailable"_qs,
+                            u"Choose an existing enabled Device Rig before creating this Profile."_qs);
+    }
+    QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    if (!profileId.isEmpty() && !findProfile(m_configuration, profileId)) profileId.clear();
+    if (profileId.isEmpty()) {
+        const QVariantMap pending = task.value(u"pendingOperation"_qs).toMap();
+        const QString plannedProfileId = pending.value(u"type"_qs).toString() == u"profile"_qs
+            ? pending.value(u"id"_qs).toString() : QUuid::createUuid().toString(QUuid::WithoutBraces);
+        task.insert(u"rigId"_qs, rig->id);
+        task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+        task.insert(u"categoryId"_qs, selectedCategoryId);
+        task.insert(u"copyProfileId"_qs, sourceProfileId);
+        task.insert(u"pendingOperation"_qs, QVariantMap{{u"type"_qs, u"profile"_qs},
+            {u"id"_qs, plannedProfileId}});
+        m_setupAssistantTask = task;
+        if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+            u"The planned Profile could not be journaled, so no Profile was created."_qs);
+        publishSetupAssistantTask();
+        profileId = createProfileForRigInCategory(profileName, selectedCategoryId, rig->id,
+                                                   sourceProfileId, plannedProfileId);
+        if (!profileId.isEmpty()) task.remove(u"pendingOperation"_qs);
+    }
+    if (profileId.isEmpty()) {
+        if (!operations.isEmpty() || needsNewRig) {
+            task.insert(u"rigId"_qs, rig->id);
+            task.insert(u"operationRefs"_qs, operations);
+            task.insert(u"stage"_qs, u"purpose"_qs);
+            task.insert(u"partialCommit"_qs, true);
+            m_setupAssistantTask = task;
+            persistSetupAssistantTask();
+            publishSetupAssistantTask();
+        }
+        return actionResult(false, u"Device Rig was saved; Profile still needs a valid name"_qs,
+                            u"The Rig remains intact. Correct the Profile choices and continue; nothing was deleted."_qs,
+                            u"deviceRig"_qs, rig->id);
+    }
+    bool profileRecorded = false;
+    for (const QVariant &entry : operations) {
+        const QVariantMap operation = entry.toMap();
+        profileRecorded = profileRecorded || (operation.value(u"type"_qs).toString() == u"profile"_qs
+            && operation.value(u"id"_qs).toString() == profileId);
+    }
+    if (!profileRecorded) operations.append(QVariantMap{{u"type"_qs, u"profile"_qs}, {u"id"_qs, profileId},
+                                                         {u"status"_qs, u"created"_qs}});
+    task.insert(u"rigId"_qs, rig->id);
+    task.insert(u"profileId"_qs, profileId);
+    task.insert(u"categoryId"_qs, selectedCategoryId);
+    task.insert(u"operationRefs"_qs, operations);
+    task.insert(u"partialCommit"_qs, false);
+    task.insert(u"stage"_qs, u"connection"_qs);
+    m_setupAssistantTask = task;
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Device Rig and Profile saved"_qs,
+                                      u"They are ready for connection checks and editing; mapping remains unchanged until Use is chosen."_qs,
+                                      u"profile"_qs, profileId, u"continue-setup"_qs);
+    result.insert(u"task"_qs, m_setupAssistantTask);
+    return result;
+}
+
+QVariantMap AppBackend::commitSetupAssistantSharedMember(const QString &rigId,
+                                                           const QString &controllerRecordId,
+                                                           bool required,
+                                                           const QString &profileId,
+                                                           const QString &profileName,
+                                                           const QString &categoryId,
+                                                           const QString &copyProfileId)
+{
+    const QVariantMap reconciled = reconcileSetupAssistantTask(true);
+    QString reason;
+    if (!setupTaskCanCommit(&reason)) return actionResult(false, u"Setup is not ready to commit"_qs, reason);
+    if (reconciled.value(u"intent"_qs).toString() != u"add-to-rig"_qs) {
+        return actionResult(false, u"This setup path does not change Rig membership"_qs,
+                            u"Start Add to existing Device Rig before adding a controller."_qs);
+    }
+    const QString selectedRigId = rigId.trimmed().isEmpty()
+        ? reconciled.value(u"rigId"_qs).toString().trimmed() : rigId.trimmed();
+    const QString selectedControllerId = controllerRecordId.trimmed();
+    const DeviceRig *rig = findDeviceRig(m_configuration, selectedRigId);
+    if (!rig || selectedControllerId.isEmpty()) {
+        return actionResult(false, u"Rig membership selection is unavailable"_qs,
+                            u"Choose a current Device Rig and connected physical controller."_qs);
+    }
+    const ControllerProfile *selectedProfile = profileId.trimmed().isEmpty()
+        ? nullptr : findProfile(m_configuration, profileId.trimmed());
+    if (selectedProfile && selectedProfile->deviceRigId != selectedRigId) {
+        return actionResult(false, u"Profile belongs to a different Device Rig"_qs,
+            u"Choose a Profile attached to this Device Rig, or leave Profile editing for later."_qs);
+    }
+    const QStringList affectedProfiles = setupTaskAffectedProfileNames(selectedRigId);
+    QString canonicalControllerId = selectedControllerId;
+    bool alreadyMember = false;
+    for (const DeviceRigMember &member : rig->members) {
+        const SavedControllerRecord *memberRecord = savedControllerRecord(member.controllerRecordId);
+        alreadyMember = alreadyMember || member.controllerRecordId == selectedControllerId
+            || (memberRecord && memberRecord->lastDirectInputId == selectedControllerId);
+        if (alreadyMember) canonicalControllerId = member.controllerRecordId;
+    }
+    if (!alreadyMember) {
+        if (savedControllerRecord(selectedControllerId)) {
+            if (!addDeviceRigMember(selectedRigId, selectedControllerId, required)) {
+                return actionResult(false, u"Controller was not added to the Device Rig"_qs,
+                    u"Review the Rig capacity and membership, then try again."_qs,
+                    u"deviceRig"_qs, selectedRigId);
+            }
+        } else if (discoveredController(selectedControllerId)
+                   && addDetectedDeviceToRig(selectedRigId, selectedControllerId, required)) {
+            const DeviceRig *updatedRig = findDeviceRig(m_configuration, selectedRigId);
+            if (updatedRig) for (const DeviceRigMember &member : updatedRig->members) {
+                const SavedControllerRecord *memberRecord = savedControllerRecord(member.controllerRecordId);
+                if (memberRecord && memberRecord->lastDirectInputId == selectedControllerId) {
+                    canonicalControllerId = member.controllerRecordId;
+                    break;
+                }
+            }
+        } else {
+            return actionResult(false, u"Controller was not added to the Device Rig"_qs,
+                u"Reconnect the exact physical controller, refresh Devices, and try again."_qs,
+                u"deviceRig"_qs, selectedRigId);
+        }
+    }
+    QVariantMap task = reconciled;
+    QVariantList operations = task.value(u"operationRefs"_qs).toList();
+    bool recorded = false;
+    for (const QVariant &entry : operations) {
+        const QVariantMap operation = entry.toMap();
+        recorded = recorded || (operation.value(u"type"_qs).toString() == u"deviceRigMember"_qs
+            && operation.value(u"id"_qs).toString() == canonicalControllerId
+            && operation.value(u"rigId"_qs).toString() == selectedRigId);
+    }
+    if (!recorded) operations.append(QVariantMap{{u"type"_qs, u"deviceRigMember"_qs},
+                                  {u"id"_qs, canonicalControllerId},
+                                  {u"rigId"_qs, selectedRigId},
+                                  {u"required"_qs, required},
+                                  {u"status"_qs, u"added"_qs}});
+    task.insert(u"rigId"_qs, selectedRigId);
+    task.insert(u"controllerRecordId"_qs, canonicalControllerId);
+    task.insert(u"profileId"_qs, selectedProfile ? selectedProfile->id : QString{});
+    task.insert(u"profileNameDraft"_qs, profileName.trimmed());
+    task.insert(u"categoryId"_qs, categoryId.trimmed());
+    task.insert(u"copyProfileId"_qs, copyProfileId.trimmed());
+    task.insert(u"affectedProfiles"_qs, affectedProfiles);
+    task.insert(u"operationRefs"_qs, operations);
+    task.insert(u"stage"_qs, u"connection"_qs);
+    m_setupAssistantTask = task;
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Controller added to Device Rig"_qs,
+                                      affectedProfiles.isEmpty()
+                                          ? u"No existing Profile was changed; review the new controller before use."_qs
+                                          : u"Existing Profiles keep their routes; the new controller starts with an independent input channel."_qs,
+                                      u"deviceRig"_qs, selectedRigId, u"continue-setup"_qs);
+    result.insert(u"affectedProfiles"_qs, affectedProfiles);
+    result.insert(u"profileId"_qs, selectedProfile ? selectedProfile->id : QString{});
+    return result;
+}
+
+QVariantMap AppBackend::prepareSetupAssistantEditor(int page)
+{
+    const QVariantMap task = reconcileSetupAssistantTask(true);
+    QString reason;
+    if (!setupTaskCanCommit(&reason)) return actionResult(false, u"Setup needs review"_qs, reason);
+    const QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    const QString rigId = task.value(u"rigId"_qs).toString().trimmed();
+    const QString controllerId = task.value(u"controllerRecordId"_qs).toString().trimmed();
+    const ControllerProfile *profile = findProfile(m_configuration, profileId);
+    const DeviceRig *rig = findDeviceRig(m_configuration, rigId);
+    if (!profile || !rig || profile->deviceRigId != rig->id) {
+        return actionResult(false, u"Editor target is unavailable"_qs,
+                            u"Review the saved Rig and Profile before opening an editor."_qs);
+    }
+    if (!selectProfileForEditing(profile->id)
+        || !setEditingDeviceContext(rig->id, controllerId.isEmpty() ? QStringList{} : QStringList{controllerId})) {
+        return actionResult(false, u"Editor context could not be prepared"_qs,
+                            u"The saved setup changed; review it before continuing."_qs);
+    }
+    m_setupAssistantTask.insert(u"stage"_qs, u"configure"_qs);
+    m_setupAssistantTask.insert(u"returnPage"_qs, page);
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+    QVariantMap result = actionResult(true, u"Editor ready"_qs,
+                                      u"The editor selection changed only; activation and mapping state are untouched."_qs);
+    result.insert(u"page"_qs, page);
+    return result;
+}
+
+QVariantMap AppBackend::useSetupAssistantTask()
+{
+    const QVariantMap task = reconcileSetupAssistantTask(true);
+    QString reason;
+    if (!setupTaskCanCommit(&reason)) return actionResult(false, u"Setup needs review"_qs, reason);
+    const QString rigId = task.value(u"rigId"_qs).toString().trimmed();
+    const QString profileId = task.value(u"profileId"_qs).toString().trimmed();
+    if (rigId.isEmpty()) return actionResult(false, u"Choose a Device Rig before Use"_qs,
+                                             u"Complete the saved setup before activating a controller context."_qs);
+    const QVariantMap activation = activateDeviceRigResult(rigId, profileId);
+    if (!activation.value(u"success"_qs).toBool()) return activation;
+    m_setupAssistantTask.insert(u"stage"_qs, u"complete"_qs);
+    m_setupAssistantTask.insert(u"state"_qs, u"result"_qs);
+    m_setupAssistantTask.insert(u"useResult"_qs, activation);
+    m_setupAssistantTask.insert(u"usedAtUtc"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup result was not saved"_qs,
+        u"The activation completed, but keep this window open and retry saving its result before finishing."_qs);
+    publishSetupAssistantTask();
+    QVariantMap result = activation;
+    result.insert(u"setupTaskCleared"_qs, false);
+    result.insert(u"task"_qs, m_setupAssistantTask);
+    return result;
+}
+
+QVariantMap AppBackend::markSetupAssistantProof(const QString &kind, const QString &state)
+{
+    const QString proofKind = kind.trimmed();
+    const QString proofState = state.trimmed();
+    if (m_setupAssistantTask.isEmpty()
+        || (proofKind != u"physical"_qs && proofKind != u"mapped"_qs)
+        || (proofState != u"not-tested"_qs && proofState != u"started"_qs
+            && proofState != u"passed"_qs && proofState != u"unavailable"_qs)) {
+        return actionResult(false, u"Test result was not recorded"_qs,
+                            u"Use the current setup task to record an honest test state."_qs);
+    }
+    QVariantMap proofs = m_setupAssistantTask.value(u"testProofs"_qs).toMap();
+    proofs.insert(proofKind, proofState);
+    m_setupAssistantTask.insert(u"testProofs"_qs, proofs);
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Test result was not saved"_qs,
+        u"No setup configuration was changed."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Test result recorded"_qs,
+        proofState == u"passed"_qs ? u"This result is recorded for the selected setup."_qs
+                                    : u"This test remains honestly marked as not tested or unavailable."_qs);
+}
+
+QVariantMap AppBackend::recordSetupAssistantRepairOperation(const QString &scopeType,
+                                                             const QString &scopeId,
+                                                             const QString &sessionId,
+                                                             const QString &state)
+{
+    if (m_setupAssistantTask.isEmpty()) return actionResult(false, u"No setup is in progress"_qs,
+        u"Start or resume setup before approving a repair."_qs);
+    const QString normalizedScope = scopeType.trimmed();
+    const QString normalizedId = scopeId.trimmed();
+    const QString taskRig = m_setupAssistantTask.value(u"rigId"_qs).toString().trimmed();
+    if (normalizedScope != u"deviceRig"_qs || normalizedId.isEmpty() || normalizedId != taskRig) {
+        return actionResult(false, u"Repair target changed"_qs,
+            u"Return to the saved Device Rig before approving a repair."_qs);
+    }
+    m_setupAssistantTask.insert(u"repairOperation"_qs, QVariantMap{{u"scopeType"_qs, normalizedScope},
+        {u"scopeId"_qs, normalizedId}, {u"sessionId"_qs, sessionId.trimmed()},
+        {u"state"_qs, state.trimmed()}});
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Repair approval was not saved"_qs,
+        u"No repair was started."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Repair target recorded"_qs,
+                        u"The confirmation applies only to this setup task's Device Rig."_qs);
+}
+
+QVariantMap AppBackend::finishSetupAssistantTask()
+{
+    if (m_setupAssistantTask.isEmpty()) return actionResult(true, u"Setup is already finished"_qs, {});
+    if (m_setupAssistantTask.value(u"repairOperation"_qs).toMap().value(u"state"_qs).toString()
+        == u"applying"_qs) return actionResult(false, u"Repair is still running"_qs,
+            u"Wait for the approved repair to reach a result before finishing setup."_qs);
+    m_setupAssistantTask.clear();
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup result was not cleared"_qs,
+        u"The saved result remains available; no configuration was changed."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Setup finished"_qs,
+                        u"The saved guidance was cleared. Your Rigs, Profiles, and activation remain unchanged."_qs);
+}
+
+QVariantMap AppBackend::saveSetupAssistantForLater()
+{
+    if (m_setupAssistantTask.isEmpty()) return actionResult(false, u"No setup to save"_qs,
+                                                             u"Start setup before saving it for later."_qs);
+    m_setupAssistantTask.insert(u"state"_qs, u"saved"_qs);
+    m_setupAssistantTask.insert(u"savedAtUtc"_qs, QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup was not saved"_qs,
+        u"The setup journal could not be written; no controller, Profile, output, or mapper state changed."_qs);
+    publishSetupAssistantTask();
+    return actionResult(true, u"Setup saved for later"_qs,
+                        u"No controller, Profile, output, or mapper state was changed."_qs);
+}
+
+QVariantMap AppBackend::dismissSetupAssistantTask()
+{
+    const bool hadTask = !m_setupAssistantTask.isEmpty();
+    m_setupAssistantTask.clear();
+    if (!persistSetupAssistantTask()) return actionResult(false, u"Setup guidance was not dismissed"_qs,
+        u"The saved guidance could not be cleared; no configuration was changed."_qs);
+    if (hadTask) publishSetupAssistantTask();
+    return actionResult(true, u"Setup guidance dismissed"_qs,
+                        u"Existing Device Rigs, Profiles, mappings, and active state were retained."_qs);
+}
+
+#ifdef HOTAS_STARTUP_TESTING
+void AppBackend::clearSetupAssistantTaskForTest()
+{
+    m_setupAssistantTask.clear();
+    persistSetupAssistantTask();
+    publishSetupAssistantTask();
+}
+#endif
+
 QVariantList AppBackend::setupAssistantIssuesForScope(const QString &scopeType,
                                                        const QString &scopeId) const
 {
@@ -9181,27 +10089,87 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                               const QString &detail, const QVariantMap &evidence = {}) {
         groups.append(QVariantMap{{u"id"_qs, id}, {u"title"_qs, title},
             {u"status"_qs, statusValue(status)}, {u"severity"_qs, severity(status)},
-            {u"detail"_qs, detail}, {u"evidence"_qs, evidence}});
+            {u"detail"_qs, detail}, {u"evidence"_qs, evidence},
+            // A stale or absent result is not a running check. Preserve the
+            // operation, checked, and freshness facts independently.
+            {u"checking"_qs, checking && status == SetupTruthStatus::Checking},
+            {u"checked"_qs, plan.lastChecked.isValid()}, {u"fresh"_qs, inspected}});
     };
     const auto addIssue = [&](const QString &code, const QString &subsystem, SetupTruthStatus status,
                               const QString &title, const QString &detail, bool automatic,
                               bool elevated, const QString &action, const QVariantMap &evidence = {}) {
-        const QString id = code + u":"_qs + QString::number(issues.size() + 1);
         const QString recordId = evidence.value(u"recordId"_qs).toString();
         const QString layoutId = evidence.value(u"layoutId"_qs).toString();
-        const QString affectedId = !recordId.isEmpty() ? recordId : layoutId;
-        issues.append(QVariantMap{{u"id"_qs, id}, {u"code"_qs, code}, {u"subsystem"_qs, subsystem},
-            {u"severity"_qs, statusValue(status)}, {u"title"_qs, title}, {u"explanation"_qs, detail},
-            {u"repairable"_qs, automatic}, {u"automatic"_qs, automatic},
-            {u"requiresElevation"_qs, elevated}, {u"proposedRepair"_qs, action},
-            {u"requiresReconnect"_qs, code == u"HidHideMismatch"_qs},
-            {u"risk"_qs, elevated ? u"Scoped driver configuration with mandatory read-back."_qs
-                                     : u"No driver configuration is required."_qs},
-            {u"manualFallback"_qs, automatic ? u"Review diagnostics if the scoped repair cannot complete."_qs
-                                                 : u"Review technical diagnostics, then run another read-only check."_qs},
-            {u"navigationTarget"_qs, subsystem}, {u"affectedObjectIds"_qs, QStringList{affectedId}},
-            {u"evidence"_qs, evidence}});
-        if (automatic) repairPlan.append(QVariantMap{{u"id"_qs, id}, {u"subsystem"_qs, subsystem},
+        const QString routeId = evidence.value(u"routeId"_qs).toString();
+        const QString profileId = evidence.value(u"profileId"_qs).toString();
+        const QString rigId = evidence.value(u"rigId"_qs,
+            evidence.value(u"setupTargetRigId"_qs)).toString();
+        QString affectedType;
+        QString affectedId;
+        if (!recordId.isEmpty()) {
+            affectedType = u"physicalDevice"_qs;
+            affectedId = recordId;
+        } else if (!layoutId.isEmpty()) {
+            affectedType = u"virtualOutput"_qs;
+            affectedId = layoutId;
+        } else if (!routeId.isEmpty()) {
+            affectedType = u"signalFlowRoute"_qs;
+            affectedId = routeId;
+        } else if (!profileId.isEmpty()) {
+            affectedType = u"profile"_qs;
+            affectedId = profileId;
+        } else if (!rigId.isEmpty()) {
+            affectedType = u"deviceRig"_qs;
+            affectedId = rigId;
+        }
+        AppIssue issue;
+        issue.id = code + u":"_qs + QString::number(issues.size() + 1);
+        issue.code = code;
+        issue.category = subsystem;
+        issue.severity = statusValue(status);
+        issue.scopeType = u"setupTruth"_qs;
+        issue.scopeId = rigId;
+        issue.affectedObjectType = affectedType;
+        issue.affectedObjectId = affectedId;
+        if (!affectedId.isEmpty()) issue.affectedObjectIds = {affectedId};
+        issue.title = title;
+        issue.explanation = detail;
+        issue.recommendedAction = action;
+        issue.recommendedActionLabel = u"REVIEW DETAILS"_qs;
+        issue.alternativeActions = {u"view-all-details"_qs};
+        issue.automaticallyFixable = automatic;
+        issue.requiresLiveHardware = false;
+        issue.priority = issues.size();
+        issue.technicalDetails = evidence.value(u"technicalDetails"_qs).toString();
+        issue.navigationTarget = issueNavigationTarget(code, affectedType, affectedId);
+        // These section keys are authored by the typed producer, not inferred
+        // from translated QML copy. They retain a truthful section when an
+        // inspection issue has no durable controller/output identity.
+        if (subsystem == u"Device isolation"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"isolation"_qs);
+        } else if (subsystem == u"Virtual output"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"virtual-output"_qs);
+        } else if (subsystem == u"Controller verification"_qs) {
+            issue.navigationTarget.insert(u"page"_qs, 10);
+            issue.navigationTarget.insert(u"section"_qs, u"verification"_qs);
+        }
+        QVariantMap projection = issue.toVariantMap();
+        projection.insert(u"subsystem"_qs, subsystem);
+        projection.insert(u"repairable"_qs, automatic);
+        projection.insert(u"automatic"_qs, automatic);
+        projection.insert(u"requiresElevation"_qs, elevated);
+        projection.insert(u"proposedRepair"_qs, action);
+        projection.insert(u"requiresReconnect"_qs, code == u"HidHideMismatch"_qs);
+        projection.insert(u"risk"_qs, elevated ? u"Scoped driver configuration with mandatory read-back."_qs
+                                                : u"No driver configuration is required."_qs);
+        projection.insert(u"manualFallback"_qs, automatic
+            ? u"Review diagnostics if the scoped repair cannot complete."_qs
+            : u"Review technical diagnostics, then run another read-only check."_qs);
+        projection.insert(u"evidence"_qs, evidence);
+        issues.append(std::move(projection));
+        if (automatic) repairPlan.append(QVariantMap{{u"id"_qs, issue.id}, {u"subsystem"_qs, subsystem},
             {u"title"_qs, action}, {u"requiresElevation"_qs, elevated}, {u"status"_qs, u"WAITING"_qs}});
     };
 
@@ -9394,8 +10362,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         } else if (checking) {
             state = SetupTruthStatus::Checking;
             detail = QString(u"Reading vJoy Device %1 descriptor."_qs).arg(layout->requirements.deviceId);
-        } else if (!outputPlan || !outputPlan->lastChecked.isValid()
-                   || outputPlan->lastChecked.secsTo(now) > 20) {
+        } else if (!outputPlan || !outputPlan->lastChecked.isValid()) {
             state = SetupTruthStatus::Unknown;
         } else if (!outputPlan->vjoy.installed) {
             state = SetupTruthStatus::Unavailable;
@@ -9438,8 +10405,12 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         const MapperOutputRequirements requirements = outputPlan ? outputPlan->requirements
             : layout ? ControllerReadinessService::requirementsForOutputLayout(m_configuration, layout->id)
                      : MapperOutputRequirements{};
+        const bool outputChecked = outputPlan && outputPlan->lastChecked.isValid();
+        const bool outputFresh = outputChecked && outputPlan->lastChecked.secsTo(now) <= 20;
         outputEvidence.append(QVariantMap{{u"layoutId"_qs, layoutId}, {u"layoutName"_qs, layout ? layout->name : u"Missing output"_qs},
             {u"status"_qs, statusValue(state)}, {u"detail"_qs, detail}, {u"deviceId"_qs, layout ? layout->requirements.deviceId : 0},
+            {u"checked"_qs, outputChecked}, {u"fresh"_qs, outputFresh},
+            {u"checking"_qs, checking && state == SetupTruthStatus::Checking},
             {u"installed"_qs, capabilities.installed}, {u"devicePresent"_qs, capabilities.devicePresent},
             {u"busy"_qs, capabilities.busy}, {u"ownedByHotasBf6"_qs, capabilities.ownedByHotasBf6},
             {u"staleOwnership"_qs, capabilities.staleOwnership}, {u"rawStatus"_qs, capabilities.rawStatus},
@@ -9488,7 +10459,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                               : u"Select an enabled Virtual Output in the Device Rig before setup can inspect vJoy."_qs;
     }
     addGroup(u"vjoy"_qs, u"Virtual output"_qs, vjoyState, vjoyDetail,
-        QVariantMap{{u"outputs"_qs, outputEvidence}});
+        QVariantMap{{u"outputs"_qs, outputEvidence}, {u"rigId"_qs, rig ? rig->id : QString{}},
+                    {u"outputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{}}});
 
     SetupTruthStatus hidState = SetupTruthStatus::Unknown;
     QString hidDetail = u"No fresh HidHide inspection has completed."_qs;
@@ -9668,6 +10640,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         {u"executable"_qs, QCoreApplication::applicationFilePath()},
         {u"rigId"_qs, rig ? rig->id : QString{}}, {u"rigName"_qs, rig ? rig->name : QString{}},
         {u"setupTargetRigId"_qs, rig ? rig->id : QString{}},
+        {u"setupTargetOutputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{}},
         {u"profileId"_qs, m_configuration.activeProfileId}, {u"profileName"_qs, activeProfileName()},
         {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
         {u"inventoryGeneration"_qs, QVariant::fromValue(m_inventoryGeneration)},
@@ -9676,7 +10649,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         {u"rigStatus"_qs, rigStatusEvidence},
         {u"overallStatus"_qs, statusValue(overall)}, {u"groups"_qs, groups}, {u"issues"_qs, issues},
         {u"repairPlan"_qs, repairPlan}, {u"manualActions"_qs, manualActions},
-        {u"diagnostics"_qs, diagnostics}, {u"fresh"_qs, inspected}};
+        {u"diagnostics"_qs, diagnostics}, {u"checking"_qs, checking},
+        {u"checked"_qs, plan.lastChecked.isValid()}, {u"fresh"_qs, inspected}};
 }
 
 QVariantMap AppBackend::setupTruthSnapshot() const
@@ -10828,6 +11802,255 @@ QVariantMap AppBackend::setupAssistantLiveTest() const
         {u"complete"_qs, allObserved}, {u"steps"_qs, activity}};
 }
 
+QVariantMap AppBackend::readOnlyPhysicalInputTest() const
+{
+    const SavedControllerRecord *record = savedControllerRecord(m_readOnlyPhysicalInputTestRecordId);
+    if (m_readOnlyPhysicalInputTestDirectInputId.isEmpty()) {
+        return {{u"active"_qs, false}, {u"available"_qs, false},
+                {u"state"_qs, u"no-device"_qs},
+                {u"title"_qs, u"Physical input test"_qs},
+                {u"message"_qs, u"Choose a saved physical controller to inspect its input."_qs}};
+    }
+
+    const DiscoveredController *discovered = nullptr;
+    for (const DiscoveredController &candidate : m_discoveredControllers) {
+        if (candidate.directInputId == m_readOnlyPhysicalInputTestDirectInputId) {
+            discovered = &candidate;
+            break;
+        }
+    }
+    const int memberIndex = activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId);
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    const bool activeRigSession = memberIndex >= 0;
+    const bool discoveredConnected = discovered && discovered->connected;
+    const bool memberConnected = activeRigSession && (memberIndex == 0
+        ? runtime.physicalConnected.load(std::memory_order_relaxed)
+        : runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed));
+    const bool connected = activeRigSession ? (memberConnected || discoveredConnected) : discoveredConnected;
+    const bool available = activeRigSession ? memberConnected : m_readOnlyPhysicalInputTestProbeAcquired;
+    const quint64 sequence = activeRigSession
+        ? runtime.deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed)
+        : m_readOnlyPhysicalInputTestSampleSequence;
+    const bool detected = m_readOnlyPhysicalInputTestActive && available
+        && sequence > m_readOnlyPhysicalInputTestBaseline;
+    QVariantList axes = m_readOnlyPhysicalInputTestProbeAxes;
+    QVariantList buttons = m_readOnlyPhysicalInputTestProbeButtons;
+    QVariantList povs = m_readOnlyPhysicalInputTestProbePovs;
+    // A controller's DirectInput axis slots are sparse: Rz is slot 5 and
+    // Slider1 is slot 7. Never turn a count into slots [0, count); use the
+    // exact discovered inventory when it is available, otherwise retain the
+    // verified record's canonical slot evidence. Legacy records without
+    // descriptors still have their `axes` bitmap; a descriptor being absent
+    // does not make an ordinal slot real.
+    std::array<bool, kPhysicalAxisCount> axisPresence{};
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> axisDescriptors{};
+    bool hasExactAxisEvidence = false;
+    const auto useAxisEvidence = [&axisPresence, &axisDescriptors, &hasExactAxisEvidence](
+                                     const std::array<bool, kPhysicalAxisCount> &presence,
+                                     const std::array<NativeAxisDescriptor, kPhysicalAxisCount> &descriptors) {
+        if (!std::any_of(presence.cbegin(), presence.cend(), [](bool present) { return present; })) return;
+        axisPresence = presence;
+        axisDescriptors = descriptors;
+        hasExactAxisEvidence = true;
+    };
+    if (discoveredConnected) useAxisEvidence(discovered->axes, discovered->axisDescriptors);
+    if (!hasExactAxisEvidence && record) useAxisEvidence(record->axes, record->axisDescriptors);
+    if (activeRigSession) {
+        const AtomicAdaptiveTelemetry &source = memberIndex == 0
+            ? static_cast<const AtomicAdaptiveTelemetry &>(runtime)
+            : runtime.deviceRigMemberAdaptive[static_cast<size_t>(memberIndex)];
+        axes.clear();
+        buttons.clear();
+        povs.clear();
+        for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+            if (!axisPresence[static_cast<size_t>(axis)]) continue;
+            const NativeAxisDescriptor descriptor = axisDescriptors[static_cast<size_t>(axis)];
+            const QString label = descriptor.present
+                ? physicalAxisDisplayLabel(descriptor, static_cast<PhysicalAxis>(axis))
+                : physicalAxisLabel(static_cast<PhysicalAxis>(axis));
+            QVariantMap entry{{u"index"_qs, axis},
+                {u"label"_qs, label},
+                {u"value"_qs, source.raw[static_cast<size_t>(axis)].load(std::memory_order_relaxed)},
+                {u"rangeKnown"_qs, descriptor.present}};
+            if (descriptor.present) {
+                entry.insert(u"nativeMinimum"_qs, descriptor.nativeMinimum);
+                entry.insert(u"nativeMaximum"_qs, descriptor.nativeMaximum);
+                entry.insert(u"relative"_qs, descriptor.relative);
+            }
+            axes.append(std::move(entry));
+        }
+        const int buttonLimit = std::min(m_readOnlyPhysicalInputTestButtonCount, kMaximumPhysicalButtons);
+        for (int button = 0; button < buttonLimit; ++button) {
+            const bool pressed = memberIndex == 0
+                ? runtime.physicalButtonPressed[static_cast<size_t>(button)].load(std::memory_order_relaxed)
+                : runtime.deviceRigMemberPhysicalButtonPressed[static_cast<size_t>(memberIndex)]
+                    [static_cast<size_t>(button)].load(std::memory_order_relaxed);
+            buttons.append(QVariantMap{{u"index"_qs, button + 1}, {u"pressed"_qs, pressed}});
+        }
+        const int povLimit = std::min(m_readOnlyPhysicalInputTestPovCount, kMaximumPhysicalPovs);
+        for (int pov = 0; pov < povLimit; ++pov) {
+            const int value = memberIndex == 0
+                ? runtime.povValues[static_cast<size_t>(pov)].load(std::memory_order_relaxed)
+                : runtime.deviceRigMemberPovValues[static_cast<size_t>(memberIndex)]
+                    [static_cast<size_t>(pov)].load(std::memory_order_relaxed);
+            povs.append(QVariantMap{{u"index"_qs, pov + 1}, {u"value"_qs, value}});
+        }
+    }
+    QString state;
+    QString message;
+    if (!connected) {
+        state = u"offline"_qs;
+        message = QString(u"Connect %1 to inspect its input. No settings, driver, or virtual output were changed."_qs)
+            .arg(m_readOnlyPhysicalInputTestName);
+    } else if (!available) {
+        state = m_readOnlyPhysicalInputTestProbeInFlight ? u"opening"_qs : u"unavailable"_qs;
+        message = m_readOnlyPhysicalInputTestProbeAttempted
+            ? (m_readOnlyPhysicalInputTestProbeDiagnostic.isEmpty()
+                ? QString(u"%1 did not return an input-only DirectInput report. Reconnect it, then try Test Input again."_qs)
+                      .arg(m_readOnlyPhysicalInputTestName)
+                : m_readOnlyPhysicalInputTestProbeDiagnostic)
+            : QString(u"Opening an input-only DirectInput session for %1. Mapping, output, and setup ownership stay unchanged."_qs)
+                  .arg(m_readOnlyPhysicalInputTestName);
+    } else if (detected) {
+        state = u"input-detected"_qs;
+        message = activeRigSession
+            ? u"This exact active Device Rig member changed after the test started. No mapped output was tested."_qs
+            : u"This exact input-only DirectInput session changed after the test started. No mapped output was tested."_qs;
+    } else {
+        state = u"listening"_qs;
+        message = activeRigSession
+            ? u"Listening to this exact active Device Rig member. Move a control or press a button; mapping and output stay unchanged."_qs
+            : u"Sampling this exact controller through input-only DirectInput. Move a control or press a button; mapping and output stay unchanged."_qs;
+    }
+    const bool reportAvailable = activeRigSession ? memberConnected : m_readOnlyPhysicalInputTestProbeAcquired;
+    const bool reportFresh = reportAvailable && (activeRigSession
+        ? sequence >= m_readOnlyPhysicalInputTestBaseline
+        : m_readOnlyPhysicalInputTestProbeAttempted);
+    return {{u"active"_qs, m_readOnlyPhysicalInputTestActive},
+            {u"available"_qs, available}, {u"connected"_qs, connected},
+            {u"reportAvailable"_qs, reportAvailable}, {u"reportFresh"_qs, reportFresh},
+            {u"inputDetected"_qs, detected}, {u"state"_qs, state},
+            {u"title"_qs, m_readOnlyPhysicalInputTestName}, {u"message"_qs, message},
+            {u"axisCount"_qs, axes.size()}, {u"buttonCount"_qs, buttons.size()},
+            {u"povCount"_qs, povs.size()},
+            {u"session"_qs, activeRigSession ? u"active-rig-member"_qs : u"input-only-directinput"_qs},
+            {u"sessionId"_qs, QVariant::fromValue(m_readOnlyPhysicalInputTestSessionId)},
+            {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
+            {u"sampleSequence"_qs, QVariant::fromValue(sequence)},
+            {u"axes"_qs, axes}, {u"buttons"_qs, buttons}, {u"povs"_qs, povs},
+            {u"hidInstanceId"_qs, m_readOnlyPhysicalInputTestProbeHidInstanceId},
+            {u"recordId"_qs, record ? record->id : QString{}},
+            {u"directInputId"_qs, m_readOnlyPhysicalInputTestDirectInputId}};
+}
+
+int AppBackend::activeRigMemberIndexForRecord(const QString &recordId) const
+{
+    if (recordId.isEmpty() || m_configuration.activeDeviceRigId.isEmpty()) return -1;
+    const DeviceRig *activeRig = findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
+    if (!activeRig) return -1;
+
+    // Device-rig telemetry is indexed by enabled member order.  Resolve that
+    // identity directly instead of requiring a compatible mapping Profile:
+    // input inspection stays available while Mapping is off or a Profile is
+    // intentionally unassigned.
+    int runtimeMemberIndex = 0;
+    for (const DeviceRigMember &member : activeRig->members) {
+        if (!member.enabled) continue;
+        if (member.controllerRecordId == recordId) return runtimeMemberIndex;
+        ++runtimeMemberIndex;
+    }
+    return -1;
+}
+
+void AppBackend::requestReadOnlyPhysicalInputProbe()
+{
+    if (!m_readOnlyPhysicalInputTestActive || m_readOnlyPhysicalInputTestProbeInFlight
+        || m_readOnlyPhysicalInputTestDirectInputId.isEmpty()
+        || activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId) >= 0) return;
+
+    const quint64 sessionId = m_readOnlyPhysicalInputTestSessionId;
+    const QString expectedId = m_readOnlyPhysicalInputTestDirectInputId;
+    const QPointer<AppBackend> backend(this);
+    auto *thread = QThread::create([backend, sessionId, expectedId] {
+        const DirectInputControllerProbe probe = MappingWorker::probeExactPhysicalController(expectedId);
+        if (!backend) return;
+        QMetaObject::invokeMethod(backend.data(), [backend, sessionId, probe] {
+            if (backend) backend->acceptReadOnlyPhysicalInputProbe(sessionId, probe);
+        }, Qt::QueuedConnection);
+    });
+    m_readOnlyPhysicalInputTestProbeInFlight = true;
+    m_readOnlyPhysicalInputTestProbeThread = thread;
+    connect(thread, &QThread::finished, this, [this, thread] {
+        if (m_readOnlyPhysicalInputTestProbeThread == thread) {
+            m_readOnlyPhysicalInputTestProbeThread = nullptr;
+            m_readOnlyPhysicalInputTestProbeInFlight = false;
+            if (m_readOnlyPhysicalInputTestActive) emit inputTelemetryChanged();
+        }
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start(QThread::LowPriority);
+}
+
+void AppBackend::acceptReadOnlyPhysicalInputProbe(quint64 sessionId,
+                                                  const DirectInputControllerProbe &probe)
+{
+    if (!m_readOnlyPhysicalInputTestActive || sessionId != m_readOnlyPhysicalInputTestSessionId) return;
+    const bool hadSample = m_readOnlyPhysicalInputTestProbeAcquired;
+    m_readOnlyPhysicalInputTestProbeAttempted = true;
+    const bool exactIdentity = probe.acquired
+        && probe.directInputId.compare(m_readOnlyPhysicalInputTestDirectInputId, Qt::CaseInsensitive) == 0;
+    m_readOnlyPhysicalInputTestProbeAcquired = exactIdentity;
+    m_readOnlyPhysicalInputTestProbeDiagnostic = exactIdentity ? probe.diagnostic
+        : (probe.diagnostic.isEmpty()
+            ? u"The input-only DirectInput session did not confirm the exact saved controller identity."_qs
+            : probe.diagnostic);
+    m_readOnlyPhysicalInputTestProbeHidInstanceId = exactIdentity ? probe.hidInstanceId : QString{};
+    if (!exactIdentity) {
+        m_readOnlyPhysicalInputTestProbeAxes.clear();
+        m_readOnlyPhysicalInputTestProbeButtons.clear();
+        m_readOnlyPhysicalInputTestProbePovs.clear();
+        emit inputTelemetryChanged();
+        return;
+    }
+
+    QVariantList axes;
+    QVariantList buttons;
+    QVariantList povs;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        if (!probe.axes[static_cast<size_t>(axis)]) continue;
+        const NativeAxisDescriptor descriptor = probe.axisDescriptors[static_cast<size_t>(axis)];
+        QVariantMap entry{{u"index"_qs, axis},
+            {u"label"_qs, physicalAxisDisplayLabel(descriptor, static_cast<PhysicalAxis>(axis))},
+            {u"value"_qs, probe.normalizedAxes[static_cast<size_t>(axis)]},
+            {u"rangeKnown"_qs, descriptor.present}};
+        if (descriptor.present) {
+            entry.insert(u"nativeMinimum"_qs, descriptor.nativeMinimum);
+            entry.insert(u"nativeMaximum"_qs, descriptor.nativeMaximum);
+            entry.insert(u"relative"_qs, descriptor.relative);
+        }
+        axes.append(std::move(entry));
+    }
+    for (int button = 0; button < probe.buttonCount; ++button) {
+        buttons.append(QVariantMap{{u"index"_qs, button + 1},
+            {u"pressed"_qs, probe.buttonPressed[static_cast<size_t>(button)]}});
+    }
+    for (int pov = 0; pov < probe.povCount && pov < kMaximumPhysicalPovs; ++pov) {
+        povs.append(QVariantMap{{u"index"_qs, pov + 1},
+            {u"value"_qs, probe.povValues[static_cast<size_t>(pov)]}});
+    }
+    const bool changed = hadSample
+        && (axes != m_readOnlyPhysicalInputTestProbeAxes
+            || buttons != m_readOnlyPhysicalInputTestProbeButtons
+            || povs != m_readOnlyPhysicalInputTestProbePovs);
+    m_readOnlyPhysicalInputTestProbeAxes = axes;
+    m_readOnlyPhysicalInputTestProbeButtons = buttons;
+    m_readOnlyPhysicalInputTestProbePovs = povs;
+    if (changed) ++m_readOnlyPhysicalInputTestSampleSequence;
+    emit inputTelemetryChanged();
+}
+
 QVariantList AppBackend::controllerReadinessProposedChanges() const
 {
     QVariantList changes;
@@ -11252,6 +12475,14 @@ QVariantMap AppBackend::axisMappingCollision(int physicalAxis, const QString &ta
 
     const ControllerProfile &profile = currentProfile();
     const QString selectedId = selectedEditingControllerId();
+    const VirtualOutputLayout *output = profilePrimaryOutputLayout(profile);
+    result.insert(u"profileId"_qs, profile.id);
+    result.insert(u"rigId"_qs, profile.deviceRigId);
+    result.insert(u"outputLayoutId"_qs, output ? output->id : QString{});
+    result.insert(u"requestedControllerRecordId"_qs, selectedId);
+    result.insert(u"requestedSourceIndex"_qs, physicalAxis);
+    result.insert(u"requestedTarget"_qs, target);
+    result.insert(u"sourceKind"_qs, u"axis"_qs);
     const auto describe = [this, &result](const QString &controllerId, int sourceAxis) {
         const SavedControllerRecord *record = savedControllerRecord(controllerId);
         const QString deviceName = record ? record->displayName : u"Profile default"_qs;
@@ -11294,6 +12525,14 @@ QVariantMap AppBackend::buttonMappingCollision(int physicalButton, int virtualBu
 
     const ControllerProfile &profile = currentProfile();
     const QString selectedId = selectedEditingControllerId();
+    const VirtualOutputLayout *output = profilePrimaryOutputLayout(profile);
+    result.insert(u"profileId"_qs, profile.id);
+    result.insert(u"rigId"_qs, profile.deviceRigId);
+    result.insert(u"outputLayoutId"_qs, output ? output->id : QString{});
+    result.insert(u"requestedControllerRecordId"_qs, selectedId);
+    result.insert(u"requestedSourceIndex"_qs, physicalButton);
+    result.insert(u"requestedTarget"_qs, virtualButton);
+    result.insert(u"sourceKind"_qs, u"button"_qs);
     const auto describe = [this, &result](const QString &controllerId, int source) {
         const SavedControllerRecord *record = savedControllerRecord(controllerId);
         const QString deviceName = record ? record->displayName : u"Profile default"_qs;
@@ -15771,7 +17010,8 @@ bool AppBackend::createProfileInCategory(const QString &name, const QString &cat
 
 QString AppBackend::createProfileForRigInCategory(const QString &name, const QString &categoryId,
                                                    const QString &rigId,
-                                                   const QString &startFromId)
+                                                   const QString &startFromId,
+                                                   const QString &requestedProfileId)
 {
     const QString requestedRigId = rigId.trimmed();
     const DeviceRig *rig = findDeviceRig(m_configuration, requestedRigId);
@@ -15782,7 +17022,7 @@ QString AppBackend::createProfileForRigInCategory(const QString &name, const QSt
 
     QString createdId;
     if (!hotas::createProfileInCategory(m_configuration, name.trimmed(), categoryId,
-                                        startFromId, &createdId)) {
+                                        startFromId, &createdId, requestedProfileId)) {
         appendEvent(u"Choose a category and a profile name unique within that category."_qs);
         return {};
     }
@@ -18927,6 +20167,81 @@ QVariantMap AppBackend::startSetupAssistantLiveTest()
                         u"live-test"_qs);
 }
 
+QVariantMap AppBackend::startReadOnlyPhysicalInputTest(const QString &recordId)
+{
+    const QString requestedId = recordId.trimmed();
+    const SavedControllerRecord *record = savedControllerRecord(requestedId);
+    const DiscoveredController *discovered = nullptr;
+    for (const DiscoveredController &candidate : m_discoveredControllers) {
+        if (candidate.directInputId == requestedId
+            || (record && candidate.directInputId == record->lastDirectInputId)) {
+            discovered = &candidate;
+            break;
+        }
+    }
+    if (!record && !discovered) {
+        return actionResult(false, u"Physical input test is unavailable"_qs,
+                            u"The controller is no longer available. Refresh Devices and choose it again."_qs,
+                            u"physicalDevice"_qs, requestedId);
+    }
+    // The test owns only transient observation state. It deliberately does
+    // not call verification, discovery, activation, or any vJoy/HidHide
+    // operation. An active Rig reads its exact member atomics; a different
+    // saved controller is read through a nonexclusive input-only probe.
+    m_readOnlyPhysicalInputTestRecordId = record ? record->id : QString{};
+    m_readOnlyPhysicalInputTestDirectInputId = record ? record->lastDirectInputId : discovered->directInputId;
+    m_readOnlyPhysicalInputTestName = record ? record->displayName : discovered->name;
+    m_readOnlyPhysicalInputTestAxisCount = record ? record->axisCount : discovered->axisCount;
+    m_readOnlyPhysicalInputTestButtonCount = record ? record->buttonCount : discovered->buttonCount;
+    m_readOnlyPhysicalInputTestPovCount = record ? record->povCount : discovered->povCount;
+    ++m_readOnlyPhysicalInputTestSessionId;
+    m_readOnlyPhysicalInputTestSampleSequence = 0;
+    m_readOnlyPhysicalInputTestProbeAttempted = false;
+    m_readOnlyPhysicalInputTestProbeAcquired = false;
+    m_readOnlyPhysicalInputTestProbeDiagnostic.clear();
+    m_readOnlyPhysicalInputTestProbeHidInstanceId.clear();
+    m_readOnlyPhysicalInputTestProbeAxes.clear();
+    m_readOnlyPhysicalInputTestProbeButtons.clear();
+    m_readOnlyPhysicalInputTestProbePovs.clear();
+    const int memberIndex = activeRigMemberIndexForRecord(m_readOnlyPhysicalInputTestRecordId);
+    m_readOnlyPhysicalInputTestBaseline = memberIndex >= 0
+        ? m_worker.runtime().deviceRigMeaningfulInputSequence[static_cast<size_t>(memberIndex)].load(
+              std::memory_order_relaxed)
+        : m_readOnlyPhysicalInputTestSampleSequence;
+    m_readOnlyPhysicalInputTestActive = true;
+    m_readOnlyPhysicalInputTestProbeTimer.start();
+    requestReadOnlyPhysicalInputProbe();
+    emit inputTelemetryChanged();
+
+    const QVariantMap test = readOnlyPhysicalInputTest();
+    return actionResult(true, u"Read-only input test ready"_qs,
+                        test.value(u"message"_qs).toString(),
+                        u"physicalDevice"_qs, record ? record->id : discovered->directInputId, u"live-test"_qs);
+}
+
+void AppBackend::stopReadOnlyPhysicalInputTest()
+{
+    if (!m_readOnlyPhysicalInputTestActive && m_readOnlyPhysicalInputTestRecordId.isEmpty()) return;
+    m_readOnlyPhysicalInputTestActive = false;
+    m_readOnlyPhysicalInputTestRecordId.clear();
+    m_readOnlyPhysicalInputTestDirectInputId.clear();
+    m_readOnlyPhysicalInputTestName.clear();
+    m_readOnlyPhysicalInputTestAxisCount = 0;
+    m_readOnlyPhysicalInputTestButtonCount = 0;
+    m_readOnlyPhysicalInputTestPovCount = 0;
+    m_readOnlyPhysicalInputTestBaseline = 0;
+    ++m_readOnlyPhysicalInputTestSessionId;
+    m_readOnlyPhysicalInputTestProbeTimer.stop();
+    m_readOnlyPhysicalInputTestProbeAttempted = false;
+    m_readOnlyPhysicalInputTestProbeAcquired = false;
+    m_readOnlyPhysicalInputTestProbeDiagnostic.clear();
+    m_readOnlyPhysicalInputTestProbeHidInstanceId.clear();
+    m_readOnlyPhysicalInputTestProbeAxes.clear();
+    m_readOnlyPhysicalInputTestProbeButtons.clear();
+    m_readOnlyPhysicalInputTestProbePovs.clear();
+    emit inputTelemetryChanged();
+}
+
 QVariantMap AppBackend::skipCalibrationForSetup(const QString &recordId)
 {
     const QString target = recordId.trimmed().isEmpty() ? m_setupAssistantScopeId : recordId.trimmed();
@@ -21984,6 +23299,10 @@ void AppBackend::persistAndApply()
         record->axisActivity = m_configuration.axisActivity;
         record->vjoyRequirements = currentVjoyRequirements();
     }
+    // A saved setup task contains only stable object IDs.  Reconcile it on
+    // control-plane commits so a later edit/delete is surfaced as a review
+    // requirement; this must never run on the DirectInput report path.
+    reconcileSetupAssistantTask(true);
     requestConfigurationPersistence();
     ++m_configurationGeneration;
     m_worker.updateConfiguration(m_configuration);

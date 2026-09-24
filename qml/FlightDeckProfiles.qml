@@ -33,6 +33,7 @@ Flickable {
     property var presentationState: ({})
     property string draggedProfileId: ""
     property string dragTargetCategoryId: ""
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     // Temporary presentation priority from an active/unmapped Rig's
     // "Choose Profile" action. It never persists or changes category order.
     property string compatibleRigId: ""
@@ -63,6 +64,10 @@ Flickable {
     signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
+    // The shell owns the request value. A one-shot handoff must clear it
+    // after this page has consumed it, otherwise recreating the lazy Profile
+    // page can reopen a stale dialog and pull later navigation back here.
+    signal profileCreationRequestConsumed()
     signal presentationStateCaptured(var state)
 
     readonly property var categories: categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined ? categoriesPresentationOverride : backend.profileCategories
@@ -73,6 +78,10 @@ Flickable {
     readonly property var selectedCategoryActivation: selectedCategoryId.length > 0
         ? backend.activationPreview(selectedCategoryId) : ({})
     readonly property bool usingPresentationFixture: (profilesPresentationOverride !== null && profilesPresentationOverride !== undefined) || (categoriesPresentationOverride !== null && categoriesPresentationOverride !== undefined)
+    readonly property bool associationExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("profiles-association")
+    }
 
     contentWidth: width
     contentHeight: profileContent.implicitHeight + deck.space24
@@ -239,9 +248,11 @@ Flickable {
                     return leftCompatible ? -1 : 1;
                 });
             }
-            rows.push({ type: "category", categoryId: categoryId, profileId: "", category: category,
-                text: String(category.name || "Unnamed category"),
-                secondary: Number(category.profileCount !== undefined ? category.profileCount : members.length) + " profiles" });
+            if (!guidedPresentation) {
+                rows.push({ type: "category", categoryId: categoryId, profileId: "", category: category,
+                    text: String(category.name || "Unnamed category"),
+                    secondary: Number(category.profileCount !== undefined ? category.profileCount : members.length) + " profiles" });
+            }
             for (let memberIndex = 0; memberIndex < members.length; ++memberIndex) {
                 const profile = members[memberIndex];
                 if (!profileMatchesFilter(profile))
@@ -312,6 +323,7 @@ Flickable {
         if (!token || token === consumedProfileCreationToken)
             return;
         consumedProfileCreationToken = token;
+        profileCreationRequestConsumed();
         const mode = String(request.mode || "choose");
         if (mode === "choose") {
             compatibleRigId = String(request.rigId || "");
@@ -443,6 +455,12 @@ Flickable {
         return false;
     }
     function openCategory(id) {
+        if (guidedPresentation) {
+            selectedCategoryId = String(id || "");
+            selectedProfileId = "";
+            view = "library";
+            return;
+        }
         selectedCategoryId = String(id || "");
         selectedProfileId = "";
         view = "category";
@@ -450,6 +468,11 @@ Flickable {
     }
     function openProfile(id) {
         const requestedId = String(id || "");
+        if (guidedPresentation) {
+            selectLibraryProfile(requestedId);
+            view = "library";
+            return;
+        }
         if (!usingPresentationFixture && !backend.selectProfileForEditing(requestedId))
             return;
         selectedProfileId = requestedId;
@@ -569,6 +592,11 @@ Flickable {
     }
 
     onCategoriesChanged: rebuildLibraryPresentation()
+    onGuidedPresentationChanged: {
+        rebuildLibraryPresentation()
+        if (guidedPresentation && view !== "library")
+            view = "library"
+    }
     onProfilesChanged: {
         rebuildLibraryPresentation()
         refreshSelectedDetail()
@@ -1262,13 +1290,14 @@ Flickable {
             }
             DeckButton {
                 objectName: "flightDeckNewCategory"
-                visible: root.view === "library"
+                visible: !root.guidedPresentation && root.view === "library"
                 text: "+ CATEGORY"
                 subdued: true
                 enabled: !root.usingPresentationFixture
                 onClicked: newCategoryDialog.open()
             }
             DeckButton {
+                objectName: "flightDeckNewProfile"
                 visible: root.view === "library"
                 text: "+ PROFILE"
                 enabled: !root.usingPresentationFixture && root.categories.length > 0
@@ -1305,15 +1334,14 @@ Flickable {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Text { text: "CONFIGURATION LIBRARY"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(15); font.bold: true }
-                                Text { text: "Categories contain profiles"; color: deck.textMuted; font.pixelSize: deck.scale(9) }
+                                Text { text: root.guidedPresentation ? "Choose a profile to use or manage." : "Categories contain profiles"; color: deck.textMuted; font.pixelSize: deck.scale(9) }
                             }
-                            DeckButton { objectName: "flightDeckNewProfile"; text: "+ PROFILE"; enabled: !root.usingPresentationFixture && root.categories.length > 0; onClicked: root.openNewProfile(root.selectedCategoryId || backend.activeCategoryId) }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             FilterButton { text: "ALL"; filterValue: "all" }
                             FilterButton { text: "ACTIVE"; filterValue: "active" }
-                            FilterButton { text: "GAME"; filterValue: "associated" }
+                            FilterButton { visible: !root.guidedPresentation; text: "GAME"; filterValue: "associated" }
                         }
                         DeckField { id: profileSearch; objectName: "flightDeckProfileSearch"; Layout.fillWidth: true; placeholderText: "Search categories and profiles…"; text: root.searchText; onTextEdited: root.searchText = text }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
@@ -1358,7 +1386,7 @@ Flickable {
                         }
                         Rectangle {
                             Layout.fillWidth: true
-                            visible: root.draggedProfileId.length > 0
+                            visible: !root.guidedPresentation && root.draggedProfileId.length > 0
                             implicitHeight: 42
                             radius: deck.radiusControl
                             color: root.dragTargetCategoryId === "__new_category__" ? deck.accentMuted : deck.secondarySurface
@@ -1397,8 +1425,7 @@ Flickable {
                         Text { visible: root.categories.length === 0; text: "Create a category, then add a profile to define a controller setup."; color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                         RowLayout {
                             Layout.fillWidth: true
-                            DeckButton { objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
-                            DeckButton { objectName: "flightDeckProfilesTransfer"; text: "IMPORT / EXPORT"; subdued: true; onClicked: transferDialog.openTransfer("import", "profile", "", "") }
+                            DeckButton { visible: !root.guidedPresentation; objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
                         }
                     }
                 }
@@ -1436,10 +1463,11 @@ Flickable {
                             Repeater {
                                 model: [
                                     { label: "AXES", value: Number(root.selectedDetail.mappedAxes || 0) + " configured" },
-                                    { label: "BUTTONS & HATS", value: Number(root.selectedDetail.mappedButtons || 0) + " buttons · " + Number(root.selectedDetail.mappedPovs || 0) + " POV" },
+                                    { label: "BUTTONS & HATS", value: Number(root.selectedDetail.mappedButtons || 0) + " buttons · " + Number(root.selectedDetail.mappedPovs || 0) + " POV" }
+                                ].concat(root.guidedPresentation ? [] : [
                                     { label: "ADAPTIVE RESPONSE", value: Number(root.selectedDetail.adaptiveProfileOverrideAxes || 0) > 0 ? "Custom response" : "Inherited response" },
                                     { label: "AUTOMATION", value: Number(root.selectedDetail.automationCount || 0) + " relationship" + (Number(root.selectedDetail.automationCount || 0) === 1 ? "" : "s") }
-                                ]
+                                ])
                                 delegate: Rectangle {
                                     required property var modelData
                                     Layout.fillWidth: true
@@ -1462,10 +1490,11 @@ Flickable {
                         RowLayout {
                             visible: root.selectedProfileId.length
                             Layout.fillWidth: true
-                            DeckButton { text: root.selectedDetail.active ? "ACTIVE NOW" : "ACTIVATE"; enabled: !root.selectedDetail.active && !!root.selectedDetail.enabled && !root.usingPresentationFixture; onClicked: root.activateProfile(root.selectedProfileId) }
-                            DeckButton { text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
+                            DeckButton { text: root.selectedDetail.active ? "ACTIVE NOW" : (root.guidedPresentation ? "USE" : "ACTIVATE"); enabled: !root.selectedDetail.active && !!root.selectedDetail.enabled && !root.usingPresentationFixture; onClicked: root.activateProfile(root.selectedProfileId) }
+                            DeckButton { visible: !root.guidedPresentation; text: "OPEN DETAILS"; subdued: true; onClicked: root.openProfile(root.selectedProfileId) }
                             Item { Layout.fillWidth: true }
-                            DeckButton { text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                            DeckButton { visible: !root.guidedPresentation; text: "OPEN RESPONSE"; subdued: true; onClicked: root.openAdaptiveForSelectedProfile() }
+                            DeckButton { visible: root.guidedPresentation && root.selectedProfileId.length > 0; text: "MORE"; subdued: true; onClicked: guidedProfileMenu.open() }
                         }
                         RowLayout {
                             visible: !root.selectedProfileId.length && root.selectedCategoryId.length
@@ -2108,8 +2137,10 @@ Flickable {
 
                 SectionLabel {
                     label: "DEVICE RIG & AUTOMATIC ACTIVATION"
+                    visible: !root.guidedPresentation
                 }
                 FlightDeckCard {
+                    visible: !root.guidedPresentation
                     tokens: deck
                     Layout.fillWidth: true
                     implicitHeight: activationProfileContent.implicitHeight + deck.space24
@@ -2147,6 +2178,60 @@ Flickable {
                             enabled: !root.usingPresentationFixture && (backend.deviceRigs || []).length > 0
                             onActivated: backend.assignProfileDeviceRig(root.selectedProfileId, currentValue)
                         }
+                        Rectangle {
+                            objectName: "flightDeckProfileAssociationDisclosure"
+                            Layout.fillWidth: true
+                            implicitHeight: associationDisclosure.implicitHeight + deck.space16
+                            radius: deck.radiusControl
+                            color: deck.secondarySurface
+                            border.color: deck.border
+                            ColumnLayout {
+                                id: associationDisclosure
+                                anchors.fill: parent
+                                anchors.margins: deck.space8
+                                spacing: deck.space4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Text { text: "RIG ASSOCIATION"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
+                                        Text {
+                                            text: String(root.selectedDetail.deviceRigName || "No Device Rig assigned")
+                                                + " · " + String(root.selectedDetail.outputName || "Output needs selection")
+                                                + " · " + String(root.selectedDetail.automaticSelectionMode || "preferred").replace("-", " ")
+                                            color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
+                                            font.pixelSize: deck.scale(9)
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                    DeckButton {
+                                        text: root.associationExpanded ? "HIDE DETAILS" : "SHOW DETAILS"
+                                        subdued: true
+                                        onClicked: themeManager.setGuidanceSectionExpanded("profiles-association", !root.associationExpanded)
+                                    }
+                                }
+                                Text {
+                                    visible: !root.associationExpanded
+                                    text: "Choose the Device Rig that owns this profile. Open details to review its output and automatic-selection role. Viewing or editing this association does not activate the profile."
+                                    color: deck.textMuted
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                                DeckButton {
+                                    visible: themeManager.guidanceSectionHasExplicitPreference("profiles-association")
+                                    text: "FOLLOW GUIDANCE LEVEL"
+                                    subdued: true
+                                    onClicked: themeManager.followGuidanceLevelForSection("profiles-association")
+                                }
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "flightDeckProfileAssociationDetails"
+                            visible: root.associationExpanded
+                            Layout.fillWidth: true
+                            spacing: deck.space8
                         Text {
                             text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
@@ -2208,6 +2293,7 @@ Flickable {
                                         root.navigateToPage(2)
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -2581,6 +2667,25 @@ Flickable {
         }
         Item {
             Layout.preferredHeight: deck.space12
+        }
+    }
+
+    Menu {
+        id: guidedProfileMenu
+        MenuItem {
+            text: "Rename"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture && !root.selectedDetail.protected
+            onTriggered: { renameProfileDialog.profileId = root.selectedProfileId; renameProfileDialog.name = root.selectedDetail.name; renameProfileDialog.open() }
+        }
+        MenuItem {
+            text: "Duplicate"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture
+            onTriggered: { duplicateProfileDialog.profileId = root.selectedProfileId; duplicateProfileDialog.name = root.selectedDetail.name + " Copy"; duplicateProfileDialog.categoryId = root.selectedDetail.categoryId; duplicateProfileDialog.open() }
+        }
+        MenuItem {
+            text: "Export"
+            enabled: root.selectedProfileId.length > 0 && !root.usingPresentationFixture
+            onTriggered: transferDialog.openTransfer("export", "profile", root.selectedProfileId, "")
         }
     }
 

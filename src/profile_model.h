@@ -26,7 +26,8 @@ bool createProfile(MapperConfiguration &configuration, const QString &name,
                    const QString &startFromId = {}, QString *createdId = nullptr);
 bool createProfileInCategory(MapperConfiguration &configuration, const QString &name,
                              const QString &categoryId, const QString &startFromId = {},
-                             QString *createdId = nullptr);
+                             QString *createdId = nullptr,
+                             const QString &requestedId = {});
 bool cloneProfile(MapperConfiguration &configuration, const QString &profileId,
                   QString *createdId = nullptr);
 bool duplicateProfileToCategory(MapperConfiguration &configuration, const QString &profileId,

@@ -359,7 +359,13 @@ int main(int argc, char *argv[])
         return 3;
     }
 
+    // Guidance classifies first use before AppBackend can write its normal
+    // default configuration. It remains a presentation-only owner and never
+    // receives a backend or mapping reference.
+    hotas::ThemeManager themeManager;
     hotas::AppBackend backend;
+    const bool recoveryNoticePending = !startupSmoke && !isolatedPresentation && !nativeQualification
+        && hotas::CrashDiagnostics::previousRunWasAbnormal();
     // Connection order is intentional: shutdown waits only for the latest
     // asynchronous configuration generation before the final probe export.
     QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
@@ -368,7 +374,6 @@ int main(int argc, char *argv[])
         [] { hotas::CrashDiagnostics::markCleanShutdown(); });
     QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
         [] { hotas::ResponsivenessProbe::exportActive(); });
-    hotas::ThemeManager themeManager;
     if (axisAcquisitionPreview) {
         // Test-mode settings make this a process-local preview choice. The
         // owner can still switch Light/Dark and text size inside Flight Deck.
@@ -379,6 +384,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("contentionResilience"),
                                              backend.contentionResilienceController());
     engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.rootContext()->setContextProperty(QStringLiteral("initialRecoveryNoticePending"), recoveryNoticePending);
     QObject::connect(&engine, &QQmlEngine::warnings, &application,
         [](const QList<QQmlError> &warnings) {
             for (const QQmlError &warning : warnings) {
@@ -389,7 +395,8 @@ int main(int argc, char *argv[])
         [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
     if (engine.rootObjects().isEmpty()) return -1;
-    if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst())) {
+    QObject *qmlRoot = engine.rootObjects().constFirst();
+    if (auto *window = qobject_cast<QWindow *>(qmlRoot)) {
         backend.attachMainWindow(window);
         if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
             hotas::InteractiveSchedulingPolicy::attachWindow(quickWindow);
@@ -402,8 +409,8 @@ int main(int argc, char *argv[])
     // A normal interactive launch must offer recovery after an abnormal exit.
     // The explicit startup-smoke route instead needs to initialize and close
     // deterministically in an off-screen package/upgrade acceptance run.
-    if (!startupSmoke && !nativeQualification && hotas::CrashDiagnostics::previousRunWasAbnormal()) {
-        QTimer::singleShot(0, &application, [] {
+    if (recoveryNoticePending) {
+        QTimer::singleShot(0, &application, [qmlRoot] {
             QMessageBox recovery;
             recovery.setWindowTitle(QStringLiteral("HOTAS BF6 recovery"));
             recovery.setIcon(QMessageBox::Warning);
@@ -412,6 +419,10 @@ int main(int argc, char *argv[])
             auto *open = recovery.addButton(QStringLiteral("Open Crash Reports"), QMessageBox::ActionRole);
             recovery.addButton(QStringLiteral("Continue"), QMessageBox::AcceptRole);
             recovery.exec();
+            // First-use guidance is intentionally deferred until recovery is
+            // acknowledged; a normal user choice must never cover an active
+            // crash/recovery decision.
+            if (qmlRoot) qmlRoot->setProperty("recoveryNoticePending", false);
             if (recovery.clickedButton() == open) QDesktopServices::openUrl(QUrl::fromLocalFile(hotas::CrashDiagnostics::crashReportsDirectory()));
         });
     }

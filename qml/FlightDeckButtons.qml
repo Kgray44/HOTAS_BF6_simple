@@ -15,6 +15,7 @@ Flickable {
     property var povPresentationOverride: null
     property var povInputsPresentationOverride: null
     property var automationPresentationOverride: null
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     property string inputDeviceNameOverride: ""
     property int expandedButtonIndex: -1
     property int expandedHatIndex: -1
@@ -32,6 +33,9 @@ Flickable {
     signal requestButtonLearning()
     signal requestQuickMap()
     signal requestPovLearning(int virtualButton)
+    signal requestDevicePicker()
+    signal requestSetup(string intent, var context)
+    signal requestFullAccess(int page, var context)
 
     // The normal grid is permanently keyed by Virtual Output.  Changing the
     // top-bar Selected Device changes only the source chooser inside an
@@ -52,9 +56,12 @@ Flickable {
     readonly property var behaviorChoices: backend.profileTriggerBehaviorChoices
     readonly property var mappingControlChoices: backend.mappingControlActionChoices
     readonly property var nativePovChoices: backend.nativePovTargetChoices
+    readonly property bool behaviorExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("buttons-behavior")
+    }
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0
         ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "Selected controller")
-    readonly property bool hasVisibleButtons: visibleButtonCount() > 0
     // The active mapper device is deliberately not used here.  The top-bar
     // Selected Device is the sole physical-input editor context.
     readonly property string selectedInputDeviceId: selectedDeviceId()
@@ -67,6 +74,26 @@ Flickable {
         }
         return false
     }
+    readonly property var selectedControllerInfo: controllerForSelectedDevice()
+    readonly property int selectedControlCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
+        + Number(selectedControllerInfo.povCount || 0)
+    readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
+    readonly property int assignedControlCount: configuredControlCount()
+    readonly property var inputStatus: readinessModel ? readinessModel.editorInputStatus({
+        kind: "buttons", selectedDeviceId: selectedInputDeviceId, selectedDeviceName: inputDeviceName,
+        selectedDeviceConnected: selectedInputDeviceConnected,
+        eligibleMemberCount: (backend.selectedDevices || []).length,
+        capabilityKnown: Object.keys(selectedControllerInfo || {}).length > 0,
+        capabilityCount: selectedControlCapabilityCount, alternateCapabilityCount: selectedAxisCapabilityCount,
+        assignedCount: assignedControlCount,
+        quickMapAvailable: backend.selectedDeviceButtonChoices().length > 1,
+        verified: selectedControllerInfo.verified,
+        rigId: backend.selectedDeviceRigId
+    }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
+    readonly property string inputPreparationState: String(inputStatus.state || "connect")
+    readonly property bool canShowInputContent: (!guidedPresentation && (buttonItems.length > 0 || povItems.length > 0))
+        || (selectedInputDeviceId.length > 0
+        && inputStatus.capabilityKnown && selectedControlCapabilityCount > 0)
 
     contentWidth: width
     contentHeight: buttonsContent.implicitHeight + deck.space24
@@ -91,6 +118,46 @@ Flickable {
             if (Boolean(device.selected)) return String(device.id || "")
         }
         return ""
+    }
+    function controllerForSelectedDevice() {
+        const selectedId = selectedDeviceId()
+        const controllers = backend.controllers || []
+        for (let index = 0; index < controllers.length; ++index) {
+            const controller = controllers[index] || ({})
+            if (String(controller.id || controller.directInputId || "") === selectedId)
+                return controller
+        }
+        return ({})
+    }
+    function configuredControlCount() {
+        let count = assignedButtonCount()
+        // A native whole-hat POV is a real configured control even when no
+        // individual direction is routed. Count it once per hat.
+        for (let index = 0; index < povItems.length; ++index) {
+            if (Boolean((povItems[index] || {}).nativeEnabled)) ++count
+        }
+        for (let index = 0; index < povInputItems.length; ++index) {
+            if (Number((povInputItems[index] || {}).target || 0) > 0) ++count
+        }
+        return count
+    }
+    function invokePreparationPrimary() {
+        switch (String(inputStatus.primaryAction || "")) {
+        case "scan": backend.refreshControllers(); break
+        case "picker": requestDevicePicker(); break
+        case "devices": navigateToPage(2); break
+        case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 1 }); break
+        case "other-editor": navigateToPage(0); break
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        case "learn-button": requestButtonLearning(); break
+        }
+    }
+    function invokePreparationSecondary() {
+        switch (String(inputStatus.secondaryAction || "")) {
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        }
     }
     function profileChoiceIndex(profileId) {
         for (let index = 0; index < profileChoices.length; ++index) {
@@ -292,6 +359,46 @@ Flickable {
             mappingConflict.open()
         }
         return false
+    }
+
+    function sameButtonConflict(collision, handoff) {
+        const buttonIndex = Number(handoff.buttonIndex)
+        const target = Number(handoff.target)
+        const hatIndex = handoff.hatIndex === undefined ? -1 : Number(handoff.hatIndex)
+        const directionIndex = handoff.directionIndex === undefined ? -1 : Number(handoff.directionIndex)
+        if (!Number.isFinite(buttonIndex) || Math.floor(buttonIndex) !== buttonIndex || buttonIndex <= 0
+                || !Number.isFinite(target) || Math.floor(target) !== target || target <= 0
+                || hatIndex >= 0 || directionIndex >= 0) return false
+        return Boolean(collision.exists)
+            && String(collision.sourceKind || "") === "button"
+            && String(collision.profileId || "") === String(handoff.profileId || "")
+            && String(collision.rigId || "") === String(handoff.rigId || "")
+            && String(collision.outputLayoutId || "") === String(handoff.outputLayoutId || "")
+            && String(collision.requestedControllerRecordId || "") === String(handoff.inputDeviceId || "")
+            && Number(collision.requestedSourceIndex) === buttonIndex
+            && Number(collision.requestedTarget) === target
+            && String(collision.controllerRecordId || "") === String(handoff.ownerControllerRecordId || "")
+            && Number(collision.sourceIndex) === Number(handoff.ownerSourceIndex)
+    }
+
+    // Full keeps the established button mixer.  Revalidate the saved source
+    // and destination after the mode transition so a stale handoff cannot
+    // act on a different route.
+    function openFullConflict(context) {
+        const handoff = context || ({})
+        const buttonIndex = Number(handoff.buttonIndex)
+        const target = Number(handoff.target)
+        if (!Number.isFinite(buttonIndex) || Math.floor(buttonIndex) !== buttonIndex || buttonIndex <= 0
+                || !Number.isFinite(target) || Math.floor(target) !== target || target <= 0) return false
+        const collision = backend.buttonMappingCollision(buttonIndex, target)
+        if (!sameButtonConflict(collision, handoff)) return false
+        conflictButtonIndex = buttonIndex
+        conflictHatIndex = -1
+        conflictDirectionIndex = -1
+        conflictTarget = target
+        conflictOwner = collision
+        mappingConflict.open()
+        return true
     }
 
     component SectionLabel: Text {
@@ -547,7 +654,9 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: 2
                     Text {
-                        text: String(button.targetLabel || "vJoy Button " + buttonIndex)
+                        text: root.guidedPresentation
+                            ? String(button.targetLabel || "Button " + buttonIndex).replace(/^vJoy\s+/i, "")
+                            : String(button.targetLabel || "vJoy Button " + buttonIndex)
                         color: deck.textPrimary
                         font.pixelSize: deck.scale(13)
                         font.bold: true
@@ -563,7 +672,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: card.automations.length > 0
+                        visible: !root.guidedPresentation && card.automations.length > 0
                         text: "Automation · " + card.automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -634,11 +743,97 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: card.virtualPressed ? "vJoy output is pressed"
+                        text: card.virtualPressed ? (root.guidedPresentation ? "Output is pressed" : "vJoy output is pressed")
                             : (Boolean(card.selectedInputLive.pressed) ? "Selected input is pressed" : "")
                         color: deck.healthy
                         font.family: deck.telemetryFont
                         font.pixelSize: deck.scale(9)
+                    }
+                }
+                Rectangle {
+                    objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
+                    visible: !root.guidedPresentation
+                    Layout.fillWidth: true
+                    implicitHeight: virtualBehaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: virtualBehaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                SectionLabel { text: "OPTIONAL RELATIONSHIPS" }
+                                Text {
+                                    text: Number(button.sourceCount || 0) + " physical source"
+                                        + (Number(button.sourceCount || 0) === 1 ? "" : "s") + " · "
+                                        + (card.automations.length ? String(card.automations.length) + " linked automation"
+                                            + (card.automations.length === 1 ? "" : "s") : "no linked automation")
+                                    color: deck.textSecondary
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            DeckButton {
+                                objectName: "flightDeckButtonsBehaviorToggle_" + card.buttonIndex
+                                text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"
+                                subdued: true
+                                onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded)
+                            }
+                        }
+                        Text {
+                            visible: !root.behaviorExpanded
+                            text: "Keep the source mapping above for normal setup. Open options to inspect each linked automation without changing its route."
+                            color: deck.textMuted
+                            font.pixelSize: deck.scale(9)
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        DeckButton {
+                            visible: themeManager.guidanceSectionHasExplicitPreference("buttons-behavior")
+                            text: "FOLLOW GUIDANCE LEVEL"
+                            subdued: true
+                            onClicked: themeManager.followGuidanceLevelForSection("buttons-behavior")
+                        }
+                    }
+                }
+                ColumnLayout {
+                    objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
+                    visible: !root.guidedPresentation && root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space8
+                    Text {
+                        text: card.selectedOwnedSourceButton > 0
+                            ? "Selected input: Button " + card.selectedOwnedSourceButton + " on " + root.inputDeviceName
+                            : "No source from the selected controller is assigned to this output."
+                        color: deck.textMuted
+                        font.pixelSize: deck.scale(9)
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                    Repeater {
+                        model: card.automations
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Automation · " + String(modelData.name || "Rule")
+                                color: deck.textSecondary
+                                font.pixelSize: deck.scale(9)
+                                elide: Text.ElideRight
+                            }
+                            DeckButton {
+                                text: "OPEN"
+                                subdued: true
+                                onClicked: root.navigateToAutomation(String(modelData.id || ""))
+                            }
+                        }
                     }
                 }
             }
@@ -730,7 +925,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: Boolean(button.profileControlEnabled) && Number(button.target) > 0
+                        visible: !root.guidedPresentation && Boolean(button.profileControlEnabled) && Number(button.target) > 0
                         text: "Saved game route · " + String(button.targetLabel)
                         color: deck.textMuted
                         font.family: deck.telemetryFont
@@ -738,7 +933,7 @@ Flickable {
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: automations.length > 0
+                        visible: !root.guidedPresentation && automations.length > 0
                         text: "Automation · " + automations.map(function(rule) { return rule.name || "Rule" }).join(" · ")
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -758,12 +953,12 @@ Flickable {
                 Layout.fillWidth: true
                 spacing: deck.space8
                 SummaryChip {
-                    visible: Boolean(button.profileControlEnabled)
+                    visible: !root.guidedPresentation && Boolean(button.profileControlEnabled)
                     label: String(button.profileControlMode || "Profile").toUpperCase()
                     tone: button.profileControlTargetAvailable ? "healthy" : "attention"
                 }
                 SummaryChip {
-                    visible: String(button.mappingControlKey || "none") !== "none"
+                    visible: !root.guidedPresentation && String(button.mappingControlKey || "none") !== "none"
                     label: "MAPPING CONTROL"
                     tone: "informational"
                 }
@@ -859,7 +1054,9 @@ Flickable {
                     }
                 }
                 Text {
-                    text: "Physical control → existing vJoy button route. Changes apply through the current profile command path."
+                        text: root.guidedPresentation
+                            ? "Physical control to game button. Changes apply to the current profile."
+                            : "Physical control → existing vJoy button route. Changes apply through the current profile command path."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                     wrapMode: Text.WordWrap
@@ -875,22 +1072,78 @@ Flickable {
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: Number(button.target) > 0 && virtualPressed ? "vJoy output is pressed" : ""
+                        text: Number(button.target) > 0 && virtualPressed
+                            ? (root.guidedPresentation ? "Output is pressed" : "vJoy output is pressed") : ""
                         color: deck.healthy
                         font.family: deck.telemetryFont
                         font.pixelSize: deck.scale(9)
                     }
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
-                SectionLabel { text: "PROFILE CONTROL" }
-                Text {
-                    text: "A profile control consumes this physical input while retaining its saved game route for restoration when cleared."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    wrapMode: Text.WordWrap
+                Rectangle {
+                    objectName: "flightDeckButtonsBehaviorDisclosure_" + card.buttonIndex
+                    visible: !root.guidedPresentation
                     Layout.fillWidth: true
+                    implicitHeight: behaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: behaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                SectionLabel { text: "OPTIONAL BEHAVIOR & RELATIONSHIPS" }
+                                Text {
+                                    text: (Boolean(button.profileControlEnabled) ? "Profile control · " + String(button.profileControlTargetName || "needs attention") : "No profile control")
+                                        + " · " + (String(button.mappingControlKey || "none") !== "none" ? "mapping control set" : "no mapping control")
+                                        + " · " + (automations.length ? String(automations.length) + " automation link" + (automations.length === 1 ? "" : "s") : "no automation links")
+                                    color: deck.textSecondary
+                                    font.pixelSize: deck.scale(9)
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                            DeckButton {
+                                text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"
+                                subdued: true
+                                onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded)
+                            }
+                        }
+                        Text {
+                            visible: !root.behaviorExpanded
+                            text: "The game route above is the normal setup. Open options only to make this input switch profiles, control mapping, or inspect linked automation."
+                            color: deck.textMuted
+                            font.pixelSize: deck.scale(9)
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        DeckButton {
+                            visible: themeManager.guidanceSectionHasExplicitPreference("buttons-behavior")
+                            text: "FOLLOW GUIDANCE LEVEL"
+                            subdued: true
+                            onClicked: themeManager.followGuidanceLevelForSection("buttons-behavior")
+                        }
+                    }
                 }
-                GridLayout {
+                ColumnLayout {
+                    objectName: "flightDeckButtonsBehaviorControls_" + card.buttonIndex
+                    visible: !root.guidedPresentation && root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space12
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                    SectionLabel { text: "PROFILE CONTROL" }
+                    Text {
+                        text: "A profile control consumes this physical input while retaining its saved game route for restoration when cleared."
+                        color: deck.textMuted
+                        font.pixelSize: deck.scale(9)
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    GridLayout {
                     Layout.fillWidth: true
                     columns: width >= 620 ? 2 : 1
                     columnSpacing: deck.space12
@@ -927,7 +1180,7 @@ Flickable {
                         }
                     }
                 }
-                RowLayout {
+                    RowLayout {
                     visible: Boolean(button.profileControlEnabled)
                     Layout.fillWidth: true
                     Text {
@@ -946,22 +1199,22 @@ Flickable {
                         onClicked: root.navigateToProfile(String(button.profileControlTargetId || ""))
                     }
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
-                SectionLabel { text: "MAPPING CONTROL" }
-                Text {
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: deck.divider }
+                    SectionLabel { text: "MAPPING CONTROL" }
+                    Text {
                     text: "This existing global control is independent of the game route above."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                     Layout.fillWidth: true
                 }
-                DeckCombo {
+                    DeckCombo {
                     objectName: "flightDeckButtonMappingControlSelector_" + card.buttonIndex
                     Layout.fillWidth: true
                     model: root.mappingControlChoices
                     currentIndex: Math.max(0, root.mappingControlChoices.indexOf(String(button.mappingControl || "None")))
                     onActivated: backend.setMappingControl(card.buttonIndex, currentText)
                 }
-                ColumnLayout {
+                    ColumnLayout {
                     visible: automations.length > 0
                     Layout.fillWidth: true
                     spacing: deck.space8
@@ -985,6 +1238,7 @@ Flickable {
                                 onClicked: root.navigateToAutomation(String(modelData.id || ""))
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1196,6 +1450,7 @@ Flickable {
                     Layout.fillWidth: true
                     spacing: 2
                     Text {
+                        visible: !root.guidedPresentation
                         text: "NATIVE vJOY POV"
                         color: deck.textSecondary
                         font.family: deck.telemetryFont
@@ -1203,7 +1458,8 @@ Flickable {
                         font.bold: true
                     }
                     Text {
-                        text: String(hat.nativeTargetLabel || "Off") + " · " + String(hat.nativeStatus || "OFF")
+                    visible: !root.guidedPresentation
+                    text: String(hat.nativeTargetLabel || "Off") + " · " + String(hat.nativeStatus || "OFF")
                         color: hat.nativeAvailable || !hat.nativeEnabled ? deck.textMuted : deck.attention
                         font.family: deck.telemetryFont
                         font.pixelSize: deck.scale(9)
@@ -1212,6 +1468,7 @@ Flickable {
                     }
                 }
                 DeckButton {
+                    visible: !root.guidedPresentation
                     text: hat.nativeEnabled ? "DISABLE POV" : "ENABLE POV"
                     subdued: true
                     enabled: hat.nativeEnabled || root.nativePovChoices.length > 0
@@ -1222,6 +1479,7 @@ Flickable {
             DeckCombo {
                 id: nativePovSelector
                 objectName: "flightDeckNativePovSelector_" + card.hatIndex
+                visible: !root.guidedPresentation
                 Layout.fillWidth: true
                 model: root.nativePovChoices
                 textRole: "label"
@@ -1231,8 +1489,59 @@ Flickable {
                 onActivated: backend.setNativePovOutput(card.hatIndex, hat.nativeEnabled,
                     root.nativeChoiceKey(currentIndex))
             }
+            // A whole-hat destination is an everyday mapping decision.  Keep
+            // the native-descriptor name and its extended diagnostics in Full,
+            // but expose the same canonical command plainly in Guided.
+            ColumnLayout {
+                visible: root.guidedPresentation
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Text {
+                    text: "WHOLE-HAT DESTINATION"
+                    color: deck.textSecondary
+                    font.family: deck.telemetryFont
+                    font.pixelSize: deck.scale(9)
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: hat.nativeEnabled
+                        ? "This whole hat sends " + String(hat.nativeTargetLabel || "the selected POV") + "."
+                        : "Choose a game POV for the whole hat, or map directions separately above."
+                    color: deck.textMuted
+                    font.pixelSize: deck.scale(9)
+                    wrapMode: Text.WordWrap
+                }
+                DeckCombo {
+                    id: guidedPovSelector
+                    objectName: "flightDeckGuidedPovSelector_" + card.hatIndex
+                    Layout.fillWidth: true
+                    model: root.nativePovChoices
+                    textRole: "label"
+                    valueRole: "key"
+                    enabled: root.nativePovChoices.length > 0
+                    currentIndex: root.nativeChoiceIndex(hat.nativeTargetKey)
+                    onActivated: backend.setNativePovOutput(card.hatIndex, hat.nativeEnabled,
+                        root.nativeChoiceKey(currentIndex))
+                }
+                DeckButton {
+                    text: hat.nativeEnabled ? "TURN OFF WHOLE-HAT POV" : "USE WHOLE HAT AS POV"
+                    subdued: !hat.nativeEnabled
+                    enabled: hat.nativeEnabled || root.nativePovChoices.length > 0
+                    onClicked: backend.setNativePovOutput(card.hatIndex, !hat.nativeEnabled,
+                        root.nativeChoiceKey(guidedPovSelector.currentIndex))
+                }
+                Text {
+                    visible: root.nativePovChoices.length === 0
+                    Layout.fillWidth: true
+                    text: "No game POV target is available for this output. Direction mappings remain available."
+                    color: deck.attention
+                    font.pixelSize: deck.scale(9)
+                    wrapMode: Text.WordWrap
+                }
+            }
             Text {
-                visible: root.nativePovChoices.length === 0
+                visible: !root.guidedPresentation && root.nativePovChoices.length === 0
                 text: "The selected vJoy device exposes no native POV target. Direction routes above remain available."
                 color: deck.attention
                 font.pixelSize: deck.scale(9)
@@ -1250,7 +1559,9 @@ Flickable {
                     text: "HAT " + card.hatIndex + " · " + String(povDetail.selectedDirection.label || "DIRECTION").toUpperCase()
                 }
                 Text {
-                    text: "Physical POV direction → existing vJoy button route."
+                    text: root.guidedPresentation
+                        ? "Physical POV direction to the selected game button."
+                        : "Physical POV direction → existing vJoy button route."
                     color: deck.textMuted
                     font.pixelSize: deck.scale(9)
                 }
@@ -1270,7 +1581,9 @@ Flickable {
                     Layout.fillWidth: true
                     Text {
                         Layout.fillWidth: true
-                        text: "Learn a physical hat direction for the current vJoy button route."
+                        text: root.guidedPresentation
+                            ? "Learn a physical hat direction for the selected game button."
+                            : "Learn a physical hat direction for the current vJoy button route."
                         color: deck.textMuted
                         font.pixelSize: deck.scale(9)
                         wrapMode: Text.WordWrap
@@ -1283,6 +1596,31 @@ Flickable {
                         onClicked: root.requestPovLearning(Number(card.directionAt(root.expandedPovDirection).target || 0))
                     }
                 }
+                Rectangle {
+                    objectName: "flightDeckPovBehaviorDisclosure_" + card.hatIndex + "_" + root.expandedPovDirection
+                    visible: !root.guidedPresentation
+                    Layout.fillWidth: true
+                    implicitHeight: povBehaviorDisclosure.implicitHeight + deck.space16
+                    radius: deck.radiusControl
+                    color: deck.secondarySurface
+                    border.color: deck.border
+                    ColumnLayout {
+                        id: povBehaviorDisclosure
+                        anchors.fill: parent
+                        anchors.margins: deck.space8
+                        spacing: deck.space4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "OPTIONAL PROFILE & AUTOMATION"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; Layout.fillWidth: true }
+                            DeckButton { text: root.behaviorExpanded ? "HIDE OPTIONS" : "SHOW OPTIONS"; subdued: true; onClicked: themeManager.setGuidanceSectionExpanded("buttons-behavior", !root.behaviorExpanded) }
+                        }
+                        Text { visible: !root.behaviorExpanded; text: "The POV route above remains unchanged. Open options to make this direction control a profile or inspect linked automation."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    }
+                }
+                ColumnLayout {
+                    visible: !root.guidedPresentation && root.behaviorExpanded
+                    Layout.fillWidth: true
+                    spacing: deck.space12
                 GridLayout {
                     Layout.fillWidth: true
                     columns: width >= 620 ? 2 : 1
@@ -1355,6 +1693,7 @@ Flickable {
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -1365,100 +1704,28 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
-        RowLayout {
-            Layout.fillWidth: true
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Text {
-                    text: buttonItems.length + " virtual buttons · "
-                        + (selectedInputDeviceId.length > 0
-                            ? "source selector: " + inputDeviceName
-                            : "select a controller to choose a source")
-                    color: deck.textMuted
-                    font.family: deck.telemetryFont
-                    font.pixelSize: deck.scale(10)
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-            }
-            DeckButton {
-                objectName: "flightDeckButtonsLearn"
-                text: "LEARN ROUTE"
-                subdued: true
-                enabled: root.selectedInputDeviceId.length > 0
-                    && root.selectedInputDeviceConnected && backend.vjoyButtonCount > 0
-                onClicked: root.requestButtonLearning()
-            }
-            DeckButton {
-                objectName: "flightDeckButtonsQuickMap"
-                text: "QUICK MAP"
-                subdued: true
-                enabled: root.selectedInputDeviceId.length > 0
-                    && backend.selectedDeviceButtonChoices().length > 1
-                onClicked: root.requestQuickMap()
-            }
-        }
-
-        FlightDeckCard {
+        FlightDeckInputStatusCard {
+            id: buttonsInputStatus
+            objectName: "flightDeckButtonsInputStatus"
             tokens: deck
-            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: statusContent.implicitHeight + contentPadding * 2
-            color: root.selectedInputDeviceId.length === 0 || root.selectedInputDeviceConnected
-                ? deck.secondarySurface : deck.elevatedSurface
-            ColumnLayout {
-                id: statusContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                RowLayout {
-                    Layout.fillWidth: true
-                    SummaryChip {
-                        label: root.selectedInputDeviceId.length === 0 ? "SELECT A CONTROLLER"
-                            : root.selectedInputDeviceConnected ? "SELECTED CONTROLLER CONNECTED"
-                            : "SELECTED CONTROLLER DISCONNECTED"
-                        tone: root.selectedInputDeviceId.length === 0 ? "informational"
-                            : root.selectedInputDeviceConnected ? "healthy" : "attention"
-                    }
-                    SummaryChip {
-                        label: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "VIRTUAL OUTPUT ATTENTION"
-                        tone: backend.vjoyReady ? "healthy" : "attention"
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        text: root.selectedInputDeviceId.length === 0
-                            ? "Choose a source in SELECTED DEVICE to edit button routing"
-                            : root.selectedInputDeviceConnected
-                                ? "Live state waits for input from " + root.inputDeviceName
-                                : root.inputDeviceName + " is disconnected; saved routes remain editable"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(9)
-                        elide: Text.ElideRight
-                    }
-                }
-                RowLayout {
-                    visible: root.selectedInputDeviceId.length === 0
-                        || !root.selectedInputDeviceConnected || !backend.vjoyReady
-                    Layout.fillWidth: true
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.selectedInputDeviceId.length === 0
-                            ? "Use SELECTED DEVICE in the top bar to choose the controller whose physical buttons you want to route."
-                            : !root.selectedInputDeviceConnected
-                            ? root.inputDeviceName + " is disconnected. Its saved routes remain available for editing."
-                            : "Virtual output needs attention. You can still inspect existing physical controls and routes."
-                        color: deck.textSecondary
-                        font.pixelSize: deck.scale(10)
-                        wrapMode: Text.WordWrap
-                    }
-                    DeckButton { text: "OPEN SETUP"; subdued: true; onClicked: root.navigateToPage(2) }
-                }
-            }
+            heading: String(root.inputStatus.heading || "")
+            detail: String(root.inputStatus.detail || "")
+            statusPills: root.inputStatus.pills || []
+            primaryText: String(root.inputStatus.primaryText || "")
+            secondaryText: String(root.inputStatus.secondaryText || "")
+            // Retain the established quick-map control identity while making
+            // its presentation conditional on a usable next action.
+            primaryObjectName: String(root.inputStatus.primaryAction || "") === "quick-map"
+                ? "flightDeckButtonsQuickMap" : "flightDeckButtonsInputPrimary"
+            secondaryObjectName: String(root.inputStatus.secondaryAction || "") === "quick-map"
+                ? "flightDeckButtonsQuickMap" : "flightDeckButtonsInputSecondary"
+            onPrimaryAction: root.invokePreparationPrimary()
+            onSecondaryAction: root.invokePreparationSecondary()
         }
 
         RowLayout {
+            visible: root.canShowInputContent
             Layout.fillWidth: true
             spacing: deck.space8
             Text {
@@ -1479,16 +1746,17 @@ Flickable {
             }
         }
 
-        SectionLabel { text: "VIRTUAL BUTTONS" }
+        SectionLabel { visible: root.canShowInputContent; text: "VIRTUAL BUTTONS" }
         Text {
-            visible: buttonItems.length === 0
-            text: "No virtual button outputs are available for the selected Profile."
+            visible: root.canShowInputContent && buttonItems.length === 0
+            text: "No button outputs are available for this setup yet."
             color: deck.textMuted
             font.pixelSize: deck.scale(10)
             Layout.fillWidth: true
         }
         Flow {
             id: virtualButtonFlow
+            visible: root.canShowInputContent
             Layout.fillWidth: true
             spacing: deck.space12
             Repeater {
@@ -1500,17 +1768,19 @@ Flickable {
             }
         }
 
-        SectionLabel { visible: root.povItems.length > 0; text: "HATS / POV" }
+        SectionLabel { visible: root.canShowInputContent && root.povItems.length > 0; text: "HATS / POV" }
         Text {
-            visible: root.povItems.length > 0
-            text: "Directions use the authoritative discrete POV routes. Native vJoy POV output, when available, stays a separate existing path."
+            visible: root.canShowInputContent && root.povItems.length > 0
+            text: root.guidedPresentation
+                ? "Map directions to game buttons, or send the whole hat to a game POV."
+                : "Map a hat direction to a button, or choose a whole-hat POV destination when one is available."
             color: deck.textMuted
             font.pixelSize: deck.scale(10)
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Repeater {
-            model: root.povItems
+            model: root.canShowInputContent ? root.povItems : []
             delegate: HatCard {
                 required property var modelData
                 hat: modelData
@@ -1544,7 +1814,7 @@ Flickable {
                 DeckButton { text: "CANCEL"; subdued: true; onClicked: mappingConflict.close() }
                 Item { Layout.fillWidth: true }
                 DeckButton {
-                    visible: conflictButtonIndex > 0
+                    visible: conflictButtonIndex > 0 && !root.guidedPresentation
                     text: "MIX"
                     subdued: true
                     onClicked: {
@@ -1559,6 +1829,26 @@ Flickable {
                             ? root.requestButtonMapping(conflictButtonIndex, conflictTarget, true)
                             : root.requestPovMapping(conflictHatIndex, conflictDirectionIndex, conflictTarget, true)
                         if (changed) mappingConflict.close()
+                    }
+                }
+                DeckButton {
+                    visible: conflictButtonIndex > 0 && root.guidedPresentation
+                    objectName: "flightDeckButtonOpenInFull"
+                    text: "OPEN IN FULL"
+                    subdued: true
+                    onClicked: {
+                        mappingConflict.close()
+                        root.requestFullAccess(1, { source: "button-conflict",
+                            buttonIndex: root.conflictButtonIndex,
+                            hatIndex: root.conflictHatIndex,
+                            directionIndex: root.conflictDirectionIndex,
+                            inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            profileId: String(root.conflictOwner.profileId || backend.selectedProfileId || ""),
+                            rigId: String(root.conflictOwner.rigId || backend.selectedDeviceRigId || ""),
+                            outputLayoutId: String(root.conflictOwner.outputLayoutId || ""),
+                            ownerControllerRecordId: String(root.conflictOwner.controllerRecordId || ""),
+                            ownerSourceIndex: Number(root.conflictOwner.sourceIndex),
+                            owner: root.conflictOwner })
                     }
                 }
             }

@@ -793,6 +793,8 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantScopeType READ setupAssistantScopeType")));
     QVERIFY(backendHeader.contains(QStringLiteral("setupAssistantSteps READ setupAssistantSteps")));
     QVERIFY(backendHeader.contains(QStringLiteral("appHealthSummary READ appHealthSummary")));
+    QVERIFY(backendHeader.contains(QStringLiteral("effectiveProfileId READ effectiveProfileId")));
+    QVERIFY(backendHeader.contains(QStringLiteral("readOnlyPhysicalInputTest READ readOnlyPhysicalInputTest")));
     QVERIFY(backendHeader.contains(QStringLiteral("startSetupAssistantCheckForScope")));
     QVERIFY(backendHeader.contains(QStringLiteral("completeSetupAssistantDevice")));
     QVERIFY(backendHeader.contains(QStringLiteral("beginCalibrationForDevice")));
@@ -973,6 +975,17 @@ void UiReleaseContractTests::setupAssistantAndOutputCreationExposeObservableCont
     QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupOutput: setupGroup(\"vjoy\")")));
     QVERIFY(flightDeckOverview.contains(QStringLiteral("readonly property var setupIsolation: setupGroup(\"isolation\")")));
     QVERIFY(flightDeckOverview.contains(QStringLiteral("label: setupTruth.overallStatus || \"CHECKING\"")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("CURRENT SETUP")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("flightDeckPrioritizedAttention")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("flightDeckConnectionEvidence")));
+    QVERIFY(flightDeckOverview.contains(QStringLiteral("LIVE CONTROLS")));
+    QVERIFY(!flightDeckOverview.contains(QStringLiteral("SYSTEM HEALTH")));
+    QVERIFY(backend.contains(QStringLiteral("input-only-directinput")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("flightDeckReadOnlyPhysicalInputTestDialog")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("exact DirectInput ID")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("flightDeckCreatedRigNextStepDialog")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("CREATE BLANK PROFILE")));
+    QVERIFY(flightDeckDevices.contains(QStringLiteral("CHOOSE EXISTING PROFILE")));
     QVERIFY(overview.contains(QStringLiteral("model: root.setupTruth.groups || []")));
     QVERIFY(overview.contains(QStringLiteral("backend.setupTruthSnapshot")));
     QVERIFY(standard.contains(QStringLiteral("showTitle: false")));

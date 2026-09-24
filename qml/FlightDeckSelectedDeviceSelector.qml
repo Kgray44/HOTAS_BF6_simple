@@ -12,7 +12,11 @@ Button {
     signal manageDevices()
 
     objectName: "flightDeckSelectedDeviceSelector"
-    implicitWidth: compact ? 42 : Math.max(216, selectorRow.implicitWidth + tokens.space20)
+    // The controller selector is the input editor's primary context.  A
+    // narrow header may elide its value, but must never collapse it into an
+    // unlabeled dot-and-chevron control.
+    implicitWidth: compact ? Math.max(156, selectorRow.implicitWidth + tokens.space16)
+        : Math.max(216, selectorRow.implicitWidth + tokens.space20)
     implicitHeight: 38
     focusPolicy: Qt.StrongFocus
     Accessible.name: "Selected Device: " + backendObject.selectedDeviceLabel
@@ -27,11 +31,10 @@ Button {
             color: control.currentRig().health === "ready" ? tokens.healthy : tokens.attention
         }
         ColumnLayout {
-            visible: !control.compact
             Layout.fillWidth: true
             spacing: 0
             Text {
-                text: "SELECTED DEVICE"
+                text: control.compact ? "CONTROLLER" : "SELECTED DEVICE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
                 font.pixelSize: tokens.scale(7)
@@ -71,6 +74,10 @@ Button {
     function selectDevice(deviceId) {
         backendObject.setSelectedDeviceContext(backendObject.selectedDeviceRigId, [String(deviceId)])
         popup.close()
+    }
+    function openPicker() {
+        if (!popup.visible) popup.open()
+        forceActiveFocus()
     }
     onClicked: popup.visible ? popup.close() : popup.open()
 

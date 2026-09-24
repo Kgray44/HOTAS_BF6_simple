@@ -14,11 +14,29 @@ Flickable {
     // states. Production always reads the current backend/readiness snapshots.
     property var presentationOverride: null
     property string filterMode: "all"
-    property bool technicalDetailsExpanded: false
-    property bool inputDetailsExpanded: false
-    property bool outputDetailsExpanded: false
-    property bool isolationDetailsExpanded: false
-    property bool eventLogExpanded: false
+    // Policy defaults are shared with every Flight Deck page. A local click
+    // records an explicit per-section choice, so switching Guided/Full never
+    // erases the technical detail a person intentionally opened or closed.
+    readonly property bool technicalDetailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("diagnostics-technical")
+    }
+    readonly property bool inputDetailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("diagnostics-input")
+    }
+    readonly property bool outputDetailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("diagnostics-output")
+    }
+    readonly property bool isolationDetailsExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("diagnostics-isolation")
+    }
+    readonly property bool eventLogExpanded: {
+        themeManager.guidancePolicyRevision
+        return themeManager.guidanceSectionExpanded("diagnostics-event-log")
+    }
 
     signal navigateToPage(int page)
     signal navigateToDevices(string context)
@@ -817,7 +835,7 @@ Flickable {
                         OutlineButton {
                             text: root.inputDetailsExpanded ? "HIDE DETAILS" : "DETAILS"
                             tone: "informational"
-                            onClicked: root.inputDetailsExpanded = !root.inputDetailsExpanded
+                            onClicked: themeManager.setGuidanceSectionExpanded("diagnostics-input", !root.inputDetailsExpanded)
                         }
                     }
                     ColumnLayout {
@@ -920,7 +938,7 @@ Flickable {
                         }
                         OutlineButton {
                             text: root.outputDetailsExpanded ? "HIDE DETAILS" : "DETAILS"
-                            onClicked: root.outputDetailsExpanded = !root.outputDetailsExpanded
+                            onClicked: themeManager.setGuidanceSectionExpanded("diagnostics-output", !root.outputDetailsExpanded)
                         }
                     }
                     ColumnLayout {
@@ -1031,7 +1049,7 @@ Flickable {
                         }
                         OutlineButton {
                             text: root.isolationDetailsExpanded ? "HIDE DETAILS" : "DETAILS"
-                            onClicked: root.isolationDetailsExpanded = !root.isolationDetailsExpanded
+                            onClicked: themeManager.setGuidanceSectionExpanded("diagnostics-isolation", !root.isolationDetailsExpanded)
                         }
                     }
                     ColumnLayout {
@@ -1726,7 +1744,7 @@ Flickable {
                     OutlineButton {
                         objectName: "flightDeckDiagnosticsTechnicalToggle"
                         text: root.technicalDetailsExpanded ? "HIDE DETAILS" : "SHOW DETAILS"
-                        onClicked: root.technicalDetailsExpanded = !root.technicalDetailsExpanded
+                        onClicked: themeManager.setGuidanceSectionExpanded("diagnostics-technical", !root.technicalDetailsExpanded)
                     }
                 }
                 ColumnLayout {
@@ -1832,7 +1850,7 @@ Flickable {
                         }
                         OutlineButton {
                             text: root.eventLogExpanded ? "HIDE LOG" : "SHOW LOG"
-                            onClicked: root.eventLogExpanded = !root.eventLogExpanded
+                            onClicked: themeManager.setGuidanceSectionExpanded("diagnostics-event-log", !root.eventLogExpanded)
                         }
                     }
                     ListView {

@@ -16,6 +16,28 @@ Item {
     }
     readonly property var themeTokens: deck
     property int currentPage: 8
+    // Guided is a deliberate basic-workspace allowlist, not a disclosure
+    // preference. These keep the canonical page IDs intact while making the
+    // presentation boundary available to every route through this shell.
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
+    readonly property var fullNavigationItems: [
+        { label: "Overview", page: 8 },
+        { label: "Devices & setup", page: 2 },
+        { label: "Axes", page: 0 },
+        { label: "Buttons", page: 1 },
+        { label: "Curve editor", page: 6 },
+        { label: "Profiles", page: 5 },
+        { label: "Adaptive Response", page: 9 },
+        { label: "Automation", page: 7 },
+        { label: "Signal Flow · Beta", page: 11 },
+        { label: "Diagnostics", page: 3 },
+        { label: "Settings", page: 4 }
+    ]
+    readonly property var guidedNavigationItems: fullNavigationItems.filter(function(item) {
+        return [8, 2, 0, 1, 5, 4].indexOf(item.page) >= 0
+    })
+    property var pendingFullDestination: ({ page: -1, context: ({}) })
+    property string fullHandoffNotice: ""
     property string flightDeckAutomationContext: ""
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
@@ -53,10 +75,78 @@ Item {
             return signalFlowPageLoader.item !== null;
         return standardPageHost.loadedPage(page);
     }
-    function navigateTo(page) {
+    function isGuidedDestination(page) {
+        return [8, 2, 0, 1, 5, 4].indexOf(Number(page)) >= 0
+    }
+    function nearestGuidedDestination(page) {
+        switch (Number(page)) {
+        case 6:
+        case 9:
+        case 11:
+            return 0
+        case 7:
+            return 1
+        case 3:
+            return 8
+        }
+        return 8
+    }
+    function requestFullDestination(page, context) {
+        fullHandoffNotice = ""
+        pendingFullDestination = { page: Number(page), context: context || ({}) }
+        fullOnlyAccessDialog.open()
+        return false
+    }
+    function clearPendingFullDestination() {
+        pendingFullDestination = { page: -1, context: ({}) }
+    }
+    function openPendingFullDestination() {
+        const destination = Number(pendingFullDestination.page)
+        const context = pendingFullDestination.context || ({})
+        const source = String(context.source || "")
+        if (source === "axis-conflict" || source === "button-conflict") {
+            const prepared = backend.prepareFullConflictEditorContext(
+                String(context.profileId || ""), String(context.rigId || ""),
+                String(context.outputLayoutId || ""), String(context.inputDeviceId || ""))
+            if (!prepared.success) {
+                clearPendingFullDestination()
+                fullHandoffNotice = String(prepared.message || "The original mapping context changed before Full could open.")
+                return false
+            }
+        }
+        // Consume before switching modes. Cancelled/replaced/stale requests
+        // cannot replay a previous target on a later Full transition.
+        clearPendingFullDestination()
+        if (destination < 0 || !themeManager.chooseGuidanceLevel("Full"))
+            return false
+        const routedDestination = source === "axis-conflict" ? 0
+            : source === "button-conflict" ? 1 : destination
+        const inputDeviceId = String(context.inputDeviceId || "")
+        if (inputDeviceId.length > 0)
+            backend.setSelectedDeviceContext(backend.selectedDeviceRigId, [inputDeviceId])
+        if (routedDestination === 0 && Number(context.axisIndex) >= 0)
+            backend.setSelectedAxis(Number(context.axisIndex))
+        if (routedDestination === 2 && (String(context.section || "") === "virtual-output"
+                || String(context.section || "") === "isolation"))
+            standardPageHost.flightDeckDevicesContext = String(context.section)
+        fullOnlyAccessDialog.close()
+        currentPage = routedDestination
+        if (source === "axis-conflict" || source === "button-conflict") {
+            Qt.callLater(function() {
+                const page = standardPageHost.pageItem(routedDestination)
+                if (page && page.openFullConflict)
+                    page.openFullConflict(context)
+            })
+        }
+        return true
+    }
+    function navigateTo(page, context) {
+        if (guidedPresentation && !isGuidedDestination(page))
+            return requestFullDestination(page, context)
         if (currentPage === page)
-            return;
+            return true;
         currentPage = page;
+        return true;
     }
     function pageTitle(page) {
         switch (page) {
@@ -85,10 +175,26 @@ Item {
         }
         return "Overview";
     }
+    function openSelectedDevicePicker() {
+        selectedDeviceSelector.openPicker()
+    }
     FlightDeckReadiness {
         id: readinessModel
     }
+    onGuidedPresentationChanged: {
+        // A mode choice never changes configuration or workspace selections.
+        // If Full was showing an expert-only surface, park it on the nearest
+        // basic editor rather than rendering it in Guided.
+        if (guidedPresentation && !isGuidedDestination(currentPage))
+            currentPage = nearestGuidedDestination(currentPage)
+    }
     onCurrentPageChanged: {
+        if (guidedPresentation && !isGuidedDestination(currentPage)) {
+            const requestedPage = currentPage
+            requestFullDestination(requestedPage, {})
+            currentPage = nearestGuidedDestination(requestedPage)
+            return
+        }
         // Signal Flow is intentionally excluded from this campaign. Its
         // navigation path remains untouched and contributes no Phase 0 data.
         if (currentPage !== 11 && root.responsivenessProbeActive)
@@ -218,19 +324,8 @@ Item {
                         spacing: deck.controlGap
 
                         Repeater {
-                            model: [
-                                { label: "Overview", page: 8 },
-                                { label: "Devices & setup", page: 2 },
-                                { label: "Axes", page: 0 },
-                                { label: "Buttons", page: 1 },
-                                { label: "Curve editor", page: 6 },
-                                { label: "Profiles", page: 5 },
-                                { label: "Adaptive Response", page: 9 },
-                                { label: "Automation", page: 7 },
-                                { label: "Signal Flow · Beta", page: 11 },
-                                { label: "Diagnostics", page: 3 },
-                                { label: "Settings", page: 4 }
-                            ]
+                            model: root.guidedPresentation
+                                ? root.guidedNavigationItems : root.fullNavigationItems
                             delegate: FlightDeckNavItem {
                                 objectName: "flightDeckNav_" + modelData.page
                                 tokens: deck
@@ -238,7 +333,7 @@ Item {
                                 selected: root.currentPage === modelData.page
                                 scrollViewport: navigationViewport
                                 Layout.fillWidth: true
-                                onClicked: root.navigateTo(modelData.page)
+                                onClicked: root.navigateTo(modelData.page, { source: "sidebar" })
                             }
                         }
                     }
@@ -330,7 +425,10 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    // Keep the shared title controls inside the same scaled
+                    // vertical rhythm as the rest of the deck at every text
+                    // setting instead of preserving an unscaled 42 px cap.
+                    Layout.preferredHeight: deck.controlHeight
                     Text {
                         objectName: "flightDeckSharedPageTitle"
                         text: root.pageTitle(root.currentPage)
@@ -342,6 +440,7 @@ Item {
                         elide: Text.ElideRight
                     }
                     FlightDeckSelectedDeviceSelector {
+                        id: selectedDeviceSelector
                         compact: root.width < 1380
                         backendObject: backend
                         tokens: deck
@@ -355,6 +454,7 @@ Item {
                     }
                     FlightDeckHeaderPill {
                         objectName: "flightDeckControllerPill"
+                        visible: root.width >= 1240
                         tokens: deck
                         text: "CONTROLLER"
                         value: backend.physicalConnected ? "CONNECTED" : "WAITING"
@@ -363,12 +463,28 @@ Item {
                     }
                     FlightDeckHeaderPill {
                         objectName: "flightDeckAppearancePill"
+                        // Controller/Profile selectors are more useful than
+                        // an appearance shortcut on a narrow Flight Deck.
+                        visible: root.width >= 1100
                         tokens: deck
                         text: "APPEARANCE"
                         value: themeManager.flightDeckAppearance.toUpperCase()
                         tone: "informational"
                         onClicked: themeManager.setFlightDeckAppearance(
                             themeManager.flightDeckAppearance === "Light" ? "Dark" : "Light")
+                    }
+                }
+
+                FlightDeckContextStrip {
+                    objectName: "flightDeckContextStrip"
+                    backendObject: backend
+                    tokens: deck
+                    Layout.fillWidth: true
+                    onSetupActionRequested: function(intent, context) {
+                        if (backend.hasSetupAssistantTask)
+                            setupAssistantDialog.openForResume()
+                        else
+                            setupAssistantDialog.openFor(intent, context)
                     }
                 }
 
@@ -396,6 +512,21 @@ Item {
                                 root.flightDeckAutomationContext = flightDeckAutomationContext;
                             if (root.currentPage !== 7 && root.currentPage !== 11 && root.currentPage !== currentPage)
                                 root.currentPage = currentPage;
+                        }
+                        onFlightDeckNavigationRequested: function(page, context) {
+                            if (page === 7 && context && String(context.automationId || "").length > 0)
+                                root.flightDeckAutomationContext = String(context.automationId)
+                            root.navigateTo(page, context)
+                        }
+                        onFlightDeckFullAccessRequested: function(page, context) {
+                            root.requestFullDestination(page, context)
+                        }
+                        onFlightDeckDevicePickerRequested: root.openSelectedDevicePicker()
+                        onFlightDeckSetupRequested: function(intent, context) {
+                            if (backend.hasSetupAssistantTask)
+                                setupAssistantDialog.openForResume()
+                            else
+                                setupAssistantDialog.openFor(intent, context)
                         }
                     }
                     Loader {
@@ -457,7 +588,7 @@ Item {
                                 onNavigateRequested: function(page, axis, state) {
                                     root.signalFlowPresentationState = state
                                     if (axis >= 0) backend.setSelectedAxis(axis)
-                                    root.currentPage = page
+                                    root.navigateTo(page, { source: "signal-flow", axis: axis })
                                 }
                             }
                         }
@@ -466,6 +597,66 @@ Item {
                             SignalFlowBeta { anchors.fill: parent; tokens: deck; flightDeck: true }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    FlightDeckSetupAssistant {
+        id: setupAssistantDialog
+        backendObject: backend
+        tokens: deck
+        onNavigateToPage: function(page) {
+            root.navigateTo(page, { source: "setup-assistant" })
+        }
+        onRequestFullAccess: function(page, context) {
+            root.requestFullDestination(page, context)
+        }
+    }
+
+    FlightDeckDialog {
+        id: fullOnlyAccessDialog
+        objectName: "flightDeckFullOnlyPrompt"
+        tokens: deck
+        heading: "Available in Full"
+        tone: "informational"
+        preferredWidth: 460
+        contentItem: ColumnLayout {
+            width: fullOnlyAccessDialog.availableWidth
+            spacing: deck.space16
+            Text {
+                Layout.fillWidth: true
+                text: root.fullHandoffNotice.length > 0 ? root.fullHandoffNotice
+                    : "" + root.pageTitle(root.pendingFullDestination.page)
+                        + " is an advanced workspace. Guided keeps everyday setup and mapping focused."
+                color: deck.textSecondary
+                font.pixelSize: deck.scale(11)
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "STAY IN GUIDED"
+                    focusPolicy: Qt.StrongFocus
+                    implicitHeight: deck.compactControlHeight
+                    onClicked: { root.clearPendingFullDestination(); root.fullHandoffNotice = ""; fullOnlyAccessDialog.close() }
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                }
+                Button {
+                    objectName: "flightDeckOpenInFull"
+                    text: root.fullHandoffNotice.length > 0 ? "CLOSE" : "OPEN IN FULL"
+                    focusPolicy: Qt.StrongFocus
+                    implicitHeight: deck.compactControlHeight
+                    onClicked: {
+                        if (root.fullHandoffNotice.length > 0) {
+                            root.fullHandoffNotice = ""
+                            fullOnlyAccessDialog.close()
+                        } else root.openPendingFullDestination()
+                    }
+                    background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                    contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
             }
         }

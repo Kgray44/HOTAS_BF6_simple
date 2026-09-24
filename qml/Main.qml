@@ -20,6 +20,11 @@ ApplicationWindow {
     visible: !presentationHeadless
     title: "HOTAS BF6"
     property var flightDeckLearningDialog: null
+    // main.cpp sets this before component completion and clears it only after
+    // the recovery decision closes. First-use guidance never covers a crash
+    // recovery, consent, or other already-running working-session prompt.
+    property bool recoveryNoticePending: typeof initialRecoveryNoticePending !== "undefined"
+        && Boolean(initialRecoveryNoticePending)
     onClosing: function(close) {
         if (backend.keepRunningInTray && backend.trayAvailable) {
             close.accepted = false
@@ -84,6 +89,15 @@ ApplicationWindow {
         sourceComponent: themeManager.currentExperience === "Flight Deck"
             ? flightDeckSurface
             : (themeManager.currentTheme === "Legacy" ? legacySurface : standardSurface)
+    }
+
+    // A real first-use decision is owned once at the application level, not
+    // by a page Loader. Selecting either density only updates ThemeManager's
+    // presentation policy; the active page, editor, task, and mapping state
+    // stay in place.
+    FlightDeckGuidanceOnboarding {
+        id: guidanceOnboarding
+        offerAllowed: !shell.recoveryNoticePending
     }
 
     // This stays outside the presentation Loader.  A page change, a

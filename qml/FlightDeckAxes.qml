@@ -9,6 +9,7 @@ Flickable {
     objectName: "flightDeckAxes"
 
     property var readinessModel
+    readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
     // Test-only visual seams. Production always reads the published backend
     // axis snapshot and selected-controller identity.
     property var axisPresentationOverride: null
@@ -25,6 +26,9 @@ Flickable {
     signal navigateToPage(int page)
     signal requestAxisLearning(string target)
     signal requestQuickMap()
+    signal requestDevicePicker()
+    signal requestSetup(string intent, var context)
+    signal requestFullAccess(int page, var context)
 
     readonly property bool usingPresentationOverride: axisPresentationOverride !== null
     // The card model is configuration-only.  Numeric values arrive in a tiny
@@ -55,7 +59,31 @@ Flickable {
         { key: "highest-magnitude", label: "Larger Value" },
         { key: "average", label: "Average" }
     ]
+    // Kept as a visual-fixture observation only. Readiness and card
+    // eligibility use the selected controller capability above, never this
+    // filtered output-grid projection.
     readonly property bool hasVisibleAxes: visibleAxisCount() > 0
+    readonly property var selectedControllerInfo: controllerForSelectedDevice()
+    readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
+    readonly property int selectedButtonCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
+        + Number(selectedControllerInfo.povCount || 0)
+    readonly property int assignedAxisCount: configuredAxisCount()
+    readonly property string preparedLearningTarget: preparedAxisLearningTarget()
+    readonly property var inputStatus: readinessModel ? readinessModel.editorInputStatus({
+        kind: "axes", selectedDeviceId: selectedInputDeviceId, selectedDeviceName: inputDeviceName,
+        selectedDeviceConnected: selectedInputDeviceConnected,
+        eligibleMemberCount: (backend.selectedDevices || []).length,
+        capabilityKnown: Object.keys(selectedControllerInfo || {}).length > 0,
+        capabilityCount: selectedAxisCapabilityCount, alternateCapabilityCount: selectedButtonCapabilityCount,
+        assignedCount: assignedAxisCount, quickMapAvailable: backend.quickAssignAxisTargets.length > 0,
+        learningTarget: preparedLearningTarget, verified: selectedControllerInfo.verified,
+        rigId: backend.selectedDeviceRigId
+    }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
+    readonly property string inputPreparationState: String(inputStatus.state || "connect")
+    readonly property bool canShowAxisCards: usingPresentationOverride
+        || (!guidedPresentation && axisItems.length > 0)
+        || (selectedInputDeviceId.length > 0
+            && inputStatus.capabilityKnown && selectedAxisCapabilityCount > 0)
 
     contentWidth: width
     contentHeight: axesContent.implicitHeight + deck.space24
@@ -92,6 +120,55 @@ Flickable {
             if (Boolean(device.selected)) return String(device.id || "")
         }
         return ""
+    }
+
+    function controllerForSelectedDevice() {
+        const selectedId = selectedDeviceId()
+        const controllers = backend.controllers || []
+        for (let index = 0; index < controllers.length; ++index) {
+            const controller = controllers[index] || ({})
+            if (String(controller.id || controller.directInputId || "") === selectedId)
+                return controller
+        }
+        return ({})
+    }
+
+    function configuredAxisCount() {
+        let count = 0
+        for (let index = 0; index < axisItems.length; ++index) {
+            const axis = axisItems[index] || ({})
+            if (axis.available && String(axis.target || "Disabled") !== "Disabled") ++count
+        }
+        return count
+    }
+
+    function preparedAxisLearningTarget() {
+        for (let index = 0; index < axisItems.length; ++index) {
+            const axis = axisItems[index] || ({})
+            if (axis.available && String(axis.target || "Disabled") !== "Disabled")
+                return String(axis.target || "")
+        }
+        return ""
+    }
+
+    function invokePreparationPrimary() {
+        switch (String(inputStatus.primaryAction || "")) {
+        case "scan": backend.refreshControllers(); break
+        case "picker": requestDevicePicker(); break
+        case "devices": navigateToPage(2); break
+        case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 0 }); break
+        case "other-editor": navigateToPage(1); break
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        case "learn-axis": requestAxisLearning(String(inputStatus.learningTarget || "")); break
+        }
+    }
+
+    function invokePreparationSecondary() {
+        switch (String(inputStatus.secondaryAction || "")) {
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        }
     }
 
     function axisForIndex(index) {
@@ -216,6 +293,44 @@ Flickable {
         routeNoticeAxis = conflictAxis;
         routeNotice = conflictNotice;
         return false;
+    }
+
+    function sameAxisConflict(collision, handoff) {
+        const axisIndex = Number(handoff.axisIndex)
+        if (!Number.isFinite(axisIndex) || Math.floor(axisIndex) !== axisIndex || axisIndex < 0
+                || String(handoff.target || "").length === 0) return false
+        return Boolean(collision.exists)
+            && String(collision.sourceKind || "") === "axis"
+            && String(collision.profileId || "") === String(handoff.profileId || "")
+            && String(collision.rigId || "") === String(handoff.rigId || "")
+            && String(collision.outputLayoutId || "") === String(handoff.outputLayoutId || "")
+            && String(collision.requestedControllerRecordId || "") === String(handoff.inputDeviceId || "")
+            && Number(collision.requestedSourceIndex) === axisIndex
+            && String(collision.requestedTarget || "") === String(handoff.target || "")
+            && String(collision.controllerRecordId || "") === String(handoff.ownerControllerRecordId || "")
+            && Number(collision.sourceIndex) === Number(handoff.ownerSourceIndex)
+    }
+
+    // A Guided conflict may be escalated, but it must arrive at this exact
+    // existing mixer dialog.  Re-read the canonical collision first: a
+    // changed route is not permission to create or replace a mapping.
+    function openFullConflict(context) {
+        const handoff = context || ({})
+        const axisIndex = Number(handoff.axisIndex)
+        const target = String(handoff.target || "")
+        if (!Number.isFinite(axisIndex) || Math.floor(axisIndex) !== axisIndex || axisIndex < 0 || target.length === 0) return false
+        const collision = backend.axisMappingCollision(axisIndex, target)
+        if (!sameAxisConflict(collision, handoff)) {
+            routeNoticeAxis = axisIndex
+            routeNotice = "This exact route changed while Full was opening. Review the current mapping before choosing another action."
+            return false
+        }
+        conflictAxis = axisIndex
+        conflictTarget = target
+        conflictOwner = collision
+        conflictNotice = ""
+        routeConflictDialog.open()
+        return true
     }
 
     function applyMixer(mode) {
@@ -436,6 +551,16 @@ Flickable {
         readonly property var adaptiveState: root.adaptiveStateFor(axisIndex)
         readonly property bool adaptiveEnabled: Boolean(adaptiveState.effective && adaptiveState.effective.enabled)
         readonly property var curveState: backend.curveEditorState
+        readonly property bool processingExpanded: {
+            themeManager.guidancePolicyRevision
+            return themeManager.guidanceSectionExpanded("axes-processing")
+        }
+        // Do not collapse a text edit because the owner changes the starting
+        // presentation underneath it. `focus` also preserves an edit while a
+        // desktop window is temporarily inactive, where activeFocus is false.
+        readonly property bool processingVisible: !root.guidedPresentation && (processingExpanded
+            || aliasEditor.focus || nameEditor.focus
+        )
         property bool technicalDetailsOpen: false
         property bool ultraNerdOpen: false
 
@@ -479,8 +604,13 @@ Flickable {
                     }
                 }
                 SummaryChip {
-                    label: axis.target === "Disabled" ? "OUTPUT DISABLED" : (axis.fixed ? "FIXED INPUT" : "OUTPUT ACTIVE")
-                    tone: axis.target === "Disabled" ? "attention" : (axis.fixed ? "attention" : "healthy")
+                    // A configured destination is not proof that a vJoy
+                    // report has been delivered. Keep this pill about the
+                    // editable route only.
+                    label: axis.target === "Disabled" ? "NOT ASSIGNED"
+                        : (axis.fixed ? "INPUT FIXED" : "ASSIGNED")
+                    tone: axis.target === "Disabled" ? "informational"
+                        : (axis.fixed ? "attention" : "healthy")
                 }
                 SummaryChip {
                     visible: Boolean(card.sharedOutput.mixed)
@@ -587,7 +717,7 @@ Flickable {
                 }
                 SummaryChip {
                     visible: Boolean(axis.axisDiscovered)
-                    label: Boolean(axis.liveMovementObserved) ? "LIVE VERIFIED" : "WAITING FOR MOVEMENT"
+                    label: Boolean(axis.liveMovementObserved) ? "INPUT DETECTED" : "NOT TESTED"
                     tone: Boolean(axis.liveMovementObserved) ? "healthy" : "informational"
                 }
             }
@@ -688,7 +818,7 @@ Flickable {
                                     Layout.fillWidth: true
                                     readonly property var choices: backend.virtualAxisChoiceDetailsForSource(card.axisIndex)
                                     Text {
-                                        text: "OUTPUT · vJoy " + backend.vjoyDeviceId
+                                        text: root.guidedPresentation ? "OUTPUT" : "OUTPUT · vJoy " + backend.vjoyDeviceId
                                         color: deck.textMuted
                                         font.family: deck.telemetryFont
                                         font.pixelSize: deck.scale(8)
@@ -708,7 +838,7 @@ Flickable {
                                 }
                             }
                             Rectangle {
-                                visible: Boolean(card.sharedOutput.mixed)
+                                visible: !root.guidedPresentation && Boolean(card.sharedOutput.mixed)
                                 Layout.fillWidth: true
                                 implicitHeight: sharedContent.implicitHeight + deck.space16
                                 radius: deck.radiusControl
@@ -734,6 +864,20 @@ Flickable {
                                         }
                                     }
                                 }
+                            }
+                            Text {
+                                visible: root.guidedPresentation && Boolean(card.sharedOutput.mixed)
+                                Layout.fillWidth: true
+                                text: "Custom processing is active for this output. Open in Full to change shared routing."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: root.guidedPresentation && Boolean(card.sharedOutput.mixed)
+                                text: "OPEN IN FULL"
+                                subdued: true
+                                onClicked: root.navigateToPage(11)
                             }
                             RowLayout {
                                 Layout.fillWidth: true
@@ -856,6 +1000,7 @@ Flickable {
                                 wrapMode: Text.WordWrap
                             }
                             RowLayout {
+                                visible: !root.guidedPresentation
                                 Layout.fillWidth: true
                                 SettingTitle {
                                     text: "RESPONSE CURVE"
@@ -863,6 +1008,7 @@ Flickable {
                                 }
                                 DeckCombo {
                                     id: curveSelector
+                                    visible: !root.guidedPresentation
                                     model: ["Linear", "J-Curve", "S-Curve", "Advanced", "Custom", "Personal"]
                                     currentIndex: Math.max(0, model.indexOf(String(card.curveState.family || "Linear")))
                                     Layout.fillWidth: true
@@ -872,6 +1018,7 @@ Flickable {
                                     }
                                 }
                                 DeckButton {
+                                    visible: !root.guidedPresentation
                                     text: "EDIT"
                                     subdued: true
                                     Layout.preferredWidth: 58
@@ -881,8 +1028,30 @@ Flickable {
                                     }
                                 }
                             }
+                            Text {
+                                visible: root.guidedPresentation
+                                    && ["Linear", "J-Curve", "S-Curve"].indexOf(String(card.curveState.family || "Linear")) < 0
+                                Layout.fillWidth: true
+                                text: "Custom processing is active. Open in Full to edit its curve."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: root.guidedPresentation
+                                    && ["Linear", "J-Curve", "S-Curve"].indexOf(String(card.curveState.family || "Linear")) < 0
+                                text: "OPEN IN FULL"
+                                subdued: true
+                                onClicked: { backend.setSelectedAxis(card.axisIndex); root.navigateToPage(6) }
+                            }
                             RowLayout {
-                                visible: String(card.curveState.family || "") === "J-Curve" || String(card.curveState.family || "") === "S-Curve"
+                                // This is the canonical J/S curve-strength
+                                // field, not a general sensitivity or gain
+                                // setting. Basic does not expose a renamed
+                                // mathematical control it cannot describe.
+                                visible: !root.guidedPresentation
+                                    && (String(card.curveState.family || "") === "J-Curve"
+                                        || String(card.curveState.family || "") === "S-Curve")
                                 Layout.fillWidth: true
                                 SettingTitle {
                                     text: "CURVE STRENGTH"
@@ -904,7 +1073,9 @@ Flickable {
                                 }
                             }
                             Text {
-                                text: "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
+                                text: root.guidedPresentation
+                                    ? "Sensitivity changes use the existing response control."
+                                    : "Use Curve Editor for the configured response graph and live axis marker. This page keeps only the mapping controls."
                                 color: deck.textMuted
                                 font.pixelSize: deck.scale(9)
                                 Layout.fillWidth: true
@@ -914,7 +1085,60 @@ Flickable {
                     }
 
                     Rectangle {
+                        objectName: "flightDeckAxesProcessingDisclosure_" + card.axisIndex
+                        visible: !root.guidedPresentation
                         Layout.fillWidth: true
+                        implicitHeight: processingDisclosure.implicitHeight + deck.space24
+                        radius: deck.radiusCard
+                        color: deck.secondarySurface
+                        border.color: deck.border
+                        ColumnLayout {
+                            id: processingDisclosure
+                            anchors.fill: parent
+                            anchors.margins: deck.space12
+                            spacing: deck.space6
+                            RowLayout {
+                                Layout.fillWidth: true
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    SettingTitle { text: "ADDITIONAL TUNING" }
+                                    Text {
+                                        text: "Limits " + root.percent(axis.outputMinimum, axis.unipolar) + " to "
+                                            + root.percent(axis.outputMaximum, axis.unipolar) + " · "
+                                            + (axis.rangeModeLabel || "Configured domain") + " · " + root.adaptiveLabel(card.axisIndex)
+                                        color: deck.textSecondary
+                                        font.pixelSize: deck.scale(10)
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                                DeckButton {
+                                    objectName: "flightDeckAxesProcessingToggle_" + card.axisIndex
+                                    text: card.processingExpanded ? "HIDE TUNING" : "SHOW TUNING"
+                                    subdued: true
+                                    onClicked: themeManager.setGuidanceSectionExpanded("axes-processing", !card.processingExpanded)
+                                }
+                            }
+                            Text {
+                                visible: !card.processingExpanded
+                                text: "Keep the route and response above for normal setup. Open tuning to change output authority, input domain, names, or Adaptive Response."
+                                color: deck.textMuted
+                                font.pixelSize: deck.scale(9)
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                            DeckButton {
+                                visible: themeManager.guidanceSectionHasExplicitPreference("axes-processing")
+                                text: "FOLLOW GUIDANCE LEVEL"
+                                subdued: true
+                                onClicked: themeManager.followGuidanceLevelForSection("axes-processing")
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: limitsContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -980,7 +1204,9 @@ Flickable {
                     }
 
                     Rectangle {
+                        objectName: "flightDeckAxesAdvancedControls_" + card.axisIndex
                         Layout.fillWidth: true
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: advancedContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1039,6 +1265,7 @@ Flickable {
                                 }
                                 TextField {
                                     id: aliasEditor
+                                    objectName: "flightDeckAxisOutputLabel_" + card.axisIndex
                                     text: axis.outputAlias || ""
                                     placeholderText: "Optional vJoy label"
                                     selectByMouse: true
@@ -1062,6 +1289,7 @@ Flickable {
                                 }
                                 TextField {
                                     id: nameEditor
+                                    objectName: "flightDeckAxisDisplayName_" + card.axisIndex
                                     text: axis.customName || ""
                                     placeholderText: axis.hardwareLabel || "Physical axis"
                                     selectByMouse: true
@@ -1090,6 +1318,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
+                        visible: !root.guidedPresentation && card.processingVisible
                         implicitHeight: adaptiveContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1131,6 +1360,7 @@ Flickable {
 
                     Rectangle {
                         Layout.fillWidth: true
+                        visible: !root.guidedPresentation
                         implicitHeight: technicalContent.implicitHeight + deck.space24
                         radius: deck.radiusCard
                         color: deck.secondarySurface
@@ -1199,148 +1429,29 @@ Flickable {
         width: root.width - deck.space24
         spacing: deck.space12
 
-        FlightDeckCard {
+        FlightDeckInputStatusCard {
+            id: axesInputStatus
+            objectName: "flightDeckAxesInputStatus"
             tokens: deck
-            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: contextContent.implicitHeight + contentPadding * 2
-            color: deck.elevatedSurface
-            ColumnLayout {
-                id: contextContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                RowLayout {
-                    Layout.fillWidth: true
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "AXIS OVERVIEW"
-                            color: deck.textMuted
-                            font.family: deck.telemetryFont
-                            font.pixelSize: deck.scale(9)
-                            font.bold: true
-                        }
-                        Text {
-                            text: "Physical control → configured transformation → virtual output"
-                            color: deck.textPrimary
-                            font.family: deck.displayFont
-                            font.pixelSize: deck.scale(14)
-                            font.bold: true
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                        }
-                    }
-                    SummaryChip {
-                        label: backend.vjoyReady ? "VJOY READY" : "VJOY ATTENTION"
-                        tone: backend.vjoyReady ? "healthy" : "attention"
-                    }
-                    SummaryChip {
-                        visible: root.selectedInputDeviceId.length > 0
-                        label: root.selectedInputDeviceConnected ? "SELECTED DEVICE CONNECTED"
-                            : "SELECTED DEVICE DISCONNECTED"
-                        tone: root.selectedInputDeviceConnected ? "healthy" : "attention"
-                    }
-                    DeckButton {
-                        objectName: "flightDeckAxesQuickMap"
-                        text: "QUICK MAP"
-                        subdued: true
-                        enabled: backend.selectedDeviceIsSpecific && backend.quickAssignAxisTargets.length > 0
-                        onClicked: root.requestQuickMap()
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "INPUT CONTEXT"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(8)
-                        font.bold: true
-                    }
-                    Text {
-                        text: inputDeviceName
-                        color: deck.textSecondary
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(10)
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        text: "PROFILE"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(8)
-                        font.bold: true
-                    }
-                    Text {
-                        text: backend.selectedProfileDisplayName || backend.selectedProfileName
-                        color: deck.textSecondary
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(10)
-                        Layout.maximumWidth: 240
-                        elide: Text.ElideRight
-                    }
-                }
-                Text {
-                    visible: !backend.selectedDeviceIsSpecific && !usingPresentationOverride
-                    text: "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices is an overview only and never chooses a controller for you."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-                Text {
-                    text: "Live meters consume the existing bounded presentation snapshot. Configuration remains available when no game is detected."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
-
-        FlightDeckCard {
-            tokens: deck
-            contentPadding: deck.cardPaddingCompact
-            visible: !root.hasVisibleAxes
-            Layout.fillWidth: true
-            implicitHeight: emptyContent.implicitHeight + contentPadding * 2
-            color: deck.secondarySurface
-            ColumnLayout {
-                id: emptyContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                Text {
-                    text: backend.selectedDeviceIsSpecific ? "NO PHYSICAL AXES AVAILABLE" : "SELECT A SPECIFIC CONTROLLER"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: deck.scale(15)
-                    font.bold: true
-                }
-                Text {
-                    text: backend.selectedDeviceIsSpecific
-                        ? root.selectedInputDeviceConnected
-                            ? "The selected saved controller has no axis descriptors. Existing mappings are not changed while it is unavailable."
-                            : root.inputDeviceName + " is disconnected. Its saved axis routes remain available for editing."
-                        : "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices only shows overview state."
-                    color: deck.textSecondary
-                    font.pixelSize: deck.scale(10)
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-                DeckButton {
-                    visible: backend.selectedDeviceIsSpecific
-                    text: "OPEN DEVICES & SETUP"
-                    Layout.preferredWidth: 172
-                    onClicked: root.navigateToPage(2)
-                }
-            }
+            heading: String(root.inputStatus.heading || "")
+            detail: String(root.inputStatus.detail || "")
+            statusPills: root.inputStatus.pills || []
+            primaryText: String(root.inputStatus.primaryText || "")
+            secondaryText: String(root.inputStatus.secondaryText || "")
+            // Retain the established quick-map test/control identity.  Its
+            // label is state-specific rather than a permanently disabled
+            // toolbar action.
+            primaryObjectName: String(root.inputStatus.primaryAction || "") === "quick-map"
+                ? "flightDeckAxesQuickMap" : "flightDeckAxesInputPrimary"
+            secondaryObjectName: String(root.inputStatus.secondaryAction || "") === "quick-map"
+                ? "flightDeckAxesQuickMap" : "flightDeckAxesInputSecondary"
+            onPrimaryAction: root.invokePreparationPrimary()
+            onSecondaryAction: root.invokePreparationSecondary()
         }
 
         Repeater {
-            model: root.axisItems
+            model: root.canShowAxisCards ? root.axisItems : []
             delegate: AxisCard {
                 required property var modelData
                 axis: modelData
@@ -1453,7 +1564,9 @@ Flickable {
                 Layout.fillWidth: true
             }
             Text {
-                text: "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
+                text: root.guidedPresentation
+                    ? "Replace moves the existing route. Use Full only when you need to combine sources."
+                    : "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
                 color: deck.textMuted
                 font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
@@ -1484,9 +1597,27 @@ Flickable {
                     onClicked: root.replaceMappingConflict()
                 }
                 DeckButton {
+                    visible: !root.guidedPresentation
                     text: "MIX"
                     Layout.preferredWidth: 88
                     onClicked: { routeConflictDialog.close(); mixerModeDialog.open(); }
+                }
+                DeckButton {
+                    visible: root.guidedPresentation
+                    objectName: "flightDeckAxisOpenInFull"
+                    text: "OPEN IN FULL"
+                    subdued: true
+                    onClicked: {
+                        routeConflictDialog.close()
+                        root.requestFullAccess(0, { source: "axis-conflict", axisIndex: root.conflictAxis,
+                            inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            profileId: String(root.conflictOwner.profileId || backend.selectedProfileId || ""),
+                            rigId: String(root.conflictOwner.rigId || backend.selectedDeviceRigId || ""),
+                            outputLayoutId: String(root.conflictOwner.outputLayoutId || ""),
+                            ownerControllerRecordId: String(root.conflictOwner.controllerRecordId || ""),
+                            ownerSourceIndex: Number(root.conflictOwner.sourceIndex),
+                            owner: root.conflictOwner })
+                    }
                 }
             }
         }

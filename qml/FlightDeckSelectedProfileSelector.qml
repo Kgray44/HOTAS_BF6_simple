@@ -13,7 +13,11 @@ Button {
     property bool compact: false
 
     objectName: "flightDeckSelectedProfileSelector"
-    implicitWidth: compact ? 42 : Math.max(214, selectorRow.implicitWidth + tokens.space20)
+    // Keep the editing-profile context readable when the shared header wraps
+    // its lower-priority pills.  Profile selection is intentionally separate
+    // from activation.
+    implicitWidth: compact ? Math.max(150, selectorRow.implicitWidth + tokens.space16)
+        : Math.max(214, selectorRow.implicitWidth + tokens.space20)
     implicitHeight: 38
     focusPolicy: Qt.StrongFocus
     Accessible.name: "Selected Profile: " + backendObject.selectedProfileDisplayName
@@ -50,11 +54,10 @@ Button {
             color: control.active ? tokens.healthy : tokens.focus
         }
         ColumnLayout {
-            visible: !control.compact
             Layout.fillWidth: true
             spacing: 0
             Text {
-                text: "SELECTED PROFILE"
+                text: control.compact ? "PROFILE" : "SELECTED PROFILE"
                 color: tokens.textMuted
                 font.family: tokens.telemetryFont
                 font.pixelSize: tokens.scale(7)

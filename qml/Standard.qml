@@ -39,8 +39,23 @@ Page {
     // Flight Deck owns one native Overview composition while this established
     // host continues to own every route, dialog, and backend command.
     property bool flightDeckMode: false
+    // A Flight Deck basic page can ask the shell to continue an exact
+    // advanced target in Full without manufacturing a second navigation owner.
+    signal flightDeckFullAccessRequested(int page, var context)
+    // Flight Deck pages keep their established signals, but their host routes
+    // every destination through the shell's Guided/Full policy.
+    signal flightDeckNavigationRequested(int page, var context)
+    // The header selector remains the single canonical selected-device model.
+    // Input pages use this relay to open that exact picker rather than a
+    // parallel page-local selector.
+    signal flightDeckDevicePickerRequested()
+    signal flightDeckSetupRequested(string intent, var context)
     property var flightDeckReadiness: null
     property string flightDeckDevicesContext: ""
+    // A durable AppIssue payload is the Flight Deck handoff contract. It is
+    // presentation state only; the Devices page re-resolves its stable ID
+    // before selecting any existing editor context.
+    property var flightDeckIssueTarget: ({})
     // Flight Deck deep links carry only presentation selection. They never
     // activate a profile, execute Automation, or change mapper configuration.
     property string flightDeckProfileContext: ""
@@ -1258,13 +1273,18 @@ Page {
             FineLine { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); Layout.preferredWidth: 1
                 Layout.preferredHeight: 24 }
             Row { visible: root.width >= 1100 && (root.width >= 1250 || backend.profileSourceLabel !== "Manual base profile"); spacing: 6
-                Text { text: "PROFILE"
+                Text { text: "EDITING"
                     color: theme.textMuted; font.pixelSize: theme.scale(9); font.bold: true }
-                Text { text: backend.effectiveProfileDisplayName.toUpperCase()
+                Text { text: backend.selectedProfileDisplayName.toUpperCase()
                     color: theme.text; font.pixelSize: theme.scale(10); font.bold: true
                     elide: Text.ElideRight; width: Math.min(128, implicitWidth) }
+                Text { visible: root.width >= 1250 && backend.selectedProfileId !== backend.activeProfileId
+                    text: "· USING " + (backend.activeProfileDisplayName || "NONE").toUpperCase()
+                    color: theme.ready; font.pixelSize: theme.scale(9); font.bold: true
+                    elide: Text.ElideRight; width: Math.min(150, implicitWidth) }
                 Text { visible: backend.profileSourceLabel !== "Manual base profile"
-                    text: "· " + backend.profileSourceLabel.toUpperCase()
+                    text: "· EFFECTIVE " + backend.effectiveProfileDisplayName.toUpperCase()
+                        + " · " + backend.profileSourceLabel.toUpperCase()
                     color: theme.ready; font.pixelSize: theme.scale(9); font.bold: true }
             }
             FineLine { visible: root.width >= 480; Layout.preferredWidth: 1; Layout.preferredHeight: 24 }
@@ -1567,10 +1587,48 @@ Page {
             FlightDeckOverview {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "overview" }) }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2
+                }
+                onNavigateToIssue: function(issue) {
+                    const issueId = String(issue && issue.id || "")
+                    const issues = backend.setupTruthSnapshot.issues || []
+                    let current = null
+                    for (let index = 0; index < issues.length; ++index) {
+                        if (String(issues[index].id || "") === issueId) {
+                            current = issues[index]
+                            break
+                        }
+                    }
+                    if (!current) {
+                        root.flightDeckIssueTarget = { id: issueId, stale: true,
+                            message: "This setup item changed before it could be opened. Review the current setup details." }
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    const target = current.navigationTarget || ({})
+                    const destination = target.page === undefined ? 3 : Number(target.page)
+                    if (destination === 10) {
+                        root.flightDeckIssueTarget = current
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    const type = String(target.objectType || "")
+                    const objectId = String(target.objectId || "")
+                    if (type.length && objectId.length
+                            && !backend.focusIssueTarget(type, objectId)) {
+                        root.flightDeckIssueTarget = { id: issueId, stale: true,
+                            message: "The exact setup target is no longer available. Review the current setup details." }
+                        root.flightDeckDevicesContext = "issue"
+                        root.currentPage = 2
+                        return
+                    }
+                    root.currentPage = destination
+                    root.menuOpen = false
                 }
             }
         }
@@ -1591,7 +1649,7 @@ Page {
             id: flightDeckSettingsComponent
             FlightDeckSettings {
                 anchors.fill: parent
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "settings" }) }
             }
         }
         Loader {
@@ -1645,22 +1703,23 @@ Page {
                 notificationCenter: root.notificationCenter
                 profileCreationRequest: root.flightDeckProfileCreationRequest
                 presentationState: root.flightDeckProfilesPresentationState
+                onProfileCreationRequestConsumed: root.flightDeckProfileCreationRequest = ({})
                 onPresentationStateCaptured: function(state) { root.flightDeckProfilesPresentationState = state }
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "profiles" }) }
                 onNavigateToDeviceRig: function(rigId) {
                     // This is a presentation deep link only.  FlightDeckDevices
                     // establishes its ordinary editing/view context and never
                     // calls activateDeviceRig while opening the target.
                     root.flightDeckDevicesContext = "rig:" + rigId
-                    root.currentPage = 2
+                    root.flightDeckNavigationRequested(2, { source: "profiles", rigId: rigId })
                 }
                 onNavigateToAutomation: function(automationId) {
                     root.flightDeckAutomationContext = automationId
-                    root.currentPage = 7
+                    root.flightDeckNavigationRequested(7, { source: "profiles", automationId: automationId })
                 }
                 onNavigateToAdaptiveProfile: function(profileId) {
                     root.flightDeckAdaptiveProfileContext = profileId
-                    root.currentPage = 9
+                    root.flightDeckNavigationRequested(9, { source: "profiles", profileId: profileId })
                 }
                 Component.onCompleted: {
                     if (root.flightDeckProfileContext.length > 0) {
@@ -1925,7 +1984,10 @@ Page {
             FlightDeckAxes {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "axes" }) }
+                onRequestDevicePicker: root.flightDeckDevicePickerRequested()
+                onRequestSetup: function(intent, context) { root.flightDeckSetupRequested(intent, context) }
+                onRequestFullAccess: function(page, context) { root.flightDeckFullAccessRequested(page, context) }
                 onRequestAxisLearning: function(target) { root.openFlightDeckAxisLearning(target) }
                 onRequestQuickMap: root.openFlightDeckQuickAxisMap()
             }
@@ -1935,14 +1997,17 @@ Page {
             FlightDeckButtons {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "buttons" }) }
+                onRequestDevicePicker: root.flightDeckDevicePickerRequested()
+                onRequestSetup: function(intent, context) { root.flightDeckSetupRequested(intent, context) }
+                onRequestFullAccess: function(page, context) { root.flightDeckFullAccessRequested(page, context) }
                 onNavigateToProfile: function(profileId) {
                     root.flightDeckProfileContext = profileId
-                    root.currentPage = 5
+                    root.flightDeckNavigationRequested(5, { source: "buttons", profileId: profileId })
                 }
                 onNavigateToAutomation: function(automationId) {
                     root.flightDeckAutomationContext = automationId
-                    root.currentPage = 7
+                    root.flightDeckNavigationRequested(7, { source: "buttons", automationId: automationId })
                 }
                 onRequestButtonLearning: root.openFlightDeckButtonLearning()
                 onRequestQuickMap: root.openFlightDeckQuickMap()
@@ -2056,8 +2121,15 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 requestedContext: root.flightDeckDevicesContext
+                requestedIssueTarget: root.flightDeckIssueTarget
                 notificationCenter: root.notificationCenter
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "devices" }) }
+                onRequestFullAccess: function(context) {
+                    root.flightDeckFullAccessRequested(2, context)
+                }
+                onRequestSetup: function(intent, context) {
+                    root.flightDeckSetupRequested(intent, context)
+                }
                 onRequestProfileWorkflow: function(rigId, mode) {
                     root.flightDeckProfileCreationRequest = {
                         rigId: String(rigId || ""),
@@ -2541,7 +2613,7 @@ Page {
             FlightDeckDiagnostics {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
-                onNavigateToPage: function(page) { root.currentPage = page }
+                onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "diagnostics" }) }
                 onNavigateToDevices: function(context) {
                     root.flightDeckDevicesContext = context
                     root.currentPage = 2
