@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.9**
+**Current version: v2.6.10**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.10 — Verification persistence and axis-evidence ownership
+
+Makes controller-verification persistence exact and bounded, assigns runtime axis evidence to its exact physical controller, and keeps Axes interaction stable during unrelated setup-state updates without changing the allocation-free mapping report path.
+
+- Controller verification now uses an exact bounded persistence transaction with predicate-specific read-after-write validation, so an ordinary coalesced save cannot supersede the verified controller state before it is read back.
+- Runtime axis evidence is owned by exact DirectInput and HID identity rather than the currently selected editor, and Device Rig members retain independent ownership even when another member is being viewed.
+- Previously verified axis sources are reused only when the native DirectInput object signature still matches after reconnect; signature changes safely return to automatic resolution.
+- Axes configuration notifications are narrowed so low-frequency setup/status activity does not reset an active menu, dialog, or text edit; live telemetry remains a separate stream.
+- Automated qualification covers exact persistence ordering, standalone and Device Rig ownership, reconnect-signature protection, fixture preservation, startup, and the zero-allocation synthetic mapping benchmark. Physical controller acceptance remains explicitly deferred.
 
 ## v2.6.9 — Evidence-resolved DirectInput acquisition
 

@@ -2476,28 +2476,37 @@ bool jsonNeedsAdaptiveResponseAuthorityNormalization(const QJsonObject &json)
 
 MapperConfiguration ConfigStore::load()
 {
+    return loadDetailed().configuration;
+}
+
+ConfigStore::LoadResult ConfigStore::loadDetailed()
+{
+    LoadResult result;
     const QSettings stored(settingsFilePath(), QSettings::IniFormat);
     const QByteArray encoded = stored.value(QLatin1String(kConfigKey)).toByteArray();
     const QJsonDocument document = QJsonDocument::fromJson(encoded);
     if (!document.isObject()) {
-        MapperConfiguration configuration = defaultConfiguration();
-        seedBundledBattlefieldHelicopterProfile(&configuration);
-        reconcileSignalFlowState(&configuration);
-        return configuration;
+        result.configuration = defaultConfiguration();
+        seedBundledBattlefieldHelicopterProfile(&result.configuration);
+        reconcileSignalFlowState(&result.configuration);
+        return result;
     }
 
+    result.documentValid = true;
     bool valid = false;
     const QJsonObject serialized = document.object();
+    result.schemaVersion = serialized.value(u"version"_qs).toInt();
     const bool needsAdaptiveNormalization = jsonNeedsAdaptiveResponseAuthorityNormalization(serialized);
-    MapperConfiguration configuration = fromJson(serialized, &valid);
-    if (!valid) return configuration;
-    if (serialized.value(u"version"_qs).toInt() < kProfileSchemaVersion
+    result.configuration = fromJson(serialized, &valid);
+    result.configurationValid = valid;
+    if (!valid) return result;
+    if (result.schemaVersion < kProfileSchemaVersion
         || needsAdaptiveNormalization) {
         // Write the deterministic migration immediately, making every later
         // launch read the profile schema without duplicate default creation.
-        save(configuration);
+        result.migrationPersisted = save(result.configuration);
     }
-    return configuration;
+    return result;
 }
 
 bool ConfigStore::save(const MapperConfiguration &configuration)

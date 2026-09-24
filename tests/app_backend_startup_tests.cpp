@@ -1442,9 +1442,20 @@ bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
     if (!rudder.value(QStringLiteral("nativeObjectName")).toString().contains(QStringLiteral("Simulated"))
         || !rudder.value(QStringLiteral("metadataContradiction")).toBool()
         || rudder.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || rudder.contains(QStringLiteral("rawValue"))
+        || rudder.contains(QStringLiteral("observedMinimum"))
+        || rudder.contains(QStringLiteral("observedMaximum"))
+        || rudder.contains(QStringLiteral("liveMovementObserved"))
+        || rudder.contains(QStringLiteral("lastMovementAgeMs"))
+        || rudder.contains(QStringLiteral("sourceConnected"))
+        || rudder.contains(QStringLiteral("liveAvailable"))
+        || rudder.contains(QStringLiteral("acquisitionSource"))
         || !rudderTelemetry.value(QStringLiteral("rawValueAvailable")).toBool()
         || rudderTelemetry.value(QStringLiteral("rawValue")).toInt()
             != rudderMonitor.value(QStringLiteral("value")).toInt()
+        || !rudderTelemetry.value(QStringLiteral("sourceConnected")).toBool()
+        || !rudderTelemetry.value(QStringLiteral("liveAvailable")).toBool()
+        || rudderTelemetry.value(QStringLiteral("acquisitionSource")).toString().isEmpty()
         || !rudderTelemetry.value(QStringLiteral("liveMovementObserved")).toBool()
         || rudderTelemetry.value(QStringLiteral("lastMovementAgeMs")).toLongLong() != 0
         || !rudderMonitor.value(QStringLiteral("available")).toBool()
@@ -1476,11 +1487,223 @@ bool verifyUnchangedControllerInventoryDoesNotRebuildReadiness()
     return true;
 }
 
+bool hasVerifiedBufferedEvidence(const QVariantMap &evidence, int expectedSource)
+{
+    return evidence.value(QStringLiteral("found")).toBool()
+        && evidence.value(QStringLiteral("formattedSource")).toInt() == expectedSource
+        && evidence.value(QStringLiteral("evidence")).toInt()
+            == static_cast<int>(hotas::AxisFormattedSourceEvidence::BufferedObjectCorrelation)
+        && evidence.value(QStringLiteral("verified")).toBool()
+        && evidence.value(QStringLiteral("acquisitionMethod")).toInt() == 0;
+}
+
+bool verifyStandaloneVerificationAndAxisEvidenceOwnership()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()
+        || !backend->deviceRigs().isEmpty()
+        || !backend->commitExactControllerVerificationForTest(QLatin1String(kRecordId))) {
+        std::fprintf(stderr, "standalone controller verification fixture did not commit without a Device Rig\n");
+        return false;
+    }
+    const QVariantMap verified = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    if (verified.value(QStringLiteral("lastVerified")).toString().isEmpty()
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), y, x)
+        || !backend->persistRuntimeAxisEvidenceForTest()) {
+        std::fprintf(stderr, "standalone runtime source evidence was not persisted\n");
+        return false;
+    }
+    const QVariantMap persistedX = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    const QVariantMap persistedY = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), y);
+    if (!hasVerifiedBufferedEvidence(persistedX, y) || !hasVerifiedBufferedEvidence(persistedY, x)) {
+        std::fprintf(stderr, "standalone T.Flight X/Y evidence did not survive durable reload\n");
+        return false;
+    }
+    // A fresh backend is the restart-style ConfigStore consumer. It must see
+    // the same saved proof before any Device Rig has been created.
+    backend.reset();
+    auto restarted = std::make_unique<hotas::AppBackend>();
+    return hasVerifiedBufferedEvidence(
+               restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)
+        && hasVerifiedBufferedEvidence(
+               restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), y), x)
+        && restarted->deviceRigs().isEmpty();
+}
+
+bool verifyAutomaticAxisEvidencePersistenceRecovery()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()) return false;
+    // The first normal asynchronous write fails. The next regular UI
+    // snapshot must retain the in-memory proof, queue recovery, and leave a
+    // durable record for a fresh ConfigStore consumer.
+    backend->setAutomaticAxisEvidencePersistenceFailuresForTest(1);
+    if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "forced automatic evidence persistence failure was not observed\n");
+        return false;
+    }
+    const QVariantMap ramOnly = backend->inMemoryAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    const QVariantMap stillOnDisk = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    if (!hasVerifiedBufferedEvidence(ramOnly, y)
+        || stillOnDisk.value(QStringLiteral("verified")).toBool()
+        || !backend->persistRuntimeAxisEvidenceForTest()
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)) {
+        std::fprintf(stderr, "automatic axis evidence did not recover after its asynchronous save failed\n");
+        return false;
+    }
+    backend.reset();
+    auto restarted = std::make_unique<hotas::AppBackend>();
+    return hasVerifiedBufferedEvidence(
+        restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y);
+}
+
+bool verifyAutomaticAxisEvidencePersistsAtShutdown()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()) return false;
+    // Do not advance a second UI snapshot here.  This is the exit edge: the
+    // initial asynchronous request has failed, verified proof exists only in
+    // RAM, and shutdown must use its bounded recovery attempt before the
+    // persistence writer stops.
+    backend->setAutomaticAxisEvidencePersistenceFailuresForTest(1);
+    if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "shutdown persistence fixture did not observe the initial write failure\n");
+        return false;
+    }
+    const QVariantMap ramOnly = backend->inMemoryAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    const QVariantMap stillOnDisk = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    if (!hasVerifiedBufferedEvidence(ramOnly, y)
+        || stillOnDisk.value(QStringLiteral("verified")).toBool()) {
+        std::fprintf(stderr, "shutdown persistence fixture did not preserve RAM-only evidence\n");
+        return false;
+    }
+    backend->flushPersistenceForShutdown();
+    if (!hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)) {
+        std::fprintf(stderr, "shutdown did not durably recover automatic axis evidence\n");
+        return false;
+    }
+    backend.reset();
+    auto restarted = std::make_unique<hotas::AppBackend>();
+    return hasVerifiedBufferedEvidence(
+        restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y);
+}
+
+bool verifyDeviceRigAxisEvidenceIgnoresEditorSelection()
+{
+    constexpr auto kPrimaryId = "activation-transaction-controller";
+    constexpr auto kSecondaryId = "multi-controller-xbox";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureDeviceRigAxisEvidenceFixtureForTest()
+        // Starts in All Devices. Both source proofs must be attributed by the
+        // runtime member index, never by a presentation selection.
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kPrimaryId), x, y)
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kSecondaryId), y, x)
+        || !backend->persistRuntimeAxisEvidenceForTest()
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kPrimaryId), x), y)
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kSecondaryId), y), x)) {
+        std::fprintf(stderr, "All Devices Rig evidence was not attributed to its owning member\n");
+        return false;
+    }
+    // View B while A produces a new proof. The saved A record must change,
+    // proving that UI/editor context has no authority over worker evidence.
+    if (!backend->selectControllerForEditing(QLatin1String(kSecondaryId))
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kPrimaryId), y, x)
+        || !backend->persistRuntimeAxisEvidenceForTest()
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kPrimaryId), y), x)) {
+        std::fprintf(stderr, "Rig member A proof was coupled to controller B editor context\n");
+        return false;
+    }
+    // Reverse the relationship: view A while B produces its other proof.
+    if (!backend->selectControllerForEditing(QLatin1String(kPrimaryId))
+        || !backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kSecondaryId), x, y)
+        || !backend->persistRuntimeAxisEvidenceForTest()
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kSecondaryId), x), y)) {
+        std::fprintf(stderr, "Rig member B proof was coupled to controller A editor context\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifyAxisConfigurationNotificationIgnoresSetupStatus()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()) return false;
+    backend->resetUiPerformanceCounters();
+    backend->setSetupAssistantFactsForTest({{QStringLiteral("scopeType"), QStringLiteral("application")},
+                                            {QStringLiteral("state"), QStringLiteral("CHECKING")}});
+    const QVariantMap statusOnly = backend->uiPerformanceCounters();
+    if (statusOnly.value(QStringLiteral("stateChanged")).toULongLong() != 1
+        || statusOnly.value(QStringLiteral("axisConfigurationChanged")).toULongLong() != 0) {
+        std::fprintf(stderr, "setup status invalidated the axis configuration model\n");
+        return false;
+    }
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || !backend->persistRuntimeAxisEvidenceForTest()) {
+        return false;
+    }
+    const QVariantMap configurationCommit = backend->uiPerformanceCounters();
+    return configurationCommit.value(QStringLiteral("axisConfigurationChanged")).toULongLong() >= 1;
+}
+
+bool verifyAxisTelemetryPublicationDoesNotRebuildConfiguration()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int rz = static_cast<int>(hotas::PhysicalAxis::Rz);
+    if (!backend->configureAxisAcquisitionFixtureForTest()) return false;
+    backend->resetUiPerformanceCounters();
+    if (!backend->setAxisSourceMonitorCandidateForTest(rz, 32123, 102, 65411, 60, 80)
+        || !backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "axis telemetry publication fixture did not advance\n");
+        return false;
+    }
+    const QVariantMap configuration = backend->axisConfiguration().at(rz).toMap();
+    const QVariantMap telemetry = backend->axisTelemetry().at(rz).toMap();
+    const QVariantMap counters = backend->uiPerformanceCounters();
+    if (configuration.contains(QStringLiteral("rawValue"))
+        || configuration.contains(QStringLiteral("observedMinimum"))
+        || configuration.contains(QStringLiteral("liveMovementObserved"))
+        || counters.value(QStringLiteral("axisConfigurationChanged")).toULongLong() != 0
+        || counters.value(QStringLiteral("inputTelemetryChanged")).toULongLong() < 1
+        || telemetry.value(QStringLiteral("rawValue")).toInt() != 32123
+        || telemetry.value(QStringLiteral("observedMinimum")).toInt() != 102
+        || telemetry.value(QStringLiteral("observedMaximum")).toInt() != 65411
+        || !telemetry.value(QStringLiteral("observedRangeAvailable")).toBool()
+        || !telemetry.value(QStringLiteral("liveMovementObserved")).toBool()
+        || telemetry.value(QStringLiteral("lastMovementAgeMs")).toLongLong() != 0) {
+        std::fprintf(stderr, "live axis telemetry rebuilt configuration or lost its runtime values\n");
+        return false;
+    }
+    return true;
+}
+
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 25> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 31> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 25> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 31> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1506,6 +1729,12 @@ const std::array<std::pair<QString, StartupFixture>, 25> &startupFixtures()
         {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},
         {QStringLiteral("axis-acquisition-preview"), verifyAxisAcquisitionPreviewIsIsolatedAndInteractive},
         {QStringLiteral("stable-controller-inventory"), verifyUnchangedControllerInventoryDoesNotRebuildReadiness},
+        {QStringLiteral("standalone-axis-evidence"), verifyStandaloneVerificationAndAxisEvidenceOwnership},
+        {QStringLiteral("axis-evidence-persistence-recovery"), verifyAutomaticAxisEvidencePersistenceRecovery},
+        {QStringLiteral("axis-evidence-persistence-shutdown"), verifyAutomaticAxisEvidencePersistsAtShutdown},
+        {QStringLiteral("rig-axis-evidence"), verifyDeviceRigAxisEvidenceIgnoresEditorSelection},
+        {QStringLiteral("axis-configuration-notification"), verifyAxisConfigurationNotificationIgnoresSetupStatus},
+        {QStringLiteral("axis-telemetry-notification"), verifyAxisTelemetryPublicationDoesNotRebuildConfiguration},
     }};
     return fixtures;
 }

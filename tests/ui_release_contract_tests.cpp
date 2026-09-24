@@ -155,7 +155,7 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)")));
-    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)")));
+    QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY axisConfigurationChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(bool showUltraNerdControls READ showUltraNerdControls NOTIFY stateChanged)")));
     QVERIFY(header.contains(QStringLiteral("Q_PROPERTY(QVariantList axisSourceMonitor READ axisSourceMonitor NOTIFY inputTelemetryChanged)")));
@@ -201,6 +201,8 @@ void UiReleaseContractTests::controllerPresentationIsCachedAndTelemetryIsIsolate
     QVERIFY(!settings.contains(QStringLiteral("backend.controllers[")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisConfiguration")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("backend.axisTelemetry")));
+    QVERIFY(flightDeckAxes.contains(QStringLiteral("function onAxisConfigurationChanged()")));
+    QVERIFY(!flightDeckAxes.contains(QStringLiteral("function onStateChanged() {\n            root.configurationRevision += 1;")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("FlightDeckUltraNerdPanel")));
     QVERIFY(flightDeckAxes.contains(QStringLiteral("FlightDeckAxisAcquisitionDialog")));
     QVERIFY(ultraNerdPanel.contains(QStringLiteral("ULTRA NERD · RAW INPUT")));
@@ -1443,8 +1445,14 @@ void UiReleaseContractTests::evidenceResolvedAxisUiKeepsApplyAndRawTelemetryCont
     QVERIFY(axes.contains(QStringLiteral("onClicked: backend.useIdentifiedAxisSource()")));
     QVERIFY(axes.contains(QStringLiteral("Boolean(identification.applied)")));
     QVERIFY(axes.contains(QStringLiteral("identifyAxisDialog.close()")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.liveMovementObserved")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.lastMovementAgeMs")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.acquisitionSource")));
+    QVERIFY(!axes.contains(QStringLiteral("axis.liveMovementObserved")));
+    QVERIFY(!axes.contains(QStringLiteral("axis.lastMovementAgeMs")));
     QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.rawValue")));
     QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.observedRangeAvailable")));
+    QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.liveAvailable")));
     QVERIFY(ultraNerd.contains(QStringLiteral("SOURCE EVIDENCE")));
 }
 

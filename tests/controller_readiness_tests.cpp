@@ -908,6 +908,26 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
         1, true, true, false});
     snapshot.selectedHidInstance = connectedController().hidInstanceId;
     snapshot.privatePaths = {QStringLiteral("C:\\Program Files\\HOTAS BF6")};
+    snapshot.verificationDurabilityReadback = QStringLiteral(
+        "Record expected: controller-fixture\n"
+        "Record found: NO\n"
+        "Timestamp expected: 2026-09-23T22:23:58.000Z\n"
+        "Timestamp persisted: <missing>\n"
+        "Timestamp match: NO\n"
+        "DirectInput ID expected: {6FBB1660-48D2-11F1-8001-444553540000}\n"
+        "DirectInput ID persisted: <missing>\n"
+        "DirectInput match: NO\n"
+        "HID instance expected: HID\\VID_044F&PID_B68D\\EXACT-INSTANCE\n"
+        "HID instance persisted: <missing>\n"
+        "Normalized HID instance match: NO\n"
+        "HID container expected: {9C64E041-9DF1-11F1-9CA7-50EE32801B2B}\n"
+        "HID container persisted: <missing>\n"
+        "Container match: NO\n"
+        "Identity authority used: HID container\n"
+        "Config schema: 33\n"
+        "Config parse: VALID\n"
+        "Persistence generation: 42\n"
+        "Durable generation: 42");
 
     const QString report = buildControllerDiagnostics(snapshot);
     QVERIFY(report.contains(QStringLiteral("HOTAS BF6 Diagnostics")));
@@ -920,6 +940,12 @@ void ControllerReadinessTests::diagnosticsAreScopedSanitizedAndCopyable()
     QVERIFY(report.contains(QStringLiteral("HOTAS BF6 Test Host.exe")));
     QVERIFY(report.contains(QStringLiteral("Acquire attempt result: Not attempted: external owner is live")));
     QVERIFY(report.contains(QStringLiteral("Output: BF6 Output  vJoy 1")));
+    QVERIFY(report.contains(QStringLiteral("VERIFICATION DURABILITY READ-BACK")));
+    QVERIFY(report.contains(QStringLiteral("Record found: NO")));
+    QVERIFY(report.contains(QStringLiteral("Timestamp match: NO")));
+    QVERIFY(report.contains(QStringLiteral("Identity authority used: HID container")));
+    QVERIFY(report.contains(QStringLiteral("Config parse: VALID")));
+    QVERIFY(report.contains(QStringLiteral("Persistence generation: 42")));
     QVERIFY(report.contains(snapshot.selectedHidInstance));
     QVERIFY(report.contains(QStringLiteral("<USER_HOME>")));
     QVERIFY(report.contains(QStringLiteral("<LOCAL_PATH>")));

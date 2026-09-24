@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
+#include <unordered_set>
 #include <utility>
 
 namespace hotas {
@@ -28,6 +30,18 @@ struct ConfigPersistenceCoordinator::SharedState {
     Writer writer;
     UntimedWriter untimedWriter;
     std::optional<Pending> pending;
+    // Exact transactions form a small FIFO that ordinary coalescing can
+    // never replace. They are deliberately separate from `pending` so a
+    // verification proof cannot be reported durable after only a later,
+    // unrelated snapshot reached disk.
+    std::deque<Pending> exactPending;
+    std::deque<std::pair<quint64, bool>> exactCompletions;
+    // Once an exact write finishes, the worker must not let an ordinary
+    // snapshot overwrite it until its caller has performed the required
+    // durable read-back. A timed-out caller may release before the write
+    // finishes, so remember those early releases as well.
+    quint64 exactReadbackFenceGeneration = 0;
+    std::unordered_set<quint64> releasedExactGenerations;
     std::vector<Completion> completions;
     quint64 requests = 0;
     quint64 writes = 0;
@@ -70,14 +84,23 @@ void ConfigPersistenceCoordinator::runWorker(const std::shared_ptr<SharedState> 
     InteractiveSchedulingPolicy::recordCurrentThread("persistence");
     for (;;) {
         Pending current;
+        bool exact = false;
         bool telemetryEnabled = false;
         {
             QMutexLocker locker(&state->mutex);
-            while (!state->stopping && !state->pending) state->changed.wait(&state->mutex);
-            if (state->stopping && !state->pending) return;
+            while (!state->stopping && (state->exactReadbackFenceGeneration != 0
+                                         || (state->exactPending.empty() && !state->pending)))
+                state->changed.wait(&state->mutex);
+            if (state->stopping && state->exactPending.empty() && !state->pending) return;
 
-            current = std::move(*state->pending);
-            state->pending.reset();
+            if (!state->exactPending.empty()) {
+                current = std::move(state->exactPending.front());
+                state->exactPending.pop_front();
+                exact = true;
+            } else {
+                current = std::move(*state->pending);
+                state->pending.reset();
+            }
             state->inFlightGeneration = current.generation;
             telemetryEnabled = state->telemetryEnabled;
         }
@@ -102,6 +125,16 @@ void ConfigPersistenceCoordinator::runWorker(const std::shared_ptr<SharedState> 
             } else {
                 ++state->failures;
                 state->lastFailedGeneration = std::max(state->lastFailedGeneration, current.generation);
+            }
+            if (exact) {
+                state->exactCompletions.emplace_back(current.generation, result.success);
+                // Exact setup transactions are rare and synchronous. Keep a
+                // bounded completion history solely so a delayed waiter can
+                // distinguish its own failed write from a newer completion.
+                while (state->exactCompletions.size() > 64) state->exactCompletions.pop_front();
+                if (state->releasedExactGenerations.erase(current.generation) == 0) {
+                    state->exactReadbackFenceGeneration = current.generation;
+                }
             }
             if (telemetryEnabled) {
                 state->completions.push_back({current.generation, current.enqueuedNs, workerStartedNs,
@@ -151,7 +184,10 @@ ConfigPersistenceCoordinator::flushThrough(quint64 generation, int timeoutMs)
             result.status = FlushStatus::Stopped;
             break;
         }
-        const bool nothingOutstanding = !m_state->pending && m_state->inFlightGeneration == 0;
+        const bool nothingOutstanding = !m_state->pending
+            && m_state->exactPending.empty()
+            && m_state->exactReadbackFenceGeneration == 0
+            && m_state->inFlightGeneration == 0;
         if (nothingOutstanding && m_state->lastFailedGeneration >= generation) {
             result.status = FlushStatus::Failed;
             break;
@@ -178,6 +214,77 @@ ConfigPersistenceCoordinator::requestAndFlush(const MapperConfiguration &configu
     return flushThrough(receipt.generation, timeoutMs);
 }
 
+ConfigPersistenceCoordinator::FlushResult
+ConfigPersistenceCoordinator::requestAndFlushExact(const MapperConfiguration &configuration, int timeoutMs)
+{
+    RequestReceipt receipt;
+    const bool telemetryEnabled = [&] {
+        QMutexLocker locker(&m_state->mutex);
+        return m_state->telemetryEnabled;
+    }();
+    receipt.captureStartedNs = telemetryEnabled ? monotonicNowNs() : 0;
+    MapperConfiguration snapshot = configuration;
+    receipt.captureFinishedNs = telemetryEnabled ? monotonicNowNs() : 0;
+
+    {
+        QMutexLocker locker(&m_state->mutex);
+        if (m_state->stopping) return {FlushStatus::Stopped, 0, m_state->durableGeneration};
+        receipt.generation = ++m_state->latestRequestedGeneration;
+        ++m_state->requests;
+        // An ordinary pending snapshot is necessarily older than this exact
+        // GUI-thread transaction. Letting it write after verification could
+        // overwrite the newly proven record, so discard it before queuing the
+        // non-coalescible transaction.
+        if (m_state->pending) {
+            ++m_state->superseded;
+            m_state->pending.reset();
+        }
+        receipt.enqueuedNs = telemetryEnabled ? monotonicNowNs() : 0;
+        m_state->exactPending.push_back(Pending{std::move(snapshot), receipt.generation,
+                                                 receipt.enqueuedNs});
+        m_state->changed.wakeOne();
+    }
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QMutexLocker locker(&m_state->mutex);
+    for (;;) {
+        const auto completed = std::find_if(m_state->exactCompletions.cbegin(),
+                                            m_state->exactCompletions.cend(),
+                                            [&receipt](const auto &entry) {
+                                                return entry.first == receipt.generation;
+                                            });
+        if (completed != m_state->exactCompletions.cend()) {
+            return {completed->second ? FlushStatus::Durable : FlushStatus::Failed,
+                    receipt.generation, m_state->durableGeneration};
+        }
+        if (m_state->stopping) return {FlushStatus::Stopped, receipt.generation,
+                                       m_state->durableGeneration};
+        const int remainingMs = timeoutMs - static_cast<int>(elapsed.elapsed());
+        if (remainingMs <= 0) return {FlushStatus::TimedOut, receipt.generation,
+                                      m_state->durableGeneration};
+        m_state->changed.wait(&m_state->mutex, static_cast<unsigned long>(remainingMs));
+    }
+}
+
+void ConfigPersistenceCoordinator::completeExact(quint64 generation)
+{
+    if (generation == 0) return;
+    QMutexLocker locker(&m_state->mutex);
+    if (m_state->exactReadbackFenceGeneration == generation) {
+        m_state->exactReadbackFenceGeneration = 0;
+    } else if (std::none_of(m_state->exactCompletions.cbegin(),
+                             m_state->exactCompletions.cend(),
+                             [generation](const auto &completion) {
+                                 return completion.first == generation;
+                             })) {
+        // The writer can still be in flight when a bounded caller gives up.
+        // Let runWorker observe this release when it records completion.
+        m_state->releasedExactGenerations.insert(generation);
+    }
+    m_state->changed.wakeAll();
+}
+
 ConfigPersistenceCoordinator::FlushResult ConfigPersistenceCoordinator::flushLatest(int timeoutMs)
 {
     quint64 generation = 0;
@@ -193,8 +300,10 @@ ConfigPersistenceCoordinator::Statistics ConfigPersistenceCoordinator::statistic
     QMutexLocker locker(&m_state->mutex);
     return {m_state->requests, m_state->writes, m_state->superseded,
             m_state->latestRequestedGeneration, m_state->durableGeneration,
-            m_state->failures, m_state->lastFailedGeneration,
-            m_state->pending.has_value(), m_state->inFlightGeneration != 0};
+             m_state->failures, m_state->lastFailedGeneration,
+             m_state->pending.has_value() || !m_state->exactPending.empty()
+                 || m_state->exactReadbackFenceGeneration != 0,
+             m_state->inFlightGeneration != 0};
 }
 
 void ConfigPersistenceCoordinator::setTelemetryEnabled(bool enabled)

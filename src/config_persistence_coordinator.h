@@ -82,6 +82,18 @@ public:
     // boundaries. Ordinary GUI handlers must use request() only.
     FlushResult flushThrough(quint64 generation, int timeoutMs);
     FlushResult requestAndFlush(const MapperConfiguration &configuration, int timeoutMs);
+    // Exact setup facts are stronger than ordinary current-state persistence:
+    // the supplied snapshot is never replaced by a later coalesced request.
+    // Pending ordinary work captured before this call is older than the
+    // transaction snapshot and is discarded. New ordinary work remains
+    // coalesced, but runs only after the exact snapshot has been written.
+    // This remains a serial control-plane operation and is unreachable from
+    // the DirectInput -> MappingWorker -> vJoy report path.
+    FlushResult requestAndFlushExact(const MapperConfiguration &configuration, int timeoutMs);
+    // Releases the short post-write fence held for an exact transaction. The
+    // owner must complete the immediate read-back before ordinary snapshots
+    // are allowed to reach storage; it is safe to call after a timeout.
+    void completeExact(quint64 generation);
     FlushResult flushLatest(int timeoutMs);
 
     Statistics statistics() const;

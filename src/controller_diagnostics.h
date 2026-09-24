@@ -59,6 +59,9 @@ struct ControllerDiagnosticsSnapshot {
     QString selectedHidInstance;
     QString vjoyAcquireAttempt;
     QString vjoyLastStatusTransition;
+    // An on-demand technical record of the last exact verification durability
+    // check. Ordinary device cards intentionally do not display these values.
+    QString verificationDurabilityReadback;
     // Known local paths are redacted before text reaches the clipboard.
     QStringList privatePaths;
 };

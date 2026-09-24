@@ -30,6 +30,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QAction;
@@ -47,7 +48,7 @@ class AppBackend final : public QObject {
     // Flight Deck owns a stable axis-card tree.  Configuration and the tiny
     // numeric stream are published independently so moving a stick never
     // reconstructs labels, mappings, curve summaries, or editor controls.
-    Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY axisConfigurationChanged)
     Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)
     // An application presentation preference only. Hiding this specialty
     // surface never alters a saved per-controller acquisition override.
@@ -367,6 +368,27 @@ public:
     // Installs a bounded verified-controller record and monitor snapshot for
     // acquisition/Identify Axis tests. It never enumerates user hardware.
     bool configureAxisAcquisitionFixtureForTest();
+    // Installs one unverified, physically identified controller without a
+    // Device Rig so the exact verification and automatic source-evidence
+    // ownership path can be qualified end to end.
+    bool configureStandaloneAxisEvidenceFixtureForTest();
+    // Installs an active two-member Rig while leaving the editor at All
+    // Devices. Its members use independent worker evidence snapshots.
+    bool configureDeviceRigAxisEvidenceFixtureForTest();
+    bool publishRuntimeAxisEvidenceForTest(const QString &recordId, int canonicalAxis,
+                                           int formattedSource);
+    // Performs exactly one normal control-plane evidence persistence attempt.
+    // The startup suite uses the false result from a forced writer failure to
+    // prove that verified in-memory evidence remains intact before recovery.
+    bool attemptRuntimeAxisEvidencePersistenceForTest();
+    bool persistRuntimeAxisEvidenceForTest();
+    // Makes the next bounded automatic-evidence save attempts fail. This
+    // startup-test seam proves that the GUI control plane retries a proof
+    // after an asynchronous writer failure; it is not compiled into product
+    // binaries and never affects device discovery or MappingWorker.
+    void setAutomaticAxisEvidencePersistenceFailuresForTest(int failures);
+    QVariantMap inMemoryAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const;
+    QVariantMap persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const;
     // Verifies that the axis-acquisition candidate never starts a DirectInput
     // discovery timer, game probe, or MappingWorker. The fixture is in-memory
     // only so it can be reviewed safely alongside an installed mapper.
@@ -1069,6 +1091,9 @@ public:
 
 signals:
     void stateChanged();
+    // Verification, readiness, and global status transitions must not
+    // invalidate every configuration-derived axis-editor expression.
+    void axisConfigurationChanged();
     void selectedProfileChanged();
     void telemetryChanged();
     void inputTelemetryChanged();
@@ -1278,6 +1303,25 @@ private:
     // rather than silently showing another controller's stale telemetry.
     const AtomicAdaptiveTelemetry *adaptiveTelemetrySource(QString *recordId = nullptr,
                                                             int *memberIndex = nullptr) const;
+    struct RuntimeAxisEvidenceOwner {
+        QString recordId;
+        int memberIndex = -1;
+    };
+    // Worker-session identity owns automatic source proof. This deliberately
+    // ignores Selected Device/editor context: single-device sessions match a
+    // saved physical identity, while active Rig sessions use their compiled
+    // member record IDs.
+    QList<RuntimeAxisEvidenceOwner> runtimeAxisEvidenceOwners() const;
+    struct PendingAutomaticAxisEvidencePersistence {
+        QHash<QString, QSet<int>> axesByRecord;
+        quint64 generation = 0;
+        int retryCount = 0;
+        qint64 retryNotBeforeMs = 0;
+        bool retryLimitReported = false;
+    };
+    bool automaticAxisEvidenceIsDurable(
+        const PendingAutomaticAxisEvidencePersistence &pending) const;
+    void recoverAutomaticAxisEvidencePersistence();
     void sampleAdaptiveResponseHistory();
     void publishProfilePresentationIfChanged();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
@@ -1533,6 +1577,12 @@ private:
 
     MapperConfiguration m_configuration;
     std::unique_ptr<ConfigPersistenceCoordinator> m_persistence;
+    // Automatic buffered-object proof is useful immediately to this session,
+    // but it is not considered complete until a later persisted read-back
+    // confirms the exact descriptor fields. This small GUI-side checkpoint
+    // retries a failed asynchronous request with bounded backoff.
+    std::optional<PendingAutomaticAxisEvidencePersistence> m_pendingAutomaticAxisEvidencePersistence;
+    QElapsedTimer m_axisEvidencePersistenceClock;
     // Session-only editor context. It is intentionally outside
     // MapperConfiguration so persisting an edit never converts selection into
     // a runtime activation request.
@@ -1570,6 +1620,10 @@ private:
     // distinct result so the assistant does not send the user through an
     // indistinguishable Set Up loop.
     QHash<QString, QString> m_setupAssistantDeviceAcquisitionFailures;
+    // Full values are retained only for explicit technical diagnostics after
+    // an exact verification durability check. Normal UI feedback remains at
+    // the failed predicate/category level.
+    QString m_lastVerificationDurabilityReadback;
     // Per-record card state is deliberately separate from the global Setup
     // Health session. It lets a multi-controller Rig report the exact target
     // being verified without projecting a generic CHECKING state.
@@ -1849,7 +1903,10 @@ private:
     quint64 m_selectedButtonTelemetryPublishes = 0;
     mutable quint64 m_profileGetterCalls = 0;
     mutable quint64 m_categoryGetterCalls = 0;
+    mutable quint64 m_axisConfigurationGetterCalls = 0;
+    mutable quint64 m_axisTelemetryGetterCalls = 0;
     quint64 m_stateChangedNotifications = 0;
+    quint64 m_axisConfigurationChangedNotifications = 0;
     quint64 m_telemetryChangedNotifications = 0;
     quint64 m_inputTelemetryChangedNotifications = 0;
     quint64 m_buttonTelemetryChangedNotifications = 0;

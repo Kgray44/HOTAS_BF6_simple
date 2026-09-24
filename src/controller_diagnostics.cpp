@@ -160,6 +160,12 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
     lines.append(QString{});
     lines.append(QStringLiteral("ADVANCED / TECHNICAL"));
     lines.append(QStringLiteral("Selected HID instance: %1").arg(snapshot.selectedHidInstance));
+    if (!snapshot.verificationDurabilityReadback.trimmed().isEmpty()) {
+        lines.append(QString{});
+        lines.append(QStringLiteral("VERIFICATION DURABILITY READ-BACK"));
+        lines.append(sanitizeControllerDiagnosticText(snapshot.verificationDurabilityReadback,
+                                                       snapshot.privatePaths));
+    }
     return lines.join(u'\n');
 }
 

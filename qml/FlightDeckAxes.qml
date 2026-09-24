@@ -264,8 +264,10 @@ Flickable {
 
     Connections {
         target: backend
-        function onStateChanged() {
+        function onAxisConfigurationChanged() {
             root.configurationRevision += 1;
+        }
+        function onStateChanged() {
             const identification = backend.axisIdentification || {};
             // A capability refresh is asynchronous. Close only after its
             // durable override commit succeeds, not when the button is pressed.
@@ -543,9 +545,9 @@ Flickable {
                     tokens: deck
                     caption: axis.unipolar ? "NORMALIZED INPUT" : "NORMALIZED INPUT"
                     value: Number(card.telemetry.calibrated)
-                    valid: Boolean(axis.liveAvailable)
+                    valid: Boolean(card.telemetry.liveAvailable)
                     unipolar: Boolean(axis.unipolar)
-                    unavailableText: Boolean(axis.sourceConnected) ? "Waiting for input" : "Disconnected"
+                    unavailableText: Boolean(card.telemetry.sourceConnected) ? "Waiting for input" : "Disconnected"
                     Layout.fillWidth: true
                 }
                 FlightDeckAxisValueMeter {
@@ -587,8 +589,8 @@ Flickable {
                 }
                 SummaryChip {
                     visible: Boolean(axis.axisDiscovered)
-                    label: Boolean(axis.liveMovementObserved) ? "LIVE VERIFIED" : "WAITING FOR MOVEMENT"
-                    tone: Boolean(axis.liveMovementObserved) ? "healthy" : "informational"
+                    label: Boolean(card.telemetry.liveMovementObserved) ? "LIVE VERIFIED" : "WAITING FOR MOVEMENT"
+                    tone: Boolean(card.telemetry.liveMovementObserved) ? "healthy" : "informational"
                 }
             }
 
@@ -1161,11 +1163,11 @@ Flickable {
                                         { label: "NATIVE INPUT", value: String(axis.nativeObjectName || axis.hardwareLabel || "Unknown") },
                                         { label: "TYPE", value: String(axis.nativeType || "Unknown") },
                                         { label: "DIRECTINPUT ID", value: String(axis.directInputGuid || "Not recorded") + " · offset " + String(axis.directInputOffset || 0) },
-                                        { label: "ACQUISITION SOURCE", value: String(axis.acquisitionSource || "Not resolved") },
+                                        { label: "ACQUISITION SOURCE", value: String(card.telemetry.acquisitionSource || "Not resolved") },
                                         { label: "RAW RANGE", value: String(axis.nativeRangeMinimum) + "–" + String(axis.nativeRangeMaximum) },
                                         { label: "REQUESTED RANGE", value: String(axis.requestedRangeMinimum) + "–" + String(axis.requestedRangeMaximum) },
-                                        { label: "LIVE STATE", value: Boolean(axis.liveMovementObserved) ? "Receiving input" : "Detected · Waiting for movement" },
-                                        { label: "LAST MOVEMENT", value: Number(axis.lastMovementAgeMs) >= 0 ? String(Math.round(Number(axis.lastMovementAgeMs))) + " ms ago" : "No movement observed" }
+                                        { label: "LIVE STATE", value: Boolean(card.telemetry.liveMovementObserved) ? "Receiving input" : "Detected · Waiting for movement" },
+                                        { label: "LAST MOVEMENT", value: Number(card.telemetry.lastMovementAgeMs) >= 0 ? String(Math.round(Number(card.telemetry.lastMovementAgeMs))) + " ms ago" : "No movement observed" }
                                     ]
                                     delegate: ColumnLayout {
                                         required property var modelData
