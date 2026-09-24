@@ -7701,6 +7701,146 @@ bool verifySignalFlowNativeWirePointerDrag(QObject *page, QQuickWindow *window, 
     return true;
 }
 
+bool verifySignalFlowNativeProcessorChannelDwell(QObject *page, QQuickWindow *window,
+                                                  hotas::AppBackend &backend)
+{
+    if (!page || !window || !window->isVisible()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel fixture needs a visible page and window"));
+    }
+    QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const oldMode = mode; mode = 'configured';"
+        " const input = node('input');"
+        " const processors = (graph.nodes || []).filter(function(candidate) {"
+        "   return candidate && candidate.kind === 'processor' && routeForProcessorNode(candidate).id;"
+        " });"
+        " const processor = processors[0];"
+        " const targetRoute = processor ? routeForProcessorNode(processor) : ({});"
+        " const source = input ? visibleCardPorts(input, false).find(function(port) {"
+        "   const route = routeForSourcePort(port);"
+        "   return port && port.available && route.id && String(route.id) !== String(targetRoute.id);"
+        " }) : null;"
+        " return { oldMode: oldMode, sourceId: String(source && source.id || ''),"
+        "   sourceEndpointId: String(source && (source.endpointId || source.id) || ''),"
+        "   processorId: String(processor && processor.id || ''),"
+        "   processorObjectName: processor ? 'signalFlowNodeCard:' + nodeIdentity(processor) : '',"
+        "   semantic: String(processor && processor.semantic || ''),"
+        "   channelCount: Number(processor && processor.channelCount || 0) };"
+        "})()"));
+    const QVariantMap setup = prepare.evaluate().toMap();
+    const QString originalMode = setup.value(QStringLiteral("oldMode")).toString();
+    const QString sourceId = setup.value(QStringLiteral("sourceId")).toString();
+    const QString sourceEndpointId = setup.value(QStringLiteral("sourceEndpointId")).toString();
+    const QString processorId = setup.value(QStringLiteral("processorId")).toString();
+    const QString processorObjectName = setup.value(QStringLiteral("processorObjectName")).toString();
+    const QString semantic = setup.value(QStringLiteral("semantic")).toString();
+    const int originalChannelCount = setup.value(QStringLiteral("channelCount")).toInt();
+    auto restore = [&] { page->setProperty("mode", originalMode); };
+    if (prepare.hasError() || sourceId.isEmpty() || sourceEndpointId.isEmpty()
+        || processorId.isEmpty() || processorObjectName.isEmpty() || semantic.isEmpty()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel fixture could not choose two distinct canonical axis routes"));
+    }
+    auto *scene = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowGraphScene"));
+    auto *viewport = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowGraphViewport"));
+    auto *sourcePort = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page),
+        QStringLiteral("signalFlowPortHitTarget:") + sourceEndpointId);
+    auto *processorCard = findVisualItemByObjectName(qobject_cast<QQuickItem *>(page), processorObjectName);
+    if (!scene || !viewport || !sourcePort || !processorCard || sourcePort->width() < 12.0
+        || sourcePort->height() < 12.0 || processorCard->width() < 40.0 || processorCard->height() < 40.0) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel fixture did not expose its source or processor card"));
+    }
+    const QVariant originalZoom = page->property("zoom");
+    const QVariant originalContentX = viewport->property("contentX");
+    const QVariant originalContentY = viewport->property("contentY");
+    const auto restoreViewport = [&] {
+        page->setProperty("zoom", originalZoom);
+        viewport->setProperty("contentX", originalContentX);
+        viewport->setProperty("contentY", originalContentY);
+    };
+    page->setProperty("zoom", 1.0);
+    const QPointF sourceLogical = sourcePort->mapToItem(scene, QPointF(sourcePort->width() * 0.5,
+        sourcePort->height() * 0.5));
+    viewport->setProperty("contentX", std::max<qreal>(0.0, sourceLogical.x() - viewport->width() * 0.30));
+    viewport->setProperty("contentY", std::max<qreal>(0.0, sourceLogical.y() - viewport->height() * 0.50));
+    settlePresentation();
+    const QPoint sourcePoint = sourcePort->mapToScene(QPointF(sourcePort->width() * 0.5,
+        sourcePort->height() * 0.5)).toPoint();
+    const bool sourceInsideWindow = sourcePoint.x() >= 0 && sourcePoint.y() >= 0
+        && sourcePoint.x() < window->width() && sourcePoint.y() < window->height();
+    if (!sourceInsideWindow) {
+        restoreViewport();
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel source was outside the visible window"));
+    }
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, sourcePoint);
+    QTest::mouseMove(window, sourcePoint + QPoint{18, 12}, 8);
+    QElapsedTimer activationWait;
+    activationWait.start();
+    while (activationWait.elapsed() < 50
+           && !page->property("dragWire").toMap().value(QStringLiteral("active")).toBool()) {
+        QTest::qWait(1);
+    }
+    const QPointF processorLogical = processorCard->mapToItem(scene, QPointF(processorCard->width() * 0.5,
+        processorCard->height() * 0.5));
+    viewport->setProperty("contentX", std::max<qreal>(0.0, processorLogical.x() - viewport->width() * 0.50));
+    viewport->setProperty("contentY", std::max<qreal>(0.0, processorLogical.y() - viewport->height() * 0.50));
+    settlePresentation();
+    const qreal heightBeforeDwell = processorCard->height();
+    const QPoint processorPoint = processorCard->mapToScene(QPointF(processorCard->width() * 0.5,
+        processorCard->height() * 0.5)).toPoint();
+    const bool processorInsideWindow = processorPoint.x() >= 0 && processorPoint.y() >= 0
+        && processorPoint.x() < window->width() && processorPoint.y() < window->height();
+    if (!processorInsideWindow) {
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, sourcePoint);
+        restoreViewport();
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel target was outside the visible window"));
+    }
+    QTest::mouseMove(window, processorPoint, 8);
+    QTest::qWait(90);
+    const bool previewExpanded = page->property("pendingProcessorChannelNodeId").toString() == processorId
+        && processorCard->height() >= heightBeforeDwell + 20.0;
+    const int dwellMs = page->property("processorChannelDwellMs").toInt();
+    QTest::qWait(std::max(1, dwellMs) + 180);
+    settlePresentation();
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, processorPoint);
+    settlePresentation();
+    QQmlExpression committed(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const channels = (graph.nodes || []).filter(function(nodeData) {"
+        "   return nodeData && nodeData.kind === 'processor' && String(nodeData.semantic || '') === '%1';"
+        " }).map(function(nodeData) { return Number(nodeData.channelCount || 0); });"
+        " return channels.length > 0 ? Math.max.apply(Math, channels) : 0;"
+        "})()").arg(semantic));
+    const int committedChannelCount = committed.evaluate().toInt();
+    const QVariantMap undo = backend.signalFlowUndo(
+        backend.signalFlowGraph().value(QStringLiteral("revision")).toULongLong());
+    settlePresentation();
+    restoreViewport();
+    restore();
+    if (!previewExpanded || committed.hasError() || committedChannelCount < std::max(2, originalChannelCount + 1)
+        || !undo.value(QStringLiteral("success")).toBool()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native processor-channel dwell failed (preview=%1 before=%2 after=%3 undo=%4 qml=%5)")
+            .arg(previewExpanded).arg(originalChannelCount).arg(committedChannelCount)
+            .arg(undo.value(QStringLiteral("success")).toBool())
+            .arg(committed.hasError() ? committed.error().toString() : QStringLiteral("none")));
+    }
+    qInfo().noquote() << QStringLiteral(
+        "signal_flow_native_processor_channel_dwell preview_pair=1 canonical_pair=1 undo=1 dwell_ms=%1")
+        .arg(dwellMs);
+    return true;
+}
+
 bool verifySignalFlowNativeContextMenus(QObject *page, QQuickWindow *window)
 {
     if (!page || !window || !window->isVisible()) {
@@ -7862,7 +8002,8 @@ bool verifySignalFlowNativeContextMenus(QObject *page, QQuickWindow *window)
     return true;
 }
 
-bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window)
+bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window,
+                                             hotas::AppBackend &backend)
 {
     if (!page || !window || !window->isVisible()) {
         return failPresentationLifecycleTest(QStringLiteral(
@@ -7994,6 +8135,17 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
     QMetaObject::invokeMethod(libraryPanel, "close", Qt::DirectConnection);
     settlePresentation();
     const bool settingsOpened = click(settingsControl) && settingsPanel->property("visible").toBool();
+    auto *buildDetails = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("signalFlowBuildProvenance"));
+    const QVariantMap compiledProvenance = backend.signalFlowBuildProvenance();
+    const QVariantMap renderedProvenance = page->property("signalFlowBuildProvenance").toMap();
+    const bool provenanceVisibleAndCurrent = buildDetails && buildDetails->isVisible()
+        && renderedProvenance.value(QStringLiteral("buildId"))
+            == compiledProvenance.value(QStringLiteral("buildId"))
+        && renderedProvenance.value(QStringLiteral("sourceBranch"))
+            == compiledProvenance.value(QStringLiteral("sourceBranch"))
+        && renderedProvenance.value(QStringLiteral("buildType"))
+            == compiledProvenance.value(QStringLiteral("buildType"));
     QMetaObject::invokeMethod(settingsPanel, "close", Qt::DirectConnection);
     settlePresentation();
     const bool portsOpened = click(portsControl) && portsMenu->property("visible").toBool();
@@ -8013,16 +8165,123 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
     settlePresentation();
     if (!inspectorOpened || !libraryOpened || !canonicalCatalogVisible || canonicalLibrary.hasError()
         || !libraryOnRight || !keyboardPlacementArmed
-        || !settingsOpened || !portsOpened || !zoomed || !rigOpened || !profileOpened) {
+        || !settingsOpened || !provenanceVisibleAndCurrent || !portsOpened || !zoomed || !rigOpened || !profileOpened) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native workspace controls failed (inspector=%1 library=%2 catalog=%3 catalogError=%4 right=%5 keyboard=%6 responseArmed=%7 ghost=%8 target=%9 cancelled=%10 settings=%11 ports=%12 zoom=%13 rig=%14 profile=%15)")
+            "Signal Flow native workspace controls failed (inspector=%1 library=%2 catalog=%3 catalogError=%4 right=%5 keyboard=%6 responseArmed=%7 ghost=%8 target=%9 cancelled=%10 settings=%11 provenance=%12 ports=%13 zoom=%14 rig=%15 profile=%16)")
             .arg(inspectorOpened).arg(libraryOpened).arg(canonicalCatalogVisible)
             .arg(canonicalLibrary.hasError()).arg(libraryOnRight).arg(keyboardPlacementArmed)
             .arg(responsePlacementArmed).arg(responseGhostVisible).arg(compatibleRoutePreview)
             .arg(processorPlacementCancelled)
-            .arg(settingsOpened).arg(portsOpened).arg(zoomed).arg(rigOpened).arg(profileOpened));
+            .arg(settingsOpened).arg(provenanceVisibleAndCurrent).arg(portsOpened).arg(zoomed)
+            .arg(rigOpened).arg(profileOpened));
     }
-    qInfo().noquote() << "signal_flow_native_workspace_controls inspector=1 library=1 catalog=1 search_respo=1 search_invert=1 keyboard=1 processor_ghost=1 processor_target=1 settings=1 ports=1 zoom=1 rig=1 profile=1";
+    qInfo().noquote() << "signal_flow_native_workspace_controls inspector=1 library=1 catalog=1 search_respo=1 search_invert=1 keyboard=1 processor_ghost=1 processor_target=1 settings=1 provenance=1 ports=1 zoom=1 rig=1 profile=1";
+    return true;
+}
+
+bool verifySignalFlowNativeLibraryProcessorDrop(QObject *page, QQuickWindow *window,
+                                                hotas::AppBackend &backend)
+{
+    if (!page || !window || !window->isVisible()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native Library drop fixture needs a visible native page and window"));
+    }
+    auto *pageItem = qobject_cast<QQuickItem *>(page);
+    auto *libraryControl = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowBlockLibraryControl")) : nullptr;
+    auto *wireLayer = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowWireInteractionLayer")) : nullptr;
+    QObject *libraryPanel = page->findChild<QObject *>(QStringLiteral("signalFlowBlockLibraryPanel"));
+    if (!libraryControl || !wireLayer || !libraryPanel) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native Library drop fixture could not find its rendered controls"));
+    }
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        libraryControl->mapToScene(QPointF(libraryControl->width() * 0.5,
+            libraryControl->height() * 0.5)).toPoint());
+    settlePresentation();
+    QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " refreshBlockLibrary(); blockLibraryQuery = ''; rebuildWireGeometry();"
+        " const entries = libraryEntries(); const geometry = wireGeometry || [];"
+        " for (let entryIndex = 0; entryIndex < entries.length; ++entryIndex) {"
+        "   const entry = entries[entryIndex]; if (entry.type !== 'processor') continue;"
+        "   for (let routeIndex = 0; routeIndex < geometry.length; ++routeIndex) {"
+        "     const segments = geometry[routeIndex].segments || [];"
+        "     for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
+        "       const points = segments[segmentIndex].points || []; if (points.length < 2) continue;"
+        "       const point = points[Math.floor(points.length / 2)];"
+        "       const target = libraryProcessorTargetAt(entry, Number(point.x), Number(point.y));"
+        "       if (target && target.segmentId) {"
+        "         blockLibraryQuery = String(entry.label || entry.id || '');"
+        "         return { id: String(entry.id), semantic: String(entry.id), label: String(entry.label),"
+        "           routeId: String(target.route.id), x: Number(point.x), y: Number(point.y) };"
+        "       }"
+        "     }"
+        "   }"
+        " } return ({});"
+        "})()"));
+    const QVariantMap prepared = prepare.evaluate().toMap();
+    if (prepare.hasError() || prepared.value(QStringLiteral("id")).toString().isEmpty()) {
+        QMetaObject::invokeMethod(libraryPanel, "close", Qt::DirectConnection);
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native Library drop fixture could not find a compatible canonical wire"));
+    }
+    settlePresentation();
+    const QString cardName = QStringLiteral("signalFlowLibraryCard:processor:")
+        + prepared.value(QStringLiteral("id")).toString();
+    auto *libraryCard = findVisualItemByObjectName(window->contentItem(), cardName);
+    if (!libraryCard || !libraryCard->isVisible()) {
+        QMetaObject::invokeMethod(libraryPanel, "close", Qt::DirectConnection);
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native Library drop fixture could not render the selected catalog card"));
+    }
+    const QPoint sourcePoint = libraryCard->mapToScene(QPointF(libraryCard->width() * 0.5,
+        libraryCard->height() * 0.5)).toPoint();
+    const QPoint targetPoint = wireLayer->mapToScene(QPointF(
+        prepared.value(QStringLiteral("x")).toReal(), prepared.value(QStringLiteral("y")).toReal())).toPoint();
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, sourcePoint);
+    QTest::mouseMove(window, (sourcePoint + targetPoint) / 2, 30);
+    QTest::mouseMove(window, targetPoint, 30);
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, targetPoint);
+    QTest::qWait(160);
+    settlePresentation();
+    const QString routeId = prepared.value(QStringLiteral("routeId")).toString();
+    const QString processorId = prepared.value(QStringLiteral("id")).toString();
+    QQmlExpression verify(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const catalog = blockLibraryCatalog.some(function(entry) { return String(entry.key || entry.id || '') === '%1'; });"
+        " const savedQuery = blockLibraryQuery; blockLibraryQuery = '';"
+        " const tile = libraryEntries().some(function(entry) { return entry.type === 'processor' && String(entry.id) === '%1'; });"
+        " blockLibraryQuery = savedQuery;"
+        " const route = (graph.routes || []).filter(function(entry) { return String(entry.id) === '%2'; })[0] || ({});"
+        " const inserted = (route.processorDetails || []).some(function(detail) { return String(detail.semantic || '') === '%1'; });"
+        " return { catalog: catalog, tile: tile, inserted: inserted, armed: Boolean(armedLibraryEntry && armedLibraryEntry.type),"
+        "   active: libraryDragActive, retained: Boolean(libraryDragEntry && libraryDragEntry.type) };"
+        "})()").arg(processorId, routeId));
+    const QVariantMap result = verify.evaluate().toMap();
+    const bool inserted = !verify.hasError() && result.value(QStringLiteral("inserted")).toBool();
+    const QVariantMap undo = inserted
+        ? backend.signalFlowUndo(backend.signalFlowRevision()) : QVariantMap{};
+    settlePresentation();
+    QMetaObject::invokeMethod(libraryPanel, "close", Qt::DirectConnection);
+    const bool pass = !verify.hasError() && result.value(QStringLiteral("catalog")).toBool()
+        && result.value(QStringLiteral("tile")).toBool() && inserted
+        && !result.value(QStringLiteral("armed")).toBool() && !result.value(QStringLiteral("active")).toBool()
+        && !result.value(QStringLiteral("retained")).toBool()
+        && undo.value(QStringLiteral("success")).toBool();
+    if (!pass) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native Library processor drop failed (catalog=%1 tile=%2 inserted=%3 armed=%4 active=%5 retained=%6 undo=%7 error=%8)")
+                .arg(result.value(QStringLiteral("catalog")).toBool())
+                .arg(result.value(QStringLiteral("tile")).toBool()).arg(inserted)
+                .arg(result.value(QStringLiteral("armed")).toBool())
+                .arg(result.value(QStringLiteral("active")).toBool())
+                .arg(result.value(QStringLiteral("retained")).toBool())
+                .arg(undo.value(QStringLiteral("success")).toBool())
+                .arg(verify.hasError() ? verify.error().toString() : QStringLiteral("none")));
+    }
+    qInfo().noquote() << "signal_flow_native_library_processor_drop catalog=1 persistent_tile=1 canonical_insert=1 ghost_cleared=1 undo=1";
     return true;
 }
 
@@ -9949,12 +10208,20 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
             qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
         return false;
     }
+    if (!verifySignalFlowNativeProcessorChannelDwell(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
+        return false;
+    }
     if (!verifySignalFlowNativeContextMenus(flightDeckPage,
             qobject_cast<QQuickWindow *>(flightDeckWindow))) {
         return false;
     }
     if (!verifySignalFlowNativeWorkspaceControls(flightDeckPage,
-            qobject_cast<QQuickWindow *>(flightDeckWindow))) {
+            qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
+        return false;
+    }
+    if (!verifySignalFlowNativeLibraryProcessorDrop(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow), backend)) {
         return false;
     }
     if (!verifySignalFlowNativeTemporaryHoverExpansion(flightDeckPage,

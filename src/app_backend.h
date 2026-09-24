@@ -424,6 +424,13 @@ public:
     QVariantList quickAssignAxisTargets() const;
     QVariantList quickMapButtonTargets() const;
     QVariantMap signalFlowGraph() const;
+    // Compile-time candidate provenance for the graphical editor's Technical
+    // Details area. This contains no runtime mapping state.
+    Q_INVOKABLE QVariantMap signalFlowBuildProvenance() const;
+    // Chooses the profile displayed and edited by Signal Flow without
+    // activating it in the running mapper.  Runtime profile activation stays
+    // exclusively on the Profiles/activation path.
+    Q_INVOKABLE bool setSignalFlowEditingProfileContext(const QString &profileId);
     qulonglong signalFlowRevision() const { return m_configurationGeneration; }
     bool signalFlowCanUndo() const;
     bool signalFlowCanRedo() const;
@@ -1027,6 +1034,12 @@ private:
                                           const QString &sourceControllerRecordId = {});
     bool commitSignalFlowCommand(MapperConfiguration before, const QString &description);
     QString signalFlowWorkspaceKey() const;
+    const ControllerProfile &signalFlowEditingProfile() const;
+    ControllerProfile &signalFlowEditingProfile();
+    const DeviceProfileMapping *signalFlowEditingDeviceMapping() const;
+    DeviceProfileMapping *signalFlowEditingDeviceMappingForWrite();
+    const VirtualOutputLayout *signalFlowEditingOutputLayout() const;
+    VirtualOutputLayout *signalFlowEditingOutputLayout();
     bool saveSignalFlowWorkspace(const QVariantMap &workspace, bool notifySignalFlow);
     // Layout/workspace persistence is not necessarily a topology change. A
     // card drop must be able to durably save its presentation metadata without
@@ -1152,6 +1165,10 @@ private:
     std::vector<SignalFlowCommand> m_signalFlowRedo;
     QString m_signalFlowActionFeedback;
     QString m_signalFlowFocusObjectId;
+    // Presentation/editor context only.  It is intentionally not persisted or
+    // published to MappingWorker, so looking at another profile cannot change
+    // the active runtime mapping.
+    QString m_signalFlowEditingProfileId;
     bool m_signalFlowCommandInFlight = false;
     MappingWorker m_worker;
     // Canonical GUI-side desired Mapping state. It is updated synchronously

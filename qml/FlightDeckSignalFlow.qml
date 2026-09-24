@@ -14,6 +14,11 @@ Item {
 
     FlightDeckTheme { id: deck }
     property var backendObject: backend
+    // Application release metadata and graphical-editor provenance are kept
+    // deliberately separate. The editor is unversioned; this compact map is
+    // available only in Graph Settings' Technical Details for owner review.
+    readonly property var signalFlowBuildProvenance: backendObject && backendObject.signalFlowBuildProvenance
+        ? backendObject.signalFlowBuildProvenance() : ({})
     // A transient return snapshot is owned by the Flight Deck shell while a
     // focused editor is open. It preserves visual context only; routing and
     // processor settings stay in the canonical backend.
@@ -59,6 +64,10 @@ Item {
     // context actually changes.
     property var blockLibraryEntries: []
     property int blockLibrarySelectionIndex: 0
+    // Compatibility is computed once when a processor is armed and reused by
+    // the per-pointer wire hit test. The canvas never synchronously crosses
+    // into C++ for every pointer sample.
+    property var libraryProcessorCompatibility: ({})
     // An armed library entry is presentation state.  It can carry an existing
     // canonical endpoint, a route-qualified processor, or an annotation
     // template; it never manufactures graph-local configuration.
@@ -69,6 +78,9 @@ Item {
     // keyboard-armed block may remain as a click-to-place ghost.
     property bool libraryDragActive: false
     property bool libraryDragDropHandled: false
+    // Retain the source entry through Qt Quick's DragHandler/DropArea release
+    // ordering. A palette card is never consumed by a drag.
+    property var libraryDragEntry: ({})
     property real blockLibraryPositionX: -1
     property real blockLibraryPositionY: -1
     property real graphSettingsPositionX: -1
@@ -1441,14 +1453,14 @@ Item {
     function selectProfileContext(profile) {
         if (!profile || !profile.id) return false
         if (routingActive) cancelRouting("Connection cancelled because the editing profile changed.", true)
-        if (!backendObject.activateProfile(String(profile.id))) {
-            notice = "The selected profile could not become the active editing context."
+        if (!backendObject.setSignalFlowEditingProfileContext(String(profile.id))) {
+            notice = "The selected profile could not become the Signal Flow editing context."
             noticeError = true
             return false
         }
         graph = backendObject.signalFlowGraph
         source = ({}); inspectedRoute = ({}); inspectedNode = ({})
-        notice = "Editing profile changed to " + (profile.displayName || profile.name || "the selected profile") + "."
+        notice = "Signal Flow now edits " + (profile.displayName || profile.name || "the selected profile") + ". Runtime mapping was not changed."
         noticeError = false
         return true
     }
@@ -3562,6 +3574,7 @@ Item {
         if (!entry || !entry.type) return false
         armedLibraryEntry = entry
         if (entry.type === "processor") {
+            cacheLibraryProcessorCompatibility(entry)
             pendingProcessorRouteId = ""
             pendingProcessorSegmentId = ""
             notice = "Place " + entry.label + " on a highlighted compatible signal route. Esc cancels."
@@ -3576,6 +3589,7 @@ Item {
     function cancelLibraryPlacement(preserveNotice) {
         if (!armedLibraryEntry || !armedLibraryEntry.type) return false
         armedLibraryEntry = ({})
+        libraryProcessorCompatibility = ({})
         pendingProcessorRouteId = ""
         pendingProcessorSegmentId = ""
         if (!preserveNotice) {
@@ -3584,15 +3598,53 @@ Item {
         }
         return true
     }
-    function finishLibraryDragDrop(x, y) {
+    function cacheLibraryProcessorCompatibility(entry) {
+        if (!entry || entry.type !== "processor") return false
+        const kind = String(entry.id || entry.processorType || "")
+        const revision = Number(graph.revision || 0)
+        const cached = libraryProcessorCompatibility || ({})
+        if (String(cached.kind || "") === kind && Number(cached.revision || -1) === revision)
+            return true
+        const compatibleSegments = ({})
+        const routes = graph.routes || []
+        for (let routeIndex = 0; routeIndex < routes.length; ++routeIndex) {
+            const segments = routes[routeIndex].segments || []
+            for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                const segmentId = String(segments[segmentIndex].id || "")
+                if (!segmentId.length) continue
+                const available = backendObject.signalFlowAvailableProcessorsForSegment(segmentId, revision) || []
+                compatibleSegments[segmentId] = available.some(function(processor) {
+                    return String(processor.key || processor.id || "") === kind
+                })
+            }
+        }
+        libraryProcessorCompatibility = ({ "kind": kind, "revision": revision,
+            "segments": compatibleSegments })
+        return true
+    }
+    function libraryProcessorSegmentIsCompatible(entry, segmentId) {
+        const kind = String(entry && (entry.id || entry.processorType) || "")
+        const cached = libraryProcessorCompatibility || ({})
+        if (String(cached.kind || "") !== kind || Number(cached.revision || -1) !== Number(graph.revision || 0))
+            cacheLibraryProcessorCompatibility(entry)
+        return Boolean((libraryProcessorCompatibility.segments || ({}))[String(segmentId || "")])
+    }
+    function finishLibraryDragDrop(entry, x, y) {
         // QML may deliver DropArea.onDropped before or after the source
-        // DragHandler deactivates. Make the drop one-shot across either order
-        // and never leave a released library card as a stale graph ghost.
-        if (!libraryDragActive || libraryDragDropHandled) return false
+        // DragHandler deactivates. Resolve the source before consulting the
+        // transient active flag: a valid native drop must not be discarded
+        // merely because Qt delivered the handler transition first.
+        if (libraryDragDropHandled) return false
+        const draggedEntry = entry && entry.type ? entry
+            : libraryDragEntry && libraryDragEntry.type ? libraryDragEntry : armedLibraryEntry
+        if (!draggedEntry || !draggedEntry.type) return false
+        libraryDragCompletionTimer.stop()
         libraryDragDropHandled = true
+        armLibraryEntry(draggedEntry)
         const placed = placeArmedLibraryEntry(x, y)
         if (!placed) cancelLibraryPlacement(true)
         libraryDragActive = false
+        libraryDragEntry = ({})
         return placed
     }
     function updateLibraryPlacementPoint(x, y) {
@@ -3624,12 +3676,7 @@ Item {
             const segmentId = String(candidate && candidate.routeSegmentId || "")
             if (!segmentId || seen[segmentId]) continue
             seen[segmentId] = true
-            const available = backendObject.signalFlowAvailableProcessorsForSegment(segmentId,
-                Number(graph.revision || 0)) || []
-            const compatible = available.some(function(processor) {
-                return String(processor.key || processor.id || "") === processorKind
-            })
-            if (!compatible) continue
+            if (!libraryProcessorSegmentIsCompatible(entry, segmentId)) continue
             const points = candidate.points || []
             let distance = Number.POSITIVE_INFINITY
             for (let point = 1; point < points.length; ++point)
@@ -3909,6 +3956,10 @@ Item {
     onGraphChanged: {
         const nextRoutes = graph.routes || []
         const topologyChanged = routeTopologySignature(nextRoutes) !== renderedRouteTopologySignature()
+        if (armedLibraryEntry && armedLibraryEntry.type === "processor")
+            cacheLibraryProcessorCompatibility(armedLibraryEntry)
+        else if (Number((libraryProcessorCompatibility || {}).revision || -1) !== Number(graph.revision || 0))
+            libraryProcessorCompatibility = ({})
         // Node placement persistence is a presentation acknowledgement, not a
         // new graph projection. Its final coordinate and incident geometry
         // already exist locally, so retain those caches through the backend
@@ -4490,15 +4541,19 @@ Item {
 
     Timer {
         id: libraryDragCompletionTimer
-        interval: 0
+        // DropArea delivery is allowed to trail DragHandler deactivation by a
+        // presentation turn. Keep the source entry briefly, then clear an
+        // actual miss; never leave a release as an armed ghost.
+        interval: 80
         repeat: false
         onTriggered: {
-            // Wait one event turn for a same-release DropArea delivery. If
-            // it never arrives, this was a miss, not an ongoing placement.
+            // If no canvas drop arrived, this was a miss rather than an
+            // ongoing placement. The Library's retained catalog stays intact.
             if (root.libraryDragActive && !root.libraryDragDropHandled)
                 root.cancelLibraryPlacement()
             root.libraryDragActive = false
             root.libraryDragDropHandled = false
+            root.libraryDragEntry = ({})
         }
     }
 
@@ -5963,7 +6018,7 @@ Item {
                                 if (!drop.source || !drop.source.libraryEntry) return
                                 if (!root.armedLibraryEntry || !root.armedLibraryEntry.type)
                                     root.armLibraryEntry(drop.source.libraryEntry)
-                                root.finishLibraryDragDrop(drop.x, drop.y)
+                                root.finishLibraryDragDrop(drop.source.libraryEntry, drop.x, drop.y)
                                 drop.accepted = true
                             }
                         }
@@ -5985,7 +6040,7 @@ Item {
                                 if (!drop.source || !drop.source.libraryEntry) return
                                 if (!root.armedLibraryEntry || !root.armedLibraryEntry.type)
                                     root.armLibraryEntry(drop.source.libraryEntry)
-                                root.finishLibraryDragDrop(drop.x, drop.y)
+                                root.finishLibraryDragDrop(drop.source.libraryEntry, drop.x, drop.y)
                                 drop.accepted = true
                             }
                         }
@@ -6806,7 +6861,7 @@ Item {
                 contentWidth: availableWidth
                 Column {
                     id: libraryContent
-                    width: blockLibraryList.availableWidth
+                    width: Number(blockLibraryList.availableWidth || 0)
                     spacing: deck.space10
                     Text { visible: root.libraryEntries().length === 0; width: parent.width; text: "No canonical blocks match this library search."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 10; wrapMode: Text.WordWrap }
                     Text { visible: root.blockLibraryCatalog.length === 0 && root.blockLibraryQuery.length === 0; width: parent.width; text: "No canonical insertable processor types are available in this build."; color: deck.textMuted; font.family: deck.bodyFont; font.pixelSize: 9; wrapMode: Text.WordWrap }
@@ -6815,7 +6870,11 @@ Item {
                         delegate: Column {
                             required property var modelData
                             required property int index
-                            width: libraryContent.width; spacing: deck.space5
+                            // ScrollView establishes its available width one polish later
+                            // than this Repeater on the first open. Keep a numeric zero
+                            // placeholder for that turn rather than assigning undefined
+                            // to a live native delegate width.
+                            width: Number(blockLibraryList.availableWidth || 0); spacing: deck.space5
                             readonly property var entries: root.libraryEntries()
                             readonly property bool categoryStart: index === 0 || entries[index - 1].category !== modelData.category
                             Text {
@@ -6830,6 +6889,7 @@ Item {
                             }
                             Rectangle {
                                 id: libraryBlockCard
+                                objectName: "signalFlowLibraryCard:" + String(modelData.type || "") + ":" + String(modelData.id || "")
                                 width: parent.width
                                 height: modelData.type === "node" ? 68 : modelData.type === "processor" ? 76 : 56
                                 radius: deck.radiusCard
@@ -6909,6 +6969,7 @@ Item {
                                         if (active) {
                                             root.libraryDragActive = true
                                             root.libraryDragDropHandled = false
+                                            root.libraryDragEntry = modelData
                                             root.armLibraryEntry(modelData)
                                         } else if (root.libraryDragActive) {
                                             // Let DropArea.onDropped for this
@@ -7017,6 +7078,40 @@ Item {
             }
             DeckToggle { Layout.fillWidth: true; label: "Lock Layout"; checked: Boolean(root.graph.workspace && root.graph.workspace.layoutLocked); onToggled: root.toggleLayoutLocked() }
             DeckToggle { Layout.fillWidth: true; label: "Reduced Motion"; checked: root.reducedMotion; onToggled: root.reducedMotion = checked }
+            Rectangle {
+                objectName: "signalFlowBuildProvenance"
+                Layout.fillWidth: true
+                implicitHeight: buildProvenanceDetails.implicitHeight + deck.space12
+                radius: deck.radiusControl
+                color: deck.secondarySurface
+                border.width: 1
+                border.color: deck.border
+                Accessible.name: "Signal Flow Graphical Editor build provenance"
+                ColumnLayout {
+                    id: buildProvenanceDetails
+                    anchors.fill: parent
+                    anchors.margins: deck.space6
+                    spacing: 2
+                    Text { text: "TECHNICAL DETAILS"; color: deck.graphLabel; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Signal Flow Graphical Editor"
+                        color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "HOTAS BF6 build · " + String(root.signalFlowBuildProvenance.applicationVersion || "unknown")
+                            + " · " + String(root.signalFlowBuildProvenance.buildId || "unknown")
+                        color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: String(root.signalFlowBuildProvenance.sourceBranch || "unknown")
+                            + " · " + String(root.signalFlowBuildProvenance.buildType || "unknown")
+                        color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 8; elide: Text.ElideRight
+                    }
+                }
+            }
         }
     }
 

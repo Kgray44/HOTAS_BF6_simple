@@ -6242,11 +6242,95 @@ QVariantList AppBackend::quickMapButtonTargets() const
 
 QString AppBackend::signalFlowWorkspaceKey() const
 {
-    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const DeviceProfileMapping *mapping = signalFlowEditingDeviceMapping();
     const QString source = mapping ? mapping->controllerRecordId : u"legacy-source"_qs;
-    return QString(u"signal-flow:%1:%2:%3"_qs).arg(currentProfile().id,
+    return QString(u"signal-flow:%1:%2:%3"_qs).arg(signalFlowEditingProfile().id,
         m_configuration.editingDeviceRigId.isEmpty() ? u"no-rig"_qs : m_configuration.editingDeviceRigId,
         source.isEmpty() ? u"legacy-source"_qs : source);
+}
+
+bool AppBackend::setSignalFlowEditingProfileContext(const QString &profileId)
+{
+    const ControllerProfile *profile = findProfile(m_configuration, profileId.trimmed());
+    if (!profile || !profile->enabled) return false;
+    if (m_signalFlowEditingProfileId == profile->id) return true;
+    m_signalFlowEditingProfileId = profile->id;
+    m_signalFlowActionFeedback = QString(u"Signal Flow editing context: %1. Runtime mapping was not changed."_qs)
+        .arg(profile->name);
+    emit signalFlowChanged();
+    return true;
+}
+
+const ControllerProfile &AppBackend::signalFlowEditingProfile() const
+{
+    if (!m_signalFlowEditingProfileId.isEmpty()) {
+        if (const ControllerProfile *profile = findProfile(m_configuration, m_signalFlowEditingProfileId)) {
+            return *profile;
+        }
+    }
+    return currentProfile();
+}
+
+ControllerProfile &AppBackend::signalFlowEditingProfile()
+{
+    if (!m_signalFlowEditingProfileId.isEmpty()) {
+        if (ControllerProfile *profile = findProfile(m_configuration, m_signalFlowEditingProfileId)) {
+            return *profile;
+        }
+    }
+    return currentProfile();
+}
+
+const DeviceProfileMapping *AppBackend::signalFlowEditingDeviceMapping() const
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    const ControllerProfile &profile = signalFlowEditingProfile();
+    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
+    QString controllerId;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        controllerId = m_configuration.editingDeviceRecordIds.front();
+    } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &candidate) { return candidate.enabled; });
+        if (member == rig->members.cend()
+            || std::count_if(rig->members.cbegin(), rig->members.cend(),
+                [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
+        controllerId = member->controllerRecordId;
+    } else {
+        return nullptr;
+    }
+    return findDeviceProfileMapping(profile, controllerId);
+}
+
+DeviceProfileMapping *AppBackend::signalFlowEditingDeviceMappingForWrite()
+{
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
+    ControllerProfile &profile = signalFlowEditingProfile();
+    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
+    QString controllerId;
+    if (m_configuration.editingDeviceRecordIds.size() == 1) {
+        controllerId = m_configuration.editingDeviceRecordIds.front();
+    } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
+            [](const DeviceRigMember &candidate) { return candidate.enabled; });
+        if (member == rig->members.cend()
+            || std::count_if(rig->members.cbegin(), rig->members.cend(),
+                [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
+        controllerId = member->controllerRecordId;
+    } else {
+        return nullptr;
+    }
+    return &ensureDeviceProfileMapping(profile, controllerId);
+}
+
+const VirtualOutputLayout *AppBackend::signalFlowEditingOutputLayout() const
+{
+    return findOutputLayout(m_configuration, signalFlowEditingProfile().outputLayoutId);
+}
+
+VirtualOutputLayout *AppBackend::signalFlowEditingOutputLayout()
+{
+    return findOutputLayout(m_configuration, signalFlowEditingProfile().outputLayoutId);
 }
 
 bool AppBackend::signalFlowCanUndo() const
@@ -6263,8 +6347,8 @@ bool AppBackend::signalFlowCanRedo() const
 
 QVariantMap AppBackend::signalFlowGraph() const
 {
-    const ControllerProfile &profile = currentProfile();
-    const DeviceProfileMapping *editingMapping = editingDeviceMapping();
+    const ControllerProfile &profile = signalFlowEditingProfile();
+    const DeviceProfileMapping *editingMapping = signalFlowEditingDeviceMapping();
     const QString graphDeviceRigId = !m_configuration.editingDeviceRigId.trimmed().isEmpty()
         ? m_configuration.editingDeviceRigId : profile.deviceRigId;
     const DeviceRig *graphDeviceRig = findDeviceRig(m_configuration, graphDeviceRigId);
@@ -6296,7 +6380,7 @@ QVariantMap AppBackend::signalFlowGraph() const
     const PovBindings &povs = mapping ? mapping->povs : profile.povs;
     const NativePovBindings &nativePovs = mapping ? mapping->nativePovBindings
                                                    : m_configuration.nativePovBindings;
-    const VirtualOutputLayout *layout = activeOutputLayout();
+    const VirtualOutputLayout *layout = signalFlowEditingOutputLayout();
     const QString workspaceKey = signalFlowWorkspaceKey();
     const QString inputNodeId = mapping
         ? QString(u"input:%1:%2"_qs).arg(profile.id, controllerId)
@@ -7285,9 +7369,17 @@ QVariantMap AppBackend::signalFlowGraph() const
             {u"editable"_qs, layout != nullptr}};
 }
 
+QVariantMap AppBackend::signalFlowBuildProvenance() const
+{
+    return {{u"applicationVersion"_qs, QString::fromLatin1(HOTAS_BF6_VERSION)},
+            {u"buildId"_qs, QString::fromLatin1(HOTAS_BF6_BUILD_ID)},
+            {u"sourceBranch"_qs, QString::fromLatin1(HOTAS_BF6_SOURCE_BRANCH)},
+            {u"buildType"_qs, QString::fromLatin1(HOTAS_BF6_BUILD_TYPE)}};
+}
+
 QVariantMap AppBackend::signalFlowExplainRoute(const QString &routeId) const
 {
-    const ControllerProfile &profile = currentProfile();
+    const ControllerProfile &profile = signalFlowEditingProfile();
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || route->profileId != profile.id) {
         return signalFlowActionResult(false, u"Route is no longer available"_qs,
@@ -7296,7 +7388,7 @@ QVariantMap AppBackend::signalFlowExplainRoute(const QString &routeId) const
     }
     const QString controllerId = route->controllerRecordId;
     const DeviceProfileMapping *mapping = controllerId.isEmpty()
-        ? editingDeviceMapping() : findDeviceProfileMapping(profile, controllerId);
+        ? signalFlowEditingDeviceMapping() : findDeviceProfileMapping(profile, controllerId);
 
     const AxisMappings &axes = mapping ? mapping->axes : profile.axes;
     const ButtonBindings &buttons = mapping ? mapping->buttons : profile.buttons;
@@ -7434,8 +7526,8 @@ QVariantMap AppBackend::signalFlowLiveTelemetry() const
     // A deliberately bounded UI-side sample. MappingWorker only writes the
     // fixed atomics below; it never traverses graph state, allocates QVariant
     // containers, signals QML, or logs a Signal Flow update per report.
-    const ControllerProfile &profile = currentProfile();
-    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const ControllerProfile &profile = signalFlowEditingProfile();
+    const DeviceProfileMapping *mapping = signalFlowEditingDeviceMapping();
     const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
     const AtomicRuntimeState &runtime = m_worker.runtime();
     QVariantList axes;
@@ -7562,12 +7654,12 @@ QVariantMap AppBackend::connectSignalFlowEndpoints(const QString &sourceEndpoint
         return signalFlowActionResult(false, u"Choose graph endpoints again"_qs,
             u"The selected port no longer belongs to this Signal Flow projection. Refresh the graph and retry."_qs);
     }
-    const ControllerProfile &profile = currentProfile();
+    const ControllerProfile &profile = signalFlowEditingProfile();
     if (source.profileId != profile.id || destination.profileId != profile.id) {
         return signalFlowActionResult(false, u"Graph context changed"_qs,
             u"The selected endpoints belong to a different profile. No route was changed."_qs);
     }
-    const VirtualOutputLayout *activeLayout = activeOutputLayout();
+    const VirtualOutputLayout *activeLayout = signalFlowEditingOutputLayout();
     if (!activeLayout || destination.ownerId != activeLayout->id) {
         return signalFlowActionResult(false, u"Destination is no longer available"_qs,
             u"The selected output port belongs to an earlier graph projection. Refresh the graph and retry."_qs);
@@ -7638,13 +7730,13 @@ QVariantMap AppBackend::signalFlowPreviewConnection(const QString &sourceEndpoin
             u"The selected port no longer belongs to this Signal Flow projection. Refresh the graph and retry."_qs);
     }
 
-    const ControllerProfile &profile = currentProfile();
+    const ControllerProfile &profile = signalFlowEditingProfile();
     if (source.profileId != profile.id || destination.profileId != profile.id) {
         return previewResult(false, u"Graph context changed"_qs,
             u"The selected endpoints belong to a different profile. No route was changed."_qs);
     }
 
-    const VirtualOutputLayout *layout = activeOutputLayout();
+    const VirtualOutputLayout *layout = signalFlowEditingOutputLayout();
     if (!layout || destination.ownerId != layout->id) {
         return previewResult(false, u"Destination is no longer available"_qs,
             u"The selected output port belongs to an earlier graph projection. Refresh the graph and retry."_qs);
@@ -7770,7 +7862,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         return signalFlowActionResult(false, u"Virtual feedback is blocked"_qs,
             u"Signal Flow accepts physical DirectInput sources only. Virtual vJoy input/output feedback cannot form a direct or indirect signal cycle."_qs);
     }
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     DeviceProfileMapping *deviceMapping = nullptr;
     if (!sourceControllerRecordId.trimmed().isEmpty()) {
         const QString requestedOwner = sourceControllerRecordId.trimmed();
@@ -7788,14 +7880,14 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         }
         deviceMapping = &ensureDeviceProfileMapping(profile, requestedOwner);
     } else {
-        deviceMapping = editingDeviceMappingForWrite();
+        deviceMapping = signalFlowEditingDeviceMappingForWrite();
     }
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"This Device Rig contains multiple selected inputs. Select one source before creating a route."_qs);
     }
     const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
-    VirtualOutputLayout *layout = activeOutputLayout();
+    VirtualOutputLayout *layout = signalFlowEditingOutputLayout();
     if (!layout) {
         return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
             u"Assign a Virtual Output to this profile before creating a Signal Flow connection."_qs);
@@ -8120,14 +8212,14 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
         return signalFlowActionResult(false, u"Disconnect was not applied"_qs, m_signalFlowActionFeedback, routeId);
     }
     const QString id = routeId.trimmed();
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     SignalFlowRoute *selected = findSignalFlowRouteById(&m_configuration.signalFlow, id);
     if (!selected || selected->profileId != profile.id) {
         return signalFlowActionResult(false, u"Route is no longer available"_qs,
             u"The selected route changed in another editor. Refresh the graph and try again."_qs, id);
     }
     const QString controllerId = selected->controllerRecordId;
-    DeviceProfileMapping *deviceMapping = controllerId.isEmpty() ? editingDeviceMappingForWrite()
+    DeviceProfileMapping *deviceMapping = controllerId.isEmpty() ? signalFlowEditingDeviceMappingForWrite()
         : &ensureDeviceProfileMapping(profile, controllerId);
     if (!controllerId.isEmpty() && !deviceMapping) {
         return signalFlowActionResult(false, u"Route owner is unavailable"_qs,
@@ -8446,7 +8538,7 @@ QVariantMap AppBackend::signalFlowRemoveSharedProcessorChannel(const QString &pr
         return signalFlowActionResult(false, u"Shared channel is no longer available"_qs,
             u"Select a current route served by this shared processor and try again."_qs, id);
     }
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     if (profile.id != shared->profileId) {
         return signalFlowActionResult(false, u"Shared channel is outside this profile"_qs,
             u"The selected shared processor belongs to a different editing profile. No topology was changed."_qs, id);
@@ -8564,7 +8656,7 @@ QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
             routeId.trimmed());
     }
     reconcileSignalFlowState(&m_configuration);
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || route->profileId != profile.id
         || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
@@ -8577,7 +8669,7 @@ QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
     // instead of requiring the operator to switch the legacy editing scope.
     const QString controllerId = route->controllerRecordId;
     DeviceProfileMapping *deviceMapping = controllerId.isEmpty()
-        ? editingDeviceMappingForWrite() : &ensureDeviceProfileMapping(profile, controllerId);
+        ? signalFlowEditingDeviceMappingForWrite() : &ensureDeviceProfileMapping(profile, controllerId);
     if (!deviceMapping && !controllerId.isEmpty()) {
         return signalFlowActionResult(false, u"Processor owner is unavailable"_qs,
             u"The physical source that owns this route is no longer available in the current profile."_qs,
@@ -8653,13 +8745,13 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
         return signalFlowActionResult(false, u"Choose a supported processor"_qs,
             u"Only Curve, Deadzone, Center Hold, Invert, Output Limits, and Adaptive Response can be shared between axis sources."_qs);
     }
-    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    DeviceProfileMapping *deviceMapping = signalFlowEditingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"Select one source before sharing a processor in this multi-device Device Rig."_qs);
     }
     reconcileSignalFlowState(&m_configuration);
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
     if (routeIds.size() < 2 || routeIds.size() > kPhysicalAxisCount) {
         return signalFlowActionResult(false, u"Choose two or more axis routes"_qs,
@@ -8795,14 +8887,14 @@ QVariantMap AppBackend::signalFlowSplitSharedProcessor(const QString &routeId,
             u"Only source-owned axis processors can be split from a shared Signal Flow object."_qs,
             routeId.trimmed());
     }
-    DeviceProfileMapping *deviceMapping = editingDeviceMappingForWrite();
+    DeviceProfileMapping *deviceMapping = signalFlowEditingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !deviceMapping) {
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"Select one source before changing a shared processor in this multi-device Device Rig."_qs,
             routeId.trimmed());
     }
     reconcileSignalFlowState(&m_configuration);
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
@@ -8856,12 +8948,12 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
         return signalFlowActionResult(false, u"Unknown default mode"_qs,
             u"Choose Connect Unassigned Only or Replace All With Defaults."_qs);
     }
-    const DeviceProfileMapping *mapping = editingDeviceMapping();
+    const DeviceProfileMapping *mapping = signalFlowEditingDeviceMapping();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !mapping) {
         return signalFlowActionResult(false, u"Choose one physical input first"_qs,
             u"Default Connections needs one explicit source in this multi-device Device Rig."_qs);
     }
-    const ControllerProfile &profile = currentProfile();
+    const ControllerProfile &profile = signalFlowEditingProfile();
     const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
     const AxisMappings &sourceAxes = mapping ? mapping->axes : profile.axes;
     const bool savedOfflineSource = !controllerId.isEmpty() && savedControllerRecord(controllerId)
@@ -9054,12 +9146,12 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
                 : u"No eligible default route would change in this Signal Flow scope."_qs);
     }
     const QString normalized = preview.value(u"mode"_qs).toString();
-    DeviceProfileMapping *mapping = editingDeviceMappingForWrite();
+    DeviceProfileMapping *mapping = signalFlowEditingDeviceMappingForWrite();
     if (findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) && !mapping) return preview;
-    VirtualOutputLayout *layout = activeOutputLayout();
+    VirtualOutputLayout *layout = signalFlowEditingOutputLayout();
     if (!layout) return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
         u"Assign a Virtual Output before applying default connections."_qs);
-    ControllerProfile &profile = currentProfile();
+    ControllerProfile &profile = signalFlowEditingProfile();
     const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
     MapperConfiguration before = m_configuration;
     SignalFlowState &topology = m_configuration.signalFlow;
