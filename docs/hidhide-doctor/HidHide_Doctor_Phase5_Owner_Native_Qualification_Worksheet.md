@@ -47,11 +47,11 @@ of them a sixth theme.
 
 | Presentation | Devices → Doctor | App Health / Diagnostics → Doctor | Normal + small layout | Result | Note |
 |---|---|---|---|---|---|
-| Legacy |  |  |  |  |  |
-| Standard |  |  |  |  |  |
-| Top Gun |  |  |  |  |  |
-| Day Ops |  |  |  |  |  |
-| Flight Deck (Dark and Light) |  |  |  |  |  |
+| Legacy | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Standard | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Top Gun | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Day Ops | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Flight Deck (Dark and Light) | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | Both Dark and Light appearances were reviewed; no launch, focus, clipping, overlap, or native/default-control regression was reported. |
 
 ## Outcome
 
