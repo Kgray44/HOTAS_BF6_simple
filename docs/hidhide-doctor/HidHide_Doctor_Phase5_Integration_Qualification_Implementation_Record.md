@@ -271,6 +271,14 @@ One idle interactive-process working-set sample was 286,765,056 bytes. These
 are process-level baselines only, not cold-boot, user-visible interaction, CPU
 contention, or memory-pressure qualification.
 
+On exact R9 stage `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R9`, five serial
+`--startup-smoke` children all exited 0 with a 597.507 ms median
+(568.995–1,112.782 ms). Five serial read-only `--scan-smoke` children all
+exited 0 with a 1,619.460 ms median (1,560.367–1,734.941 ms). Windows file
+cache was not flushed, so these are repeatable serial process-launch
+measurements only—not cold-start, first-visible-progress, input, render,
+accessibility, or owner-perceived responsiveness evidence.
+
 Production hygiene was also inspected in the staged binary. Fixture mode is
 reachable only by an explicit `--development-fixture` command-line switch;
 Lab repair requires the additional explicit `--lab-repair-mode` switch. The
