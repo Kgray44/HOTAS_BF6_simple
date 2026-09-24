@@ -8,7 +8,7 @@ This document summarizes what each versioned project release or candidate added.
 
 Versions are shown newest first.
 
-## v2.6.10 — Verification persistence and axis-evidence ownership (candidate)
+## v2.6.10 — Verification persistence and axis-evidence ownership
 
 Makes controller-verification persistence exact and bounded, assigns runtime axis evidence to its exact physical controller, and keeps Axes interaction stable during unrelated setup-state updates without changing the allocation-free mapping report path.
 

@@ -776,7 +776,7 @@
   },
   {
     "version": "2.6.10",
-    "title": "Verification persistence and axis-evidence ownership (candidate)",
+    "title": "Verification persistence and axis-evidence ownership",
     "summary": "Makes controller-verification persistence exact and bounded, assigns runtime axis evidence to its exact physical controller, and keeps Axes interaction stable during unrelated setup-state updates without changing the allocation-free mapping report path.",
     "highlights": [
       "Controller verification now uses an exact bounded persistence transaction with predicate-specific read-after-write validation, so an ordinary coalesced save cannot supersede the verified controller state before it is read back.",
