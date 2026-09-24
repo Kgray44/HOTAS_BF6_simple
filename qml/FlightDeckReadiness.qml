@@ -288,6 +288,105 @@ Item {
         };
     }
 
+    // Axes and Buttons deliberately share this projection.  The editor pages
+    // provide their exact selected saved member and physical capability count;
+    // this model supplies the common controller/output truth and never turns
+    // an uninspected capability or output into a ready state by inference.
+    function setupGroup(snapshot, id) {
+        const groups = snapshot && snapshot.groups ? snapshot.groups : []
+        for (let index = 0; index < groups.length; ++index) {
+            const group = groups[index] || ({})
+            if (String(group.id || "") === String(id || "")) return group
+        }
+        return ({ status: "CHECKING", detail: "Setup status has not been checked yet." })
+    }
+
+    function editorInputStatus(context) {
+        const details = context || ({})
+        const kind = String(details.kind || "input")
+        const plural = kind === "axes" ? "axes" : "buttons or hat switches"
+        const singular = kind === "axes" ? "axis" : "button"
+        const selectedId = String(details.selectedDeviceId || "")
+        const selectedName = String(details.selectedDeviceName || "Selected controller")
+        const selectedConnected = Boolean(details.selectedDeviceConnected)
+        const eligibleMembers = Math.max(0, Number(details.eligibleMemberCount || 0))
+        const capabilityKnown = Boolean(details.capabilityKnown)
+        const capabilityCount = Math.max(0, Number(details.capabilityCount || 0))
+        const alternateCapabilityCount = Math.max(0, Number(details.alternateCapabilityCount || 0))
+        const assignedCount = Math.max(0, Number(details.assignedCount || 0))
+        const preparedQuickMap = Boolean(details.quickMapAvailable)
+        const learningTarget = String(details.learningTarget || "")
+        // `setupTruth` is a test seam only; production always consumes the
+        // frozen AppBackend projection for the current setup scope.
+        const truth = details.setupTruth || (backendObject ? (backendObject.setupTruthSnapshot || ({})) : ({}))
+        const output = setupGroup(truth, "vjoy")
+        const outputState = String(output.status || "CHECKING").toUpperCase()
+        const outputReady = truth.fresh && (outputState === "READY" || outputState === "READY TO ACTIVATE")
+        const outputChecking = !truth.fresh || outputState === "CHECKING"
+        const outputFailed = outputState === "FAILED" || outputState === "UNAVAILABLE"
+            || outputState === "UNKNOWN / INSPECTION FAILED"
+        const controllerPill = selectedId.length > 0
+            ? { label: "CONTROLLER", value: selectedConnected ? "CONNECTED" : "OFFLINE",
+                tone: selectedConnected ? "healthy" : "attention" }
+            : { label: "CONTROLLER", value: eligibleMembers > 0 ? "CHOOSE" : "NOT ASSIGNED",
+                tone: eligibleMembers > 0 ? "informational" : "attention" }
+        const outputPill = { label: "OUTPUT", value: outputChecking ? "CHECKING"
+                : outputReady ? "READY" : outputFailed ? "FAILED" : outputState,
+            tone: outputReady ? "healthy" : outputChecking ? "informational" : "attention" }
+        const result = function(state, heading, detail, primaryAction, primaryText,
+                                 secondaryAction, secondaryText) {
+            return { state: state, heading: heading, detail: detail, pills: [controllerPill, outputPill],
+                primaryAction: primaryAction || "", primaryText: primaryText || "",
+                secondaryAction: secondaryAction || "", secondaryText: secondaryText || "",
+                capabilityKnown: capabilityKnown, learningTarget: learningTarget }
+        }
+        if (selectedId.length === 0) {
+            if (eligibleMembers > 0)
+                return result("choose", "Choose a controller", "Choose the saved controller whose " + plural
+                    + " you want to configure.", "picker", "CHOOSE CONTROLLER")
+            const discovered = backendObject ? (backendObject.controllers || []).length : 0
+            if (discovered === 0)
+                return result("connect", "Connect your controller", "Plug in a controller, then scan for it here.",
+                    "scan", "SCAN FOR CONTROLLERS")
+            return result("unassigned", "Add this controller to a setup",
+                "A controller was discovered, but it is not a saved member of the selected setup yet.",
+                "devices", "OPEN DEVICES & SETUP")
+        }
+        if (!selectedConnected)
+            return result("offline", selectedName + " is not connected",
+                "Saved mappings stay editable. Live learning and testing wait for this controller to reconnect.",
+                "picker", "CHANGE CONTROLLER", preparedQuickMap ? "quick-map" : "check",
+                preparedQuickMap ? "QUICK MAP" : "CHECK SETUP")
+        if (!capabilityKnown)
+            return result("capabilities", "Checking controller capabilities",
+                "HOTAS BF6 has not received a capability record for this exact saved controller. Run a scoped setup check.",
+                "check", "CHECK SETUP")
+        if (details.verified === false)
+            return result("setup", "Set up " + selectedName,
+                "Finish identity setup for this exact controller before mapping it.",
+                "setup", "SET UP THIS CONTROLLER")
+        if (capabilityCount === 0)
+            return result("no-controls", "This controller has no " + plural,
+                "This is not a fault. Open the other input editor or review the saved controller details.",
+                alternateCapabilityCount > 0 ? "other-editor" : "devices",
+                alternateCapabilityCount > 0 ? (kind === "axes" ? "OPEN BUTTONS" : "OPEN AXES") : "OPEN DEVICES & SETUP")
+        if (!outputReady)
+            return result("output", outputChecking ? "Checking virtual output" : "Virtual output needs attention",
+                String(output.detail || "Check the selected setup before testing mapped output."),
+                "check", "CHECK SETUP", preparedQuickMap ? "quick-map" : "",
+                preparedQuickMap ? "QUICK MAP" : "")
+        if (assignedCount === 0)
+            return result("first-assignment", "Assign your first " + singular,
+                "Choose a " + singular + ", then select the output it should control.",
+                preparedQuickMap ? "quick-map" : "", preparedQuickMap ? "QUICK MAP" : "")
+        return result("ready", kind === "axes" ? "Axes ready" : "Buttons ready",
+            "Choose an input to view its source, output, and simple mapping controls.",
+            kind === "buttons" ? "learn-button" : (learningTarget.length > 0 ? "learn-axis" : (preparedQuickMap ? "quick-map" : "")),
+            kind === "buttons" ? "LEARN BUTTON" : (learningTarget.length > 0 ? "LEARN INPUT" : (preparedQuickMap ? "QUICK MAP" : "")),
+            preparedQuickMap && (kind === "buttons" || learningTarget.length > 0) ? "quick-map" : "",
+            preparedQuickMap && (kind === "buttons" || learningTarget.length > 0) ? "QUICK MAP" : "")
+    }
+
     function isolationFor(state) {
         const check = readinessCheck(state.checks || [], "HIDHIDE ISOLATION");
         const severity = String(check.severity || "info").toLowerCase();

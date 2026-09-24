@@ -58,17 +58,29 @@ Flickable {
         { key: "highest-magnitude", label: "Larger Value" },
         { key: "average", label: "Average" }
     ]
+    // Kept as a visual-fixture observation only. Readiness and card
+    // eligibility use the selected controller capability above, never this
+    // filtered output-grid projection.
     readonly property bool hasVisibleAxes: visibleAxisCount() > 0
     readonly property var selectedControllerInfo: controllerForSelectedDevice()
-    readonly property int knownControllerCount: (backend.controllers || []).length
     readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
     readonly property int selectedButtonCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
         + Number(selectedControllerInfo.povCount || 0)
     readonly property int assignedAxisCount: configuredAxisCount()
-    readonly property string inputPreparationState: preparationState()
+    readonly property string preparedLearningTarget: preparedAxisLearningTarget()
+    readonly property var inputStatus: readinessModel ? readinessModel.editorInputStatus({
+        kind: "axes", selectedDeviceId: selectedInputDeviceId, selectedDeviceName: inputDeviceName,
+        selectedDeviceConnected: selectedInputDeviceConnected,
+        eligibleMemberCount: (backend.selectedDevices || []).length,
+        capabilityKnown: Object.keys(selectedControllerInfo || {}).length > 0,
+        capabilityCount: selectedAxisCapabilityCount, alternateCapabilityCount: selectedButtonCapabilityCount,
+        assignedCount: assignedAxisCount, quickMapAvailable: backend.quickAssignAxisTargets.length > 0,
+        learningTarget: preparedLearningTarget, verified: selectedControllerInfo.verified
+    }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
+    readonly property string inputPreparationState: String(inputStatus.state || "connect")
     readonly property bool canShowAxisCards: usingPresentationOverride
         || (selectedInputDeviceId.length > 0
-            && (hasVisibleAxes || selectedAxisCapabilityCount > 0))
+            && inputStatus.capabilityKnown && selectedAxisCapabilityCount > 0)
 
     contentWidth: width
     contentHeight: axesContent.implicitHeight + deck.space24
@@ -127,95 +139,33 @@ Flickable {
         return count
     }
 
-    function preparationState() {
-        if (selectedInputDeviceId.length === 0) {
-            if (knownControllerCount === 0)
-                return backend.controllerSetupInProgress ? "looking" : "connect"
-            return "choose"
+    function preparedAxisLearningTarget() {
+        for (let index = 0; index < axisItems.length; ++index) {
+            const axis = axisItems[index] || ({})
+            if (axis.available && String(axis.target || "Disabled") !== "Disabled")
+                return String(axis.target || "")
         }
-        if (!selectedInputDeviceConnected) return "offline"
-        if (selectedControllerInfo && selectedControllerInfo.verified === false) return "setup"
-        if (selectedAxisCapabilityCount === 0 && !hasVisibleAxes) return "no-axes"
-        if (!backend.vjoyReady) return "output"
-        if (assignedAxisCount === 0) return "first-assignment"
-        return "ready"
-    }
-
-    function preparationHeading() {
-        switch (inputPreparationState) {
-        case "looking": return "Looking for controllers"
-        case "connect": return "Connect your controller"
-        case "choose": return "Choose a controller"
-        case "setup": return "Set up " + inputDeviceName
-        case "offline": return inputDeviceName + " is not connected"
-        case "no-axes": return "This controller has no axes"
-        case "output": return "Connection needs a check"
-        case "first-assignment": return "Assign your first axis"
-        }
-        return "Axes ready"
-    }
-
-    function preparationDetail() {
-        switch (inputPreparationState) {
-        case "looking": return "HOTAS BF6 is checking the current controller list."
-        case "connect": return "Plug in a controller, then scan for it here."
-        case "choose": return "Choose the controller whose axes you want to map."
-        case "setup": return "Finish identity setup for this exact controller before mapping it."
-        case "offline": return "Saved axis mappings stay editable. Live input and testing wait for the controller to reconnect."
-        case "no-axes": return "This is not a fault. Try Buttons for its buttons or hat switches."
-        case "output": return "Your saved mappings are still visible. Check this setup before testing mapped output."
-        case "first-assignment": return "Choose an axis, then select the output it should control."
-        }
-        return "Choose an axis to view its input, output, and simple mapping controls."
-    }
-
-    function preparationPills() {
-        const controllerPill = inputPreparationState === "offline"
-            ? { label: "CONTROLLER", value: "OFFLINE", tone: "attention" }
-            : selectedInputDeviceId.length > 0
-                ? { label: "CONTROLLER", value: selectedInputDeviceConnected ? "CONNECTED" : "OFFLINE",
-                    tone: selectedInputDeviceConnected ? "healthy" : "attention" }
-                : { label: "CONTROLLER", value: knownControllerCount > 0 ? "CHOOSE" : "NOT FOUND",
-                    tone: knownControllerCount > 0 ? "informational" : "attention" }
-        const outputPill = { label: "OUTPUT", value: backend.vjoyReady ? "READY" : "CHECK",
-            tone: backend.vjoyReady ? "healthy" : "attention" }
-        return [controllerPill, outputPill]
-    }
-
-    function preparationPrimaryText() {
-        switch (inputPreparationState) {
-        case "connect": return "SCAN FOR CONTROLLERS"
-        case "choose": return "CHOOSE CONTROLLER"
-        case "setup": return "SET UP THIS CONTROLLER"
-        case "offline": return "CHANGE CONTROLLER"
-        case "no-axes": return selectedButtonCapabilityCount > 0 ? "OPEN BUTTONS" : "OPEN DEVICES & SETUP"
-        case "output": return "CHECK SETUP"
-        case "first-assignment": return backend.quickAssignAxisTargets.length > 0 ? "QUICK MAP" : ""
-        }
-        return ""
-    }
-
-    function preparationSecondaryText() {
-        if (inputPreparationState === "offline") return "CHECK CONNECTION"
-        if (inputPreparationState === "connect") return ""
-        if (inputPreparationState === "choose") return ""
         return ""
     }
 
     function invokePreparationPrimary() {
-        switch (inputPreparationState) {
-        case "connect": backend.refreshControllers(); break
-        case "choose": requestDevicePicker(); break
+        switch (String(inputStatus.primaryAction || "")) {
+        case "scan": backend.refreshControllers(); break
+        case "picker": requestDevicePicker(); break
+        case "devices": navigateToPage(2); break
         case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 0 }); break
-        case "offline": requestDevicePicker(); break
-        case "no-axes": navigateToPage(selectedButtonCapabilityCount > 0 ? 1 : 2); break
-        case "output": navigateToPage(2); break
-        case "first-assignment": requestQuickMap(); break
+        case "other-editor": navigateToPage(1); break
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        case "learn-axis": requestAxisLearning(String(inputStatus.learningTarget || "")); break
         }
     }
 
     function invokePreparationSecondary() {
-        if (inputPreparationState === "offline") navigateToPage(2)
+        switch (String(inputStatus.secondaryAction || "")) {
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        }
     }
 
     function axisForIndex(index) {
@@ -340,6 +290,28 @@ Flickable {
         routeNoticeAxis = conflictAxis;
         routeNotice = conflictNotice;
         return false;
+    }
+
+    // A Guided conflict may be escalated, but it must arrive at this exact
+    // existing mixer dialog.  Re-read the canonical collision first: a
+    // changed route is not permission to create or replace a mapping.
+    function openFullConflict(context) {
+        const handoff = context || ({})
+        const axisIndex = Number(handoff.axisIndex)
+        const target = String(handoff.target || "")
+        if (axisIndex < 0 || target.length === 0) return false
+        const collision = backend.axisMappingCollision(axisIndex, target)
+        if (!collision.exists) {
+            routeNoticeAxis = axisIndex
+            routeNotice = "This route changed while Full was opening. Review the current mapping before choosing another action."
+            return false
+        }
+        conflictAxis = axisIndex
+        conflictTarget = target
+        conflictOwner = collision
+        conflictNotice = ""
+        routeConflictDialog.open()
+        return true
     }
 
     function applyMixer(mode) {
@@ -1386,16 +1358,18 @@ Flickable {
             objectName: "flightDeckAxesInputStatus"
             tokens: deck
             Layout.fillWidth: true
-            heading: root.preparationHeading()
-            detail: root.preparationDetail()
-            statusPills: root.preparationPills()
-            primaryText: root.preparationPrimaryText()
-            secondaryText: root.preparationSecondaryText()
+            heading: String(root.inputStatus.heading || "")
+            detail: String(root.inputStatus.detail || "")
+            statusPills: root.inputStatus.pills || []
+            primaryText: String(root.inputStatus.primaryText || "")
+            secondaryText: String(root.inputStatus.secondaryText || "")
             // Retain the established quick-map test/control identity.  Its
             // label is state-specific rather than a permanently disabled
             // toolbar action.
-            primaryObjectName: "flightDeckAxesQuickMap"
-            secondaryObjectName: "flightDeckAxesInputSecondary"
+            primaryObjectName: String(root.inputStatus.primaryAction || "") === "quick-map"
+                ? "flightDeckAxesQuickMap" : "flightDeckAxesInputPrimary"
+            secondaryObjectName: String(root.inputStatus.secondaryAction || "") === "quick-map"
+                ? "flightDeckAxesQuickMap" : "flightDeckAxesInputSecondary"
             onPrimaryAction: root.invokePreparationPrimary()
             onSecondaryAction: root.invokePreparationSecondary()
         }
@@ -1472,8 +1446,9 @@ Flickable {
                     subdued: true
                     onClicked: {
                         routeConflictDialog.close()
-                        root.requestFullAccess(6, { source: "axis-conflict", axisIndex: root.conflictAxis,
-                            target: root.conflictTarget, owner: root.conflictOwner })
+                        root.requestFullAccess(0, { source: "axis-conflict", axisIndex: root.conflictAxis,
+                            inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            owner: root.conflictOwner })
                     }
                 }
             }

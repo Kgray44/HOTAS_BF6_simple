@@ -62,7 +62,6 @@ Flickable {
     }
     readonly property string inputDeviceName: inputDeviceNameOverride.length > 0
         ? inputDeviceNameOverride : (backend.selectedDeviceLabel || "Selected controller")
-    readonly property bool hasVisibleButtons: visibleButtonCount() > 0
     // The active mapper device is deliberately not used here.  The top-bar
     // Selected Device is the sole physical-input editor context.
     readonly property string selectedInputDeviceId: selectedDeviceId()
@@ -76,14 +75,23 @@ Flickable {
         return false
     }
     readonly property var selectedControllerInfo: controllerForSelectedDevice()
-    readonly property int knownControllerCount: (backend.controllers || []).length
     readonly property int selectedControlCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
         + Number(selectedControllerInfo.povCount || 0)
     readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
     readonly property int assignedControlCount: configuredControlCount()
-    readonly property string inputPreparationState: preparationState()
+    readonly property var inputStatus: readinessModel ? readinessModel.editorInputStatus({
+        kind: "buttons", selectedDeviceId: selectedInputDeviceId, selectedDeviceName: inputDeviceName,
+        selectedDeviceConnected: selectedInputDeviceConnected,
+        eligibleMemberCount: (backend.selectedDevices || []).length,
+        capabilityKnown: Object.keys(selectedControllerInfo || {}).length > 0,
+        capabilityCount: selectedControlCapabilityCount, alternateCapabilityCount: selectedAxisCapabilityCount,
+        assignedCount: assignedControlCount,
+        quickMapAvailable: backend.selectedDeviceButtonChoices().length > 1,
+        verified: selectedControllerInfo.verified
+    }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
+    readonly property string inputPreparationState: String(inputStatus.state || "connect")
     readonly property bool canShowInputContent: selectedInputDeviceId.length > 0
-        && (selectedControlCapabilityCount > 0 || hasVisibleButtons || povItems.length > 0)
+        && inputStatus.capabilityKnown && selectedControlCapabilityCount > 0
 
     contentWidth: width
     contentHeight: buttonsContent.implicitHeight + deck.space24
@@ -121,90 +129,33 @@ Flickable {
     }
     function configuredControlCount() {
         let count = assignedButtonCount()
+        // A native whole-hat POV is a real configured control even when no
+        // individual direction is routed. Count it once per hat.
+        for (let index = 0; index < povItems.length; ++index) {
+            if (Boolean((povItems[index] || {}).nativeEnabled)) ++count
+        }
         for (let index = 0; index < povInputItems.length; ++index) {
             if (Number((povInputItems[index] || {}).target || 0) > 0) ++count
         }
         return count
     }
-    function preparationState() {
-        if (selectedInputDeviceId.length === 0) {
-            if (knownControllerCount === 0)
-                return backend.controllerSetupInProgress ? "looking" : "connect"
-            return "choose"
-        }
-        if (!selectedInputDeviceConnected) return "offline"
-        if (selectedControllerInfo && selectedControllerInfo.verified === false) return "setup"
-        if (selectedControlCapabilityCount === 0 && !hasVisibleButtons && povItems.length === 0)
-            return "no-controls"
-        if (buttonItems.length === 0 && povItems.length === 0) return "setup"
-        if (!backend.vjoyReady) return "output"
-        if (assignedControlCount === 0) return "first-assignment"
-        return "ready"
-    }
-    function preparationHeading() {
-        switch (inputPreparationState) {
-        case "looking": return "Looking for controllers"
-        case "connect": return "Connect your controller"
-        case "choose": return "Choose a controller"
-        case "setup": return "Set up " + inputDeviceName
-        case "offline": return inputDeviceName + " is not connected"
-        case "no-controls": return "This controller has no buttons or hat switches"
-        case "output": return "Connection needs a check"
-        case "first-assignment": return "Assign your first button"
-        }
-        return "Buttons ready"
-    }
-    function preparationDetail() {
-        switch (inputPreparationState) {
-        case "looking": return "HOTAS BF6 is checking the current controller list."
-        case "connect": return "Plug in a controller, then scan for it here."
-        case "choose": return "Choose the controller whose buttons or hat switches you want to map."
-        case "setup": return "Finish setup for this exact controller before mapping it."
-        case "offline": return "Saved routes stay editable. Live learning and tests wait for the controller to reconnect."
-        case "no-controls": return "This is not a fault. Try Axes if this controller has analog controls."
-        case "output": return "Your saved routes are still visible. Check this setup before testing mapped output."
-        case "first-assignment": return "Choose a button or hat direction, then select the output it should control."
-        }
-        return "Choose a control to view its input, output, and simple mapping controls."
-    }
-    function preparationPills() {
-        const controllerPill = selectedInputDeviceId.length > 0
-            ? { label: "CONTROLLER", value: selectedInputDeviceConnected ? "CONNECTED" : "OFFLINE",
-                tone: selectedInputDeviceConnected ? "healthy" : "attention" }
-            : { label: "CONTROLLER", value: knownControllerCount > 0 ? "CHOOSE" : "NOT FOUND",
-                tone: knownControllerCount > 0 ? "informational" : "attention" }
-        const outputPill = { label: "OUTPUT", value: backend.vjoyReady ? "READY" : "CHECK",
-            tone: backend.vjoyReady ? "healthy" : "attention" }
-        return [controllerPill, outputPill]
-    }
-    function preparationPrimaryText() {
-        switch (inputPreparationState) {
-        case "connect": return "SCAN FOR CONTROLLERS"
-        case "choose": return "CHOOSE CONTROLLER"
-        case "setup": return "SET UP THIS CONTROLLER"
-        case "offline": return "CHANGE CONTROLLER"
-        case "no-controls": return selectedAxisCapabilityCount > 0 ? "OPEN AXES" : "OPEN DEVICES & SETUP"
-        case "output": return "CHECK SETUP"
-        case "first-assignment": return backend.selectedDeviceButtonChoices().length > 1 ? "QUICK MAP" : ""
-        }
-        return ""
-    }
-    function preparationSecondaryText() {
-        return inputPreparationState === "offline" ? "CHECK CONNECTION" : ""
-    }
     function invokePreparationPrimary() {
-        switch (inputPreparationState) {
-        case "connect": backend.refreshControllers(); break
-        case "choose": requestDevicePicker(); break
+        switch (String(inputStatus.primaryAction || "")) {
+        case "scan": backend.refreshControllers(); break
+        case "picker": requestDevicePicker(); break
+        case "devices": navigateToPage(2); break
         case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 1 }); break
-        case "offline": requestDevicePicker(); break
-        case "no-controls": navigateToPage(selectedAxisCapabilityCount > 0 ? 0 : 2); break
-        case "output": navigateToPage(2); break
-        case "first-assignment": requestQuickMap(); break
+        case "other-editor": navigateToPage(0); break
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        case "learn-button": requestButtonLearning(); break
         }
     }
     function invokePreparationSecondary() {
-        if (inputPreparationState === "offline") navigateToPage(2)
+        switch (String(inputStatus.secondaryAction || "")) {
+        case "check": backend.checkSetupHealth(); break
+        case "quick-map": requestQuickMap(); break
+        }
     }
     function profileChoiceIndex(profileId) {
         for (let index = 0; index < profileChoices.length; ++index) {
@@ -406,6 +357,25 @@ Flickable {
             mappingConflict.open()
         }
         return false
+    }
+
+    // Full keeps the established button mixer.  Revalidate the saved source
+    // and destination after the mode transition so a stale handoff cannot
+    // act on a different route.
+    function openFullConflict(context) {
+        const handoff = context || ({})
+        const buttonIndex = Number(handoff.buttonIndex)
+        const target = Number(handoff.target)
+        if (buttonIndex <= 0 || target <= 0) return false
+        const collision = backend.buttonMappingCollision(buttonIndex, target)
+        if (!collision.exists) return false
+        conflictButtonIndex = buttonIndex
+        conflictHatIndex = -1
+        conflictDirectionIndex = -1
+        conflictTarget = target
+        conflictOwner = collision
+        mappingConflict.open()
+        return true
     }
 
     component SectionLabel: Text {
@@ -1716,15 +1686,17 @@ Flickable {
             objectName: "flightDeckButtonsInputStatus"
             tokens: deck
             Layout.fillWidth: true
-            heading: root.preparationHeading()
-            detail: root.preparationDetail()
-            statusPills: root.preparationPills()
-            primaryText: root.preparationPrimaryText()
-            secondaryText: root.preparationSecondaryText()
+            heading: String(root.inputStatus.heading || "")
+            detail: String(root.inputStatus.detail || "")
+            statusPills: root.inputStatus.pills || []
+            primaryText: String(root.inputStatus.primaryText || "")
+            secondaryText: String(root.inputStatus.secondaryText || "")
             // Retain the established quick-map control identity while making
             // its presentation conditional on a usable next action.
-            primaryObjectName: "flightDeckButtonsQuickMap"
-            secondaryObjectName: "flightDeckButtonsInputSecondary"
+            primaryObjectName: String(root.inputStatus.primaryAction || "") === "quick-map"
+                ? "flightDeckButtonsQuickMap" : "flightDeckButtonsInputPrimary"
+            secondaryObjectName: String(root.inputStatus.secondaryAction || "") === "quick-map"
+                ? "flightDeckButtonsQuickMap" : "flightDeckButtonsInputSecondary"
             onPrimaryAction: root.invokePreparationPrimary()
             onSecondaryAction: root.invokePreparationSecondary()
         }
@@ -1842,11 +1814,12 @@ Flickable {
                     subdued: true
                     onClicked: {
                         mappingConflict.close()
-                        root.requestFullAccess(11, { source: "button-conflict",
+                        root.requestFullAccess(1, { source: "button-conflict",
                             buttonIndex: root.conflictButtonIndex,
                             hatIndex: root.conflictHatIndex,
                             directionIndex: root.conflictDirectionIndex,
-                            target: root.conflictTarget, owner: root.conflictOwner })
+                            inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            owner: root.conflictOwner })
                     }
                 }
             }

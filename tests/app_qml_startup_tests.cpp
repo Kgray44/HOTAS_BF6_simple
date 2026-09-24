@@ -4202,6 +4202,71 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("flightDeckSetupRigName"));
     auto *profileNameField = findVisualItemByObjectName(window->contentItem(),
         QStringLiteral("flightDeckSetupProfileName"));
+    const QVariantMap taskBeforeSelectorFixture = backend.setupAssistantTask();
+    // Use the rendered selectors, then edit a name. The second ID must
+    // survive that independent save and the task journal—not merely remain
+    // visible in a ComboBox model.
+    const QString selectedOutputB = backend.createVirtualOutputLayout(
+        QStringLiteral("Pass C selector B output %1").arg(appearance),
+        backend.suggestedVirtualOutputDeviceId(), QStringLiteral("full-8-axis"));
+    const QString selectedCategoryBName = QStringLiteral("Pass C selector B category %1").arg(appearance);
+    const bool selectedCategoryBCreated = backend.createProfileCategory(selectedCategoryBName);
+    QString selectedCategoryB;
+    for (const QVariant &entry : backend.profileCategories()) {
+        const QVariantMap category = entry.toMap();
+        if (category.value(QStringLiteral("name")).toString() == selectedCategoryBName) {
+            selectedCategoryB = category.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    settlePresentation();
+    auto *setupOutputChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupOutputChoice"));
+    auto *setupCategoryChoice = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckSetupCategoryChoice"));
+    const auto selectorIndexForId = [](QQuickItem *selector, const QString &id) {
+        if (!selector) return -1;
+        const QVariantList model = selector->property("model").toList();
+        for (int index = 0; index < model.size(); ++index) {
+            if (model.at(index).toMap().value(QStringLiteral("id")).toString() == id) return index;
+        }
+        return -1;
+    };
+    const int outputBIndex = selectorIndexForId(setupOutputChoice, selectedOutputB);
+    const int categoryBIndex = selectorIndexForId(setupCategoryChoice, selectedCategoryB);
+    const bool selectionFixtureReady = !selectedOutputB.isEmpty() && selectedCategoryBCreated
+        && !selectedCategoryB.isEmpty() && setupOutputChoice && setupCategoryChoice
+        && setupOutputChoice->property("visible").toBool() && setupCategoryChoice->property("visible").toBool()
+        && outputBIndex >= 0 && categoryBIndex >= 0;
+    const bool outputBPointer = selectionFixtureReady && setupViewport
+        && clickPresentationChoice(window, setupViewport, setupOutputChoice, outputBIndex,
+            setupOutputChoice->property("count").toInt());
+    settlePresentation();
+    const bool categoryBPointer = outputBPointer && setupViewport
+        && clickPresentationChoice(window, setupViewport, setupCategoryChoice, categoryBIndex,
+            setupCategoryChoice->property("count").toInt());
+    if (categoryBPointer && rigNameField) {
+        rigNameField->setProperty("text", QStringLiteral("Pass C B selection draft"));
+        QMetaObject::invokeMethod(rigNameField, "editingFinished");
+    }
+    settlePresentation();
+    const QVariantMap selectionAfterNameEdit = backend.setupAssistantTask();
+    const bool selectorIdsPersistedAfterNameEdit = categoryBPointer && rigNameField
+        && selectionAfterNameEdit.value(QStringLiteral("outputLayoutId")).toString() == selectedOutputB
+        && selectionAfterNameEdit.value(QStringLiteral("categoryId")).toString() == selectedCategoryB
+        && selectionAfterNameEdit.value(QStringLiteral("rigNameDraft")).toString()
+            == QStringLiteral("Pass C B selection draft");
+    // This is an interaction fixture, not part of the longer mapping
+    // journey below. Restore its original draft and remove its unused choices
+    // before that journey allocates its own exact test outputs.
+    const QVariantMap selectorFixtureRestored = backend.updateSetupAssistantTask({
+        {QStringLiteral("outputLayoutId"), taskBeforeSelectorFixture.value(QStringLiteral("outputLayoutId"))},
+        {QStringLiteral("categoryId"), taskBeforeSelectorFixture.value(QStringLiteral("categoryId"))},
+    });
+    const bool selectorFixturesCleaned = selectorFixtureRestored.value(QStringLiteral("success")).toBool()
+        && backend.deleteVirtualOutputLayout(selectedOutputB).value(QStringLiteral("success")).toBool()
+        && backend.deleteProfileCategory(selectedCategoryB);
+    settlePresentation();
     const auto opaqueColor = [](QQuickItem *item) {
         return item && item->property("color").value<QColor>().isValid()
             && item->property("color").value<QColor>().alpha() == 255;
@@ -4402,6 +4467,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck context strip did not preserve friendly duplicate, override, or empty-profile presentation"));
     }
     if (!guidedSetupOpened || !decisionHelpChangesWithPresentation || !controllerKeyboard || !advancedWithPointer || !inTaskStepTwo
+        || !selectionFixtureReady || !outputBPointer || !categoryBPointer || !selectorIdsPersistedAfterNameEdit || !selectorFixturesCleaned
         || !readableNamePlaceholders || !copyUncheckedCaptured || !copyIndicatorSaved || !copyLabelSaved || !copyKeyboardSaved
         || !guidanceTaskRetained
         || !copyCheckedCaptured
@@ -4412,12 +4478,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             "Flight Deck setup journey failed (open=%1 decisionHelp=%2 controller=%3 next=%4 step2=%5 placeholders=%6 "
             "copyIndicator=%7 copyLabel=%8 copyKey=%9 guidanceTask=%10 copySource=%11 copyDisabledVisual=%12 copyDisabledSafe=%13 "
             "copyLayout=%14 resume=%15 requiredIndicator=%16 requiredLabel=%17 requiredKey=%18 "
-            "requiredDisabledVisual=%19 requiredDisabledSafe=%20 reset=%21)")
+            "requiredDisabledVisual=%19 requiredDisabledSafe=%20 reset=%21 choices=%22 outputB=%23 categoryB=%24 persistedB=%25 cleaned=%26)")
             .arg(guidedSetupOpened).arg(decisionHelpChangesWithPresentation).arg(controllerKeyboard).arg(advancedWithPointer).arg(inTaskStepTwo)
             .arg(readableNamePlaceholders).arg(copyIndicatorSaved).arg(copyLabelSaved).arg(copyKeyboardSaved)
             .arg(guidanceTaskRetained).arg(copySourceSaved).arg(copyDisabledVisual).arg(copyDisabledSafe).arg(setupCheckboxGeometryStable)
             .arg(resumedCopyDraft).arg(requiredIndicatorSaved).arg(requiredLabelSaved).arg(requiredKeyboardSaved)
-            .arg(requiredDisabledVisual).arg(requiredDisabledSafe).arg(setupActionReset));
+            .arg(requiredDisabledVisual).arg(requiredDisabledSafe).arg(setupActionReset)
+            .arg(selectionFixtureReady).arg(outputBPointer).arg(categoryBPointer).arg(selectorIdsPersistedAfterNameEdit)
+            .arg(selectorFixturesCleaned));
     }
     // The accepted Basic setup journey above is complete. The remaining
     // long-standing lifecycle fixture intentionally exercises Full-only Rig,
@@ -4519,11 +4587,26 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("gameFor({automaticGameDetection:true, activeCategoryName:'Battlefield', activeCategoryRules:['bf6.exe'], runningApplications:[{name:'Battlefield 6', executable:'bf6.exe'}]})")).toMap();
     const QVariantMap hidHideAttention = readinessValue(
         QStringLiteral("isolationFor({checks:[{name:'HIDHIDE ISOLATION', state:'Attention', message:'Review access', severity:'warning'}]})")).toMap();
+    const auto inputStatusFor = [&readinessValue](const QString &outputStatus, bool fresh) {
+        return readinessValue(QStringLiteral("editorInputStatus({kind:'buttons', selectedDeviceId:'saved-member', "
+            "selectedDeviceName:'Saved member', selectedDeviceConnected:true, eligibleMemberCount:1, "
+            "capabilityKnown:true, capabilityCount:12, alternateCapabilityCount:3, assignedCount:2, "
+            "quickMapAvailable:true, verified:true, setupTruth:{fresh:%1,groups:[{id:'vjoy',status:'%2',detail:'Scoped output'}]}})")
+            .arg(fresh ? QStringLiteral("true") : QStringLiteral("false"), outputStatus)).toMap();
+    };
+    const QVariantMap checkingInputStatus = inputStatusFor(QStringLiteral("CHECKING"), false);
+    const QVariantMap failedInputStatus = inputStatusFor(QStringLiteral("FAILED"), true);
+    const QVariantMap readyInputStatus = inputStatusFor(QStringLiteral("READY"), true);
     if (multipleInput.value(QStringLiteral("title")).toString() != QStringLiteral("3 input devices")
         || noProfile.value(QStringLiteral("title")).toString() != QStringLiteral("No active profile")
         || noGame.value(QStringLiteral("title")).toString() != QStringLiteral("No supported game detected")
         || detectedGame.value(QStringLiteral("title")).toString() != QStringLiteral("Battlefield 6")
-        || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")) {
+        || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")
+        || checkingInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("check")
+        || checkingInputStatus.value(QStringLiteral("secondaryAction")).toString() != QStringLiteral("quick-map")
+        || failedInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("check")
+        || readyInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("learn-button")
+        || readyInputStatus.value(QStringLiteral("secondaryAction")).toString() != QStringLiteral("quick-map")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
     }
 
@@ -8748,14 +8831,58 @@ bool verifyFlightDeckGuidedBasicMode(hotas::AppBackend &backend, hotas::ThemeMan
     const bool safeFallback = returnedToBasic && surface->property("currentPage").toInt() == 0
         && !pageItem(surface, 11)
         && pageIds(surface->property("guidedNavigationItems")) == guidedPages;
+    // Conflict escalation must land on the existing Full Axes/Buttons mixer
+    // dialogs, never the unrelated Curve or beta Signal Flow pages. The
+    // contexts are deliberately stale (no collision exists), so this also
+    // proves the handoff is consumed and cannot create a route on its own.
+    QQmlExpression requestAxisConflict(qmlContext(surface), surface,
+        QStringLiteral("requestFullDestination(0, {source:'axis-conflict', axisIndex:-1, target:'X'}); true"));
+    const bool axisConflictPrompted = safeFallback && requestAxisConflict.evaluate().toBool()
+        && !requestAxisConflict.hasError() && prompt && prompt->property("visible").toBool();
+    QQmlExpression openAxisConflict(qmlContext(surface), surface,
+        QStringLiteral("openPendingFullDestination()"));
+    const bool axisConflictOpened = axisConflictPrompted && openAxisConflict.evaluate().toBool()
+        && !openAxisConflict.hasError();
+    settlePresentation();
+    const bool axisConflictExactTarget = axisConflictOpened
+        && themeManager.guidanceLevel() == QStringLiteral("Full")
+        && surface->property("currentPage").toInt() == 0 && pageItem(surface, 0) && !pageItem(surface, 6)
+        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
+    const bool guidedAfterAxisConflict = axisConflictExactTarget
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
+    QQmlExpression requestButtonConflict(qmlContext(surface), surface,
+        QStringLiteral("requestFullDestination(1, {source:'button-conflict', buttonIndex:1, target:1}); true"));
+    const bool buttonConflictPrompted = guidedAfterAxisConflict && requestButtonConflict.evaluate().toBool()
+        && !requestButtonConflict.hasError() && prompt && prompt->property("visible").toBool();
+    QQmlExpression openButtonConflict(qmlContext(surface), surface,
+        QStringLiteral("openPendingFullDestination()"));
+    const bool buttonConflictOpened = buttonConflictPrompted && openButtonConflict.evaluate().toBool()
+        && !openButtonConflict.hasError();
+    settlePresentation();
+    const bool buttonConflictExactTarget = buttonConflictOpened
+        && themeManager.guidanceLevel() == QStringLiteral("Full")
+        && surface->property("currentPage").toInt() == 1 && pageItem(surface, 1) && !pageItem(surface, 11)
+        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
+    const bool guidedAfterButtonConflict = buttonConflictExactTarget
+        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    settlePresentation();
+    QQmlExpression requestCancelledConflict(qmlContext(surface), surface,
+        QStringLiteral("requestFullDestination(0, {source:'axis-conflict', axisIndex:-1, target:'X'}); clearPendingFullDestination(); true"));
+    const bool cancelledConflictCleared = guidedAfterButtonConflict && requestCancelledConflict.evaluate().toBool()
+        && !requestCancelledConflict.hasError()
+        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
+    if (prompt && prompt->property("visible").toBool()) QMetaObject::invokeMethod(prompt, "close");
     if (!guidedAllowlist || !fullOnlyBlocked || !fullRestored || !safeFallback
+        || !axisConflictExactTarget || !buttonConflictExactTarget || !cancelledConflictCleared
         || flightDeckConfigurationSnapshot(backend) != configurationBefore
         || backend.setupAssistantTask() != taskBefore) {
         delete shell;
         return failPresentationLifecycleTest(QStringLiteral(
             "Guided Basic allowlist or Full-only recovery changed presentation or configuration "
-            "(allowlist=%1 blocked=%2 full=%3 fallback=%4)")
-            .arg(guidedAllowlist).arg(fullOnlyBlocked).arg(fullRestored).arg(safeFallback));
+            "(allowlist=%1 blocked=%2 full=%3 fallback=%4 axis=%5 button=%6 cancel=%7)")
+            .arg(guidedAllowlist).arg(fullOnlyBlocked).arg(fullRestored).arg(safeFallback)
+            .arg(axisConflictExactTarget).arg(buttonConflictExactTarget).arg(cancelledConflictCleared));
     }
     delete shell;
     return true;

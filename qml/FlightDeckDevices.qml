@@ -257,14 +257,39 @@ Flickable {
         return null;
     }
 
-    function profileNameForRig(rigId) {
+    function profileSummaryForRig(rigId) {
         const profiles = backend.profiles || []
+        const matching = []
         for (let index = 0; index < profiles.length; ++index) {
             const profile = profiles[index] || ({})
             if (String(profile.deviceRigId || "") === String(rigId || ""))
-                return String(profile.name || "Profile")
+                matching.push(profile)
         }
-        return "No profile selected"
+        const activeId = String(backend.activeProfileId || "")
+        const selectedId = String(backend.selectedProfileId || "")
+        for (let index = 0; index < matching.length; ++index) {
+            if (String(matching[index].id || "") === activeId)
+                return "Active profile: " + String(matching[index].displayName || matching[index].name || "Profile")
+        }
+        for (let index = 0; index < matching.length; ++index) {
+            if (String(matching[index].id || "") === selectedId)
+                return "Selected profile: " + String(matching[index].displayName || matching[index].name || "Profile")
+        }
+        return matching.length === 0 ? "No profile selected" : matching.length + " available profile"
+            + (matching.length === 1 ? " · choose it to configure" : "s · choose one to configure")
+    }
+
+    // Guided offers only a named output that has passed its existing scoped
+    // descriptor/ownership inspection. A raw saved layout is never silently
+    // adopted just because it happens to be first in the configuration.
+    function guidedEligibleOutputLayouts() {
+        const choices = []
+        for (let index = 0; index < outputLayouts.length; ++index) {
+            const output = outputLayouts[index] || ({})
+            if (String(output.id || "").length > 0 && Boolean(output.inspected) && Boolean(output.ready))
+                choices.push(output)
+        }
+        return choices
     }
 
     function rigTone(rig) {
@@ -1629,11 +1654,12 @@ Flickable {
         heading: "Setup summary"
         tone: "informational"
         preferredWidth: 560
-        property var rig: ({})
+        property string rigId: ""
+        readonly property var rig: root.rigFor(rigId)
 
         function openFor(value) {
-            rig = value || ({})
-            open()
+            rigId = String((value || {}).id || value || "")
+            if (rigId.length > 0) open()
         }
 
         contentItem: ColumnLayout {
@@ -1641,7 +1667,7 @@ Flickable {
             spacing: deck.space12
             Text {
                 Layout.fillWidth: true
-                text: String(guidedRigSummaryDialog.rig.name || "Setup")
+                text: guidedRigSummaryDialog.rig ? String(guidedRigSummaryDialog.rig.name || "Setup") : "Setup unavailable"
                 color: deck.textPrimary
                 font.family: deck.displayFont
                 font.pixelSize: deck.scale(19)
@@ -1650,14 +1676,16 @@ Flickable {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Profile: " + root.profileNameForRig(String(guidedRigSummaryDialog.rig.id || ""))
+                text: "Profile: " + (guidedRigSummaryDialog.rig
+                    ? root.profileSummaryForRig(guidedRigSummaryDialog.rigId)
+                    : "This Device Rig was removed while this summary was open.")
                 color: deck.textSecondary
                 font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
             }
             Text { text: "CONTROLLERS"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true }
             Repeater {
-                model: guidedRigSummaryDialog.rig.members || []
+                model: guidedRigSummaryDialog.rig ? guidedRigSummaryDialog.rig.members || [] : []
                 delegate: RowLayout {
                     required property var modelData
                     Layout.fillWidth: true
@@ -1668,8 +1696,8 @@ Flickable {
             }
             Text {
                 Layout.fillWidth: true
-                text: String(guidedRigSummaryDialog.rig.setupStatus || "Not checked")
-                color: deck.statusColor(root.rigTone(guidedRigSummaryDialog.rig))
+                text: guidedRigSummaryDialog.rig ? String(guidedRigSummaryDialog.rig.setupStatus || "Not checked") : "UNAVAILABLE"
+                color: deck.statusColor(root.rigTone(guidedRigSummaryDialog.rig || ({})))
                 font.family: deck.telemetryFont
                 font.pixelSize: deck.scale(9)
                 font.bold: true
@@ -1680,13 +1708,14 @@ Flickable {
                     text: "CHECK SETUP"
                     subdued: true
                     onClicked: {
-                        backend.setEditingDeviceContext(String(guidedRigSummaryDialog.rig.id || ""), [])
+                        backend.setEditingDeviceContext(guidedRigSummaryDialog.rigId, [])
                         guidedRigSummaryDialog.close()
                         setupHealthDialog.open()
                     }
+                    enabled: !!guidedRigSummaryDialog.rig
                 }
                 RigButton {
-                    visible: Boolean(guidedRigSummaryDialog.rig.unmapped)
+                    visible: Boolean(guidedRigSummaryDialog.rig && guidedRigSummaryDialog.rig.unmapped)
                     text: "CREATE PROFILE"
                     onClicked: {
                         root.openUnmappedRigProfileWorkflow(guidedRigSummaryDialog.rig, "blank")
@@ -1695,8 +1724,9 @@ Flickable {
                 }
                 Item { Layout.fillWidth: true }
                 RigButton {
-                    text: guidedRigSummaryDialog.rig.configured ? "ACTIVE" : "USE"
-                    enabled: Boolean(guidedRigSummaryDialog.rig.enabled) && !guidedRigSummaryDialog.rig.configured
+                    text: Boolean(guidedRigSummaryDialog.rig && guidedRigSummaryDialog.rig.configured) ? "ACTIVE" : "USE"
+                    enabled: Boolean(guidedRigSummaryDialog.rig && guidedRigSummaryDialog.rig.enabled)
+                        && !Boolean(guidedRigSummaryDialog.rig && guidedRigSummaryDialog.rig.configured)
                     onClicked: root.activateRig(guidedRigSummaryDialog.rig)
                 }
             }
@@ -1712,14 +1742,15 @@ Flickable {
         preferredWidth: 720
         property var draftMembers: []
         property string outputLayoutId: ""
+        readonly property var guidedOutputChoices: root.guidedEligibleOutputLayouts()
 
         function resetDraft() {
             draftMembers = [];
             // Basic only proposes the existing connection when it is the
             // single unambiguous option. It never treats the first layout as
             // a compatibility decision.
-            outputLayoutId = root.guidedPresentation && root.outputLayouts.length !== 1
-                ? "" : (root.outputLayouts.length ? String(root.outputLayouts[0].id || "") : "");
+            const candidates = root.guidedPresentation ? guidedOutputChoices : root.outputLayouts
+            outputLayoutId = candidates.length === 1 ? String(candidates[0].id || "") : "";
             rigCreateName.text = "";
         }
         function draftEntry(id) {
@@ -1867,17 +1898,35 @@ Flickable {
                 Text { visible: !root.guidedPresentation; text: root.outputLayouts.length ? "Choose the existing Virtual Output this Rig should own. You can add more outputs in Rig Details." : "Create a Virtual Output before this Rig can be saved."; color: deck.textMuted; font.pixelSize: deck.scale(9); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 Text {
                     visible: root.guidedPresentation
-                    text: root.outputLayouts.length === 1
+                    text: createRigDialog.guidedOutputChoices.length === 1
                         ? "Connection: " + root.outputName(createRigDialog.outputLayoutId)
-                        : "A simple setup needs one existing compatible connection. Choose a specific connection in Full when more than one is available."
-                    color: root.outputLayouts.length === 1 ? deck.textSecondary : deck.attention
+                        : createRigDialog.guidedOutputChoices.length > 1
+                            ? "Choose the checked connection this setup should use."
+                            : "No checked compatible connection is available yet. Check setup before creating this setup."
+                    color: createRigDialog.guidedOutputChoices.length > 0 ? deck.textSecondary : deck.attention
                     font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
+                RigCombo {
+                    visible: root.guidedPresentation && createRigDialog.guidedOutputChoices.length > 1
+                    objectName: "flightDeckGuidedCreateRigOutput"
+                    Layout.fillWidth: true
+                    model: createRigDialog.guidedOutputChoices
+                    textRole: "name"
+                    valueRole: "id"
+                    currentIndex: {
+                        for (let index = 0; index < createRigDialog.guidedOutputChoices.length; ++index)
+                            if (String(createRigDialog.guidedOutputChoices[index].id || "") === createRigDialog.outputLayoutId) return index;
+                        return -1;
+                    }
+                    onActivated: createRigDialog.outputLayoutId = String(currentValue || "")
+                }
                 RigButton {
-                    visible: root.guidedPresentation && root.outputLayouts.length !== 1
-                    text: "OPEN IN FULL"
+                    visible: root.guidedPresentation && createRigDialog.guidedOutputChoices.length === 0
+                    text: "CHECK SETUP"
                     subdued: true
-                    onClicked: { createRigDialog.close(); root.requestFullAccess({ section: "virtual-output" }); }
+                    // Keep the in-progress name and membership draft open;
+                    // the check is a prerequisite, not an escalation reset.
+                    onClicked: setupHealthDialog.open()
                 }
                 Text { visible: rigCreateName.text.trim().length === 0 || createRigDialog.draftMembers.length === 0 || !createRigDialog.outputLayoutId; text: "Enter a name, include at least one controller, and select a Virtual Output to continue."; color: deck.attention; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {

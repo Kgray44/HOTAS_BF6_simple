@@ -132,7 +132,7 @@ FlightDeckDialog {
 
     function selectedOutputId() {
         const saved = String(task.outputLayoutId || "")
-        if (saved.length > 0)
+        if (saved.length > 0 && outputIndexFor(saved) >= 0)
             return saved
         // Guided never silently chooses one item from an ambiguous list. A
         // lone compatible output is a fact, not a hidden user decision.
@@ -144,7 +144,7 @@ FlightDeckDialog {
 
     function selectedCategoryId() {
         const saved = String(task.categoryId || "")
-        if (saved.length > 0)
+        if (saved.length > 0 && categoryIndexFor(saved) >= 0)
             return saved
         if (guidedPresentation && categories.length === 1)
             return String(categories[0] && categories[0].id || "")
@@ -191,11 +191,19 @@ FlightDeckDialog {
         showResult(result, "Controller choice could not be saved.")
     }
 
-    function savePurposeChoice() {
+    function savePurposeChoice(overrides) {
+        const changed = overrides || ({})
         const copyEnabled = copyProfile.checked
         const result = backendObject.updateSetupAssistantTask({
-            rigId: selectedRigId(), profileId: selectedProfileId(), outputLayoutId: selectedOutputId(),
-            categoryId: selectedCategoryId(), copyProfileId: copyEnabled ? String(copyChoice.currentValue || "") : "",
+            rigId: changed.rigId === undefined ? selectedRigId() : String(changed.rigId || ""),
+            profileId: changed.profileId === undefined ? selectedProfileId() : String(changed.profileId || ""),
+            // A selector activation must win over the old journal value in
+            // this very call.  A later name edit then reads the newly saved
+            // stable ID instead of restoring the previous selection.
+            outputLayoutId: changed.outputLayoutId === undefined ? selectedOutputId() : String(changed.outputLayoutId || ""),
+            categoryId: changed.categoryId === undefined ? selectedCategoryId() : String(changed.categoryId || ""),
+            copyProfileId: changed.copyProfileId === undefined
+                ? (copyEnabled ? String(copyChoice.currentValue || "") : "") : String(changed.copyProfileId || ""),
             rigNameDraft: rigName.text, profileNameDraft: profileName.text,
             copyExistingDraft: copyEnabled, requiredMembershipDraft: requiredMembership.checked,
             stage: "purpose"
@@ -610,7 +618,7 @@ FlightDeckDialog {
                     model: root.rigs
                     currentIndex: root.rigIndexFor(root.task.rigId)
                     textRole: "name"
-                    onActivated: root.savePurposeDraft()
+                    onActivated: root.savePurposeChoice({ rigId: String(currentValue || "") })
                 }
                 Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: root.guidedPresentation ? "SETUP NAME" : "DEVICE RIG NAME"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 TextField {
@@ -653,7 +661,7 @@ FlightDeckDialog {
                     model: root.outputs
                     currentIndex: root.outputIndexFor(root.task.outputLayoutId)
                     textRole: "name"
-                    onActivated: root.savePurposeDraft()
+                    onActivated: root.savePurposeChoice({ outputLayoutId: String(currentValue || "") })
                 }
                 Text {
                     visible: root.guidedPresentation && (root.taskIntent === "first-controller" || root.taskIntent === "independent") && root.hasUnambiguousOutput()
@@ -678,7 +686,7 @@ FlightDeckDialog {
                     model: root.categories
                     currentIndex: root.categoryIndexFor(root.task.categoryId)
                     textRole: "name"
-                    onActivated: root.savePurposeDraft()
+                    onActivated: root.savePurposeChoice({ categoryId: String(currentValue || "") })
                 }
                 Text {
                     visible: root.guidedPresentation && root.taskIntent !== "add-to-rig" && root.hasUnambiguousCategory()
@@ -708,7 +716,7 @@ FlightDeckDialog {
                     textRole: "displayName"
                     emptyText: "Choose a profile to copy"
                     currentIndex: root.task.copyProfileId ? root.profiles.findIndex(function(profile) { return String(profile.id || "") === String(root.task.copyProfileId || "") }) : -1
-                    onActivated: root.savePurposeDraft()
+                    onActivated: root.savePurposeChoice({ copyProfileId: String(currentValue || "") })
                 }
                 SetupCheckBox {
                     id: requiredMembership
@@ -733,7 +741,7 @@ FlightDeckDialog {
                             if (String(root.profilesForSelectedRig[index].id || "") === wanted) return index
                         return -1
                     }
-                    onActivated: root.savePurposeDraft()
+                    onActivated: root.savePurposeChoice({ profileId: String(currentValue || "") })
                 }
                 Text {
                     visible: root.taskIntent === "add-to-rig" && rigChoice.currentIndex >= 0

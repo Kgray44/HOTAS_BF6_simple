@@ -90,18 +90,37 @@ Item {
         fullOnlyAccessDialog.open()
         return false
     }
+    function clearPendingFullDestination() {
+        pendingFullDestination = { page: -1, context: ({}) }
+    }
     function openPendingFullDestination() {
         const destination = Number(pendingFullDestination.page)
+        const context = pendingFullDestination.context || ({})
+        // Consume before switching modes. Cancelled/replaced/stale requests
+        // cannot replay a previous target on a later Full transition.
+        clearPendingFullDestination()
         if (destination < 0 || !themeManager.chooseGuidanceLevel("Full"))
             return false
-        const context = pendingFullDestination.context || ({})
-        if (destination === 6 && Number(context.axisIndex) >= 0)
+        const source = String(context.source || "")
+        const routedDestination = source === "axis-conflict" ? 0
+            : source === "button-conflict" ? 1 : destination
+        const inputDeviceId = String(context.inputDeviceId || "")
+        if (inputDeviceId.length > 0)
+            backend.setSelectedDeviceContext(backend.selectedDeviceRigId, [inputDeviceId])
+        if (routedDestination === 0 && Number(context.axisIndex) >= 0)
             backend.setSelectedAxis(Number(context.axisIndex))
-        if (destination === 2 && (String(context.section || "") === "virtual-output"
+        if (routedDestination === 2 && (String(context.section || "") === "virtual-output"
                 || String(context.section || "") === "isolation"))
             standardPageHost.flightDeckDevicesContext = String(context.section)
         fullOnlyAccessDialog.close()
-        currentPage = destination
+        currentPage = routedDestination
+        if (source === "axis-conflict" || source === "button-conflict") {
+            Qt.callLater(function() {
+                const page = standardPageHost.pageItem(routedDestination)
+                if (page && page.openFullConflict)
+                    page.openFullConflict(context)
+            })
+        }
         return true
     }
     function navigateTo(page, context) {
@@ -603,7 +622,7 @@ Item {
                     text: "STAY IN GUIDED"
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
-                    onClicked: fullOnlyAccessDialog.close()
+                    onClicked: { root.clearPendingFullDestination(); fullOnlyAccessDialog.close() }
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }

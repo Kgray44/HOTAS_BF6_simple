@@ -69,6 +69,20 @@ Flickable {
         return themeManager.guidanceSectionExpanded("overview-additional-attention")
     }
     property string issueHandoffMessage: ""
+    property int guidedIssueIndex: 0
+
+    function prioritizedIssue() {
+        const issues = setupTruth.issues || []
+        if (issues.length === 0) return ({})
+        if (!guidedPresentation) return issues[0]
+        const index = Math.max(0, Math.min(guidedIssueIndex, issues.length - 1))
+        return issues[index] || ({})
+    }
+
+    function advanceGuidedIssue() {
+        const issues = setupTruth.issues || []
+        if (issues.length > 1) guidedIssueIndex = (guidedIssueIndex + 1) % issues.length
+    }
 
     function currentIssueById(issueId) {
         const issues = setupTruth.issues || []
@@ -333,7 +347,7 @@ Flickable {
                     spacing: deck.space8
                     Button {
                         objectName: "flightDeckOverviewNextSetupAction"
-                        readonly property var nextIssue: (root.setupTruth.issues || []).length ? root.setupTruth.issues[0] : null
+                        readonly property var nextIssue: root.prioritizedIssue()
                         text: nextIssue ? "REVIEW NEXT ISSUE" : (root.setupTruth.fresh ? "VIEW SETUP" : "CHECK SETUP")
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
@@ -395,8 +409,7 @@ Flickable {
                 anchors.fill: parent
                 anchors.margins: parent.contentPadding
                 spacing: deck.space8
-                readonly property var issue: (root.setupTruth.issues || []).length
-                    ? root.setupTruth.issues[0] : ({})
+                readonly property var issue: root.prioritizedIssue()
                 RowLayout {
                     Layout.fillWidth: true
                     ColumnLayout {
@@ -428,11 +441,18 @@ Flickable {
                     }
                 }
                 Button {
+                    objectName: "flightDeckAdditionalIssueAction"
                     visible: (setupTruth.issues || []).length > 1
-                    text: root.additionalAttentionExpanded ? "HIDE ADDITIONAL ITEMS" : "SHOW ADDITIONAL ITEMS · " + ((setupTruth.issues || []).length - 1)
+                    text: root.guidedPresentation
+                        ? "NEXT ISSUE · " + (Math.max(0, Math.min(root.guidedIssueIndex,
+                            (setupTruth.issues || []).length - 1)) + 1) + " OF " + (setupTruth.issues || []).length
+                        : (root.additionalAttentionExpanded ? "HIDE ADDITIONAL ITEMS" : "SHOW ADDITIONAL ITEMS · " + ((setupTruth.issues || []).length - 1))
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
-                    onClicked: themeManager.setGuidanceSectionExpanded("overview-additional-attention", !root.additionalAttentionExpanded)
+                    onClicked: {
+                        if (root.guidedPresentation) root.advanceGuidedIssue()
+                        else themeManager.setGuidanceSectionExpanded("overview-additional-attention", !root.additionalAttentionExpanded)
+                    }
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(8); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }

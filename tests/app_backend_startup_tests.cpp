@@ -1531,6 +1531,26 @@ bool verifyPersistentSetupAssistantCoordinator()
         mappingRequestedBefore = backend->mappingRequested();
         const QString categoryId = backend->profileDetail(activeProfileBefore)
             .value(QStringLiteral("categoryId")).toString();
+        // Keep two real stable choices in the task journal. This guards the
+        // UI contract where a later draft edit must never resurrect the first
+        // output/category after an explicit B selection.
+        const QString alternateOutputId = backend->createVirtualOutputLayout(
+            QStringLiteral("Pass C selection B output"), backend->suggestedVirtualOutputDeviceId(),
+            QStringLiteral("full-8-axis"));
+        const QString alternateCategoryName = QStringLiteral("Pass C selection B category");
+        const bool alternateCategoryCreated = backend->createProfileCategory(alternateCategoryName);
+        QString alternateCategoryId;
+        for (const QVariant &entry : backend->profileCategories()) {
+            const QVariantMap category = entry.toMap();
+            if (category.value(QStringLiteral("name")).toString() == alternateCategoryName) {
+                alternateCategoryId = category.value(QStringLiteral("id")).toString();
+                break;
+            }
+        }
+        if (alternateOutputId.isEmpty() || !alternateCategoryCreated || alternateCategoryId.isEmpty()) {
+            std::fprintf(stderr, "setup task selection fixture could not create two stable choices\n");
+            return false;
+        }
         const QVariantMap started = backend->beginSetupAssistantTask(
             QStringLiteral("independent"), {{QStringLiteral("controllerRecordId"),
                                                QLatin1String(kControllerId)}});
@@ -1553,22 +1573,37 @@ bool verifyPersistentSetupAssistantCoordinator()
             std::fprintf(stderr, "setup path selection replaced the current task instead of preserving it\n");
             return false;
         }
-        const QVariantMap savedChoice = backend->updateSetupAssistantTask({
+        const QVariantMap savedChoiceA = backend->updateSetupAssistantTask({
             {QStringLiteral("controllerRecordId"), QLatin1String(kControllerId)},
             {QStringLiteral("outputLayoutId"), QLatin1String(kOutputId)},
             {QStringLiteral("categoryId"), categoryId},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        const QVariantMap selectedChoiceB = backend->updateSetupAssistantTask({
+            {QStringLiteral("outputLayoutId"), alternateOutputId},
+            {QStringLiteral("categoryId"), alternateCategoryId},
+            {QStringLiteral("stage"), QStringLiteral("purpose")},
+        });
+        // This is the save a name edit makes after the selector event. It
+        // intentionally contains no output/category field.
+        const QVariantMap savedChoice = backend->updateSetupAssistantTask({
             {QStringLiteral("rigNameDraft"), expectedRigName},
             {QStringLiteral("profileNameDraft"), expectedProfileName},
             {QStringLiteral("requiredMembershipDraft"), true},
             {QStringLiteral("stage"), QStringLiteral("purpose")},
         });
-        if (!savedChoice.value(QStringLiteral("success")).toBool()) {
-            std::fprintf(stderr, "setup task choices were not retained\n");
+        const QVariantMap selectionAfterDraft = backend->setupAssistantTask();
+        if (!savedChoiceA.value(QStringLiteral("success")).toBool()
+            || !selectedChoiceB.value(QStringLiteral("success")).toBool()
+            || !savedChoice.value(QStringLiteral("success")).toBool()
+            || selectionAfterDraft.value(QStringLiteral("outputLayoutId")).toString() != alternateOutputId
+            || selectionAfterDraft.value(QStringLiteral("categoryId")).toString() != alternateCategoryId) {
+            std::fprintf(stderr, "setup task name edit restored an older output/category selection\n");
             return false;
         }
         const QVariantMap committed = backend->commitSetupAssistantRigAndProfile(
             expectedRigName, expectedProfileName, QLatin1String(kControllerId),
-            QLatin1String(kOutputId), categoryId);
+            alternateOutputId, alternateCategoryId);
         if (!committed.value(QStringLiteral("success")).toBool()
             || backend->activeProfileId() != activeProfileBefore
             || backend->activeDeviceRigId() != activeRigBefore
@@ -1584,9 +1619,13 @@ bool verifyPersistentSetupAssistantCoordinator()
             || task.value(QStringLiteral("operationRefs")).toList().size() != 2
             || task.value(QStringLiteral("rigNameDraft")).toString() != expectedRigName
             || task.value(QStringLiteral("profileNameDraft")).toString() != expectedProfileName
+            || task.value(QStringLiteral("outputLayoutId")).toString() != alternateOutputId
+            || task.value(QStringLiteral("categoryId")).toString() != alternateCategoryId
             || backend->profileDetail(createdProfileId).value(QStringLiteral("deviceRigId")).toString()
-                != createdRigId) {
-            std::fprintf(stderr, "setup task did not journal its explicit Rig/Profile commit\n");
+                != createdRigId
+            || backend->profileDetail(createdProfileId).value(QStringLiteral("categoryId")).toString()
+                != alternateCategoryId) {
+            std::fprintf(stderr, "setup task did not retain and commit the explicit B selections\n");
             return false;
         }
         const QVariantMap competing = backend->beginSetupAssistantTask(QStringLiteral("first-controller"));
