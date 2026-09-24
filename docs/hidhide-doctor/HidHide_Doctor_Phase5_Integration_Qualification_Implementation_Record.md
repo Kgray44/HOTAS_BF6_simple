@@ -371,6 +371,15 @@ path has not run for this unsigned candidate.
   and three scan smokes per synthetic CPU level had medians of 1327.669 ms idle,
   1388.527 ms moderate, and 1682.934 ms heavy. This is process-level evidence,
   not first-visible or owner interaction latency.
+- On exact R9, a fresh direct `ProcessStartInfo.ArgumentList` contract used a
+  Unicode report destination containing spaces, `&`, `%`, `;`, and an
+  apostrophe. It exited 0, produced 1,907,747 bytes of valid schema-6 JSON
+  with no NUL bytes (SHA-256
+  `AA16929231A202032B61AFFD55AC0735FF25B30C7A83DB283CAAB6F487221E9F`), while
+  a regular-file parent exited 3 and created no report. The temporary test
+  directory was removed after verification. This requalifies only the
+  standalone headless report argument boundary; it does not imply broad
+  installer, RunOnce, cache, helper, or user-visible export qualification.
 - The installer acceptance contract now treats mapper, Doctor, and helper as
   one candidate component set: every resulting candidate clean/upgrade/recovery
   installation must contain the Doctor and helper, and each invokes standalone
