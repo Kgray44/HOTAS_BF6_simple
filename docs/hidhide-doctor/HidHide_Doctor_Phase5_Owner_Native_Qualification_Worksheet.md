@@ -33,6 +33,26 @@ substitute.
 | Five HOTAS themes |  | Record each actual theme label; launch/focus Doctor through each of the three entry points and confirm no visual or focus regression. |
 | Practical HOTAS pass |  | With the owner’s safe physical setup, confirm no disruption to the normal mapping path. This is observational only; do not alter HidHide configuration. |
 
+## Five-presentation native route matrix
+
+The actual presentation choices are **Legacy**, **Standard**, **Top Gun**,
+**Day Ops**, and **Flight Deck**. For each, use Devices to open Doctor and use
+the App Health or Diagnostics route when that presentation exposes one. Record
+whether each route focused one paired staged Doctor, whether the normal and
+small HOTAS window layouts had clipping or overlap, and whether any control
+looked native/default rather than application-styled. Flight Deck's Dark and
+Light appearances are two appearance variants of the one Flight Deck
+presentation; inspect both and record them in its note rather than calling one
+of them a sixth theme.
+
+| Presentation | Devices → Doctor | App Health / Diagnostics → Doctor | Normal + small layout | Result | Note |
+|---|---|---|---|---|---|
+| Legacy |  |  |  |  |  |
+| Standard |  |  |  |  |  |
+| Top Gun |  |  |  |  |  |
+| Day Ops |  |  |  |  |  |
+| Flight Deck (Dark and Light) |  |  |  |  |  |
+
 ## Outcome
 
 The owner should return this completed table together with the candidate
