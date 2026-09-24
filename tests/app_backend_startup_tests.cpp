@@ -1566,6 +1566,42 @@ bool verifyAutomaticAxisEvidencePersistenceRecovery()
         restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y);
 }
 
+bool verifyAutomaticAxisEvidencePersistsAtShutdown()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()) return false;
+    // Do not advance a second UI snapshot here.  This is the exit edge: the
+    // initial asynchronous request has failed, verified proof exists only in
+    // RAM, and shutdown must use its bounded recovery attempt before the
+    // persistence writer stops.
+    backend->setAutomaticAxisEvidencePersistenceFailuresForTest(1);
+    if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || backend->attemptRuntimeAxisEvidencePersistenceForTest()) {
+        std::fprintf(stderr, "shutdown persistence fixture did not observe the initial write failure\n");
+        return false;
+    }
+    const QVariantMap ramOnly = backend->inMemoryAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    const QVariantMap stillOnDisk = backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x);
+    if (!hasVerifiedBufferedEvidence(ramOnly, y)
+        || stillOnDisk.value(QStringLiteral("verified")).toBool()) {
+        std::fprintf(stderr, "shutdown persistence fixture did not preserve RAM-only evidence\n");
+        return false;
+    }
+    backend->flushPersistenceForShutdown();
+    if (!hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)) {
+        std::fprintf(stderr, "shutdown did not durably recover automatic axis evidence\n");
+        return false;
+    }
+    backend.reset();
+    auto restarted = std::make_unique<hotas::AppBackend>();
+    return hasVerifiedBufferedEvidence(
+        restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y);
+}
+
 bool verifyDeviceRigAxisEvidenceIgnoresEditorSelection()
 {
     constexpr auto kPrimaryId = "activation-transaction-controller";
@@ -1665,9 +1701,9 @@ bool verifyAxisTelemetryPublicationDoesNotRebuildConfiguration()
 
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 30> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 31> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 30> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 31> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1695,6 +1731,7 @@ const std::array<std::pair<QString, StartupFixture>, 30> &startupFixtures()
         {QStringLiteral("stable-controller-inventory"), verifyUnchangedControllerInventoryDoesNotRebuildReadiness},
         {QStringLiteral("standalone-axis-evidence"), verifyStandaloneVerificationAndAxisEvidenceOwnership},
         {QStringLiteral("axis-evidence-persistence-recovery"), verifyAutomaticAxisEvidencePersistenceRecovery},
+        {QStringLiteral("axis-evidence-persistence-shutdown"), verifyAutomaticAxisEvidencePersistsAtShutdown},
         {QStringLiteral("rig-axis-evidence"), verifyDeviceRigAxisEvidenceIgnoresEditorSelection},
         {QStringLiteral("axis-configuration-notification"), verifyAxisConfigurationNotificationIgnoresSetupStatus},
         {QStringLiteral("axis-telemetry-notification"), verifyAxisTelemetryPublicationDoesNotRebuildConfiguration},

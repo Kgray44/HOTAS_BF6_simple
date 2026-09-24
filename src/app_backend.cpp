@@ -1035,6 +1035,42 @@ void AppBackend::flushPersistenceForShutdown()
     // already-requested generation; starting a clean application must not
     // manufacture a configuration write merely because it exits.
     m_persistence->flushLatest(kPersistenceShutdownTimeoutMs);
+
+    // Runtime source proof normally recovers on a later UI snapshot.  When
+    // the first asynchronous write has already failed, application exit can
+    // arrive before that snapshot.  Preserve the normal bounded-recovery
+    // policy, but spend one of its existing attempts at this real durability
+    // boundary and wait for that recovery generation before stopping the
+    // writer.  A clean shutdown and already-durable proof still create no
+    // new write; this remains wholly outside the MappingWorker report path.
+    if (m_pendingAutomaticAxisEvidencePersistence) {
+        PendingAutomaticAxisEvidencePersistence &pending =
+            *m_pendingAutomaticAxisEvidencePersistence;
+        const ConfigPersistenceCoordinator::Statistics statistics = m_persistence->statistics();
+        if (statistics.durableGeneration >= pending.generation
+            && automaticAxisEvidenceIsDurable(pending)) {
+            m_pendingAutomaticAxisEvidencePersistence.reset();
+        } else {
+            const bool failed = statistics.lastFailedGeneration >= pending.generation;
+            const bool durableButMissing = statistics.durableGeneration >= pending.generation;
+            if ((failed || durableButMissing)
+                && pending.retryCount < kAutomaticEvidencePersistenceRetryLimit) {
+                const ConfigPersistenceCoordinator::RequestReceipt retry =
+                    m_persistence->request(m_configuration);
+                recordPersistenceProbeTelemetry();
+                if (retry.generation != 0) {
+                    pending.generation = retry.generation;
+                    ++pending.retryCount;
+                    m_persistence->flushThrough(retry.generation, kPersistenceShutdownTimeoutMs);
+                    const ConfigPersistenceCoordinator::Statistics recovered = m_persistence->statistics();
+                    if (recovered.durableGeneration >= pending.generation
+                        && automaticAxisEvidenceIsDurable(pending)) {
+                        m_pendingAutomaticAxisEvidencePersistence.reset();
+                    }
+                }
+            }
+        }
+    }
     m_persistence->stop(kPersistenceShutdownTimeoutMs);
     recordPersistenceProbeTelemetry();
 }
