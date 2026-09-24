@@ -487,6 +487,19 @@ plane.
   the requested live owner acceptance across healthy, informational, warning,
   protocol, package, service, device, Windows evidence, diagnosis, and repair
   transaction families remains pending.
+- On exact R9 stage `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R9`, the
+  explicit `Forensic Evidence Review` development fixture ran headlessly with
+  `--report` and exited 0. Its 1,986,232-byte schema-6 JSON report had SHA-256
+  `CF1464033CC9B55C82CDE4AB2F642F7C412BCC5806DE36E2F0F75A69AEC53580`, no NUL
+  bytes, 238 canonical evidence records, and 600 retained typed timeline
+  events with one explicit 161-event truncation marker. Every record had a
+  non-empty summary, provider, status rationale, non-negative monotonic
+  duration, and labelled field; no summary was a bare Boolean. The fixture
+  confirmed the expected protocol IOCTL/native-error, package signature,
+  driver service, device-property, Event Log/WER/SetupAPI/repair-transaction,
+  diagnosis, and `CHECK STARTED`/`EVIDENCE RECORDED`/`CHECK COMPLETED`
+  lifecycle links. This is exact-stage deterministic fixture evidence only;
+  it does not replace native owner review or owner-machine observation.
 
 The platform, hardware, failure injection, privacy/export, repair, reboot,
 performance, contention, installer/update/uninstall, native owner review, and
