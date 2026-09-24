@@ -500,10 +500,15 @@ plane.
   zero-unexpected-shallow-record forensic coverage check),
   `hidhide_doctor_deep_repair_tests`, and `hidhide_doctor_layout_tests`; the
   isolated QML startup regression completed in 150.05 seconds. These are
-  automated evidence only;
-  the requested live owner acceptance across healthy, informational, warning,
-  protocol, package, service, device, Windows evidence, diagnosis, and repair
-  transaction families remains pending.
+  automated evidence only.
+- The owner subsequently completed the requested R9 native read-only review
+  with Activity on and Inspector open. It covered representative healthy,
+  informational, and warning activity; protocol, configuration, package,
+  driver, device, and knowledge/diagnosis evidence; lifecycle selection; and
+  Inspector curved-arrow navigation. The owner reported that everything looked
+  good. This closes the addendum's owner-review observation as a narrow
+  owner-reported result, but it is not a per-row capture, a screen-reader or
+  DPI result, a repair test, or a final release decision.
 - On exact R9 stage `C:\hotas-builds\HidHideDoctor-v1-RC1-2.6.2-R9`, the
   explicit `Forensic Evidence Review` development fixture ran headlessly with
   `--report` and exited 0. Its 1,986,232-byte schema-6 JSON report had SHA-256
