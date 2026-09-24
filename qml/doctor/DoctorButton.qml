@@ -7,23 +7,27 @@ AbstractButton {
     property string tone: "secondary"
     property bool selected: false
     property bool compact: false
+    property bool iconOnly: false
     property string tooltipText: ""
     property string accessibleName: text
     implicitHeight: compact ? 28 : 34
-    implicitWidth: Math.max(compact ? 58 : 84, contentItem.implicitWidth + leftPadding + rightPadding)
-    leftPadding: compact ? 10 : 13
-    rightPadding: compact ? 10 : 13
+    implicitWidth: iconOnly ? 32 : Math.max(compact ? 58 : 84, contentItem.implicitWidth + leftPadding + rightPadding)
+    leftPadding: iconOnly ? 6 : (compact ? 10 : 13)
+    rightPadding: iconOnly ? 6 : (compact ? 10 : 13)
     topPadding: 4
     bottomPadding: 4
     focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.Button
     Accessible.name: accessibleName
     Accessible.description: tooltipText
+    Keys.onReturnPressed: control.click()
+    Keys.onEnterPressed: control.click()
 
     contentItem: Label {
         text: control.text
         color: !control.enabled ? Theme.disabled : (control.tone === "primary" ? Theme.textPrimary : Theme.textSecondary)
         font.family: Theme.ui
-        font.pixelSize: control.compact ? 10 : 11
+        font.pixelSize: control.iconOnly ? 15 : (control.compact ? 10 : 11)
         font.weight: Font.DemiBold
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

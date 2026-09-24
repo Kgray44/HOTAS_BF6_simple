@@ -1,0 +1,60 @@
+# HidHide Doctor Phase 5 owner native-qualification worksheet
+
+This worksheet records only a normal, read-only Doctor review. It does not
+authorize a repair, elevation prompt, installer, restart, device-configuration
+change, or release.
+
+## Candidate receipt
+
+Before starting, record the staged candidate folder, `VERSION`, component
+manifest SHA-256, and the SHA-256 of `HidHide Doctor.exe`. Confirm that the
+component manifest lists the four product executables and that all listed file
+hashes verify. If the receipt does not agree, stop and report **NO VERDICT**.
+
+## Native review matrix
+
+For every row, record `PASS`, `FAIL`, or `NOT RUN`; include the observed
+scaling value and a short note. Do not use an offscreen or fixture result as a
+substitute.
+
+| Review | Result | Evidence to record |
+|---|---|---|
+| Launch Doctor from **Devices** |  | Opens/focuses the paired staged Doctor once; no unexpected prompt or mutation. |
+| Launch from **Diagnostics/App Health** |  | Same paired binary and one-process behavior. |
+| Launch from **Flight Deck → Diagnostics** |  | Same paired binary and one-process behavior. |
+| Read-only scan at the current Windows scaling |  | First visible progress, completion state, and whether the window remains responsive. |
+| Interactive CPU contention: idle, moderate, and heavy |  | For each level, run `scripts/invoke-hidhide-doctor-interactive-contention.ps1` for its bounded interval, then record the JSON receipt, whether each normal read-only control reacts promptly, and any measured or observed delay. No repair, export, or device change. |
+| Activity lifecycle selection and Inspector navigation | PASS, narrow R9 owner review | The owner selected historical `CHECK STARTED`, `EVIDENCE RECORDED`, and `CHECK COMPLETED` rows and used the Inspector's curved-arrow navigation. The owner reported that the requested lifecycle and Inspector checks all looked good. This is an owner-reported native interaction result; no per-row capture was retained. |
+| Forensic evidence activity sample | PASS, narrow R9 owner review | During the requested read-only scan with Activity on and Inspector open, the owner reviewed the representative healthy, informational, and warning activity sample across protocol, configuration, package, driver, device, and knowledge/diagnosis evidence, then reported that everything looked good. This establishes the requested native owner observation only; it does not qualify screen-reader behavior, every record, or another machine. |
+| Each available Windows scaling from 100% through 200% |  | Actual scaling value, readable text, no clipped controls, usable small-window behavior. |
+| Keyboard-only route |  | Tab order reaches the primary controls; Space/Enter activates the intended control; Escape closes only the transient surface. |
+| Accessibility semantics |  | Inspect accessible name/role with the owner’s available tool. If no screen reader is exercised, record `NOT RUN`, not `PASS`. |
+| Doctor control-style consistency |  | Buttons, segmented controls, progress, timeline, focus indicator, and error/status presentation are visually coherent. |
+| Five HOTAS themes |  | Record each actual theme label; launch/focus Doctor through each of the three entry points and confirm no visual or focus regression. |
+| Practical HOTAS pass |  | With the owner’s safe physical setup, confirm no disruption to the normal mapping path. This is observational only; do not alter HidHide configuration. |
+
+## Five-presentation native route matrix
+
+The actual presentation choices are **Legacy**, **Standard**, **Top Gun**,
+**Day Ops**, and **Flight Deck**. For each, use Devices to open Doctor and use
+the App Health or Diagnostics route when that presentation exposes one. Record
+whether each route focused one paired staged Doctor, whether the normal and
+small HOTAS window layouts had clipping or overlap, and whether any control
+looked native/default rather than application-styled. Flight Deck's Dark and
+Light appearances are two appearance variants of the one Flight Deck
+presentation; inspect both and record them in its note rather than calling one
+of them a sixth theme.
+
+| Presentation | Devices → Doctor | App Health / Diagnostics → Doctor | Normal + small layout | Result | Note |
+|---|---|---|---|---|---|
+| Legacy | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Standard | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Top Gun | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Day Ops | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | No launch, focus, clipping, overlap, or native/default-control regression was reported. |
+| Flight Deck (Dark and Light) | PASS, owner-reported | PASS where exposed, owner-reported | PASS, owner-reported | PASS, narrow R9 owner review | Both Dark and Light appearances were reviewed; no launch, focus, clipping, overlap, or native/default-control regression was reported. |
+
+## Outcome
+
+The owner should return this completed table together with the candidate
+receipt and, if useful, a Safe-to-Share bundle. A `FAIL` or an unperformed
+required row is a blocker, not a reason to improvise a repair.

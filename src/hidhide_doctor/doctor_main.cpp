@@ -1,5 +1,6 @@
 #include "doctor_diagnostics.h"
 #include "doctor_fixtures.h"
+#include "doctor_integration.h"
 #include "doctor_repair_helper_client.h"
 #include "doctor_repair_engine.h"
 #include "doctor_session.h"
@@ -7,8 +8,11 @@
 #include "hotas_build_version.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QFile>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QMetaObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -16,10 +20,12 @@
 #include <QSysInfo>
 #include <QTimer>
 #include <QUuid>
+#include <QWindow>
 
 #include <atomic>
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -35,9 +41,56 @@ bool hasArgument(int argc, char *argv[], const char *argument)
 QString argumentValue(int argc, char *argv[], const char *argument)
 {
     for (int index = 1; index + 1 < argc; ++index) {
-        if (std::strcmp(argv[index], argument) == 0) return QString::fromLocal8Bit(argv[index + 1]);
+        // QCoreApplication preserves the native Windows command line as
+        // Unicode.  Decoding argv through the local ANSI code page corrupts
+        // valid report destinations such as a non-ASCII Downloads folder.
+        if (std::strcmp(argv[index], argument) == 0) return QCoreApplication::arguments().value(index + 1);
     }
     return {};
+}
+
+constexpr auto kDoctorSingleInstanceEndpoint = "hotas-bf6-hidhide-doctor-v1";
+
+bool forwardToExistingDoctor(const QString &integrationToken)
+{
+    QLocalSocket existing;
+    existing.connectToServer(QString::fromLatin1(kDoctorSingleInstanceEndpoint));
+    if (!existing.waitForConnected(150)) return false;
+    if (!integrationToken.isEmpty()) {
+        const QByteArray payload = integrationToken.toLatin1();
+        if (payload.size() != 32 || existing.write(payload) != payload.size() || !existing.waitForBytesWritten(150)) {
+            existing.disconnectFromServer();
+            return false;
+        }
+    }
+    existing.disconnectFromServer();
+    return true;
+}
+
+bool listenForDoctorInstance(QLocalServer &server)
+{
+    server.setSocketOptions(QLocalServer::UserAccessOption);
+    if (server.listen(QString::fromLatin1(kDoctorSingleInstanceEndpoint))) return true;
+    // A failed client connection above can leave an abandoned named-pipe
+    // endpoint after a crash. Remove only that stale endpoint, then retry.
+    if (server.serverError() != QAbstractSocket::AddressInUseError
+        || !QLocalServer::removeServer(QString::fromLatin1(kDoctorSingleInstanceEndpoint))) {
+        return false;
+    }
+    server.setSocketOptions(QLocalServer::UserAccessOption);
+    return server.listen(QString::fromLatin1(kDoctorSingleInstanceEndpoint));
+}
+
+void focusDoctorWindow(QQmlApplicationEngine &engine)
+{
+    for (QObject *root : engine.rootObjects()) {
+        auto *window = qobject_cast<QWindow *>(root);
+        if (!window) continue;
+        window->showNormal();
+        window->raise();
+        window->requestActivate();
+        return;
+    }
 }
 
 void stampBuildProvenance(hotas::doctor::DiagnosticRunOutcome &outcome)
@@ -84,6 +137,12 @@ QString reconcileIncompleteJournals(const hotas::doctor::ReadOnlyDiagnosticSnaps
 // The controller owns a single bounded worker for a scan.  It never exposes a
 // repair operation; cancellation simply tells the observational provider not
 // to schedule further reads and safely joins the worker on shutdown.
+struct ScanCompletion final {
+    hotas::doctor::DoctorSession session;
+    QString recoveryNotice;
+    QByteArray redactedReport;
+};
+
 class ScanController final {
 public:
     ScanController(hotas::doctor::DoctorSessionViewModel &model, QString reportPath)
@@ -111,29 +170,30 @@ public:
             ? QStringLiteral("RESUMING REPAIR — rerunning a fresh read-only Doctor scan before any continuation decision.") : QString());
         hotas::doctor::DoctorDiagnosticEngine engine;
         m_model.replaceSession(engine.createPreparedSession());
+        m_model.setRedactedDiagnosticReport({});
         m_worker = std::thread([this, generation] {
             hotas::doctor::ReadOnlyWindowsDiagnosticProvider provider;
             hotas::doctor::DoctorDiagnosticEngine engine;
-            hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &m_cancelled,
-                [this, generation](const hotas::doctor::DoctorSession &session) {
-                    const hotas::doctor::DoctorSession copy = session;
-                    QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, copy] {
-                        if (generation == m_generation.load()) m_model.replaceSession(copy);
-                    }, Qt::QueuedConnection);
-                });
-            const QString recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
+            hotas::doctor::DiagnosticRunOutcome outcome = engine.run(provider, &m_cancelled);
+            auto completion = std::make_shared<ScanCompletion>();
+            completion->recoveryNotice = reconcileIncompleteJournals(outcome.snapshot);
             stampBuildProvenance(outcome);
+            completion->redactedReport = hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true);
             if (!m_reportPath.isEmpty()) {
                 QFile report(m_reportPath);
                 if (report.open(QIODevice::WriteOnly | QIODevice::Truncate))
-                    report.write(hotas::doctor::DoctorDiagnosticEngine::serializeJson(outcome, true));
+                    report.write(completion->redactedReport);
             }
-            const hotas::doctor::DoctorSession finished = outcome.session;
+            completion->session = std::move(outcome.session);
             m_running.store(false);
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, finished, recoveryNotice] {
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [this, generation, completion] {
                 if (generation == m_generation.load()) {
-                    m_model.replaceSession(finished);
-                    m_model.setRecoveryNotice(recoveryNotice);
+                    // The worker transfers its completed session exactly once.
+                    // Do not copy a mutable implicitly-shared session through a
+                    // queued callback: that was the native QtCore crash path.
+                    m_model.replaceSession(std::move(completion->session));
+                    m_model.setRecoveryNotice(std::move(completion->recoveryNotice));
+                    m_model.setRedactedDiagnosticReport(std::move(completion->redactedReport));
                 }
             }, Qt::QueuedConnection);
         });
@@ -258,7 +318,32 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     const bool fixtureMode = hasArgument(argc, argv, "--development-fixture");
-    const bool labRepairMode = fixtureMode && hasArgument(argc, argv, "--lab-repair-mode");
+    const bool scanSmoke = hasArgument(argc, argv, "--scan-smoke");
+    const QString integrationToken = argumentValue(argc, argv, "--integration-context");
+    // Only the interactive production workstation is single-instance. The
+    // explicit headless, fixture, and startup-smoke paths remain independent
+    // verification processes and must never bind to an owner's open Doctor.
+    const bool interactiveProductionWindow = !fixtureMode
+        && !hasArgument(argc, argv, "--headless")
+        && !hasArgument(argc, argv, "--startup-smoke")
+        && !scanSmoke;
+    if (interactiveProductionWindow && forwardToExistingDoctor(integrationToken)) return 0;
+    std::optional<QLocalServer> instanceServer;
+    if (interactiveProductionWindow) {
+        instanceServer.emplace();
+        if (!listenForDoctorInstance(*instanceServer)) instanceServer.reset();
+    }
+    const hotas::doctor::DoctorIntegrationReadResult integration = integrationToken.isEmpty()
+        ? hotas::doctor::DoctorIntegrationReadResult{} : hotas::doctor::consumeDoctorLaunchContext(integrationToken);
+    const bool componentMismatch = integration.accepted
+        && integration.context.invokingVersion != QString::fromLatin1(HOTAS_BF6_VERSION);
+    const QString integrationNotice = integrationToken.isEmpty() ? QString{}
+        : !integration.accepted ? QStringLiteral("HOTAS integration context rejected: %1").arg(integration.rejection)
+        : componentMismatch ? QStringLiteral("COMPONENT VERSION MISMATCH — HOTAS BF6 %1 requested Doctor %2. Repair is blocked; independent diagnosis continues.")
+              .arg(integration.context.invokingVersion, QString::fromLatin1(HOTAS_BF6_VERSION))
+        : QStringLiteral("Opened by HOTAS BF6 for %1. This is an intent hint only; Doctor independently verifies all system evidence.")
+              .arg(integration.context.reason);
+    const bool labRepairMode = fixtureMode && !componentMismatch && hasArgument(argc, argv, "--lab-repair-mode");
     const bool repairPlanningRequested = hasArgument(argc, argv, "--plan-repair");
     const bool dryRunRequested = hasArgument(argc, argv, "--dry-run-repair");
     const bool approvedUpgradeRequested = fixtureMode && hasArgument(argc, argv, "--approved-upgrade");
@@ -297,6 +382,10 @@ int main(int argc, char *argv[])
         }
         if (hasArgument(argc, argv, "--headless")) return 0;
         hotas::doctor::DoctorSessionViewModel viewModel(outcome.session, buildIdentity);
+        viewModel.setCopyAction([](QString text) { QGuiApplication::clipboard()->setText(text); });
+        viewModel.setIntegrationNotice(integrationNotice, componentMismatch);
+        if (integration.accepted) hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Doctor opened"),
+            componentMismatch ? QStringLiteral("Component version mismatch; repair is blocked.") : QStringLiteral("Independent diagnosis is starting."));
         std::optional<LabRepairController> labController;
         if (labRepairMode) {
             const hotas::doctor::RepairPlanProposal proposal = hotas::doctor::RepairPlanner().propose(outcome.session, outcome.snapshot, true, approvedUpgradeRequested);
@@ -346,6 +435,8 @@ int main(int argc, char *argv[])
     hotas::doctor::DoctorDiagnosticEngine diagnosticEngine;
     hotas::doctor::DoctorSession prepared = diagnosticEngine.createPreparedSession();
     hotas::doctor::DoctorSessionViewModel viewModel(prepared, buildIdentity);
+    viewModel.setCopyAction([](QString text) { QGuiApplication::clipboard()->setText(text); });
+    viewModel.setIntegrationNotice(integrationNotice, componentMismatch);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("doctorSession"), &viewModel);
@@ -353,8 +444,57 @@ int main(int argc, char *argv[])
         [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     engine.loadFromModule(u"HidHideDoctor"_qs, u"HidHideDoctorMain"_qs);
     if (engine.rootObjects().isEmpty()) return -1;
+    if (instanceServer) {
+        QObject::connect(&*instanceServer, &QLocalServer::newConnection, &application,
+            [&engine, &application, server = &*instanceServer] {
+                while (QLocalSocket *socket = server->nextPendingConnection()) {
+                    QObject::connect(socket, &QLocalSocket::readyRead, &application,
+                        [&engine, socket] {
+                            const QByteArray payload = socket->readAll();
+                            const QString forwardedToken = QString::fromLatin1(payload).trimmed();
+                            if (payload.size() == 32 && hotas::doctor::isValidDoctorIntegrationSessionId(forwardedToken)) {
+                                const hotas::doctor::DoctorIntegrationReadResult forwarded =
+                                    hotas::doctor::consumeDoctorLaunchContext(forwardedToken);
+                                if (forwarded.accepted) {
+                                    hotas::doctor::writeDoctorIntegrationResult(forwarded.context, QStringLiteral("Doctor opened"),
+                                        QStringLiteral("An existing HidHide Doctor window was focused; no second process was started."));
+                                }
+                            }
+                            focusDoctorWindow(engine);
+                            socket->disconnectFromServer();
+                            socket->deleteLater();
+                        });
+                    QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+                }
+            });
+    }
     ScanController controller(viewModel, reportPath);
     viewModel.setScanActions([&controller] { controller.cancel(); }, [&controller] { controller.start(); });
+    if (integration.accepted) {
+        hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Doctor opened"),
+            componentMismatch ? QStringLiteral("Component version mismatch; repair is blocked.") : QStringLiteral("Independent diagnosis is starting."));
+        bool diagnosisResultReported = false;
+        QObject::connect(&viewModel, &hotas::doctor::DoctorSessionViewModel::sessionChanged, &application,
+            [&viewModel, &integration, &diagnosisResultReported] {
+                if (diagnosisResultReported || viewModel.scanRunning()) return;
+                diagnosisResultReported = true;
+                hotas::doctor::writeDoctorIntegrationResult(integration.context, QStringLiteral("Diagnosis complete"),
+                    QStringLiteral("A fresh read-only scan completed; HOTAS BF6 may refresh its low-frequency readiness view."));
+            });
+    }
+    bool scanSmokeFinished = false;
+    if (scanSmoke) {
+        QObject::connect(&viewModel, &hotas::doctor::DoctorSessionViewModel::sessionChanged, &application,
+            [&application, &viewModel, &scanSmokeFinished] {
+                if (!viewModel.scanRunning() && !scanSmokeFinished) {
+                    scanSmokeFinished = true;
+                    QTimer::singleShot(750, &application, &QCoreApplication::quit);
+                }
+            });
+        // A scan-smoke timeout is a test failure. It remains a read-only
+        // verification process and never claims an interactive owner window.
+        QTimer::singleShot(30000, &application, [] { QCoreApplication::exit(2); });
+    }
     controller.start();
     if (hasArgument(argc, argv, "--startup-smoke")) QTimer::singleShot(0, &application, &QCoreApplication::quit);
     const int result = application.exec();

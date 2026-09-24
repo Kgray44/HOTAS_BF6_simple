@@ -101,6 +101,19 @@ struct ProtocolObservation final {
     std::optional<NativeError> nativeError;
     qint64 durationMs = 0;
     bool sizeNegotiation = false;
+    // Provider-level details survive into canonical EvidenceRecord metadata.
+    // Request/response byte counts are recorded, not unbounded raw buffers.
+    QString endpoint;
+    QString access;
+    QString api;
+    quint32 ioctlCode = 0;
+    qint64 requestBytes = 0;
+    qint64 responseBytes = 0;
+    int attemptCount = 0;
+    qint64 timeoutMs = 0;
+    QDateTime startedAt;
+    QDateTime completedAt;
+    qint64 monotonicDurationUs = 0;
 };
 
 struct PendingRestartObservation final {

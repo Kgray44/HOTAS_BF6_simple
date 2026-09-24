@@ -3,6 +3,9 @@
 #include "doctor_session.h"
 
 #include <QObject>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -22,6 +25,9 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(QString currentStepId READ currentStepId NOTIFY sessionChanged)
     Q_PROPERTY(int overallProgress READ overallProgress NOTIFY sessionChanged)
     Q_PROPERTY(int currentStepProgress READ currentStepProgress NOTIFY sessionChanged)
+    Q_PROPERTY(double displayProgress READ displayProgress NOTIFY progressPresentationChanged)
+    Q_PROPERTY(double displayCurrentStepProgress READ displayCurrentStepProgress NOTIFY progressPresentationChanged)
+    Q_PROPERTY(QString presentationElapsed READ presentationElapsed NOTIFY progressPresentationChanged)
     Q_PROPERTY(QStringList planItems READ planItems NOTIFY sessionChanged)
     Q_PROPERTY(QStringList resultItems READ resultItems NOTIFY sessionChanged)
     Q_PROPERTY(QStringList findingItems READ findingItems NOTIFY sessionChanged)
@@ -45,6 +51,7 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(QVariantList activityRows READ activityRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantList evidenceRows READ evidenceRows NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap selectedEvidence READ selectedEvidence NOTIFY sessionChanged)
+    Q_PROPERTY(QVariantMap selectedActivity READ selectedActivity NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap currentOperationDetails READ currentOperationDetails NOTIFY sessionChanged)
     Q_PROPERTY(bool repairPlanAvailable READ repairPlanAvailable NOTIFY sessionChanged)
     Q_PROPERTY(QVariantMap repairPlanSummary READ repairPlanSummary NOTIFY sessionChanged)
@@ -62,6 +69,13 @@ class DoctorSessionViewModel final : public QObject {
     Q_PROPERTY(bool liveEvidenceVisible READ liveEvidenceVisible NOTIFY presentationChanged)
     Q_PROPERTY(QString maximizedPane READ maximizedPane NOTIFY presentationChanged)
     Q_PROPERTY(QVariantList paneFractions READ paneFractions NOTIFY presentationChanged)
+    Q_PROPERTY(QVariantList bottomDockFractions READ bottomDockFractions NOTIFY presentationChanged)
+    Q_PROPERTY(int layoutResetEpoch READ layoutResetEpoch NOTIFY presentationChanged)
+    Q_PROPERTY(QString integrationNotice READ integrationNotice NOTIFY presentationChanged)
+    Q_PROPERTY(bool integrationComponentMismatch READ integrationComponentMismatch NOTIFY presentationChanged)
+    Q_PROPERTY(bool exportAvailable READ exportAvailable NOTIFY presentationChanged)
+    Q_PROPERTY(bool reportBusy READ reportBusy NOTIFY presentationChanged)
+    Q_PROPERTY(QString reportStatus READ reportStatus NOTIFY presentationChanged)
 public:
     explicit DoctorSessionViewModel(DoctorSession &session, QString buildIdentity, QObject *parent = nullptr);
     QString buildIdentity() const;
@@ -71,6 +85,9 @@ public:
     QString currentStepId() const;
     int overallProgress() const;
     int currentStepProgress() const;
+    double displayProgress() const;
+    double displayCurrentStepProgress() const;
+    QString presentationElapsed() const;
     QStringList planItems() const;
     QStringList resultItems() const;
     QStringList findingItems() const;
@@ -94,6 +111,7 @@ public:
     QVariantList activityRows() const;
     QVariantList evidenceRows() const;
     QVariantMap selectedEvidence() const;
+    QVariantMap selectedActivity() const;
     QVariantMap currentOperationDetails() const;
     bool repairPlanAvailable() const;
     QVariantMap repairPlanSummary() const;
@@ -111,6 +129,13 @@ public:
     bool liveEvidenceVisible() const;
     QString maximizedPane() const;
     QVariantList paneFractions() const;
+    QVariantList bottomDockFractions() const;
+    int layoutResetEpoch() const;
+    QString integrationNotice() const;
+    bool integrationComponentMismatch() const;
+    bool exportAvailable() const;
+    bool reportBusy() const;
+    QString reportStatus() const;
     static QVariantList defaultPaneFractions();
     static QVariantList normalizedPaneFractions(const QVariantList &candidate);
     Q_INVOKABLE void togglePresentation();
@@ -119,23 +144,46 @@ public:
     Q_INVOKABLE void setLiveEvidenceVisible(bool visible);
     Q_INVOKABLE void setMaximizedPane(const QString &pane);
     Q_INVOKABLE void savePaneFractions(const QVariantList &fractions);
+    Q_INVOKABLE void saveBottomDockFractions(const QVariantList &fractions);
     Q_INVOKABLE void resetWorkspaceLayout();
     Q_INVOKABLE void selectEvidence(const QString &evidenceId);
+    Q_INVOKABLE void selectActivity(int activityIndex);
+    Q_INVOKABLE void selectAdjacentEvidence(int direction);
     Q_INVOKABLE void requestCancellation();
     Q_INVOKABLE void requestRerun();
     Q_INVOKABLE void requestHelperConnectivityTest();
     Q_INVOKABLE void requestLabRepairAuthorization();
+    Q_INVOKABLE void copyReportSection(const QString &scope, const QString &format = QStringLiteral("Markdown"),
+                                       const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE void copySelectedEvidence(const QString &format = QStringLiteral("Markdown"),
+                                          const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE void copySelectedEvidenceMode(const QString &mode,
+                                              const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE void exportReportUrl(const QUrl &fileUrl, const QString &scope, const QString &detail,
+                                     const QString &format, const QString &privacy);
+    Q_INVOKABLE void exportDiagnosticBundleUrl(const QUrl &directoryUrl,
+                                               const QString &privacy = QStringLiteral("Safe to Share"));
+    void exportReport(const QString &fileName, const QString &scope, const QString &detail,
+                      const QString &format, const QString &privacy);
+    void exportDiagnosticBundle(const QString &directory, const QString &privacy = QStringLiteral("Safe to Share"));
+    Q_INVOKABLE bool exportDiagnosticReport(const QString &fileName);
     void notifySessionChanged();
     void replaceSession(DoctorSession session);
     void setScanActions(std::function<void()> cancellation, std::function<void()> rerun);
     void setLabRepairActions(bool enabled, std::function<void(bool)> action);
+    void setCopyAction(std::function<void(QString)> action);
     void setRepairRuntime(QString state, QString detail, bool inFlight);
     void setRecoveryNotice(QString notice);
+    void setIntegrationNotice(QString notice, bool componentMismatch);
+    void setRedactedDiagnosticReport(QByteArray report);
 signals:
     void sessionChanged();
     void presentationChanged();
     void repairRuntimeChanged();
+    void progressPresentationChanged();
 private:
+    void updateProgressPresentation();
+    void beginAsynchronousExport(QString destination, QString scope, QString detail, QString format, QString privacy);
     DoctorSession m_session;
     QString m_buildIdentity;
     bool m_commandCenter = false;
@@ -143,7 +191,10 @@ private:
     bool m_liveEvidenceVisible = false;
     QString m_maximizedPane;
     QVariantList m_paneFractions;
+    QVariantList m_bottomDockFractions;
+    int m_layoutResetEpoch = 0;
     QString m_selectedEvidenceId;
+    int m_selectedActivityIndex = -1;
     std::function<void()> m_cancellation;
     std::function<void()> m_rerun;
     bool m_labRepairMode = false;
@@ -152,6 +203,19 @@ private:
     QString m_repairRuntimeDetail = QStringLiteral("No repair request is active.");
     QString m_recoveryNotice;
     std::function<void(bool)> m_labRepairAction;
+    std::function<void(QString)> m_copyAction;
+    QString m_integrationNotice;
+    bool m_integrationComponentMismatch = false;
+    QByteArray m_redactedDiagnosticReport;
+    QElapsedTimer m_scanClock;
+    QElapsedTimer m_activeOperationClock;
+    QTimer m_progressPresentationTimer;
+    QString m_activePresentationStep;
+    double m_displayProgress = 0.0;
+    double m_displayCurrentStepProgress = 0.0;
+    qint64 m_completedPresentationMs = -1;
+    bool m_reportBusy = false;
+    QString m_reportStatus;
 };
 
 } // namespace hotas::doctor

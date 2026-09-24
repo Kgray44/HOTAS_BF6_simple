@@ -1003,6 +1003,12 @@ Flickable {
                             tone: isolationHealth.tone || "informational"
                             onClicked: root.navigateToDevices("isolation")
                         }
+                        OutlineButton {
+                            objectName: "flightDeckDiagnosticsOpenHidHideDoctor"
+                            text: "OPEN HIDHIDE DOCTOR"
+                            tone: isolationHealth.tone || "informational"
+                            onClicked: backend.openHidHideDoctor("diagnostics-isolation")
+                        }
                         Item {
                             Layout.fillWidth: true
                         }

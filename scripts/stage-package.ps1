@@ -14,8 +14,12 @@ $build = (Resolve-Path -LiteralPath $BuildDir).Path
 $deploy = (Resolve-Path -LiteralPath $WindeployQt).Path
 $mapper = Join-Path $build 'HOTAS BF6.exe'
 $launcher = Join-Path $build 'HOTAS BF6 Launcher.exe'
+$doctor = Join-Path $build 'HidHide Doctor.exe'
+$doctorHelper = Join-Path $build 'HidHideDoctorRepair.exe'
 if (-not (Test-Path -LiteralPath $mapper -PathType Leaf)) { throw "Missing mapper: $mapper" }
 if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw "Missing launcher: $launcher" }
+if (-not (Test-Path -LiteralPath $doctor -PathType Leaf)) { throw "Missing HidHide Doctor: $doctor" }
+if (-not (Test-Path -LiteralPath $doctorHelper -PathType Leaf)) { throw "Missing HidHide Doctor helper: $doctorHelper" }
 
 function Find-MsvcRuntimeDirectory {
     # windeployqt --compiler-runtime only works when its caller inherited a
@@ -58,10 +62,14 @@ if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -F
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item -LiteralPath $mapper -Destination (Join-Path $stage 'HOTAS BF6.exe')
 Copy-Item -LiteralPath $launcher -Destination (Join-Path $stage 'HOTAS BF6 Launcher.exe')
+Copy-Item -LiteralPath $doctor -Destination (Join-Path $stage 'HidHide Doctor.exe')
+Copy-Item -LiteralPath $doctorHelper -Destination (Join-Path $stage 'HidHideDoctorRepair.exe')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'HOTAS_VERSION') -Destination (Join-Path $stage 'VERSION')
 
 & $deploy --release --compiler-runtime --qmldir (Join-Path $repoRoot 'qml') (Join-Path $stage 'HOTAS BF6.exe')
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE." }
+& $deploy --release --compiler-runtime --qmldir (Join-Path $repoRoot 'qml') (Join-Path $stage 'HidHide Doctor.exe')
+if ($LASTEXITCODE -ne 0) { throw "windeployqt failed for HidHide Doctor with exit code $LASTEXITCODE." }
 
 # CI exercises the installed mapper with Qt's offscreen platform. Deploy that
 # platform explicitly so the acceptance result cannot be satisfied by the Qt
@@ -92,6 +100,8 @@ if ($missingRuntime.Count -gt 0) {
 $required = @(
     'HOTAS BF6.exe',
     'HOTAS BF6 Launcher.exe',
+    'HidHide Doctor.exe',
+    'HidHideDoctorRepair.exe',
     'VERSION',
     'Qt6Core.dll',
     'Qt6Widgets.dll',
@@ -108,5 +118,43 @@ foreach ($relative in $required) {
         throw "Qt deployment validation failed: $relative is missing."
     }
 }
+
+$componentVersions = @{}
+foreach ($component in @('HOTAS BF6.exe', 'HidHide Doctor.exe', 'HidHideDoctorRepair.exe')) {
+    $fileVersion = (Get-Item -LiteralPath (Join-Path $stage $component)).VersionInfo.FileVersion
+    if ([string]::IsNullOrWhiteSpace($fileVersion) -or -not $fileVersion.StartsWith($version)) {
+        throw "Component version mismatch: $component reports '$fileVersion', expected $version."
+    }
+    $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $stage $component)
+    $componentVersions[$component] = [ordered]@{
+        fileVersion = $fileVersion
+        authenticodeStatus = [string]$signature.Status
+        signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }
+    }
+}
+
+# The manifest is generated only after the deployment checks pass. It is a
+# release-candidate audit record, not a runtime input, and includes every
+# staged file so a missing helper or Qt dependency is observable before setup.
+$manifestEntries = @(Get-ChildItem -LiteralPath $stage -Recurse -File |
+    Where-Object { $_.Name -notin @('HidHideDoctor-ComponentManifest.json', 'SHA256SUMS.txt') } |
+    Sort-Object FullName |
+    ForEach-Object {
+        $relative = $_.FullName.Substring($stage.Length).TrimStart('\', '/') -replace '\\', '/'
+        [ordered]@{ path = $relative; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    })
+$manifest = [ordered]@{
+    schemaVersion = 1
+    productVersion = $version
+    components = $componentVersions
+    helperProtocolVersion = 2
+    integrationProtocolVersion = 1
+    generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+    files = $manifestEntries
+}
+$manifestPath = Join-Path $stage 'HidHideDoctor-ComponentManifest.json'
+$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+$manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Encoding ascii -Value "$manifestHash  HidHideDoctor-ComponentManifest.json"
 
 Write-Host "Staged HOTAS BF6 $version at $stage"

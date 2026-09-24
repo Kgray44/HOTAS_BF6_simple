@@ -8,6 +8,7 @@ Popup {
     property var issues: []
     property var theme
     property bool legacy: false
+    property var openDoctor: null
     signal navigationRequested(var target)
 
     readonly property color panelColor: legacy ? "#182126" : (theme ? theme.panel : "#1a1d23")
@@ -85,9 +86,16 @@ Popup {
         }
         Text { visible: root.issues.length === 0; Layout.fillWidth: true; text: "No unresolved application issues."; color: root.mutedColor; font.pixelSize: 10 }
         Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
-        Button { text: "OPEN DIAGNOSTICS"; Layout.alignment: Qt.AlignRight; onClicked: { root.navigationRequested({ page: 3, objectType: "diagnostics" }); root.close() }
-            contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-            background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: root.borderColor; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
+        RowLayout {
+            Layout.alignment: Qt.AlignRight
+            Button { visible: !!root.openDoctor; text: "OPEN HIDHIDE DOCTOR"; onClicked: { root.openDoctor(); root.close() }
+                contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: root.borderColor; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
+            }
+            Button { text: "OPEN DIAGNOSTICS"; onClicked: { root.navigationRequested({ page: 3, objectType: "diagnostics" }); root.close() }
+                contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 9; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { color: parent.hovered ? (root.theme ? root.theme.buttonSecondaryHover : "#303d44") : "transparent"; border.color: root.borderColor; radius: root.legacy ? 3 : (root.theme ? root.theme.controlRadius : 4) }
+            }
         }
     }
 }
