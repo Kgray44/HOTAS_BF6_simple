@@ -7659,6 +7659,45 @@ bool AppBackend::setSelectedDeviceContext(const QString &rigId,
     return setEditingDeviceContext(rigId, controllerRecordIds);
 }
 
+QVariantMap AppBackend::prepareFullConflictEditorContext(const QString &profileId,
+                                                         const QString &rigId,
+                                                         const QString &outputLayoutId,
+                                                         const QString &controllerRecordId)
+{
+    const QString requestedProfileId = profileId.trimmed();
+    const QString requestedRigId = rigId.trimmed();
+    const QString requestedOutputId = outputLayoutId.trimmed();
+    const QString requestedControllerId = controllerRecordId.trimmed();
+    const auto reject = [](const QString &message) {
+        return QVariantMap{{u"success"_qs, false}, {u"message"_qs, message}};
+    };
+    const ControllerProfile *profile = findProfile(m_configuration, requestedProfileId);
+    const DeviceRig *rig = findDeviceRig(m_configuration, requestedRigId);
+    const VirtualOutputLayout *output = findOutputLayout(m_configuration, requestedOutputId);
+    const SavedControllerRecord *controller = savedControllerRecord(requestedControllerId);
+    if (!profile || !rig || !output || !controller) {
+        return reject(u"The original Profile, Device Rig, output, or controller is no longer available."_qs);
+    }
+    if (profile->deviceRigId != rig->id
+        || deviceRigPrimaryOutputLayoutId(*rig) != output->id) {
+        return reject(u"The original Profile, Device Rig, and primary Virtual Output no longer describe one editing scope."_qs);
+    }
+    const bool memberExists = std::any_of(rig->members.cbegin(), rig->members.cend(),
+        [&requestedControllerId](const DeviceRigMember &member) {
+            return member.enabled && member.controllerRecordId == requestedControllerId;
+        });
+    if (!memberExists) {
+        return reject(u"The original controller is no longer an enabled member of that Device Rig."_qs);
+    }
+    if (!selectProfileForEditing(profile->id)
+        || !setEditingDeviceContext(rig->id, {controller->id})) {
+        return reject(u"The original editor context could not be restored without changing runtime setup."_qs);
+    }
+    return QVariantMap{{u"success"_qs, true}, {u"profileId"_qs, profile->id},
+                       {u"rigId"_qs, rig->id}, {u"outputLayoutId"_qs, output->id},
+                       {u"controllerRecordId"_qs, controller->id}};
+}
+
 bool AppBackend::selectControllerForEditing(const QString &recordId)
 {
     const QString targetId = recordId.trimmed();
@@ -10050,7 +10089,11 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                               const QString &detail, const QVariantMap &evidence = {}) {
         groups.append(QVariantMap{{u"id"_qs, id}, {u"title"_qs, title},
             {u"status"_qs, statusValue(status)}, {u"severity"_qs, severity(status)},
-            {u"detail"_qs, detail}, {u"evidence"_qs, evidence}});
+            {u"detail"_qs, detail}, {u"evidence"_qs, evidence},
+            // A stale or absent result is not a running check. Preserve the
+            // operation, checked, and freshness facts independently.
+            {u"checking"_qs, checking && status == SetupTruthStatus::Checking},
+            {u"checked"_qs, plan.lastChecked.isValid()}, {u"fresh"_qs, inspected}});
     };
     const auto addIssue = [&](const QString &code, const QString &subsystem, SetupTruthStatus status,
                               const QString &title, const QString &detail, bool automatic,
@@ -10319,8 +10362,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         } else if (checking) {
             state = SetupTruthStatus::Checking;
             detail = QString(u"Reading vJoy Device %1 descriptor."_qs).arg(layout->requirements.deviceId);
-        } else if (!outputPlan || !outputPlan->lastChecked.isValid()
-                   || outputPlan->lastChecked.secsTo(now) > 20) {
+        } else if (!outputPlan || !outputPlan->lastChecked.isValid()) {
             state = SetupTruthStatus::Unknown;
         } else if (!outputPlan->vjoy.installed) {
             state = SetupTruthStatus::Unavailable;
@@ -10363,8 +10405,12 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         const MapperOutputRequirements requirements = outputPlan ? outputPlan->requirements
             : layout ? ControllerReadinessService::requirementsForOutputLayout(m_configuration, layout->id)
                      : MapperOutputRequirements{};
+        const bool outputChecked = outputPlan && outputPlan->lastChecked.isValid();
+        const bool outputFresh = outputChecked && outputPlan->lastChecked.secsTo(now) <= 20;
         outputEvidence.append(QVariantMap{{u"layoutId"_qs, layoutId}, {u"layoutName"_qs, layout ? layout->name : u"Missing output"_qs},
             {u"status"_qs, statusValue(state)}, {u"detail"_qs, detail}, {u"deviceId"_qs, layout ? layout->requirements.deviceId : 0},
+            {u"checked"_qs, outputChecked}, {u"fresh"_qs, outputFresh},
+            {u"checking"_qs, checking && state == SetupTruthStatus::Checking},
             {u"installed"_qs, capabilities.installed}, {u"devicePresent"_qs, capabilities.devicePresent},
             {u"busy"_qs, capabilities.busy}, {u"ownedByHotasBf6"_qs, capabilities.ownedByHotasBf6},
             {u"staleOwnership"_qs, capabilities.staleOwnership}, {u"rawStatus"_qs, capabilities.rawStatus},
@@ -10413,7 +10459,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
                               : u"Select an enabled Virtual Output in the Device Rig before setup can inspect vJoy."_qs;
     }
     addGroup(u"vjoy"_qs, u"Virtual output"_qs, vjoyState, vjoyDetail,
-        QVariantMap{{u"outputs"_qs, outputEvidence}});
+        QVariantMap{{u"outputs"_qs, outputEvidence}, {u"rigId"_qs, rig ? rig->id : QString{}},
+                    {u"outputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{}}});
 
     SetupTruthStatus hidState = SetupTruthStatus::Unknown;
     QString hidDetail = u"No fresh HidHide inspection has completed."_qs;
@@ -10593,6 +10640,7 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         {u"executable"_qs, QCoreApplication::applicationFilePath()},
         {u"rigId"_qs, rig ? rig->id : QString{}}, {u"rigName"_qs, rig ? rig->name : QString{}},
         {u"setupTargetRigId"_qs, rig ? rig->id : QString{}},
+        {u"setupTargetOutputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{}},
         {u"profileId"_qs, m_configuration.activeProfileId}, {u"profileName"_qs, activeProfileName()},
         {u"configurationGeneration"_qs, QVariant::fromValue(m_configurationGeneration)},
         {u"inventoryGeneration"_qs, QVariant::fromValue(m_inventoryGeneration)},
@@ -10601,7 +10649,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         {u"rigStatus"_qs, rigStatusEvidence},
         {u"overallStatus"_qs, statusValue(overall)}, {u"groups"_qs, groups}, {u"issues"_qs, issues},
         {u"repairPlan"_qs, repairPlan}, {u"manualActions"_qs, manualActions},
-        {u"diagnostics"_qs, diagnostics}, {u"fresh"_qs, inspected}};
+        {u"diagnostics"_qs, diagnostics}, {u"checking"_qs, checking},
+        {u"checked"_qs, plan.lastChecked.isValid()}, {u"fresh"_qs, inspected}};
 }
 
 QVariantMap AppBackend::setupTruthSnapshot() const
@@ -12426,6 +12475,14 @@ QVariantMap AppBackend::axisMappingCollision(int physicalAxis, const QString &ta
 
     const ControllerProfile &profile = currentProfile();
     const QString selectedId = selectedEditingControllerId();
+    const VirtualOutputLayout *output = profilePrimaryOutputLayout(profile);
+    result.insert(u"profileId"_qs, profile.id);
+    result.insert(u"rigId"_qs, profile.deviceRigId);
+    result.insert(u"outputLayoutId"_qs, output ? output->id : QString{});
+    result.insert(u"requestedControllerRecordId"_qs, selectedId);
+    result.insert(u"requestedSourceIndex"_qs, physicalAxis);
+    result.insert(u"requestedTarget"_qs, target);
+    result.insert(u"sourceKind"_qs, u"axis"_qs);
     const auto describe = [this, &result](const QString &controllerId, int sourceAxis) {
         const SavedControllerRecord *record = savedControllerRecord(controllerId);
         const QString deviceName = record ? record->displayName : u"Profile default"_qs;
@@ -12468,6 +12525,14 @@ QVariantMap AppBackend::buttonMappingCollision(int physicalButton, int virtualBu
 
     const ControllerProfile &profile = currentProfile();
     const QString selectedId = selectedEditingControllerId();
+    const VirtualOutputLayout *output = profilePrimaryOutputLayout(profile);
+    result.insert(u"profileId"_qs, profile.id);
+    result.insert(u"rigId"_qs, profile.deviceRigId);
+    result.insert(u"outputLayoutId"_qs, output ? output->id : QString{});
+    result.insert(u"requestedControllerRecordId"_qs, selectedId);
+    result.insert(u"requestedSourceIndex"_qs, physicalButton);
+    result.insert(u"requestedTarget"_qs, virtualButton);
+    result.insert(u"sourceKind"_qs, u"button"_qs);
     const auto describe = [this, &result](const QString &controllerId, int source) {
         const SavedControllerRecord *record = savedControllerRecord(controllerId);
         const QString deviceName = record ? record->displayName : u"Profile default"_qs;

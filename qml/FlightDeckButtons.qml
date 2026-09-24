@@ -87,11 +87,13 @@ Flickable {
         capabilityCount: selectedControlCapabilityCount, alternateCapabilityCount: selectedAxisCapabilityCount,
         assignedCount: assignedControlCount,
         quickMapAvailable: backend.selectedDeviceButtonChoices().length > 1,
-        verified: selectedControllerInfo.verified
+        verified: selectedControllerInfo.verified,
+        rigId: backend.selectedDeviceRigId
     }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
     readonly property string inputPreparationState: String(inputStatus.state || "connect")
-    readonly property bool canShowInputContent: selectedInputDeviceId.length > 0
-        && inputStatus.capabilityKnown && selectedControlCapabilityCount > 0
+    readonly property bool canShowInputContent: (!guidedPresentation && (buttonItems.length > 0 || povItems.length > 0))
+        || (selectedInputDeviceId.length > 0
+        && inputStatus.capabilityKnown && selectedControlCapabilityCount > 0)
 
     contentWidth: width
     contentHeight: buttonsContent.implicitHeight + deck.space24
@@ -359,6 +361,26 @@ Flickable {
         return false
     }
 
+    function sameButtonConflict(collision, handoff) {
+        const buttonIndex = Number(handoff.buttonIndex)
+        const target = Number(handoff.target)
+        const hatIndex = handoff.hatIndex === undefined ? -1 : Number(handoff.hatIndex)
+        const directionIndex = handoff.directionIndex === undefined ? -1 : Number(handoff.directionIndex)
+        if (!Number.isFinite(buttonIndex) || Math.floor(buttonIndex) !== buttonIndex || buttonIndex <= 0
+                || !Number.isFinite(target) || Math.floor(target) !== target || target <= 0
+                || hatIndex >= 0 || directionIndex >= 0) return false
+        return Boolean(collision.exists)
+            && String(collision.sourceKind || "") === "button"
+            && String(collision.profileId || "") === String(handoff.profileId || "")
+            && String(collision.rigId || "") === String(handoff.rigId || "")
+            && String(collision.outputLayoutId || "") === String(handoff.outputLayoutId || "")
+            && String(collision.requestedControllerRecordId || "") === String(handoff.inputDeviceId || "")
+            && Number(collision.requestedSourceIndex) === buttonIndex
+            && Number(collision.requestedTarget) === target
+            && String(collision.controllerRecordId || "") === String(handoff.ownerControllerRecordId || "")
+            && Number(collision.sourceIndex) === Number(handoff.ownerSourceIndex)
+    }
+
     // Full keeps the established button mixer.  Revalidate the saved source
     // and destination after the mode transition so a stale handoff cannot
     // act on a different route.
@@ -366,9 +388,10 @@ Flickable {
         const handoff = context || ({})
         const buttonIndex = Number(handoff.buttonIndex)
         const target = Number(handoff.target)
-        if (buttonIndex <= 0 || target <= 0) return false
+        if (!Number.isFinite(buttonIndex) || Math.floor(buttonIndex) !== buttonIndex || buttonIndex <= 0
+                || !Number.isFinite(target) || Math.floor(target) !== target || target <= 0) return false
         const collision = backend.buttonMappingCollision(buttonIndex, target)
-        if (!collision.exists) return false
+        if (!sameButtonConflict(collision, handoff)) return false
         conflictButtonIndex = buttonIndex
         conflictHatIndex = -1
         conflictDirectionIndex = -1
@@ -1810,6 +1833,7 @@ Flickable {
                 }
                 DeckButton {
                     visible: conflictButtonIndex > 0 && root.guidedPresentation
+                    objectName: "flightDeckButtonOpenInFull"
                     text: "OPEN IN FULL"
                     subdued: true
                     onClicked: {
@@ -1819,6 +1843,11 @@ Flickable {
                             hatIndex: root.conflictHatIndex,
                             directionIndex: root.conflictDirectionIndex,
                             inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            profileId: String(root.conflictOwner.profileId || backend.selectedProfileId || ""),
+                            rigId: String(root.conflictOwner.rigId || backend.selectedDeviceRigId || ""),
+                            outputLayoutId: String(root.conflictOwner.outputLayoutId || ""),
+                            ownerControllerRecordId: String(root.conflictOwner.controllerRecordId || ""),
+                            ownerSourceIndex: Number(root.conflictOwner.sourceIndex),
                             owner: root.conflictOwner })
                     }
                 }

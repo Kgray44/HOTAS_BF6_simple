@@ -1349,6 +1349,93 @@ bool verifySelectedProfileEditorContext()
     return true;
 }
 
+bool verifyFullConflictHandoffScope()
+{
+    constexpr auto kRigId = "activation-transaction-rig";
+    constexpr auto kOutputId = "activation-transaction-output";
+    constexpr auto kControllerId = "activation-transaction-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const QString normalId = hotas::normalProfileId();
+    const QString precisionId = hotas::precisionProfileId();
+    if (!backend->configureRigOwnedOutputFixtureForTest()
+        || !backend->selectProfileForEditing(normalId)
+        || !backend->setEditingDeviceContext(QLatin1String(kRigId), {QLatin1String(kControllerId)})
+        || !backend->setMapping(0, QStringLiteral("Axis 1"), true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the normal Profile axis collision\n");
+        return false;
+    }
+    const QVariantMap normalAxisCollision = backend->axisMappingCollision(1, QStringLiteral("Axis 1"));
+    if (!normalAxisCollision.value(QStringLiteral("exists")).toBool()
+        || normalAxisCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || normalAxisCollision.value(QStringLiteral("rigId")).toString() != QLatin1String(kRigId)
+        || normalAxisCollision.value(QStringLiteral("outputLayoutId")).toString() != QLatin1String(kOutputId)
+        || normalAxisCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || normalAxisCollision.value(QStringLiteral("sourceIndex")).toInt() != 0) {
+        std::fprintf(stderr, "full conflict handoff did not publish the normal Profile collision scope\n");
+        return false;
+    }
+
+    // A second Profile deliberately has the same local source and output.
+    // The saved handoff must still restore Normal, never choose Precision by
+    // the matching local axis index or virtual destination.
+    if (!backend->selectProfileForEditing(precisionId)
+        || !backend->setEditingDeviceContext(QLatin1String(kRigId), {QLatin1String(kControllerId)})
+        || !backend->setMapping(0, QStringLiteral("Axis 1"), true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the matching precision route\n");
+        return false;
+    }
+    const QString activeProfileBefore = backend->activeProfileId();
+    const QString activeRigBefore = backend->activeDeviceRigId();
+    const int vjoyBefore = backend->vjoyDeviceId();
+    const QVariantMap prepared = backend->prepareFullConflictEditorContext(
+        normalId, QLatin1String(kRigId), QLatin1String(kOutputId), QLatin1String(kControllerId));
+    const QVariantMap restoredAxisCollision = backend->axisMappingCollision(1, QStringLiteral("Axis 1"));
+    if (!prepared.value(QStringLiteral("success")).toBool()
+        || backend->selectedProfileId() != normalId
+        || backend->editingDeviceRigId() != QLatin1String(kRigId)
+        || !backend->selectedDeviceIsSpecific()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->vjoyDeviceId() != vjoyBefore
+        || restoredAxisCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || restoredAxisCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || restoredAxisCollision.value(QStringLiteral("sourceIndex")).toInt() != 0) {
+        std::fprintf(stderr, "full conflict handoff did not restore the exact saved axis editor scope without runtime mutation\n");
+        return false;
+    }
+
+    if (!backend->assignSelectedDeviceButtonToVirtualOutput(1, 1, true)) {
+        std::fprintf(stderr, "full conflict handoff fixture could not create the button collision owner\n");
+        return false;
+    }
+    const QVariantMap buttonCollision = backend->buttonMappingCollision(2, 1);
+    if (!buttonCollision.value(QStringLiteral("exists")).toBool()
+        || buttonCollision.value(QStringLiteral("profileId")).toString() != normalId
+        || buttonCollision.value(QStringLiteral("rigId")).toString() != QLatin1String(kRigId)
+        || buttonCollision.value(QStringLiteral("outputLayoutId")).toString() != QLatin1String(kOutputId)
+        || buttonCollision.value(QStringLiteral("controllerRecordId")).toString() != QLatin1String(kControllerId)
+        || buttonCollision.value(QStringLiteral("sourceIndex")).toInt() != 1) {
+        std::fprintf(stderr, "full conflict handoff did not publish the button owner scope\n");
+        return false;
+    }
+
+    // Removal/output changes are rejected before they can select a related
+    // editor. The failed retry keeps the last validated selection intact.
+    const QVariantMap rejected = backend->prepareFullConflictEditorContext(
+        normalId, QLatin1String(kRigId), QStringLiteral("removed-output"), QLatin1String(kControllerId));
+    if (rejected.value(QStringLiteral("success")).toBool()
+        || backend->selectedProfileId() != normalId
+        || backend->editingDeviceRigId() != QLatin1String(kRigId)
+        || !backend->selectedDeviceIsSpecific()
+        || backend->activeProfileId() != activeProfileBefore
+        || backend->activeDeviceRigId() != activeRigBefore
+        || backend->vjoyDeviceId() != vjoyBefore) {
+        std::fprintf(stderr, "a stale Full conflict handoff changed editor or runtime state instead of being rejected\n");
+        return false;
+    }
+    return true;
+}
+
 bool verifyReadOnlyPhysicalInputTest()
 {
     constexpr auto kPrimaryRecordId = "activation-transaction-controller";
@@ -1882,9 +1969,9 @@ bool verifyUnchangedControllerInventoryDoesNotRebuildReadiness()
 
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 27> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 28> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 27> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 28> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1907,6 +1994,7 @@ const std::array<std::pair<QString, StartupFixture>, 27> &startupFixtures()
         {QStringLiteral("hidhide-health-actions"), verifyHidHideHealthActionFeedbackContracts},
         {QStringLiteral("sidebar"), verifySidebarActivationLifecycle},
         {QStringLiteral("selected-profile"), verifySelectedProfileEditorContext},
+        {QStringLiteral("full-conflict-handoff"), verifyFullConflictHandoffScope},
         {QStringLiteral("read-only-input"), verifyReadOnlyPhysicalInputTest},
         {QStringLiteral("setup-task-coordinator"), verifyPersistentSetupAssistantCoordinator},
         {QStringLiteral("axis-acquisition"), verifyAxisAcquisitionIdentifyLifecycle},

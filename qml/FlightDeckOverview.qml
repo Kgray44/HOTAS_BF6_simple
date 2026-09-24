@@ -24,7 +24,11 @@ Flickable {
     readonly property var activation: backend.activationResolverState
     // Setup Health is a frozen, shared projection. Do not replay the older
     // readiness presentation while Devices shows the same rig's session.
-    readonly property var setupTruth: backend.setupTruthSnapshot || ({})
+    // Test-only override for exercising the action paths against an empty or
+    // changed published projection. Production always reads AppBackend.
+    property var setupTruthOverride: null
+    readonly property var setupTruth: setupTruthOverride !== null && setupTruthOverride !== undefined
+        ? setupTruthOverride : (backend.setupTruthSnapshot || ({}))
     readonly property var hidhideHealth: backend.hidhideHealth || ({})
     readonly property bool guidedPresentation: themeManager.guidanceLevel === "Guided"
 
@@ -70,18 +74,43 @@ Flickable {
     }
     property string issueHandoffMessage: ""
     property int guidedIssueIndex: 0
+    property string guidedIssueId: ""
+
+    function validIssue(issue) {
+        return issue !== null && issue !== undefined && String(issue.id || "").length > 0
+    }
 
     function prioritizedIssue() {
         const issues = setupTruth.issues || []
-        if (issues.length === 0) return ({})
-        if (!guidedPresentation) return issues[0]
+        if (issues.length === 0) return null
+        if (!guidedPresentation) return validIssue(issues[0]) ? issues[0] : null
+        if (guidedIssueId.length > 0) return currentIssueById(guidedIssueId)
         const index = Math.max(0, Math.min(guidedIssueIndex, issues.length - 1))
-        return issues[index] || ({})
+        return validIssue(issues[index]) ? issues[index] : null
     }
 
     function advanceGuidedIssue() {
         const issues = setupTruth.issues || []
-        if (issues.length > 1) guidedIssueIndex = (guidedIssueIndex + 1) % issues.length
+        if (issues.length === 0) return false
+        const current = prioritizedIssue()
+        if (!current) {
+            // A removed selection never redirects itself. Choosing Next is an
+            // explicit request to select a current issue again.
+            guidedIssueId = String(issues[0].id || "")
+            guidedIssueIndex = 0
+            return validIssue(issues[0])
+        }
+        let currentIndex = 0
+        for (let index = 0; index < issues.length; ++index) {
+            if (String(issues[index].id || "") === String(current.id || "")) {
+                currentIndex = index
+                break
+            }
+        }
+        const nextIndex = issues.length > 1 ? (currentIndex + 1) % issues.length : currentIndex
+        guidedIssueIndex = nextIndex
+        guidedIssueId = String(issues[nextIndex].id || "")
+        return validIssue(issues[nextIndex])
     }
 
     function currentIssueById(issueId) {
@@ -95,13 +124,16 @@ Flickable {
 
     function reviewIssue(issue) {
         const issueId = String(issue && issue.id || "")
+        if (!issueId.length) return false
         const current = currentIssueById(issueId)
         if (!current) {
             issueHandoffMessage = "This setup item changed before it could be opened. Review the current setup details."
-            return
+            return false
         }
+        if (guidedPresentation) guidedIssueId = issueId
         issueHandoffMessage = ""
         navigateToIssue(current)
+        return true
     }
 
     function attentionFallbackTitle() {
@@ -348,11 +380,11 @@ Flickable {
                     Button {
                         objectName: "flightDeckOverviewNextSetupAction"
                         readonly property var nextIssue: root.prioritizedIssue()
-                        text: nextIssue ? "REVIEW NEXT ISSUE" : (root.setupTruth.fresh ? "VIEW SETUP" : "CHECK SETUP")
+                        text: root.validIssue(nextIssue) ? "REVIEW NEXT ISSUE" : (root.setupTruth.fresh ? "VIEW SETUP" : "CHECK SETUP")
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight
                         onClicked: {
-                            if (nextIssue) root.reviewIssue(nextIssue)
+                            if (root.validIssue(nextIssue)) root.reviewIssue(nextIssue)
                             else root.navigateToDevices(root.setupTruth.fresh ? root.editSetupContext() : "verification")
                         }
                         background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
@@ -417,21 +449,21 @@ Flickable {
                         spacing: deck.space4
                         Text { text: "ATTENTION"; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true }
                         Text {
-                            text: attentionContent.issue.title || root.attentionFallbackTitle()
-                            color: attentionContent.issue.title ? deck.statusColor(root.setupTone(attentionContent.issue.severity || "attention")) : deck.healthy
+                            text: root.validIssue(attentionContent.issue) ? attentionContent.issue.title : root.attentionFallbackTitle()
+                            color: root.validIssue(attentionContent.issue) ? deck.statusColor(root.setupTone(attentionContent.issue.severity || "attention")) : deck.healthy
                             font.family: deck.displayFont; font.pixelSize: deck.scale(16); font.bold: true
                             Layout.fillWidth: true; elide: Text.ElideRight
                         }
                         Text {
                             text: root.issueHandoffMessage.length
                                 ? root.issueHandoffMessage
-                                : (attentionContent.issue.explanation || root.attentionFallbackExplanation())
+                                : (root.validIssue(attentionContent.issue) ? attentionContent.issue.explanation : root.attentionFallbackExplanation())
                             color: deck.textSecondary; font.pixelSize: deck.scale(10); Layout.fillWidth: true; wrapMode: Text.WordWrap
                         }
                     }
                     Button {
                         objectName: "flightDeckPrioritizedIssueReview"
-                        visible: !!attentionContent.issue.title
+                        visible: root.validIssue(attentionContent.issue)
                         text: "REVIEW DETAILS"
                         focusPolicy: Qt.StrongFocus
                         implicitHeight: deck.compactControlHeight

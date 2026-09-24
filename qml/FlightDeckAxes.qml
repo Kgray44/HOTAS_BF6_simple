@@ -76,10 +76,12 @@ Flickable {
         capabilityKnown: Object.keys(selectedControllerInfo || {}).length > 0,
         capabilityCount: selectedAxisCapabilityCount, alternateCapabilityCount: selectedButtonCapabilityCount,
         assignedCount: assignedAxisCount, quickMapAvailable: backend.quickAssignAxisTargets.length > 0,
-        learningTarget: preparedLearningTarget, verified: selectedControllerInfo.verified
+        learningTarget: preparedLearningTarget, verified: selectedControllerInfo.verified,
+        rigId: backend.selectedDeviceRigId
     }) : ({ state: "connect", heading: "Connect your controller", detail: "", pills: [] })
     readonly property string inputPreparationState: String(inputStatus.state || "connect")
     readonly property bool canShowAxisCards: usingPresentationOverride
+        || (!guidedPresentation && axisItems.length > 0)
         || (selectedInputDeviceId.length > 0
             && inputStatus.capabilityKnown && selectedAxisCapabilityCount > 0)
 
@@ -293,6 +295,22 @@ Flickable {
         return false;
     }
 
+    function sameAxisConflict(collision, handoff) {
+        const axisIndex = Number(handoff.axisIndex)
+        if (!Number.isFinite(axisIndex) || Math.floor(axisIndex) !== axisIndex || axisIndex < 0
+                || String(handoff.target || "").length === 0) return false
+        return Boolean(collision.exists)
+            && String(collision.sourceKind || "") === "axis"
+            && String(collision.profileId || "") === String(handoff.profileId || "")
+            && String(collision.rigId || "") === String(handoff.rigId || "")
+            && String(collision.outputLayoutId || "") === String(handoff.outputLayoutId || "")
+            && String(collision.requestedControllerRecordId || "") === String(handoff.inputDeviceId || "")
+            && Number(collision.requestedSourceIndex) === axisIndex
+            && String(collision.requestedTarget || "") === String(handoff.target || "")
+            && String(collision.controllerRecordId || "") === String(handoff.ownerControllerRecordId || "")
+            && Number(collision.sourceIndex) === Number(handoff.ownerSourceIndex)
+    }
+
     // A Guided conflict may be escalated, but it must arrive at this exact
     // existing mixer dialog.  Re-read the canonical collision first: a
     // changed route is not permission to create or replace a mapping.
@@ -300,11 +318,11 @@ Flickable {
         const handoff = context || ({})
         const axisIndex = Number(handoff.axisIndex)
         const target = String(handoff.target || "")
-        if (axisIndex < 0 || target.length === 0) return false
+        if (!Number.isFinite(axisIndex) || Math.floor(axisIndex) !== axisIndex || axisIndex < 0 || target.length === 0) return false
         const collision = backend.axisMappingCollision(axisIndex, target)
-        if (!collision.exists) {
+        if (!sameAxisConflict(collision, handoff)) {
             routeNoticeAxis = axisIndex
-            routeNotice = "This route changed while Full was opening. Review the current mapping before choosing another action."
+            routeNotice = "This exact route changed while Full was opening. Review the current mapping before choosing another action."
             return false
         }
         conflictAxis = axisIndex
@@ -1586,12 +1604,18 @@ Flickable {
                 }
                 DeckButton {
                     visible: root.guidedPresentation
+                    objectName: "flightDeckAxisOpenInFull"
                     text: "OPEN IN FULL"
                     subdued: true
                     onClicked: {
                         routeConflictDialog.close()
                         root.requestFullAccess(0, { source: "axis-conflict", axisIndex: root.conflictAxis,
                             inputDeviceId: root.selectedInputDeviceId, target: root.conflictTarget,
+                            profileId: String(root.conflictOwner.profileId || backend.selectedProfileId || ""),
+                            rigId: String(root.conflictOwner.rigId || backend.selectedDeviceRigId || ""),
+                            outputLayoutId: String(root.conflictOwner.outputLayoutId || ""),
+                            ownerControllerRecordId: String(root.conflictOwner.controllerRecordId || ""),
+                            ownerSourceIndex: Number(root.conflictOwner.sourceIndex),
                             owner: root.conflictOwner })
                     }
                 }

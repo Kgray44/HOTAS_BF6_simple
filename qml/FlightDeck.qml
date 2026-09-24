@@ -37,6 +37,7 @@ Item {
         return [8, 2, 0, 1, 5, 4].indexOf(item.page) >= 0
     })
     property var pendingFullDestination: ({ page: -1, context: ({}) })
+    property string fullHandoffNotice: ""
     property string flightDeckAutomationContext: ""
     property int flightDeckButtonContext: -1
     property var flightDeckAutomationPresentationState: ({})
@@ -91,6 +92,7 @@ Item {
         return 8
     }
     function requestFullDestination(page, context) {
+        fullHandoffNotice = ""
         pendingFullDestination = { page: Number(page), context: context || ({}) }
         fullOnlyAccessDialog.open()
         return false
@@ -101,12 +103,22 @@ Item {
     function openPendingFullDestination() {
         const destination = Number(pendingFullDestination.page)
         const context = pendingFullDestination.context || ({})
+        const source = String(context.source || "")
+        if (source === "axis-conflict" || source === "button-conflict") {
+            const prepared = backend.prepareFullConflictEditorContext(
+                String(context.profileId || ""), String(context.rigId || ""),
+                String(context.outputLayoutId || ""), String(context.inputDeviceId || ""))
+            if (!prepared.success) {
+                clearPendingFullDestination()
+                fullHandoffNotice = String(prepared.message || "The original mapping context changed before Full could open.")
+                return false
+            }
+        }
         // Consume before switching modes. Cancelled/replaced/stale requests
         // cannot replay a previous target on a later Full transition.
         clearPendingFullDestination()
         if (destination < 0 || !themeManager.chooseGuidanceLevel("Full"))
             return false
-        const source = String(context.source || "")
         const routedDestination = source === "axis-conflict" ? 0
             : source === "button-conflict" ? 1 : destination
         const inputDeviceId = String(context.inputDeviceId || "")
@@ -614,8 +626,9 @@ Item {
             spacing: deck.space16
             Text {
                 Layout.fillWidth: true
-                text: "" + root.pageTitle(root.pendingFullDestination.page)
-                    + " is an advanced workspace. Guided keeps everyday setup and mapping focused."
+                text: root.fullHandoffNotice.length > 0 ? root.fullHandoffNotice
+                    : "" + root.pageTitle(root.pendingFullDestination.page)
+                        + " is an advanced workspace. Guided keeps everyday setup and mapping focused."
                 color: deck.textSecondary
                 font.pixelSize: deck.scale(11)
                 wrapMode: Text.WordWrap
@@ -627,16 +640,21 @@ Item {
                     text: "STAY IN GUIDED"
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
-                    onClicked: { root.clearPendingFullDestination(); fullOnlyAccessDialog.close() }
+                    onClicked: { root.clearPendingFullDestination(); root.fullHandoffNotice = ""; fullOnlyAccessDialog.close() }
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.secondarySurface : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }
                 Button {
                     objectName: "flightDeckOpenInFull"
-                    text: "OPEN IN FULL"
+                    text: root.fullHandoffNotice.length > 0 ? "CLOSE" : "OPEN IN FULL"
                     focusPolicy: Qt.StrongFocus
                     implicitHeight: deck.compactControlHeight
-                    onClicked: root.openPendingFullDestination()
+                    onClicked: {
+                        if (root.fullHandoffNotice.length > 0) {
+                            root.fullHandoffNotice = ""
+                            fullOnlyAccessDialog.close()
+                        } else root.openPendingFullDestination()
+                    }
                     background: Rectangle { radius: deck.radiusControl; color: parent.down ? deck.accentMuted : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
                     contentItem: Text { text: parent.text; color: deck.light ? "white" : deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 }

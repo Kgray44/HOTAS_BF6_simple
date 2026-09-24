@@ -1054,6 +1054,13 @@ public:
                                              const QStringList &controllerRecordIds = {});
     Q_INVOKABLE bool setSelectedDeviceContext(const QString &rigId,
                                               const QStringList &controllerRecordIds = {});
+    // Resolves a saved Full-editor handoff against its original Profile, Rig,
+    // primary output, and physical source. It is selection-only: no activation,
+    // output acquisition, setup inspection, or mapping mutation is allowed.
+    Q_INVOKABLE QVariantMap prepareFullConflictEditorContext(const QString &profileId,
+                                                             const QString &rigId,
+                                                             const QString &outputLayoutId,
+                                                             const QString &controllerRecordId);
     // Selects only the editor/view target for an already-saved Rig member.
     // It deliberately cannot activate a Rig, change the runtime controller,
     // configure output, or schedule setup work.

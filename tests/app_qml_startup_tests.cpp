@@ -4587,28 +4587,108 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("gameFor({automaticGameDetection:true, activeCategoryName:'Battlefield', activeCategoryRules:['bf6.exe'], runningApplications:[{name:'Battlefield 6', executable:'bf6.exe'}]})")).toMap();
     const QVariantMap hidHideAttention = readinessValue(
         QStringLiteral("isolationFor({checks:[{name:'HIDHIDE ISOLATION', state:'Attention', message:'Review access', severity:'warning'}]})")).toMap();
-    const auto inputStatusFor = [&readinessValue](const QString &outputStatus, bool fresh) {
+    // The editor card is a pure projection. Exercise the actual QML function
+    // as the check state changes; rendering it may never start an inspection.
+    const QVariantMap setupTruthBeforeReadiness = backend.setupTruthSnapshot();
+    const auto inputStatusFor = [&readinessValue](const QString &truth, const QString &rigId = {}) {
         return readinessValue(QStringLiteral("editorInputStatus({kind:'buttons', selectedDeviceId:'saved-member', "
             "selectedDeviceName:'Saved member', selectedDeviceConnected:true, eligibleMemberCount:1, "
             "capabilityKnown:true, capabilityCount:12, alternateCapabilityCount:3, assignedCount:2, "
-            "quickMapAvailable:true, verified:true, setupTruth:{fresh:%1,groups:[{id:'vjoy',status:'%2',detail:'Scoped output'}]}})")
-            .arg(fresh ? QStringLiteral("true") : QStringLiteral("false"), outputStatus)).toMap();
+            "quickMapAvailable:true, verified:true, rigId:'%2', setupTruth:%1})")
+            .arg(truth, rigId)).toMap();
     };
-    const QVariantMap checkingInputStatus = inputStatusFor(QStringLiteral("CHECKING"), false);
-    const QVariantMap failedInputStatus = inputStatusFor(QStringLiteral("FAILED"), true);
-    const QVariantMap readyInputStatus = inputStatusFor(QStringLiteral("READY"), true);
+    const QVariantMap uninspectedInputStatus = inputStatusFor(QStringLiteral("{fresh:false,groups:[]}"));
+    const QVariantMap checkingInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:false,groups:[{id:'vjoy',status:'CHECKING',checking:true,checked:false,fresh:false,detail:'Scoped output'}]}"));
+    const QVariantMap readyInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:true,groups:[{id:'vjoy',status:'READY',checking:false,checked:true,fresh:true,detail:'Scoped output'}]}"));
+    const QVariantMap staleReadyInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:false,groups:[{id:'vjoy',status:'READY',checking:false,checked:true,fresh:false,detail:'Prior ready'}]}"));
+    const QVariantMap failedInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:true,groups:[{id:'vjoy',status:'FAILED',checking:false,checked:true,fresh:true,detail:'Fresh failure'}]}"));
+    const QVariantMap staleFailedInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:false,groups:[{id:'vjoy',status:'FAILED',checking:false,checked:true,fresh:false,detail:'Prior failure'}]}"));
+    const QVariantMap wrongScopeInputStatus = inputStatusFor(QStringLiteral(
+        "{fresh:true,setupTargetRigId:'other-rig',groups:[{id:'vjoy',status:'READY',checking:false,checked:true,fresh:true,evidence:{rigId:'other-rig'},detail:'Other rig'}]}"),
+        QStringLiteral("this-rig"));
+    const auto outputPillValue = [](const QVariantMap &status) {
+        const QVariantList pills = status.value(QStringLiteral("pills")).toList();
+        return pills.size() > 1 ? pills.at(1).toMap().value(QStringLiteral("value")).toString() : QString{};
+    };
     if (multipleInput.value(QStringLiteral("title")).toString() != QStringLiteral("3 input devices")
         || noProfile.value(QStringLiteral("title")).toString() != QStringLiteral("No active profile")
         || noGame.value(QStringLiteral("title")).toString() != QStringLiteral("No supported game detected")
         || detectedGame.value(QStringLiteral("title")).toString() != QStringLiteral("Battlefield 6")
         || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")
+        || uninspectedInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output has not been checked")
+        || outputPillValue(uninspectedInputStatus) != QStringLiteral("NOT CHECKED")
+        || checkingInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Checking virtual output")
+        || outputPillValue(checkingInputStatus) != QStringLiteral("CHECKING")
         || checkingInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("check")
-        || checkingInputStatus.value(QStringLiteral("secondaryAction")).toString() != QStringLiteral("quick-map")
         || failedInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("check")
+        || failedInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output needs attention")
+        || outputPillValue(failedInputStatus) != QStringLiteral("FAILED")
+        || staleReadyInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output needs a fresh check")
+        || outputPillValue(staleReadyInputStatus) != QStringLiteral("STALE READY")
+        || staleFailedInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output needs a fresh check")
+        || outputPillValue(staleFailedInputStatus) != QStringLiteral("STALE FAILED")
+        || wrongScopeInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output has not been checked")
+        || outputPillValue(wrongScopeInputStatus) != QStringLiteral("NOT CHECKED")
         || readyInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("learn-button")
-        || readyInputStatus.value(QStringLiteral("secondaryAction")).toString() != QStringLiteral("quick-map")) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details are incomplete"));
+        || readyInputStatus.value(QStringLiteral("secondaryAction")).toString() != QStringLiteral("quick-map")
+        || backend.setupTruthSnapshot() != setupTruthBeforeReadiness) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview state details did not preserve scoped check semantics or read-only rendering"));
     }
+
+    // An empty published issue object is not a reviewable issue. Click the
+    // real Overview action in both inspected and uninspected states and
+    // verify it routes to the intended setup context rather than taking a
+    // stale issue branch.
+    const QString scopedSetupContext = QStringLiteral("rig:") + backend.editingDeviceRigId();
+    QVariantMap noIssueTruth{{QStringLiteral("fresh"), true},
+        {QStringLiteral("setupTargetRigId"), backend.editingDeviceRigId()},
+        {QStringLiteral("issues"), QVariantList{}}, {QStringLiteral("groups"), QVariantList{}}};
+    overview->setProperty("setupTruthOverride", noIssueTruth);
+    settlePresentation();
+    auto *overviewAction = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckOverviewNextSetupAction"));
+    const bool noIssueActionVisible = overviewAction
+        && overviewAction->property("text").toString() == QStringLiteral("VIEW SETUP");
+    const bool noIssueActionClicked = noIssueActionVisible
+        && clickFlightDeckSettingsItem(window, window->contentItem(), overviewAction);
+    settlePresentation();
+    QObject *noIssueDevices = pageItem(surface, 2);
+    const bool noIssueActionRouted = noIssueActionClicked
+        && surface->property("currentPage").toInt() == 2 && noIssueDevices
+        && noIssueDevices->property("requestedContext").toString() == scopedSetupContext;
+    if (!selectPage(surface, 8)) return false;
+    settlePresentation();
+    overview = pageItem(surface, 8);
+    QVariantMap uninspectedTruth = noIssueTruth;
+    uninspectedTruth.insert(QStringLiteral("fresh"), false);
+    if (!overview) return failPresentationLifecycleTest(QStringLiteral("Flight Deck did not restore Overview after the empty-issue route"));
+    overview->setProperty("setupTruthOverride", uninspectedTruth);
+    settlePresentation();
+    overviewAction = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("flightDeckOverviewNextSetupAction"));
+    const bool uninspectedActionVisible = overviewAction
+        && overviewAction->property("text").toString() == QStringLiteral("CHECK SETUP");
+    const bool uninspectedActionClicked = uninspectedActionVisible
+        && clickFlightDeckSettingsItem(window, window->contentItem(), overviewAction);
+    settlePresentation();
+    QObject *uninspectedDevices = pageItem(surface, 2);
+    const bool uninspectedActionRouted = uninspectedActionClicked
+        && surface->property("currentPage").toInt() == 2 && uninspectedDevices
+        && uninspectedDevices->property("requestedContext").toString() == QStringLiteral("verification");
+    if (!noIssueActionRouted || !uninspectedActionRouted) {
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck Overview empty-issue action did not route inspected and uninspected setup states correctly"));
+    }
+    if (!selectPage(surface, 8)) return false;
+    settlePresentation();
+    overview = pageItem(surface, 8);
+    if (!overview) return failPresentationLifecycleTest(QStringLiteral("Flight Deck did not restore Overview after the uninspected route"));
+    overview->setProperty("setupTruthOverride", QVariant{});
+    settlePresentation();
 
     QObject *attentionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckPrioritizedAttention"));
     QObject *connectionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence"));
@@ -8935,58 +9015,40 @@ bool verifyFlightDeckGuidedBasicMode(hotas::AppBackend &backend, hotas::ThemeMan
     const bool safeFallback = returnedToBasic && surface->property("currentPage").toInt() == 0
         && !pageItem(surface, 11)
         && pageIds(surface->property("guidedNavigationItems")) == guidedPages;
-    // Conflict escalation must land on the existing Full Axes/Buttons mixer
-    // dialogs, never the unrelated Curve or beta Signal Flow pages. The
-    // contexts are deliberately stale (no collision exists), so this also
-    // proves the handoff is consumed and cannot create a route on its own.
+    // A stale conflict must not open a similarly named Full editor. The
+    // backend receives an incomplete saved scope and rejects it before mode
+    // or editor selection changes; the owner gets an explicit recovery note.
     QQmlExpression requestAxisConflict(qmlContext(surface), surface,
         QStringLiteral("requestFullDestination(0, {source:'axis-conflict', axisIndex:-1, target:'X'}); true"));
     const bool axisConflictPrompted = safeFallback && requestAxisConflict.evaluate().toBool()
         && !requestAxisConflict.hasError() && prompt && prompt->property("visible").toBool();
     QQmlExpression openAxisConflict(qmlContext(surface), surface,
         QStringLiteral("openPendingFullDestination()"));
-    const bool axisConflictOpened = axisConflictPrompted && openAxisConflict.evaluate().toBool()
+    const bool axisConflictRejected = axisConflictPrompted && !openAxisConflict.evaluate().toBool()
         && !openAxisConflict.hasError();
     settlePresentation();
-    const bool axisConflictExactTarget = axisConflictOpened
-        && themeManager.guidanceLevel() == QStringLiteral("Full")
-        && surface->property("currentPage").toInt() == 0 && pageItem(surface, 0) && !pageItem(surface, 6)
-        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
-    const bool guidedAfterAxisConflict = axisConflictExactTarget
-        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
-    settlePresentation();
-    QQmlExpression requestButtonConflict(qmlContext(surface), surface,
-        QStringLiteral("requestFullDestination(1, {source:'button-conflict', buttonIndex:1, target:1}); true"));
-    const bool buttonConflictPrompted = guidedAfterAxisConflict && requestButtonConflict.evaluate().toBool()
-        && !requestButtonConflict.hasError() && prompt && prompt->property("visible").toBool();
-    QQmlExpression openButtonConflict(qmlContext(surface), surface,
-        QStringLiteral("openPendingFullDestination()"));
-    const bool buttonConflictOpened = buttonConflictPrompted && openButtonConflict.evaluate().toBool()
-        && !openButtonConflict.hasError();
-    settlePresentation();
-    const bool buttonConflictExactTarget = buttonConflictOpened
-        && themeManager.guidanceLevel() == QStringLiteral("Full")
-        && surface->property("currentPage").toInt() == 1 && pageItem(surface, 1) && !pageItem(surface, 11)
-        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
-    const bool guidedAfterButtonConflict = buttonConflictExactTarget
-        && themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
-    settlePresentation();
+    const bool staleConflictStayedGuided = axisConflictRejected
+        && themeManager.guidanceLevel() == QStringLiteral("Guided")
+        && surface->property("currentPage").toInt() == 0 && pageItem(surface, 0)
+        && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0
+        && !surface->property("fullHandoffNotice").toString().isEmpty();
+    if (prompt && prompt->property("visible").toBool()) QMetaObject::invokeMethod(prompt, "close");
     QQmlExpression requestCancelledConflict(qmlContext(surface), surface,
         QStringLiteral("requestFullDestination(0, {source:'axis-conflict', axisIndex:-1, target:'X'}); clearPendingFullDestination(); true"));
-    const bool cancelledConflictCleared = guidedAfterButtonConflict && requestCancelledConflict.evaluate().toBool()
+    const bool cancelledConflictCleared = staleConflictStayedGuided && requestCancelledConflict.evaluate().toBool()
         && !requestCancelledConflict.hasError()
         && surface->property("pendingFullDestination").toMap().value(QStringLiteral("page")).toInt() < 0;
     if (prompt && prompt->property("visible").toBool()) QMetaObject::invokeMethod(prompt, "close");
     if (!guidedAllowlist || !fullOnlyBlocked || !fullRestored || !safeFallback
-        || !axisConflictExactTarget || !buttonConflictExactTarget || !cancelledConflictCleared
+        || !staleConflictStayedGuided || !cancelledConflictCleared
         || flightDeckConfigurationSnapshot(backend) != configurationBefore
         || backend.setupAssistantTask() != taskBefore) {
         delete shell;
         return failPresentationLifecycleTest(QStringLiteral(
             "Guided Basic allowlist or Full-only recovery changed presentation or configuration "
-            "(allowlist=%1 blocked=%2 full=%3 fallback=%4 axis=%5 button=%6 cancel=%7)")
+            "(allowlist=%1 blocked=%2 full=%3 fallback=%4 staleAxis=%5 cancel=%6)")
             .arg(guidedAllowlist).arg(fullOnlyBlocked).arg(fullRestored).arg(safeFallback)
-            .arg(axisConflictExactTarget).arg(buttonConflictExactTarget).arg(cancelledConflictCleared));
+            .arg(staleConflictStayedGuided).arg(cancelledConflictCleared));
     }
     delete shell;
     return true;

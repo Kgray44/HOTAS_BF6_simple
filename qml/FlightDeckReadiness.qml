@@ -296,9 +296,12 @@ Item {
         const groups = snapshot && snapshot.groups ? snapshot.groups : []
         for (let index = 0; index < groups.length; ++index) {
             const group = groups[index] || ({})
-            if (String(group.id || "") === String(id || "")) return group
+            if (String(group.id || "") === String(id || "")) {
+                return Object.assign({}, group, { present: true })
+            }
         }
-        return ({ status: "CHECKING", detail: "Setup status has not been checked yet." })
+        return ({ present: false, status: "NOT CHECKED", detail: "Setup status has not been checked yet.",
+            checking: false, checked: false, fresh: false })
     }
 
     function editorInputStatus(context) {
@@ -320,9 +323,17 @@ Item {
         // frozen AppBackend projection for the current setup scope.
         const truth = details.setupTruth || (backendObject ? (backendObject.setupTruthSnapshot || ({})) : ({}))
         const output = setupGroup(truth, "vjoy")
-        const outputState = String(output.status || "CHECKING").toUpperCase()
-        const outputReady = truth.fresh && (outputState === "READY" || outputState === "READY TO ACTIVATE")
-        const outputChecking = !truth.fresh || outputState === "CHECKING"
+        const outputState = String(output.status || "NOT CHECKED").toUpperCase()
+        const requestedRigId = String(details.rigId || "")
+        const snapshotRigId = String((output.evidence || {}).rigId || truth.setupTargetRigId || truth.rigId || "")
+        const scopeMatches = !requestedRigId.length || !snapshotRigId.length || requestedRigId === snapshotRigId
+        const hasOutputGroup = Boolean(output.present) && scopeMatches
+        const outputChecking = hasOutputGroup && (Boolean(output.checking) || outputState === "CHECKING")
+        const outputChecked = hasOutputGroup && (Boolean(output.checked)
+            || (outputState.length > 0 && outputState !== "NOT CHECKED" && outputState !== "CHECKING"))
+        const outputFresh = outputChecked && (Object.prototype.hasOwnProperty.call(output, "fresh")
+            ? Boolean(output.fresh) : Boolean(truth.fresh))
+        const outputReady = outputFresh && (outputState === "READY" || outputState === "READY TO ACTIVATE")
         const outputFailed = outputState === "FAILED" || outputState === "UNAVAILABLE"
             || outputState === "UNKNOWN / INSPECTION FAILED"
         const controllerPill = selectedId.length > 0
@@ -330,8 +341,11 @@ Item {
                 tone: selectedConnected ? "healthy" : "attention" }
             : { label: "CONTROLLER", value: eligibleMembers > 0 ? "CHOOSE" : "NOT ASSIGNED",
                 tone: eligibleMembers > 0 ? "informational" : "attention" }
-        const outputPill = { label: "OUTPUT", value: outputChecking ? "CHECKING"
-                : outputReady ? "READY" : outputFailed ? "FAILED" : outputState,
+        const outputPillValue = outputChecking ? "CHECKING"
+            : !hasOutputGroup || !outputChecked ? "NOT CHECKED"
+            : !outputFresh ? "STALE " + (outputState || "RESULT")
+            : outputReady ? "READY" : outputFailed ? "FAILED" : outputState
+        const outputPill = { label: "OUTPUT", value: outputPillValue,
             tone: outputReady ? "healthy" : outputChecking ? "informational" : "attention" }
         const result = function(state, heading, detail, primaryAction, primaryText,
                                  secondaryAction, secondaryText) {
@@ -370,11 +384,22 @@ Item {
                 "This is not a fault. Open the other input editor or review the saved controller details.",
                 alternateCapabilityCount > 0 ? "other-editor" : "devices",
                 alternateCapabilityCount > 0 ? (kind === "axes" ? "OPEN BUTTONS" : "OPEN AXES") : "OPEN DEVICES & SETUP")
-        if (!outputReady)
-            return result("output", outputChecking ? "Checking virtual output" : "Virtual output needs attention",
-                String(output.detail || "Check the selected setup before testing mapped output."),
+        if (!outputReady) {
+            const outputHeading = outputChecking ? "Checking virtual output"
+                : !hasOutputGroup || !outputChecked ? "Virtual output has not been checked"
+                : !outputFresh ? "Virtual output needs a fresh check"
+                : "Virtual output needs attention"
+            const outputDetail = !hasOutputGroup
+                ? "This editor's current Device Rig has no matching setup result. Run a scoped check before testing mapped output."
+                : !outputChecked ? "No prior setup result exists for this output. Run a scoped check before testing mapped output."
+                : !outputFresh
+                    ? "Last checked result: " + (outputState || "unknown") + ". "
+                        + String(output.detail || "Run a scoped check before testing mapped output.")
+                    : String(output.detail || "Check the selected setup before testing mapped output.")
+            return result("output", outputHeading, outputDetail,
                 "check", "CHECK SETUP", preparedQuickMap ? "quick-map" : "",
                 preparedQuickMap ? "QUICK MAP" : "")
+        }
         if (assignedCount === 0)
             return result("first-assignment", "Assign your first " + singular,
                 "Choose a " + singular + ", then select the output it should control.",
