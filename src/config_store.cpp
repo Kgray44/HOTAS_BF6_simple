@@ -345,6 +345,10 @@ QJsonObject signalFlowWorkspaceToJson(const SignalFlowWorkspaceState &workspace)
             {u"inspectorWidth"_qs, std::clamp(workspace.inspectorWidth, 240, 720)},
             {u"inspectorX"_qs, std::clamp(workspace.inspectorX, -1.0F, 100000.0F)},
             {u"inspectorY"_qs, std::clamp(workspace.inspectorY, -1.0F, 100000.0F)},
+            {u"blockLibraryX"_qs, std::clamp(workspace.blockLibraryX, -1.0F, 100000.0F)},
+            {u"blockLibraryY"_qs, std::clamp(workspace.blockLibraryY, -1.0F, 100000.0F)},
+            {u"graphSettingsX"_qs, std::clamp(workspace.graphSettingsX, -1.0F, 100000.0F)},
+            {u"graphSettingsY"_qs, std::clamp(workspace.graphSettingsY, -1.0F, 100000.0F)},
             {u"portVisibility"_qs, workspace.portVisibility.trimmed().left(24)},
             {u"autoExpandPorts"_qs, workspace.autoExpandPorts},
             {u"layoutLocked"_qs, workspace.layoutLocked},
@@ -360,18 +364,30 @@ bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceSta
     const QJsonValue width = json.value(u"inspectorWidth"_qs);
     const QJsonValue inspectorX = json.value(u"inspectorX"_qs);
     const QJsonValue inspectorY = json.value(u"inspectorY"_qs);
+    const QJsonValue blockLibraryX = json.value(u"blockLibraryX"_qs);
+    const QJsonValue blockLibraryY = json.value(u"blockLibraryY"_qs);
+    const QJsonValue graphSettingsX = json.value(u"graphSettingsX"_qs);
+    const QJsonValue graphSettingsY = json.value(u"graphSettingsY"_qs);
     const QJsonValue autoExpandPorts = json.value(u"autoExpandPorts"_qs);
     const QJsonValue snapToGrid = json.value(u"snapToGrid"_qs);
     if (!panX.isDouble() || !panY.isDouble() || !zoom.isDouble() || !width.isDouble()
         || !json.value(u"layoutLocked"_qs).isBool()
         || (!inspectorX.isUndefined() && !inspectorX.isDouble())
         || (!inspectorY.isUndefined() && !inspectorY.isDouble())
+        || (!blockLibraryX.isUndefined() && !blockLibraryX.isDouble())
+        || (!blockLibraryY.isUndefined() && !blockLibraryY.isDouble())
+        || (!graphSettingsX.isUndefined() && !graphSettingsX.isDouble())
+        || (!graphSettingsY.isUndefined() && !graphSettingsY.isDouble())
         || (!autoExpandPorts.isUndefined() && !autoExpandPorts.isBool())
         || (!snapToGrid.isUndefined() && !snapToGrid.isBool())) return false;
     if (!std::isfinite(panX.toDouble()) || !std::isfinite(panY.toDouble())
         || !std::isfinite(zoom.toDouble())
         || (!inspectorX.isUndefined() && !std::isfinite(inspectorX.toDouble()))
-        || (!inspectorY.isUndefined() && !std::isfinite(inspectorY.toDouble()))) return false;
+        || (!inspectorY.isUndefined() && !std::isfinite(inspectorY.toDouble()))
+        || (!blockLibraryX.isUndefined() && !std::isfinite(blockLibraryX.toDouble()))
+        || (!blockLibraryY.isUndefined() && !std::isfinite(blockLibraryY.toDouble()))
+        || (!graphSettingsX.isUndefined() && !std::isfinite(graphSettingsX.toDouble()))
+        || (!graphSettingsY.isUndefined() && !std::isfinite(graphSettingsY.toDouble()))) return false;
     SignalFlowWorkspaceState restored;
     restored.key = json.value(u"key"_qs).toString().trimmed().left(320);
     restored.wireStyle = json.value(u"wireStyle"_qs).toString().trimmed().left(24);
@@ -392,6 +408,14 @@ bool signalFlowWorkspaceFromJson(const QJsonObject &json, SignalFlowWorkspaceSta
         : std::clamp(static_cast<float>(inspectorX.toDouble()), -1.0F, 100000.0F);
     restored.inspectorY = inspectorY.isUndefined() ? -1.0F
         : std::clamp(static_cast<float>(inspectorY.toDouble()), -1.0F, 100000.0F);
+    restored.blockLibraryX = blockLibraryX.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(blockLibraryX.toDouble()), -1.0F, 100000.0F);
+    restored.blockLibraryY = blockLibraryY.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(blockLibraryY.toDouble()), -1.0F, 100000.0F);
+    restored.graphSettingsX = graphSettingsX.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(graphSettingsX.toDouble()), -1.0F, 100000.0F);
+    restored.graphSettingsY = graphSettingsY.isUndefined() ? -1.0F
+        : std::clamp(static_cast<float>(graphSettingsY.toDouble()), -1.0F, 100000.0F);
     restored.autoExpandPorts = autoExpandPorts.isUndefined() ? true : autoExpandPorts.toBool();
     restored.layoutLocked = json.value(u"layoutLocked"_qs).toBool();
     // Schema-28 workspaces predate this optional presentation preference.

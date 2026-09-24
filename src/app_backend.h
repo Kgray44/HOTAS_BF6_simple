@@ -780,6 +780,13 @@ public:
     // represented by this canonical segment.  This keeps the palette honest:
     // Signal Flow cannot offer a graph-only reorder that the mapping worker
     // would not execute.
+    //
+    // Unlike the segment-qualified helper below, this catalog answers only
+    // which processor *types* have a real canonical insertion command. It is
+    // independent of graph selection and of existing processor instances;
+    // target compatibility is checked only when a block is placed on a
+    // concrete visible segment.
+    Q_INVOKABLE QVariantList signalFlowProcessorCatalog() const;
     Q_INVOKABLE QVariantList signalFlowAvailableProcessorsForSegment(const QString &segmentId,
                                                                       qulonglong expectedRevision) const;
     Q_INVOKABLE QVariantMap signalFlowRemoveOrBypassProcessor(const QString &processorId,

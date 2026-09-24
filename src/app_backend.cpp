@@ -148,6 +148,7 @@ int signalFlowProcessorStage(const QString &kind)
 QString signalFlowProcessorLabel(const QString &kind)
 {
     const QString normalized = kind.trimmed().toLower();
+    if (normalized == u"curve"_qs) return u"Response Curve"_qs;
     if (normalized == u"center-hold"_qs) return u"Center Hold"_qs;
     if (normalized == u"adaptive-response"_qs) return u"Adaptive Response"_qs;
     if (normalized == u"limits"_qs) return u"Output Limits"_qs;
@@ -158,6 +159,40 @@ QList<QString> signalFlowEditableProcessorKinds()
 {
     return {u"deadzone"_qs, u"center-hold"_qs, u"invert"_qs,
             u"curve"_qs, u"limits"_qs, u"adaptive-response"_qs};
+}
+
+QVariantMap signalFlowProcessorCatalogEntry(const QString &kind)
+{
+    const QString normalized = kind.trimmed().toLower();
+    QString detail = u"Canonical axis processor"_qs;
+    QString aliases = u"processor axis response transform insert signal route"_qs;
+
+    if (normalized == u"curve"_qs) {
+        detail = u"Curve processor"_qs;
+        aliases += u" response curve response shaping sensitivity"_qs;
+    } else if (normalized == u"deadzone"_qs) {
+        detail = u"Deadzone processor"_qs;
+        aliases += u" dead zone center jitter filter"_qs;
+    } else if (normalized == u"center-hold"_qs) {
+        detail = u"Center hold processor"_qs;
+        aliases += u" center hold hysteresis stability"_qs;
+    } else if (normalized == u"invert"_qs) {
+        detail = u"Polarity processor"_qs;
+        aliases += u" invert inversion reverse polarity"_qs;
+    } else if (normalized == u"limits"_qs) {
+        detail = u"Output range processor"_qs;
+        aliases += u" output limits clamp saturation range"_qs;
+    } else if (normalized == u"adaptive-response"_qs) {
+        detail = u"Adaptive response processor"_qs;
+        aliases += u" adaptive response dynamic sensitivity"_qs;
+    }
+
+    return QVariantMap{{u"key"_qs, normalized},
+                       {u"processorType"_qs, normalized},
+                       {u"label"_qs, signalFlowProcessorLabel(normalized)},
+                       {u"category"_qs, u"Axis & Response"_qs},
+                       {u"detail"_qs, detail},
+                       {u"aliases"_qs, aliases}};
 }
 
 QString signalFlowProcessorKindForId(const SignalFlowState &state, const QString &processorId)
@@ -7211,6 +7246,8 @@ QVariantMap AppBackend::signalFlowGraph() const
                           {u"zoom"_qs, 1.0}, {u"wireStyle"_qs, u"smooth"_qs},
                           {u"densityMode"_qs, u"compact"_qs}, {u"inspectorWidth"_qs, 360},
                           {u"inspectorX"_qs, -1.0}, {u"inspectorY"_qs, -1.0},
+                          {u"blockLibraryX"_qs, -1.0}, {u"blockLibraryY"_qs, -1.0},
+                          {u"graphSettingsX"_qs, -1.0}, {u"graphSettingsY"_qs, -1.0},
                           {u"portVisibility"_qs, u"smart"_qs}, {u"autoExpandPorts"_qs, true},
                           {u"layoutLocked"_qs, false}, {u"snapToGrid"_qs, true},
                           {u"annotations"_qs, annotations}};
@@ -7221,6 +7258,8 @@ QVariantMap AppBackend::signalFlowGraph() const
                      {u"wireStyle"_qs, savedWorkspace.wireStyle}, {u"densityMode"_qs, savedWorkspace.densityMode},
                      {u"inspectorWidth"_qs, savedWorkspace.inspectorWidth},
                      {u"inspectorX"_qs, savedWorkspace.inspectorX}, {u"inspectorY"_qs, savedWorkspace.inspectorY},
+                     {u"blockLibraryX"_qs, savedWorkspace.blockLibraryX}, {u"blockLibraryY"_qs, savedWorkspace.blockLibraryY},
+                     {u"graphSettingsX"_qs, savedWorkspace.graphSettingsX}, {u"graphSettingsY"_qs, savedWorkspace.graphSettingsY},
                      {u"portVisibility"_qs, savedWorkspace.portVisibility},
                      {u"autoExpandPorts"_qs, savedWorkspace.autoExpandPorts},
                      {u"layoutLocked"_qs, savedWorkspace.layoutLocked},
@@ -8367,10 +8406,19 @@ QVariantList AppBackend::signalFlowAvailableProcessorsForSegment(const QString &
         if (signalFlowRouteHasProcessorKind(m_configuration.signalFlow, *targetRoute, kind)) continue;
         if (signalFlowRequiredInsertionSegment(m_configuration.signalFlow, *targetRoute, kind) != requestedOrdinal)
             continue;
-        available.append(QVariantMap{{u"key"_qs, kind}, {u"label"_qs, signalFlowProcessorLabel(kind)},
-                                     {u"segmentId"_qs, requestedSegment}});
+        QVariantMap entry = signalFlowProcessorCatalogEntry(kind);
+        entry.insert(u"segmentId"_qs, requestedSegment);
+        available.append(entry);
     }
     return available;
+}
+
+QVariantList AppBackend::signalFlowProcessorCatalog() const
+{
+    QVariantList catalog;
+    for (const QString &kind : signalFlowEditableProcessorKinds())
+        catalog.append(signalFlowProcessorCatalogEntry(kind));
+    return catalog;
 }
 
 QVariantMap AppBackend::signalFlowRemoveSharedProcessorChannel(const QString &processorId,
@@ -9160,8 +9208,14 @@ bool AppBackend::saveSignalFlowWorkspace(const QVariantMap &workspace, bool noti
     const double zoom = workspace.value(u"zoom"_qs, 1.0).toDouble();
     const double inspectorX = workspace.value(u"inspectorX"_qs, -1.0).toDouble();
     const double inspectorY = workspace.value(u"inspectorY"_qs, -1.0).toDouble();
+    const double blockLibraryX = workspace.value(u"blockLibraryX"_qs, -1.0).toDouble();
+    const double blockLibraryY = workspace.value(u"blockLibraryY"_qs, -1.0).toDouble();
+    const double graphSettingsX = workspace.value(u"graphSettingsX"_qs, -1.0).toDouble();
+    const double graphSettingsY = workspace.value(u"graphSettingsY"_qs, -1.0).toDouble();
     if (!std::isfinite(panX) || !std::isfinite(panY) || !std::isfinite(zoom)
-        || !std::isfinite(inspectorX) || !std::isfinite(inspectorY)) return false;
+        || !std::isfinite(inspectorX) || !std::isfinite(inspectorY)
+        || !std::isfinite(blockLibraryX) || !std::isfinite(blockLibraryY)
+        || !std::isfinite(graphSettingsX) || !std::isfinite(graphSettingsY)) return false;
     SignalFlowWorkspaceState state;
     state.key = signalFlowWorkspaceKey();
     state.panX = std::clamp(static_cast<float>(panX), -100000.0F, 100000.0F);
@@ -9172,6 +9226,10 @@ bool AppBackend::saveSignalFlowWorkspace(const QVariantMap &workspace, bool noti
     state.inspectorWidth = std::clamp(workspace.value(u"inspectorWidth"_qs, 360).toInt(), 240, 720);
     state.inspectorX = std::clamp(static_cast<float>(inspectorX), -1.0F, 100000.0F);
     state.inspectorY = std::clamp(static_cast<float>(inspectorY), -1.0F, 100000.0F);
+    state.blockLibraryX = std::clamp(static_cast<float>(blockLibraryX), -1.0F, 100000.0F);
+    state.blockLibraryY = std::clamp(static_cast<float>(blockLibraryY), -1.0F, 100000.0F);
+    state.graphSettingsX = std::clamp(static_cast<float>(graphSettingsX), -1.0F, 100000.0F);
+    state.graphSettingsY = std::clamp(static_cast<float>(graphSettingsY), -1.0F, 100000.0F);
     state.portVisibility = workspace.value(u"portVisibility"_qs, u"smart"_qs).toString().trimmed().toLower();
     state.autoExpandPorts = workspace.value(u"autoExpandPorts"_qs, true).toBool();
     state.layoutLocked = workspace.value(u"layoutLocked"_qs, false).toBool();
@@ -14073,6 +14131,14 @@ void AppBackend::evaluateGameDetection()
 
 void AppBackend::refreshControllerInventory()
 {
+    // Isolated presentation is a native UI review/test surface, not a
+    // low-frequency exception to its hardware boundary.  Keep the lifecycle
+    // timer observable for the presentation contract, but never enumerate or
+    // project physical inventory while this explicit mode is active.
+    if (startupSmokeRequested()) {
+        if (m_uiPerformanceInstrumentationEnabled) ++m_controllerDiscoveryBackgroundRuns;
+        return;
+    }
     if (m_controllerDiscoveryInProgress) return;
     m_controllerDiscoveryInProgress = true;
     if (m_uiPerformanceInstrumentationEnabled) ++m_controllerDiscoveryBackgroundRuns;

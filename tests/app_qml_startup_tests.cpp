@@ -212,6 +212,18 @@ QQuickItem *findVisualItemByObjectName(QQuickItem *item, const QString &objectNa
     return nullptr;
 }
 
+QQuickItem *findVisualItemByObjectNamePrefix(QQuickItem *item, const QString &prefix)
+{
+    if (!item) return nullptr;
+    if (item->objectName().startsWith(prefix) && item->isVisible()
+        && item->width() > 0.0 && item->height() > 0.0) return item;
+    const auto children = item->childItems();
+    for (auto it = children.crbegin(); it != children.crend(); ++it) {
+        if (QQuickItem *found = findVisualItemByObjectNamePrefix(*it, prefix)) return found;
+    }
+    return nullptr;
+}
+
 QQuickItem *flickableContentItem(QQuickItem *viewport)
 {
     if (!viewport) return nullptr;
@@ -275,13 +287,38 @@ bool clickResponseComboRow(QQuickWindow *window, QObject *surface, QObject *comb
         auto *delegate = findVisualItemByObjectName(popupContent, combo->objectName()
             + QStringLiteral("Choice_%1").arg(row));
         if (!delegate) continue;
+        // ComboBox popups cap their ListView height.  A delegate outside that
+        // clipped viewport still has a live visual item, but clicking its
+        // scene coordinate simply dismisses the popup.  Scroll the actual
+        // popup ListView first, then locate the rendered row again for the
+        // native pointer event.
+        const qreal rowHeight = delegate->height();
+        const qreal maximumPopupContentY = std::max<qreal>(0.0,
+            popupContent->property("contentHeight").toReal() - popupContent->height());
+        if (rowHeight > 0.0 && maximumPopupContentY > 0.0) {
+            const qreal targetContentY = std::clamp((static_cast<qreal>(row) + 0.5) * rowHeight
+                    - popupContent->height() * 0.5, 0.0, maximumPopupContentY);
+            popupContent->setProperty("contentY", targetContentY);
+            settlePresentation();
+            delegate = findVisualItemByObjectName(popupContent, combo->objectName()
+                + QStringLiteral("Choice_%1").arg(row));
+            if (!delegate) continue;
+        }
+        const QPointF visibleRowPoint = delegate->mapToItem(popupContent,
+            QPointF(delegate->width() * 0.5, delegate->height() * 0.5));
+        if (visibleRowPoint.x() < 0.0 || visibleRowPoint.y() < 0.0
+            || visibleRowPoint.x() >= popupContent->width()
+            || visibleRowPoint.y() >= popupContent->height()) {
+            continue;
+        }
         const QPointF rowPoint = delegate->mapToScene(QPointF(delegate->width() * 0.5,
                                                                delegate->height() * 0.5));
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         QTest::qWait(16);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, rowPoint.toPoint());
         settlePresentation();
-        if (!popup->property("visible").toBool()
+        const bool popupClosed = !popup->property("visible").toBool();
+        if (popupClosed
             && (!requireSelectedRow || combo->property("currentIndex").toInt() == row)) return true;
         QTest::keyClick(window, Qt::Key_Escape);
         settlePresentation();
@@ -4178,6 +4215,14 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     QQmlExpression configureButton(qmlContext(buttons), buttons, QStringLiteral("setExpandedButton(2)"));
     configureButton.evaluate();
     settlePresentation();
+    // The preceding card-layout check deliberately uses a frozen
+    // presentation list.  The pointer command below must instead observe the
+    // live backend snapshot so the rendered selector, activation handler,
+    // and persisted route all share one authoritative model.
+    QQmlExpression useLiveButtonSnapshot(qmlContext(buttons), buttons,
+        QStringLiteral("(function() { buttonPresentationOverride = null; return buttonItems.length; })()"));
+    const bool liveButtonSnapshot = useLiveButtonSnapshot.evaluate().toInt() >= 3
+        && !useLiveButtonSnapshot.hasError();
     // Re-arm the bounded test snapshot immediately before the pointer action.
     // The normal worker is allowed to continue publishing an empty physical
     // state on this no-device host, so the test does not retain a fake device.
@@ -4190,12 +4235,17 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         QStringLiteral("flightDeckButtonMappingSelector_2"));
     const bool buttonSelectorClicked = buttonSelector
         && clickResponseComboRow(window, buttons, buttonSelector, 7, false);
-    if (configureButton.hasError() || !buttonSelector || !buttonSelectorClicked
+    if (configureButton.hasError() || !liveButtonSnapshot || !buttonSelector || !buttonSelectorClicked
         || targetForButton(backend.buttons(), 1) != 1
         || targetForButton(backend.buttons(), 2) != 7
         || targetForButton(backend.buttons(), 3) != 3) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 pointer-selected Button 2 -> vJoy 7 did not persist in isolation")
-            .arg(appearance));
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck %1 pointer-selected Button 2 -> vJoy 7 did not persist in isolation "
+            "(configure=%2 live=%3 selector=%4 clicked=%5 selected=%6 targets=%7/%8/%9)")
+            .arg(appearance).arg(!configureButton.hasError()).arg(liveButtonSnapshot).arg(buttonSelector != nullptr)
+            .arg(buttonSelectorClicked).arg(buttonSelector ? buttonSelector->property("currentIndex").toInt() : -1)
+            .arg(targetForButton(backend.buttons(), 1)).arg(targetForButton(backend.buttons(), 2))
+            .arg(targetForButton(backend.buttons(), 3)));
     }
     QQmlExpression clearButton(qmlContext(buttons), buttons, QStringLiteral("requestButtonMapping(2, 0, false)"));
     if (!clearButton.evaluate().toBool() || clearButton.hasError() || targetForButton(backend.buttons(), 2) != 0
@@ -6697,12 +6747,27 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     const QPointF graphPress = scene->mapFromScene(press);
     const std::array<QPoint, 4> dragOffsets{
         QPoint{9, 6}, QPoint{21, 13}, QPoint{34, 21}, QPoint{46, 28}};
+    QQmlExpression armDisclosureRace(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const groups = cardGroups(input);"
+        " if (!input || groups.length === 0) return ''; const group = String(groups[0].group || '');"
+        " setGroupHovered(input, group, true); setGroupHovered(input, group, false);"
+        " return String(groups[0].group || ''); })()"));
+    const QString racedGroup = armDisclosureRace.evaluate().toString();
+    // Enter/leave deliberately creates a grace-period disclosure before the
+    // press. Let that one local, incident-only anchor handoff settle *before*
+    // taking the drag baseline. The following press then proves that no grace
+    // expiry or deferred disclosure work can cross the active drag gesture.
+    if (!racedGroup.isEmpty()) {
+        QTest::qWait(std::max(80, page->property("motionStructuralDuration").toInt() + 70));
+        settlePresentation();
+    }
     QPoint release = press;
     QPointF expected = before;
     QPointF during = before;
     bool trackedEveryNativeSample = true;
     bool transformOnlyDrag = true;
     bool newestSampleWonEveryFrame = true;
+    bool disclosureStayedFrozen = true;
     const bool enforceNativeFrameBudget = qEnvironmentVariableIsSet(
         "HOTAS_QML_SIGNAL_FLOW_STRICT_FRAME_BUDGET");
     qint64 maximumPointerToVisualMs = 0;
@@ -6710,6 +6775,13 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, press);
     QTest::qWait(8);
     const bool pressDelivered = page->property("liveDragNodeId").toString() == nodeId;
+    QQmlExpression disclosureFrozenAtPress(qmlContext(page), page, QStringLiteral(
+        "(function() { const frozen = dragDisclosureGeometry || ({});"
+        " return Boolean(frozen.nodeId === '%1' && frozen.collapsed && frozen.collapsed['%2'] !== undefined); })()")
+            .arg(nodeId, racedGroup));
+    const bool disclosureFreezeEstablished = !racedGroup.isEmpty()
+        && disclosureFrozenAtPress.evaluate().toBool() && !disclosureFrozenAtPress.hasError();
+    disclosureStayedFrozen = disclosureFreezeEstablished;
     // Let the one press-time settled repaint remove the incident routes
     // before establishing the pointer-down baseline. Every following move
     // must stay on the active interaction layer: no canonical graph refresh,
@@ -6762,6 +6834,13 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
             && std::hypot(card->x() - settledLayoutBefore.x(), card->y() - settledLayoutBefore.y()) < 0.01;
         newestSampleWonEveryFrame = newestSampleWonEveryFrame
             && (!enforceNativeFrameBudget || latencyMs <= 33);
+        QQmlExpression disclosureStable(qmlContext(page), page, QStringLiteral(
+            "(function() { const input = node('input'); const frozen = dragDisclosureGeometry || ({});"
+            " return Boolean(frozen.nodeId === '%1' && frozen.collapsed && frozen.collapsed['%2'] !== undefined"
+            "   && cardGroupCollapsed(input, '%2', false) === Boolean(frozen.collapsed['%2'])); })()")
+                .arg(nodeId, racedGroup));
+        disclosureStayedFrozen = disclosureStayedFrozen && disclosureStable.evaluate().toBool()
+            && !disclosureStable.hasError();
     }
     // Opt-in hardware qualification: keep one real native pointer gesture
     // alive for ten seconds and wait for an actual presented Qt Quick frame
@@ -7034,6 +7113,8 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
             && qualifiedReleaseP95Ms <= 10 && qualifiedReleaseP99Ms <= 16
             && qualifiedReleaseMaximumMs <= 33);
     const bool canonicalTopologyStayedCold = backend.signalFlowRevision() == canonicalRevisionBeforeRelease;
+    const bool disclosureFreezeReleased = page->property("dragDisclosureGeometry").toMap()
+        .value(QStringLiteral("nodeId")).toString().isEmpty();
     const bool releaseWasIncremental = !releaseCapture.hasError() && !releaseContinuity.hasError()
         && releaseBaseline.value(QStringLiteral("routes")).toInt() > 0
         && releaseContinuityState.value(QStringLiteral("routeCount")).toInt() == releaseBaseline.value(QStringLiteral("routes")).toInt()
@@ -7068,6 +7149,7 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
     const bool workspaceRestored = restore.evaluate().toBool() && !restore.hasError();
     settlePresentation();
     if (!pressDelivered || !movedDuringPointerDrag || !trackedEveryNativeSample || !transformOnlyDrag || !newestSampleWonEveryFrame
+        || !disclosureFreezeEstablished || !disclosureStayedFrozen || !disclosureFreezeReleased
         || !nativeFrameBudgetMet
         || !onlyIncidentGeometry || !dragKeptCanonicalStateCold || !dragKeptSettledWireLayerCold
         || !releaseWasIncremental || !placementRestored || !workspaceRestored) {
@@ -7093,7 +7175,8 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
             .arg(releaseBucketUpdateDelta).arg(queuedDeferredViewportSave).arg(deferredViewportSaveWasSilent)
             .arg(deferredViewportWorkspaceRestored).arg(sampleTrace.join(QStringLiteral("; ")))
             .arg(qualifiedReleaseP50Ms).arg(qualifiedReleaseP95Ms).arg(qualifiedReleaseP99Ms)
-            .arg(qualifiedReleaseMaximumMs).arg(qualifiedReleaseSampleCount));
+            .arg(qualifiedReleaseMaximumMs).arg(qualifiedReleaseSampleCount)
+            );
     }
     const QString dropContinuityLog = QStringLiteral(
         "signal_flow_drop_continuity canonical_topology_mutations=%1 topology_projections=%2 "
@@ -7113,9 +7196,233 @@ bool verifySignalFlowNativeCardPointerDrag(QObject *page, QQuickWindow *window, 
         .arg(releaseContinuityState.value(QStringLiteral("unrelatedGeometry")).toBool())
         .arg(deferredViewportSaveWasSilent).arg(qualifiedReleaseSampleCount)
         .arg(qualifiedReleaseP95Ms).arg(qualifiedReleaseP99Ms).arg(qualifiedReleaseMaximumMs)
-        + QStringLiteral(" reloaded_position_stable=%1").arg(reloadedPersistenceMatchesCommit);
+        + QStringLiteral(" reloaded_position_stable=%1 disclosure_freeze=[established=%2 stable=%3 released=%4]")
+              .arg(reloadedPersistenceMatchesCommit).arg(disclosureFreezeEstablished)
+              .arg(disclosureStayedFrozen).arg(disclosureFreezeReleased);
     qInfo().noquote() << dropContinuityLog;
     std::fprintf(stderr, "%s\n", qPrintable(dropContinuityLog));
+    return true;
+}
+
+bool verifySignalFlowNativeTemporaryHoverExpansion(QObject *page, QQuickWindow *window)
+{
+    if (!page || !window || !window->isVisible()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture needs a visible page and window"));
+    }
+    auto *pageItem = qobject_cast<QQuickItem *>(page);
+    auto *viewport = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowGraphViewport")) : nullptr;
+    if (!pageItem || !viewport) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture could not find the graph viewport"));
+    }
+
+    // Keep the backend and its persisted workspace untouched.  This local
+    // presentation snapshot gives the native pointer fixture deterministic
+    // compact sections plus an explicit-open Axes section for precedence.
+    const QVariant originalGraph = page->property("graph");
+    const QVariant originalAutoExpand = page->property("diagnosticExpandAllNodeSections");
+    const qreal originalZoom = page->property("zoom").toReal();
+    const QVariant originalContentX = viewport->property("contentX");
+    const QVariant originalContentY = viewport->property("contentY");
+    const auto restore = [&] {
+        page->setProperty("graph", originalGraph);
+        page->setProperty("diagnosticExpandAllNodeSections", originalAutoExpand);
+        page->setProperty("temporaryGroupHoverStates", QVariantMap{});
+        page->setProperty("pendingSectionDisclosureReflowNodeIds", QVariantMap{});
+        page->setProperty("activeSectionDisclosureReflowNodeIds", QVariantMap{});
+        page->setProperty("hoveredGroupKey", QString{});
+        page->setProperty("zoom", originalZoom);
+        viewport->setProperty("contentX", originalContentX);
+        viewport->setProperty("contentY", originalContentY);
+        settlePresentation();
+    };
+    QQmlExpression prepare(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " const input = node('input'); const viewport = graphViewportForTest();"
+        " if (!input || !viewport) return ({});"
+        " const nodeId = String(input.id || input.objectId || '');"
+        " const nodes = (graph.nodes || []).map(function(candidate) {"
+        "   if (String(candidate.id || candidate.objectId || '') !== nodeId) return candidate;"
+        "   const groups = (candidate.portGroups || []).map(function(group) {"
+        "     const name = String(group.group || '');"
+        "     if (name === 'Axes') return Object.assign({}, group, { collapsed: true, explicit: true });"
+        "     if (name === 'Buttons') return Object.assign({}, group, { collapsed: true, explicit: true });"
+        "     return group;"
+        "   }); return Object.assign({}, candidate, { portGroups: groups });"
+        " });"
+        " graph = Object.assign({}, graph, { nodes: nodes, workspace: Object.assign({}, graph.workspace || {}, { autoExpandPorts: true }) });"
+        " temporaryGroupHoverStates = ({}); hoveredGroupKey = ''; diagnosticExpandAllNodeSections = false;"
+        " viewport.cancelFlick(); zoom = 1; viewport.contentX = 0; viewport.contentY = 0;"
+        " return { nodeId: nodeId, axes: 'Axes', buttons: 'Buttons' };"
+        "})()"));
+    const QVariantMap setup = prepare.evaluate().toMap();
+    const QString inputId = setup.value(QStringLiteral("nodeId")).toString();
+    if (prepare.hasError() || inputId.isEmpty()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture could not prepare an input card (error=%1)")
+                .arg(prepare.hasError() ? prepare.error().toString() : QStringLiteral("no input card")));
+    }
+    const int structuralSettleMs = std::max(80, page->property("motionStructuralDuration").toInt() + 70);
+    QTest::qWait(structuralSettleMs);
+    settlePresentation();
+    auto *buttonsSection = findVisualItemByObjectNamePrefix(pageItem,
+        QStringLiteral("signalFlowPortSection:") + inputId + QStringLiteral(":Buttons"));
+    auto *axesSection = findVisualItemByObjectNamePrefix(pageItem,
+        QStringLiteral("signalFlowPortSection:") + inputId + QStringLiteral(":Axes"));
+    const auto scenePoint = [window](QQuickItem *item, const QPointF &local) {
+        if (!item || !item->isVisible() || item->width() < 4.0 || item->height() < 4.0) return QPoint{};
+        const QPointF point = item->mapToScene(local);
+        if (point.x() < 0.0 || point.y() < 0.0 || point.x() >= window->width() || point.y() >= window->height())
+            return QPoint{};
+        return point.toPoint();
+    };
+    const QPoint buttonsHeader = scenePoint(buttonsSection, QPointF(8.0, 8.0));
+    const QPoint axesHeader = scenePoint(axesSection, QPointF(8.0, 8.0));
+    if (!buttonsSection || !axesSection || buttonsHeader.isNull() || axesHeader.isNull()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture could not expose the Axes and Buttons full sections"));
+    }
+
+    // Baseline only after the deliberate local setup. Every actual hover
+    // transition below must remain incident-only: neither canonical data nor
+    // the global wire cache may rebuild.
+    // The local deterministic graph snapshot above intentionally hands off
+    // its initial cache once. Do not charge that setup work to the native
+    // hover transitions below.
+    QTest::qWait(std::max(1200, structuralSettleMs * 3));
+    settlePresentation();
+    const int fullRebuildsBefore = page->property("geometryRebuildCount").toInt();
+    const int bucketRebuildsBefore = page->property("wireBucketFullRebuildCount").toInt();
+    const int graphRefreshesBefore = page->property("graphRefreshCount").toInt();
+    const int incidentUpdatesBefore = page->property("incidentWireGeometryUpdateCount").toInt();
+    const QPoint outsidePoint(std::max(2, window->width() - 8), 6);
+    // Give the section handler a genuine enter transition even when a prior
+    // native fixture left the cursor over this card.
+    QTest::mouseMove(window, outsidePoint);
+    QTest::qWait(16);
+    QTest::mouseMove(window, axesHeader);
+    QTest::qWait(structuralSettleMs);
+    settlePresentation();
+    // The Repeater may recreate its Column while the disclosure animates, so
+    // resolve the currently rendered full section rather than retaining its
+    // pre-hover delegate pointer.
+    auto *openedAxesSection = findVisualItemByObjectNamePrefix(pageItem,
+        QStringLiteral("signalFlowPortSection:") + inputId + QStringLiteral(":Axes"));
+    auto *revealedAxisPort = findVisualItemByObjectNamePrefix(openedAxesSection,
+        QStringLiteral("signalFlowPortRow:"));
+    const QPoint axisPortPoint = scenePoint(revealedAxisPort,
+        QPointF(revealedAxisPort ? revealedAxisPort->width() * 0.5 : 0.0,
+            revealedAxisPort ? revealedAxisPort->height() * 0.5 : 0.0));
+    QQmlExpression axesOpened(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const state = temporaryGroupState(input, 'Axes');"
+        " return !cardGroupCollapsed(input, 'Axes', false) && state.inside && state.state === 'TEMP_OPEN'; })()"));
+    const bool axesExpanded = axesOpened.evaluate().toBool() && !axesOpened.hasError();
+    if (!revealedAxisPort || axisPortPoint.isNull()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture did not reveal an Axes port row (expanded=%1 section=%2)")
+                .arg(axesExpanded).arg(openedAxesSection != nullptr));
+    }
+    // A header-to-row native pointer transfer remains inside the one rendered
+    // section. It must not start its grace timer or collapse the newly shown
+    // controls.
+    QTest::mouseMove(window, axisPortPoint);
+    QTest::qWait(30);
+    QQmlExpression rowContinuity(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const state = temporaryGroupState(input, 'Axes');"
+        " return !cardGroupCollapsed(input, 'Axes', false) && state.inside && state.state === 'TEMP_OPEN'; })()"));
+    const bool headerToPortStayedOpen = rowContinuity.evaluate().toBool() && !rowContinuity.hasError();
+
+    QTest::mouseMove(window, outsidePoint);
+    QTest::qWait(structuralSettleMs);
+    QQmlExpression axisGrace(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const state = temporaryGroupState(input, 'Axes');"
+        " return !cardGroupCollapsed(input, 'Axes', false) && !state.inside && state.state === 'TEMP_OPEN_GRACE'; })()"));
+    const bool axisGraceHeld = axisGrace.evaluate().toBool() && !axisGrace.hasError();
+
+    // A second section gets its own state machine: opening Buttons while Axes
+    // is in grace must retain both sections until their respective timers end.
+    // Axes expanded above it, so resolve Buttons again after layout rather
+    // than sending a native pointer event to its former scene coordinate.
+    auto *movedButtonsSection = findVisualItemByObjectNamePrefix(pageItem,
+        QStringLiteral("signalFlowPortSection:") + inputId + QStringLiteral(":Buttons"));
+    const QPoint movedButtonsHeader = scenePoint(movedButtonsSection, QPointF(8.0, 8.0));
+    if (!movedButtonsSection || movedButtonsHeader.isNull()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture lost the Buttons section after Axes expansion"));
+    }
+    QTest::mouseMove(window, movedButtonsHeader);
+    QTest::qWait(structuralSettleMs);
+    QQmlExpression independentSections(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const axes = temporaryGroupState(input, 'Axes');"
+        " const buttons = temporaryGroupState(input, 'Buttons');"
+        " return !cardGroupCollapsed(input, 'Axes', false) && !cardGroupCollapsed(input, 'Buttons', false)"
+        "   && axes.state === 'TEMP_OPEN_GRACE' && buttons.inside && buttons.state === 'TEMP_OPEN'; })()"));
+    const bool sectionsIndependent = independentSections.evaluate().toBool() && !independentSections.hasError();
+
+    QTest::mouseMove(window, outsidePoint);
+    QTest::qWait(page->property("temporaryGroupHoverGraceMs").toInt() + 150);
+    settlePresentation();
+    QQmlExpression graceExpired(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); return cardGroupCollapsed(input, 'Axes', false)"
+        " && cardGroupCollapsed(input, 'Buttons', false) && temporaryGroupState(input, 'Axes').state === 'COLLAPSED'"
+        " && temporaryGroupState(input, 'Buttons').state === 'COLLAPSED'; })()"));
+    const bool graceCollapsedBoth = graceExpired.evaluate().toBool() && !graceExpired.hasError();
+
+    // Finish the hover-only performance observation before changing the
+    // deliberately local graph snapshot for the separate manual-precedence
+    // case below. A graph replacement is setup, not a hover transition.
+    const int fullRebuildDelta = page->property("geometryRebuildCount").toInt() - fullRebuildsBefore;
+    const int bucketRebuildDelta = page->property("wireBucketFullRebuildCount").toInt() - bucketRebuildsBefore;
+    const int graphRefreshDelta = page->property("graphRefreshCount").toInt() - graphRefreshesBefore;
+    const int incidentUpdateDelta = page->property("incidentWireGeometryUpdateCount").toInt() - incidentUpdatesBefore;
+
+    // Manual explicit open outranks temporary hover state. Reapply it only to
+    // this local copy, then drive the same native enter/leave path and wait a
+    // full grace interval; it must remain open without a new timer or write.
+    QQmlExpression forceManualOpen(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); const id = String(input.id || input.objectId || '');"
+        " const nodes = (graph.nodes || []).map(function(candidate) { if (String(candidate.id || candidate.objectId || '') !== id) return candidate;"
+        "   return Object.assign({}, candidate, { portGroups: (candidate.portGroups || []).map(function(group) {"
+        "     return String(group.group || '') === 'Axes' ? Object.assign({}, group, { collapsed: false, explicit: true }) : group; }) }); });"
+        " graph = Object.assign({}, graph, { nodes: nodes }); clearTemporaryGroupState(node('input'), 'Axes'); return !cardGroupCollapsed(node('input'), 'Axes', false); })()"));
+    const bool manualOpenPrepared = forceManualOpen.evaluate().toBool() && !forceManualOpen.hasError();
+    settlePresentation();
+    auto *manualAxesSection = findVisualItemByObjectNamePrefix(pageItem,
+        QStringLiteral("signalFlowPortSection:") + inputId + QStringLiteral(":Axes"));
+    const QPoint manualAxesHeader = scenePoint(manualAxesSection, QPointF(8.0, 8.0));
+    if (!manualAxesSection || manualAxesHeader.isNull()) {
+        restore();
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover fixture lost the Axes section while preparing manual precedence"));
+    }
+    QTest::mouseMove(window, manualAxesHeader);
+    QTest::qWait(structuralSettleMs);
+    QTest::mouseMove(window, outsidePoint);
+    QTest::qWait(page->property("temporaryGroupHoverGraceMs").toInt() + 150);
+    settlePresentation();
+    QQmlExpression manualOpenPrecedence(qmlContext(page), page, QStringLiteral(
+        "(function() { const input = node('input'); return !cardGroupCollapsed(input, 'Axes', false); })()"));
+    const bool manualOpenSurvivedGrace = manualOpenPrecedence.evaluate().toBool()
+        && !manualOpenPrecedence.hasError();
+    restore();
+    if (!headerToPortStayedOpen || !axisGraceHeld || !sectionsIndependent || !graceCollapsedBoth
+        || !manualOpenPrepared || !manualOpenSurvivedGrace || fullRebuildDelta != 0
+        || bucketRebuildDelta != 0 || graphRefreshDelta != 0) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native temporary-hover expansion failed (headerToPort=%1 grace=%2 independent=%3 expired=%4 manualPrepared=%5 manualSurvived=%6 full=%7 buckets=%8 graph=%9 incident=%10)")
+                .arg(headerToPortStayedOpen).arg(axisGraceHeld).arg(sectionsIndependent)
+                .arg(graceCollapsedBoth).arg(manualOpenPrepared).arg(manualOpenSurvivedGrace)
+                .arg(fullRebuildDelta).arg(bucketRebuildDelta).arg(graphRefreshDelta).arg(incidentUpdateDelta));
+    }
+    qInfo().noquote() << QStringLiteral(
+        "signal_flow_native_hover_sections header_to_port=1 grace=1 independent=1 manual_precedence=1 full_wire_rebuilds=0 incident_wire_updates=%1")
+        .arg(incidentUpdateDelta);
     return true;
 }
 
@@ -7400,35 +7707,49 @@ bool verifySignalFlowNativeContextMenus(QObject *page, QQuickWindow *window)
         return failPresentationLifecycleTest(QStringLiteral(
             "Signal Flow native context-menu fixture needs a visible native page and window"));
     }
-    const auto findVisiblePrefix = [page, window](const QString &prefix) -> QQuickItem * {
-        const auto items = page->findChildren<QQuickItem *>();
-        for (QQuickItem *item : items) {
-            if (!item || !item->isVisible() || !item->objectName().startsWith(prefix)) continue;
-            const QPointF point = item->mapToScene(QPointF(item->width() * 0.5, item->height() * 0.5));
-            if (item->width() >= 6.0 && item->height() >= 6.0
-                && point.x() >= 0.0 && point.y() >= 0.0
-                && point.x() < window->width() && point.y() < window->height()) return item;
-        }
-        return nullptr;
-    };
     const auto dismiss = [](QObject *menu) {
         if (menu) QMetaObject::invokeMethod(menu, "close", Qt::DirectConnection);
         settlePresentation();
     };
     auto *pageItem = qobject_cast<QQuickItem *>(page);
+    const auto findRenderedPrefix = [pageItem](const QString &prefix) -> QQuickItem * {
+        return findVisualItemByObjectNamePrefix(pageItem, prefix);
+    };
     auto *nodeMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowNodeContextMenu"));
     auto *portMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowPortContextMenu"));
     auto *routeMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowRouteContextMenu"));
     auto *canvasMenu = page->findChild<QObject *>(QStringLiteral("flightDeckSignalFlowCanvasContextMenu"));
-    auto *node = findVisiblePrefix(QStringLiteral("signalFlowNodeDrag:"));
-    auto *port = findVisiblePrefix(QStringLiteral("signalFlowPortHitTarget:"));
-    auto *groupToggle = findVisiblePrefix(QStringLiteral("signalFlowPortGroupToggle:"));
     auto *canvas = pageItem ? findVisualItemByObjectName(pageItem,
         QStringLiteral("signalFlowWireInteractionLayer")) : nullptr;
-    QQmlExpression fitGraphForContextClick(qmlContext(page), page,
-        QStringLiteral("(function() { fitGraph(); return (wireGeometry || []).length; })()"));
-    fitGraphForContextClick.evaluate();
+    auto *viewport = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowGraphViewport")) : nullptr;
+    auto *scene = pageItem ? findVisualItemByObjectName(pageItem,
+        QStringLiteral("signalFlowGraphScene")) : nullptr;
+    const QVariant originalDiagnosticExpansion = page->property("diagnosticExpandAllNodeSections");
+    const QVariant originalContentX = viewport ? viewport->property("contentX") : QVariant{};
+    const QVariant originalContentY = viewport ? viewport->property("contentY") : QVariant{};
+    const auto restorePresentation = [page, viewport, originalDiagnosticExpansion,
+            originalContentX, originalContentY] {
+        page->setProperty("diagnosticExpandAllNodeSections", originalDiagnosticExpansion);
+        QMetaObject::invokeMethod(page, "refreshSceneBounds", Qt::DirectConnection);
+        if (viewport) {
+            viewport->setProperty("contentX", originalContentX);
+            viewport->setProperty("contentY", originalContentY);
+        }
+        settlePresentation();
+    };
+    QQmlExpression prepareTargets(qmlContext(page), page,
+        QStringLiteral("(function() { diagnosticExpandAllNodeSections = true;"
+            " refreshSceneBounds(); return (wireGeometry || []).length; })()"));
+    prepareTargets.evaluate();
+    QTest::qWait(page->property("motionStructuralDuration").toInt() + 20);
     settlePresentation();
+    // The persisted camera may leave a genuine target beyond the current
+    // viewport. Find the rendered control, then pan the native Flickable to
+    // it before sending the real pointer event.
+    auto *node = findRenderedPrefix(QStringLiteral("signalFlowNodeDrag:"));
+    auto *port = findRenderedPrefix(QStringLiteral("signalFlowPortHitTarget:"));
+    auto *groupToggle = findRenderedPrefix(QStringLiteral("signalFlowPortGroupToggle:"));
     QPointF routePoint;
     bool routePointFound = false;
     const QVariantList wireGeometry = page->property("wireGeometry").toList();
@@ -7440,57 +7761,268 @@ bool verifySignalFlowNativeContextMenus(QObject *page, QQuickWindow *window)
             const QVariantMap middlePoint = points.at(points.size() / 2).toMap();
             const QPointF candidate(middlePoint.value(QStringLiteral("x")).toDouble(),
                 middlePoint.value(QStringLiteral("y")).toDouble());
-            const QPointF scenePoint = canvas ? canvas->mapToScene(candidate) : QPointF{};
-            if (scenePoint.x() >= 0.0 && scenePoint.y() >= 0.0
-                && scenePoint.x() < window->width() && scenePoint.y() < window->height()) {
-                routePoint = candidate;
-                routePointFound = true;
-                break;
-            }
+            routePoint = candidate;
+            routePointFound = true;
+            break;
         }
         if (routePointFound) break;
     }
-    if (fitGraphForContextClick.hasError() || !nodeMenu || !portMenu || !routeMenu || !canvasMenu
-        || !node || !port || !groupToggle || !canvas || !routePointFound) {
+    if (prepareTargets.hasError() || !nodeMenu || !portMenu || !routeMenu || !canvasMenu
+        || !node || !port || !groupToggle || !canvas || !viewport || !scene || !routePointFound) {
+        restorePresentation();
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native context-menu fixture could not find each rendered target"));
+            "Signal Flow native context-menu fixture could not find each rendered target "
+            "(prepare=%1 nodeMenu=%2 portMenu=%3 routeMenu=%4 canvasMenu=%5 node=%6 port=%7 group=%8 canvas=%9 viewport=%10 scene=%11 route=%12)")
+                .arg(!prepareTargets.hasError()).arg(nodeMenu != nullptr).arg(portMenu != nullptr)
+                .arg(routeMenu != nullptr).arg(canvasMenu != nullptr).arg(node != nullptr).arg(port != nullptr)
+                .arg(groupToggle != nullptr).arg(canvas != nullptr).arg(viewport != nullptr)
+                .arg(scene != nullptr).arg(routePointFound));
     }
+    const auto focusLogicalPoint = [page, window, viewport, scene](const QPointF &logical) {
+        const qreal zoom = std::max<qreal>(0.01, page->property("zoom").toReal());
+        viewport->setProperty("contentX", std::max<qreal>(0.0,
+            logical.x() * zoom - viewport->width() * 0.5));
+        viewport->setProperty("contentY", std::max<qreal>(0.0,
+            logical.y() * zoom - viewport->height() * 0.5));
+        settlePresentation();
+        const QPointF point = scene->mapToScene(logical);
+        return point.x() >= 0.0 && point.y() >= 0.0
+            && point.x() < window->width() && point.y() < window->height();
+    };
+    const auto focusItem = [scene, &focusLogicalPoint](QQuickItem *item) {
+        return item && focusLogicalPoint(item->mapToItem(scene,
+            QPointF(item->width() * 0.5, item->height() * 0.5)));
+    };
     const auto rightClick = [window](QQuickItem *item, const QPointF &local) {
         QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier,
             item->mapToScene(local).toPoint());
         settlePresentation();
     };
-    rightClick(node, QPointF(node->width() * 0.5, node->height() * 0.5));
-    const bool nodeOpened = nodeMenu->property("visible").toBool();
+    const bool nodeInViewport = focusItem(node);
+    if (nodeInViewport)
+        rightClick(node, QPointF(node->width() * 0.5, node->height() * 0.5));
+    const bool nodeOpened = nodeInViewport && nodeMenu->property("visible").toBool();
     dismiss(nodeMenu);
-    rightClick(port, QPointF(port->width() * 0.5, port->height() * 0.5));
-    const bool portOpened = portMenu->property("visible").toBool();
-    dismiss(portMenu);
-    rightClick(canvas, routePoint);
-    const bool routeOpened = routeMenu->property("visible").toBool();
+    const bool routeInViewport = focusLogicalPoint(routePoint);
+    if (routeInViewport) rightClick(canvas, routePoint);
+    const bool routeOpened = routeInViewport && routeMenu->property("visible").toBool();
     dismiss(routeMenu);
     // The scene origin is deliberately clear of cards and cached route paths.
     // This right click verifies the real empty-canvas menu path, rather than
     // calling the QML helper that opens it.
-    rightClick(canvas, QPointF(8.0, 8.0));
-    const bool canvasOpened = canvasMenu->property("visible").toBool();
+    const bool canvasInViewport = focusLogicalPoint(QPointF(8.0, 8.0));
+    if (canvasInViewport) rightClick(canvas, QPointF(8.0, 8.0));
+    const bool canvasOpened = canvasInViewport && canvasMenu->property("visible").toBool();
     dismiss(canvasMenu);
-    const QString groupBefore = groupToggle->property("text").toString();
-    const QString groupToggleName = groupToggle->objectName();
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
-        groupToggle->mapToScene(QPointF(groupToggle->width() * 0.5,
-            groupToggle->height() * 0.5)).toPoint());
+    const bool portInViewport = focusItem(port);
+    if (portInViewport)
+        rightClick(port, QPointF(port->width() * 0.5, port->height() * 0.5));
+    const bool portOpened = portInViewport && portMenu->property("visible").toBool();
+    dismiss(portMenu);
+    // The preceding target-discovery mode expands every group so its port
+    // target is rendered. Return to ordinary disclosure semantics before
+    // clicking the actual group toggle; otherwise its text is intentionally
+    // held at the diagnostic-expanded value.
+    page->setProperty("diagnosticExpandAllNodeSections", false);
+    QMetaObject::invokeMethod(page, "refreshSceneBounds", Qt::DirectConnection);
+    QTest::qWait(page->property("motionStructuralDuration").toInt() + 20);
+    settlePresentation();
+    auto *normalGroupToggle = pageItem
+        ? findVisualItemByObjectName(pageItem, groupToggle->objectName()) : nullptr;
+    const bool groupInViewport = focusItem(normalGroupToggle);
+    const QString groupBefore = normalGroupToggle ? normalGroupToggle->property("text").toString() : QString{};
+    const QString groupToggleName = normalGroupToggle ? normalGroupToggle->objectName() : QString{};
+    if (groupInViewport) QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+        normalGroupToggle->mapToScene(QPointF(normalGroupToggle->width() * 0.5,
+            normalGroupToggle->height() * 0.5)).toPoint());
     settlePresentation();
     auto *updatedGroupToggle = pageItem
         ? findVisualItemByObjectName(pageItem, groupToggleName) : nullptr;
     const bool sectionToggled = updatedGroupToggle
         && updatedGroupToggle->property("text").toString() != groupBefore;
-    if (!nodeOpened || !portOpened || !routeOpened || !canvasOpened || !sectionToggled) {
+    if (updatedGroupToggle && focusItem(updatedGroupToggle)) {
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            updatedGroupToggle->mapToScene(QPointF(updatedGroupToggle->width() * 0.5,
+                updatedGroupToggle->height() * 0.5)).toPoint());
+        settlePresentation();
+    }
+    auto *restoredGroupToggle = pageItem
+        ? findVisualItemByObjectName(pageItem, groupToggleName) : nullptr;
+    const bool sectionRestored = restoredGroupToggle
+        && restoredGroupToggle->property("text").toString() == groupBefore;
+    restorePresentation();
+    if (!nodeOpened || !portOpened || !routeOpened || !canvasOpened || !sectionToggled || !sectionRestored) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native pointer controls failed (node=%1 port=%2 route=%3 canvas=%4 section=%5)" )
-                .arg(nodeOpened).arg(portOpened).arg(routeOpened).arg(canvasOpened).arg(sectionToggled));
+            "Signal Flow native pointer controls failed (node=%1 port=%2 route=%3 canvas=%4 section=%5 restored=%6 viewport=[node=%7 port=%8 route=%9 canvas=%10 group=%11])" )
+                .arg(nodeOpened).arg(portOpened).arg(routeOpened).arg(canvasOpened).arg(sectionToggled)
+                .arg(sectionRestored).arg(nodeInViewport).arg(portInViewport).arg(routeInViewport)
+                .arg(canvasInViewport).arg(groupInViewport));
     }
     qInfo().noquote() << "signal_flow_native_context_menus node=1 port=1 route=1 canvas=1 section=1";
+    return true;
+}
+
+bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window)
+{
+    if (!page || !window || !window->isVisible()) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native workspace-control fixture needs a visible native page and window"));
+    }
+    auto *pageItem = qobject_cast<QQuickItem *>(page);
+    const auto item = [pageItem](const QString &name) {
+        return pageItem ? findVisualItemByObjectName(pageItem, name) : nullptr;
+    };
+    const auto click = [window](QQuickItem *target) {
+        if (!target || !target->isVisible() || target->width() < 4.0 || target->height() < 4.0) return false;
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            target->mapToScene(QPointF(target->width() * 0.5, target->height() * 0.5)).toPoint());
+        settlePresentation();
+        return true;
+    };
+    auto *inspectorControl = item(QStringLiteral("signalFlowInspectorControl"));
+    auto *libraryControl = item(QStringLiteral("signalFlowBlockLibraryControl"));
+    auto *settingsControl = item(QStringLiteral("signalFlowGraphSettingsControl"));
+    auto *portsControl = item(QStringLiteral("signalFlowPortVisibilityControl"));
+    auto *zoomInControl = item(QStringLiteral("signalFlowZoomInControl"));
+    auto *rigControl = item(QStringLiteral("signalFlowDeviceRigControl"));
+    auto *profileControl = item(QStringLiteral("signalFlowProfileControl"));
+    QObject *inspectorPanel = page->findChild<QObject *>(QStringLiteral("signalFlowInspectorPanel"));
+    QObject *libraryPanel = page->findChild<QObject *>(QStringLiteral("signalFlowBlockLibraryPanel"));
+    QObject *settingsPanel = page->findChild<QObject *>(QStringLiteral("signalFlowGraphSettingsPanel"));
+    QObject *portsMenu = page->findChild<QObject *>(QStringLiteral("signalFlowPortVisibilityMenu"));
+    QObject *rigMenu = page->findChild<QObject *>(QStringLiteral("signalFlowRigContextMenu"));
+    QObject *profileMenu = page->findChild<QObject *>(QStringLiteral("signalFlowProfileContextMenu"));
+    if (!inspectorControl || !libraryControl || !settingsControl || !portsControl || !zoomInControl
+        || !rigControl || !profileControl || !inspectorPanel || !libraryPanel || !settingsPanel
+        || !portsMenu || !rigMenu || !profileMenu) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native workspace-control fixture could not find the first-class controls"));
+    }
+    const bool inspectorOpened = click(inspectorControl) && inspectorPanel->property("visible").toBool();
+    if (inspectorPanel) QMetaObject::invokeMethod(inspectorPanel, "close", Qt::DirectConnection);
+    settlePresentation();
+    const bool libraryOpened = click(libraryControl) && libraryPanel->property("visible").toBool();
+    QQmlExpression canonicalLibrary(qmlContext(page), page, QStringLiteral(
+        "(function() {"
+        " refreshBlockLibrary();"
+        " const savedQuery = blockLibraryQuery;"
+        " blockLibraryQuery = ''; const empty = libraryEntries();"
+        " const categories = { inputs: empty.some(function(entry) { return entry.category === 'INPUTS'; }),"
+        "   outputs: empty.some(function(entry) { return entry.category === 'OUTPUTS'; }),"
+        "   processors: empty.some(function(entry) { return entry.category === 'PROCESSORS / Axis & Response'; }) };"
+        " blockLibraryQuery = 'respo'; const response = libraryEntries().some(function(entry) {"
+        "   return entry.type === 'processor' && entry.id === 'curve' && entry.label === 'Response Curve'; });"
+        " blockLibraryQuery = 'invert'; const invert = libraryEntries().some(function(entry) {"
+        "   return entry.type === 'processor' && entry.id === 'invert' && entry.label === 'Invert'; });"
+        " blockLibraryQuery = savedQuery;"
+        " return { categories: categories, response: response, invert: invert, catalog: blockLibraryCatalog.length };"
+        "})()"));
+    const QVariantMap canonicalLibraryState = canonicalLibrary.evaluate().toMap();
+    const QVariantMap canonicalLibraryCategories = canonicalLibraryState.value(QStringLiteral("categories")).toMap();
+    const bool canonicalCatalogVisible = canonicalLibraryState.value(QStringLiteral("catalog")).toInt() > 0
+        && canonicalLibraryCategories.value(QStringLiteral("inputs")).toBool()
+        && canonicalLibraryCategories.value(QStringLiteral("outputs")).toBool()
+        && canonicalLibraryCategories.value(QStringLiteral("processors")).toBool()
+        && canonicalLibraryState.value(QStringLiteral("response")).toBool()
+        && canonicalLibraryState.value(QStringLiteral("invert")).toBool();
+    // Popups are rendered below the window overlay rather than the page's
+    // visual root. Resolve the actual field from that overlay so this remains
+    // a genuine keyboard path through the displayed Block Library.
+    auto *librarySearch = findVisualItemByObjectName(window->contentItem(),
+        QStringLiteral("signalFlowBlockLibrarySearch"));
+    auto *wireLayer = item(QStringLiteral("signalFlowWireInteractionLayer"));
+    bool keyboardPlacementArmed = false;
+    bool responsePlacementArmed = false;
+    bool responseGhostVisible = false;
+    bool compatibleRoutePreview = false;
+    bool processorPlacementCancelled = false;
+    if (libraryOpened && librarySearch) {
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            librarySearch->mapToScene(QPointF(librarySearch->width() * 0.5,
+                librarySearch->height() * 0.5)).toPoint());
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (const QChar character : QStringLiteral("respo")) {
+            const Qt::Key key = character == u' '
+                ? Qt::Key_Space
+                : static_cast<Qt::Key>(Qt::Key_A + character.unicode() - u'a');
+            QTest::keyClick(window, key);
+        }
+        // The preceding catalog query temporarily changed the visible list.
+        // Select its first (and only matching) rendered card before sending
+        // the native Enter that arms Response Curve.
+        page->setProperty("blockLibrarySelectionIndex", 0);
+        QTest::keyClick(window, Qt::Key_Return);
+        settlePresentation();
+        const QVariantMap armedProcessor = page->property("armedLibraryEntry").toMap();
+        responsePlacementArmed = armedProcessor.value(QStringLiteral("type")).toString() == QStringLiteral("processor")
+            && armedProcessor.value(QStringLiteral("id")).toString() == QStringLiteral("curve");
+        auto *placementGhost = findVisualItemByObjectName(pageItem,
+            QStringLiteral("signalFlowLibraryPlacementGhost"));
+        responseGhostVisible = placementGhost && placementGhost->isVisible();
+        QQmlExpression compatibleTarget(qmlContext(page), page, QStringLiteral(
+            "(function() {"
+            " const processor = libraryEntries().filter(function(entry) { return entry.type === 'processor' && entry.id === 'curve'; })[0];"
+            " if (!processor) return ({}); rebuildWireGeometry();"
+            " const geometry = wireGeometry || [];"
+            " for (let entryIndex = 0; entryIndex < geometry.length; ++entryIndex) {"
+            "   const segments = geometry[entryIndex].segments || [];"
+            "   for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
+            "     const points = segments[segmentIndex].points || [];"
+            "     if (points.length < 2) continue;"
+            "     const point = points[Math.floor(points.length / 2)];"
+            "     const target = libraryProcessorTargetAt(processor, Number(point.x), Number(point.y));"
+            "     if (target && target.segmentId) return { x: Number(point.x), y: Number(point.y), segmentId: String(target.segmentId) };"
+            "   }"
+            " } return ({});"
+            "})()"));
+        const QVariantMap target = compatibleTarget.evaluate().toMap();
+        if (!compatibleTarget.hasError() && wireLayer && target.contains(QStringLiteral("segmentId"))) {
+            QTest::mouseMove(window, wireLayer->mapToScene(QPointF(target.value(QStringLiteral("x")).toReal(),
+                target.value(QStringLiteral("y")).toReal())).toPoint());
+            settlePresentation();
+            compatibleRoutePreview = page->property("pendingProcessorSegmentId").toString()
+                == target.value(QStringLiteral("segmentId")).toString();
+        }
+        QTest::keyClick(window, Qt::Key_Escape);
+        settlePresentation();
+        processorPlacementCancelled = page->property("armedLibraryEntry").toMap().isEmpty();
+        keyboardPlacementArmed = responsePlacementArmed && responseGhostVisible
+            && compatibleRoutePreview && processorPlacementCancelled;
+    }
+    const bool libraryOnRight = libraryPanel->property("x").toReal()
+        >= window->width() * 0.45;
+    QMetaObject::invokeMethod(libraryPanel, "close", Qt::DirectConnection);
+    settlePresentation();
+    const bool settingsOpened = click(settingsControl) && settingsPanel->property("visible").toBool();
+    QMetaObject::invokeMethod(settingsPanel, "close", Qt::DirectConnection);
+    settlePresentation();
+    const bool portsOpened = click(portsControl) && portsMenu->property("visible").toBool();
+    QMetaObject::invokeMethod(portsMenu, "close", Qt::DirectConnection);
+    settlePresentation();
+    const qreal zoomBefore = page->property("zoom").toReal();
+    const bool zoomed = click(zoomInControl) && page->property("zoom").toReal() > zoomBefore;
+    QQmlExpression restoreZoom(qmlContext(page), page,
+        QStringLiteral("(function() { zoomAtViewport(1 / 1.1); return true; })()"));
+    restoreZoom.evaluate();
+    settlePresentation();
+    const bool rigOpened = click(rigControl) && rigMenu->property("visible").toBool();
+    QMetaObject::invokeMethod(rigMenu, "close", Qt::DirectConnection);
+    settlePresentation();
+    const bool profileOpened = click(profileControl) && profileMenu->property("visible").toBool();
+    QMetaObject::invokeMethod(profileMenu, "close", Qt::DirectConnection);
+    settlePresentation();
+    if (!inspectorOpened || !libraryOpened || !canonicalCatalogVisible || canonicalLibrary.hasError()
+        || !libraryOnRight || !keyboardPlacementArmed
+        || !settingsOpened || !portsOpened || !zoomed || !rigOpened || !profileOpened) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Signal Flow native workspace controls failed (inspector=%1 library=%2 catalog=%3 catalogError=%4 right=%5 keyboard=%6 responseArmed=%7 ghost=%8 target=%9 cancelled=%10 settings=%11 ports=%12 zoom=%13 rig=%14 profile=%15)")
+            .arg(inspectorOpened).arg(libraryOpened).arg(canonicalCatalogVisible)
+            .arg(canonicalLibrary.hasError()).arg(libraryOnRight).arg(keyboardPlacementArmed)
+            .arg(responsePlacementArmed).arg(responseGhostVisible).arg(compatibleRoutePreview)
+            .arg(processorPlacementCancelled)
+            .arg(settingsOpened).arg(portsOpened).arg(zoomed).arg(rigOpened).arg(profileOpened));
+    }
+    qInfo().noquote() << "signal_flow_native_workspace_controls inspector=1 library=1 catalog=1 search_respo=1 search_invert=1 keyboard=1 processor_ghost=1 processor_target=1 settings=1 ports=1 zoom=1 rig=1 profile=1";
     return true;
 }
 
@@ -9418,6 +9950,14 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
         return false;
     }
     if (!verifySignalFlowNativeContextMenus(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow))) {
+        return false;
+    }
+    if (!verifySignalFlowNativeWorkspaceControls(flightDeckPage,
+            qobject_cast<QQuickWindow *>(flightDeckWindow))) {
+        return false;
+    }
+    if (!verifySignalFlowNativeTemporaryHoverExpansion(flightDeckPage,
             qobject_cast<QQuickWindow *>(flightDeckWindow))) {
         return false;
     }

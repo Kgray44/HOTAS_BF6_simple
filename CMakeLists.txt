@@ -632,7 +632,10 @@ if (BUILD_TESTING)
     )
     target_compile_definitions(app_qml_startup_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
     target_compile_definitions(app_qml_startup_tests PRIVATE HOTAS_STARTUP_TESTING)
-    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests)
+    # The QML lifecycle suite supplies its own bounded UI fixtures.  It must
+    # not enumerate or acquire the owner's physical controller while testing
+    # those presentation paths.
+    add_test(NAME app_qml_startup_tests COMMAND app_qml_startup_tests --isolated-presentation)
     if (WIN32)
         set_tests_properties(app_qml_startup_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins;PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}")

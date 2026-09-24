@@ -976,6 +976,10 @@ struct SignalFlowWorkspaceState {
     int inspectorWidth = 360;
     float inspectorX = -1.0F;
     float inspectorY = -1.0F;
+    float blockLibraryX = -1.0F;
+    float blockLibraryY = -1.0F;
+    float graphSettingsX = -1.0F;
+    float graphSettingsY = -1.0F;
     QString portVisibility = u"smart"_qs;
     bool autoExpandPorts = true;
     bool layoutLocked = false;
