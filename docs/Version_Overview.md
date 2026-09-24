@@ -2,11 +2,30 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current version: v2.6.7**
+**Current version: v2.6.9**
 
 This document summarizes what each versioned project release or candidate added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.6.9 — Evidence-resolved DirectInput acquisition
+
+Separates a controller axis's native meaning from the DirectInput state field that carries its live value, so contradictory driver metadata can be resolved safely without changing how the control is identified.
+
+- Semantic DirectInput GUIDs remain strong canonical-axis identity evidence while a conflicting reported offset becomes an acquisition-source candidate instead of redefining the physical control.
+- Fresh buffered native-object events can correlate against the eight fixed DIJOYSTATE2 fields, but a source is durable only after two unique correlations identify the same field with two distinct native values; ambiguous samples prove nothing and conflicting sources restart provisional evidence.
+- Regression fixtures preserve T.Flight canonical X to lY and canonical Y to lX behavior, plus the Saitek pedal canonical Rz to lRz behavior despite its reported DIJOFS_Z offset, without vendor-specific runtime logic.
+- Verified sources are bound to the exact compatible native-object signature across reconnects, while changed signatures return safely to automatic resolution; single-device and Device Rig mapping share the same fixed-size evidence policy.
+- The normal report loop returns to a compiled RuntimeAxisAcquisition source index after verification, keeping DirectInput-to-vJoy mapping allocation-free while Flight Deck Ultra Nerd diagnostics expose source evidence, raw telemetry, and safe Identify Axis application.
+
+## v2.6.8 — Axis acquisition controls and refresh stability
+
+Makes DirectInput axis acquisition explicit and diagnosable while preventing unchanged controller inventory polls from disrupting active editing.
+
+- GUID-first acquisition preserves a physical controller's semantic DirectInput identity when its reported state offset is contradictory, including the Saitek Pro Flight Rudder Pedals Rz case merged in PR #80.
+- The opt-in Ultra Nerd workspace adds native-object evidence, bounded live candidate-source monitoring, Identify Axis, and explicit manual acquisition overrides with a safe Automatic reset path.
+- Acquisition resolution compiles to fixed runtime bindings outside MappingWorker report processing; diagnostics and QML presentation remain outside the DirectInput-to-vJoy hot path.
+- Unchanged low-frequency controller inventory snapshots no longer rebuild Device Rig readiness or emit no-op activation state changes, so open menus and text fields remain stable during ordinary refreshes.
 
 ## v2.6.7 — Whole-app responsiveness
 

@@ -713,6 +713,15 @@ Flickable {
             title: "Mapping defaults"
             detail: "These are global fallback preferences. Detailed controller mappings stay in Axes and Buttons."
             SettingsRow {
+                objectName: "flightDeckSettingsUltraNerdToggle"
+                title: "SHOW ULTRA NERD CONTROLS"
+                detail: "Show raw controller acquisition and hardware interpretation controls. These settings are normally unnecessary."
+                DeckToggle {
+                    checked: backend.showUltraNerdControls
+                    onToggled: function(value) { backend.setShowUltraNerdControls(value) }
+                }
+            }
+            SettingsRow {
                 title: "DISABLED AXIS VALUE"
                 detail: "Neutral output held by virtual axes without an active route."
                 RowLayout {

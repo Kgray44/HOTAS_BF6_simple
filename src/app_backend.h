@@ -50,6 +50,14 @@ class AppBackend final : public QObject {
     // reconstructs labels, mappings, curve summaries, or editor controls.
     Q_PROPERTY(QVariantList axisConfiguration READ axisConfiguration NOTIFY stateChanged)
     Q_PROPERTY(QVariantList axisTelemetry READ axisTelemetry NOTIFY inputTelemetryChanged)
+    // An application presentation preference only. Hiding this specialty
+    // surface never alters a saved per-controller acquisition override.
+    Q_PROPERTY(bool showUltraNerdControls READ showUltraNerdControls NOTIFY stateChanged)
+    // Explicit isolated-presentation fixture. It is never enabled in an
+    // ordinary launch and is exposed only so Flight Deck can label mock data.
+    Q_PROPERTY(bool axisAcquisitionPreview READ axisAcquisitionPreview CONSTANT)
+    Q_PROPERTY(QVariantList axisSourceMonitor READ axisSourceMonitor NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QVariantMap axisIdentification READ axisIdentification NOTIFY stateChanged)
     Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
     // Curve Editor keeps this structural selector model separate from the
     // high-frequency axes telemetry list.
@@ -308,6 +316,10 @@ public:
 
     QVariantList axisConfiguration() const;
     QVariantList axisTelemetry() const;
+    bool showUltraNerdControls() const { return m_showUltraNerdControls; }
+    bool axisAcquisitionPreview() const { return m_axisAcquisitionPreview; }
+    QVariantList axisSourceMonitor() const;
+    QVariantMap axisIdentification() const { return m_axisIdentification.result; }
     QVariantList axes() const;
     QVariantList curveAxisChoices() const;
     int selectedAxisIndex() const;
@@ -363,6 +375,24 @@ public:
     // compiled only into the isolated startup suites and cannot alter a
     // production mapper, driver, or visibility transaction.
     bool configureActivationTransactionFixtureForTest();
+    // Installs a bounded verified-controller record and monitor snapshot for
+    // acquisition/Identify Axis tests. It never enumerates user hardware.
+    bool configureAxisAcquisitionFixtureForTest();
+    // Verifies that the axis-acquisition candidate never starts a DirectInput
+    // discovery timer, game probe, or MappingWorker. The fixture is in-memory
+    // only so it can be reviewed safely alongside an installed mapper.
+    bool axisAcquisitionPreviewIsHardwareIsolatedForTest() const;
+    // Replays an initial and an identical inventory publication. The second
+    // snapshot must not rebuild Device Rig readiness or advance its generation.
+    bool unchangedControllerInventoryIsStableForTest();
+    bool setAxisSourceMonitorCandidateForTest(int source, qint32 value,
+                                              qint32 observedMinimum, qint32 observedMaximum,
+                                              quint64 changeCount, int movementMagnitude = 0);
+    void completeAxisIdentificationForTest();
+    // Replays a stale capability record and applies the same exact-controller
+    // refresh used by the UI. The test seam never opens a DirectInput device.
+    bool applyIdentifiedAxisSourceWithRefreshedCapabilitiesForTest();
+    bool axisSourceMonitorRequestedForTest() const;
     // Uses the same selected-device runtime atomics as production to stress
     // the Flight Deck button presentation path without DirectInput hardware.
     bool configureSelectedButtonPresentationFixtureForTest(int buttonCount = 32);
@@ -640,6 +670,20 @@ public:
     Q_INVOKABLE void cancelInputLearning();
     Q_INVOKABLE bool resolveInputLearningConflict(const QString &resolution);
     Q_INVOKABLE void setSelectedAxis(int physicalAxis);
+    Q_INVOKABLE void setShowUltraNerdControls(bool enabled);
+    // Enables a bounded, latest-snapshot raw source instrument. It is not
+    // persisted and adds no work when the panel is closed.
+    Q_INVOKABLE void setAxisSourceMonitorVisible(bool visible);
+    Q_INVOKABLE bool beginAxisIdentification(int physicalAxis);
+    Q_INVOKABLE void cancelAxisIdentification();
+    Q_INVOKABLE bool useIdentifiedAxisSource();
+    Q_INVOKABLE bool saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
+                                                 int formattedSource, const QString &mode,
+                                                 const QString &rangePolicy,
+                                                 qint32 manualMinimum, qint32 manualMaximum,
+                                                 const QString &interpretation,
+                                                 const QString &polarity);
+    Q_INVOKABLE bool resetAxisAcquisitionOverride(int physicalAxis);
     Q_INVOKABLE void setAxisInverted(int physicalAxis, bool inverted);
     Q_INVOKABLE void setAxisDeadzone(int physicalAxis, double deadzone);
     Q_INVOKABLE void setAxisHysteresis(int physicalAxis, double hysteresis);
@@ -1115,6 +1159,9 @@ signals:
 
 private slots:
     void refreshUiSnapshot();
+    bool installAxisAcquisitionPreview();
+    void advanceAxisAcquisitionPreview();
+    void finishAxisIdentification();
     void appendEvent(const QString &event);
     QString crashPresentationContext() const;
     void initializeDefaultButtonMappings(int physicalButtonCount, int vjoyButtonCapacity);
@@ -1152,6 +1199,14 @@ private:
             values.fill(-1);
             return values;
         }()};
+    };
+
+    struct AxisIdentificationState {
+        bool active = false;
+        int targetAxis = -1;
+        QString controllerRecordId;
+        std::array<quint64, kPhysicalAxisCount> baselineChanges{};
+        QVariantMap result;
     };
 
     struct SignalFlowCommand {
@@ -1399,6 +1454,16 @@ private:
     bool editingScopeHasSinglePhysicalSource() const;
     const SavedControllerRecord *selectedEditingControllerRecord() const;
     QString selectedEditingControllerId() const;
+    bool applyIdentifiedAxisSourceFromProbe(const QString &recordId,
+                                            const QString &expectedDirectInputId,
+                                            int targetAxis, int formattedSource,
+                                            const DirectInputControllerProbe &probe,
+                                            QString *failure);
+    void finishIdentifiedAxisSourceRefresh(quint64 generation, const QString &recordId,
+                                           const QString &expectedDirectInputId, int targetAxis,
+                                           int formattedSource,
+                                           const DirectInputControllerProbe &probe);
+    void setAxisIdentificationApplyFailure(const QString &failure);
     DeviceProfileMapping *editingDeviceMappingForWrite();
     const DeviceProfileMapping *editingDeviceMapping() const;
     AdaptiveResponseLayer *adaptiveResponseLayer(const QString &scope, const QString &targetId = {});
@@ -1754,6 +1819,7 @@ private:
     // cannot consume the selected-device 60 Hz presentation budget.
     QTimer m_legacyButtonTelemetryTimer;
     QTimer m_numericTelemetryTimer;
+    QTimer m_axisIdentificationTimer;
     QTimer m_adaptiveResponseHistoryTimer;
     QTimer m_controllerDiscoveryTimer;
     QTimer m_gameDetectionTimer;
@@ -1791,6 +1857,18 @@ private:
     QVariantList m_selectedButtonConfigurationModel;
     QVariantList m_selectedButtonInputTelemetryModel;
     InputLearningState m_inputLearning;
+    AxisIdentificationState m_axisIdentification;
+    // Invalidates an outstanding exact-controller capability refresh when the
+    // dialog is cancelled, restarted, or its capture completes.
+    quint64 m_axisIdentificationGeneration = 0;
+    bool m_showUltraNerdControls = false;
+    bool m_axisAcquisitionPreview = false;
+    int m_axisAcquisitionPreviewSequence = 0;
+    QTimer m_axisAcquisitionPreviewTimer;
+    // The QML panel owns this presentation intent. Identification temporarily
+    // enables monitor capture but must restore this value when its bounded
+    // capture window ends.
+    bool m_axisSourceMonitorVisible = false;
     QElapsedTimer m_rateClock;
     QElapsedTimer m_physicalUpdateClock;
     QElapsedTimer m_latencyPercentileClock;

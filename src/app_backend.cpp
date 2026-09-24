@@ -12,6 +12,7 @@
 #include "controller_diagnostics.h"
 #include "controller_manager.h"
 #include "config_persistence_coordinator.h"
+#include "direct_input_axis.h"
 #include "hotas_build_version.h"
 #include "input_learning.h"
 #include "launcher_core.h"
@@ -113,7 +114,20 @@ bool startupSmokeRequested()
 bool isolatedPresentationRequested()
 {
     return QCoreApplication::arguments().contains(u"--isolated-presentation"_qs)
-        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0;
+        || qEnvironmentVariableIntValue("HOTAS_RESPONSIVENESS_NATIVE_QUALIFICATION") != 0
+        // The standalone Axis Acquisition candidate is a review fixture, not
+        // a second mapper. It must never enumerate DirectInput, acquire vJoy,
+        // or sample foreground applications beside the installed app.
+        || qEnvironmentVariableIntValue("HOTAS_AXIS_ACQUISITION_PREVIEW") != 0;
+}
+
+bool axisAcquisitionPreviewRequested()
+{
+    // main.cpp sets this only for --axis-acquisition-preview before an
+    // AppBackend exists. Keep the backend's decision process-local and
+    // explicit: no installed controller, saved preference, or auto-detection
+    // can silently turn an ordinary mapping session into a mock session.
+    return qEnvironmentVariableIntValue("HOTAS_AXIS_ACQUISITION_PREVIEW") == 1;
 }
 
 bool sameControllerInventory(const QList<DiscoveredController> &left,
@@ -168,6 +182,12 @@ AxisPresentationDescriptor axisPresentationDescriptor(const SavedControllerRecor
         }
     }
     result.descriptor = current && current->present ? *current : saved;
+    // Controller discovery intentionally starts from fresh native metadata on
+    // every reconnect. Preserve a previously proven fixed formatted field
+    // only when the entire native object signature remains compatible.
+    if (current && current->present) {
+        reuseVerifiedFormattedSource(&result.descriptor, saved);
+    }
     result.discovered = current ? current->present : saved.present;
     result.configuredAvailable = !displacedSavedObject
         && (record->axes[index] || (observed && observed->axes[index]));
@@ -563,6 +583,7 @@ AppBackend::AppBackend(QObject *parent)
     // launches retain the unchanged hardware startup path below.
     const bool startupSmoke = startupSmokeRequested();
     const bool isolatedPresentation = isolatedPresentationRequested();
+    m_axisAcquisitionPreview = axisAcquisitionPreviewRequested();
     m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
     // Selection starts at the authoritative active Profile, then remains a
     // session-local editor choice until the user changes it. It is never a
@@ -574,7 +595,10 @@ AppBackend::AppBackend(QObject *parent)
     m_adaptiveResponseSimulatorRecording.resize(3000);
     QSettings settings;
     m_controllerSetupSuggested = !settings.value(u"readiness/controllerSetupIntroSeen"_qs, false).toBool();
+    // Retain the durable Pass B setup task independently of the accepted
+    // upstream presentation preference.
     loadSetupAssistantTask();
+    m_showUltraNerdControls = settings.value(u"presentation/showUltraNerdControls"_qs, false).toBool();
     if (m_readiness.hasPendingRecovery()) {
         ControllerReadinessPlan pending;
         pending.state = ControllerReadinessState::Attention;
@@ -603,6 +627,11 @@ AppBackend::AppBackend(QObject *parent)
     m_readOnlyPhysicalInputTestProbeTimer.setInterval(250);
     connect(&m_readOnlyPhysicalInputTestProbeTimer, &QTimer::timeout, this,
             &AppBackend::requestReadOnlyPhysicalInputProbe);
+    // Keep the accepted upstream Identify Axis session independent of the
+    // read-only input inspector timer above.
+    m_axisIdentificationTimer.setSingleShot(true);
+    connect(&m_axisIdentificationTimer, &QTimer::timeout, this,
+            &AppBackend::finishAxisIdentification);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     m_setupTruthStartupInspectionTimer.setSingleShot(true);
     connect(&m_setupTruthStartupInspectionTimer, &QTimer::timeout, this,
@@ -679,6 +708,21 @@ AppBackend::AppBackend(QObject *parent)
     // active output mapping.
     m_numericTelemetryTimer.setInterval(kVisibleNumericTelemetryIntervalMs);
     m_numericTelemetryTimer.start();
+    if (m_axisAcquisitionPreview) {
+        if (installAxisAcquisitionPreview()) {
+            m_axisAcquisitionPreviewTimer.setInterval(90);
+            connect(&m_axisAcquisitionPreviewTimer, &QTimer::timeout, this,
+                    &AppBackend::advanceAxisAcquisitionPreview);
+            advanceAxisAcquisitionPreview();
+            m_axisAcquisitionPreviewTimer.start();
+            appendEvent(u"Simulated Axis Acquisition preview loaded; no physical input or vJoy output is active"_qs);
+        } else {
+            // Never leave an ambiguous partially-seeded view if the isolated
+            // fixture cannot establish a complete in-memory Device Rig.
+            m_axisAcquisitionPreview = false;
+            appendEvent(u"Axis Acquisition preview could not initialize"_qs);
+        }
+    }
     // DirectInput enumeration is an independent, low-frequency control-plane
     // snapshot.  The report loop neither waits for it nor reads its results.
     m_controllerDiscoveryTimer.setInterval(kVisibleControllerDiscoveryIntervalMs);
@@ -758,7 +802,7 @@ AppBackend::AppBackend(QObject *parent)
     // normal launch path then resolves it through the passive verifier below;
     // this prevents the Overview from briefly inventing an inspection failure
     // while the sidebar is still reporting live mapper readiness.
-    if (!startupSmoke) {
+    if (!startupSmoke && !m_axisAcquisitionPreview) {
         m_setupTruthStartupInspectionPending = true;
         captureSetupTruthSnapshot();
         // HidHide Health starts as a separate passive control-plane check. It
@@ -777,7 +821,160 @@ AppBackend::AppBackend(QObject *parent)
     // Update network activity is intentionally scheduled on the UI event loop
     // after startup. It never enters the DirectInput/vJoy worker or its hot
     // path, and a bounded timeout leaves mapper startup fully independent.
-    if (!startupSmoke && !isolatedPresentation) QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+    if (!startupSmoke && !isolatedPresentation && !m_axisAcquisitionPreview)
+        QTimer::singleShot(500, this, &AppBackend::checkForUpdates);
+}
+
+bool AppBackend::installAxisAcquisitionPreview()
+{
+    // This is intentionally not a fake DirectInput device. It is a complete
+    // in-memory verified-record and Device Rig projection for reviewing the
+    // acquisition UI while no physical controller is attached. Main enables
+    // QStandardPaths test mode before construction, and this routine never
+    // persists, probes drivers, or starts MappingWorker.
+    MapperConfiguration preview = defaultConfiguration();
+    ControllerProfile *normal = findProfile(preview, normalProfileId());
+    if (!normal || preview.outputLayouts.empty()) return false;
+
+    constexpr auto kRecordId = "axis-acquisition-ui-preview-controller";
+    constexpr auto kRigId = "axis-acquisition-ui-preview-rig";
+    SavedControllerRecord record;
+    record.id = QLatin1String(kRecordId);
+    record.displayName = u"Simulated Axis Acquisition Controller · UI Preview"_qs;
+    record.lastDirectInputId = u"{axis-acquisition-ui-preview}"_qs;
+    record.productGuid = u"{axis-acquisition-ui-preview-product}"_qs;
+    record.hidInstanceId = u"HID\\SIMULATED_AXIS_ACQUISITION\\1"_qs;
+    record.hidContainerId = u"{axis-acquisition-ui-preview-container}"_qs;
+    record.axisCount = kPhysicalAxisCount;
+    record.buttonCount = 12;
+    record.povCount = 1;
+    record.capabilityFingerprint = u"SIMULATED-AXIS-ACQUISITION-PREVIEW"_qs;
+    record.lastVerified = u"SIMULATED · UI preview only · no physical verification"_qs;
+
+    const std::array<QString, kPhysicalAxisCount> standardGuids{{
+        u"GUID_XAxis"_qs, u"GUID_YAxis"_qs, u"GUID_ZAxis"_qs, u"GUID_RxAxis"_qs,
+        u"GUID_RyAxis"_qs, u"GUID_RzAxis"_qs, u"GUID_Slider"_qs, u"GUID_Slider"_qs,
+    }};
+    const std::array<quint32, kPhysicalAxisCount> standardOffsets{{0U, 4U, 8U, 12U,
+                                                                     16U, 20U, 24U, 28U}};
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
+        NativeAxisDescriptor &descriptor = record.axisDescriptors[static_cast<size_t>(index)];
+        descriptor.present = true;
+        descriptor.nativeName = axis == PhysicalAxis::Rz
+            ? u"Simulated Z Rotation (Rudder)"_qs
+            : QString(u"Simulated %1"_qs).arg(physicalAxisLabel(axis));
+        descriptor.directInputGuid = standardGuids[static_cast<size_t>(index)];
+        descriptor.directInputType = 0x1000U + static_cast<quint32>(index);
+        descriptor.directInputOffset = axis == PhysicalAxis::Rz ? 8U : standardOffsets[static_cast<size_t>(index)];
+        descriptor.directInputInstance = static_cast<quint32>(index);
+        descriptor.enumerationIndex = index;
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.requestedMinimum = 0;
+        descriptor.requestedMaximum = 65535;
+        descriptor.rangeSetAttempted = true;
+        descriptor.acquisitionSourceResolved = true;
+        descriptor.acquisitionMethod = 0;
+        descriptor.canonicalAxis = index;
+        descriptor.formattedSource = index;
+        descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+        descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+        // The preview deliberately presents the known semantic-GUID versus
+        // reported-offset situation without claiming that this mock is Saitek
+        // hardware. It lets the owner inspect the intended contradiction UI.
+        descriptor.metadataContradiction = axis == PhysicalAxis::Rz;
+        record.axes[static_cast<size_t>(index)] = true;
+    }
+    preview.savedControllers = {record};
+
+    const QString outputId = preview.outputLayouts.front().id;
+    DeviceRig rig;
+    rig.id = QLatin1String(kRigId);
+    rig.name = u"Simulated Axis Acquisition Rig · UI Preview"_qs;
+    rig.autoActivate = false;
+    rig.members = {{record.id, true, true, outputId}};
+    rig.outputs = {{outputId, true}};
+    rig.primaryOutputLayoutId = outputId;
+    rig.setupStatus = u"SIMULATED · no driver inspection"_qs;
+    preview.deviceRigs = {rig};
+
+    DeviceProfileMapping mapping;
+    mapping.controllerRecordId = record.id;
+    mapping.enabled = true;
+    normal->deviceRigId = rig.id;
+    normal->outputLayoutId = outputId;
+    normal->deviceMappings = {mapping};
+    normal->automaticSelectionMode = ProfileAutomaticSelectionMode::ManualOnly;
+    preview.activeProfileId = normal->id;
+    preview.activeDeviceRigId = rig.id;
+    preview.activeControllerRecordId = record.id;
+    preview.editingDeviceRigId = rig.id;
+    preview.editingDeviceRecordIds = {record.id};
+    preview.selectedAxisIndex = static_cast<int>(PhysicalAxis::Rz);
+    preview.startMappingOnLaunch = false;
+    preview.automaticGameDetection = false;
+    if (!compileDeviceRigRuntime(preview, rig.id, normal->id).valid) return false;
+
+    m_configuration = std::move(preview);
+    m_selectedProfileId = m_configuration.activeProfileId;
+    ++m_configurationGeneration;
+    m_showUltraNerdControls = true;
+    m_axisIdentification = {};
+    m_axisSourceMonitorVisible = false;
+    m_discoveredControllers.clear();
+    DiscoveredController discovered;
+    discovered.name = record.displayName;
+    discovered.directInputId = record.lastDirectInputId;
+    discovered.productGuid = record.productGuid;
+    discovered.hidInstanceId = record.hidInstanceId;
+    discovered.hidContainerId = record.hidContainerId;
+    discovered.axes = record.axes;
+    discovered.axisDescriptors = record.axisDescriptors;
+    discovered.axisCount = record.axisCount;
+    discovered.buttonCount = record.buttonCount;
+    discovered.povCount = record.povCount;
+    discovered.connected = true;
+    m_discoveredControllers.push_back(std::move(discovered));
+    m_controllerInventoryInitialized = true;
+    m_initialInventoryResolved = true;
+    m_initialGameContextResolved = true;
+    DeviceRigStatus status;
+    status.rigId = rig.id;
+    status.health = DeviceRigHealth::Ready;
+    status.complete = true;
+    status.connectedMemberIds = {record.id};
+    m_deviceRigStatuses = {status};
+    ++m_inventoryGeneration;
+    m_worker.updateConfiguration(m_configuration);
+
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const qint32 value = source == static_cast<int>(PhysicalAxis::Rz) ? 32761 : 0;
+        m_worker.publishAxisAcquisitionPreviewSnapshot(source, value, 0, 65535,
+                                                       source == static_cast<int>(PhysicalAxis::Rz) ? 1074 : 0,
+                                                       0);
+        m_worker.publishPhysicalAxisSnapshotForTest(source,
+            source == static_cast<int>(PhysicalAxis::Rz) ? -0.001F : 0.0F);
+    }
+    return true;
+}
+
+void AppBackend::advanceAxisAcquisitionPreview()
+{
+    if (!m_axisAcquisitionPreview) return;
+    constexpr int source = static_cast<int>(PhysicalAxis::Rz);
+    constexpr int cycleLength = 128;
+    constexpr int halfCycle = cycleLength / 2;
+    const int phase = (++m_axisAcquisitionPreviewSequence) % cycleLength;
+    const int ramp = phase <= halfCycle ? phase : cycleLength - phase;
+    const qint32 raw = 32761 + static_cast<qint32>((ramp - halfCycle / 2) * 520);
+    const float normalized = std::clamp((static_cast<float>(raw) - 32767.5F) / 32767.5F,
+                                        -1.0F, 1.0F);
+    m_worker.publishAxisAcquisitionPreviewSnapshot(source, raw, 142, 65392,
+                                                   1074U + static_cast<quint64>(m_axisAcquisitionPreviewSequence),
+                                                   520);
+    m_worker.publishPhysicalAxisSnapshotForTest(source, normalized);
+    emit inputTelemetryChanged();
 }
 
 AppBackend::~AppBackend()
@@ -867,10 +1064,28 @@ QVariantList AppBackend::axisConfiguration() const
     const bool exactLiveSource = sourceRecord && liveSource
         && (sourceMemberIndex < 0 || runtime.deviceRigMemberPhysicalConnected[
             static_cast<size_t>(sourceMemberIndex)].load());
+    const AtomicAxisSourceTelemetry *sourceTelemetry = !exactLiveSource ? nullptr
+        : sourceMemberIndex < 0 ? &runtime.axisSourceTelemetry
+                                : &runtime.deviceRigMemberAxisSourceTelemetry[
+                                      static_cast<size_t>(sourceMemberIndex)];
     const QString sourceName = sourceRecord ? sourceRecord->displayName : u"All Devices"_qs;
     const DiscoveredController *observedController = sourceRecord
         ? discoveredController(sourceRecord->lastDirectInputId) : nullptr;
     const bool sourceConnected = observedController != nullptr;
+    const auto automaticSourceForTarget = [sourceRecord](int target) -> const NativeAxisDescriptor * {
+        if (!sourceRecord) return nullptr;
+        const NativeAxisDescriptor *resolved = nullptr;
+        for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount; ++descriptorIndex) {
+            const NativeAxisDescriptor &candidate = sourceRecord->axisDescriptors[
+                static_cast<size_t>(descriptorIndex)];
+            const int candidateTarget = candidate.canonicalAxis >= 0
+                ? candidate.canonicalAxis : descriptorIndex;
+            if (!candidate.present || candidate.formattedSource < 0 || candidateTarget != target) continue;
+            if (resolved) return nullptr;
+            resolved = &candidate;
+        }
+        return resolved;
+    };
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const auto axis = static_cast<PhysicalAxis>(index);
         const AxisMapping &mapping = axes[index];
@@ -903,6 +1118,87 @@ QVariantList AppBackend::axisConfiguration() const
         item.insert(u"rangeSetAttempted"_qs, descriptor.rangeSetAttempted);
         item.insert(u"rangeSetResult"_qs, descriptor.rangeSetResult);
         item.insert(u"rangeReadResult"_qs, descriptor.rangeReadResult);
+        const AxisAcquisitionOverride override = sourceRecord
+            ? sourceRecord->axisAcquisitionOverrides[static_cast<size_t>(index)]
+            : AxisAcquisitionOverride{};
+        const bool manualOverride = override.enabled
+            && override.mode != AxisAcquisitionMode::Automatic;
+        const int automaticTarget = descriptor.canonicalAxis >= 0 ? descriptor.canonicalAxis : index;
+        const int effectiveTarget = manualOverride ? static_cast<int>(override.target) : automaticTarget;
+        const NativeAxisDescriptor *automaticSourceDescriptor = manualOverride
+            && override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+            && override.formattedSource < 0 ? automaticSourceForTarget(effectiveTarget) : nullptr;
+        const int displaySource = manualOverride && override.formattedSource >= 0
+            ? override.formattedSource : automaticSourceDescriptor
+                ? automaticSourceDescriptor->formattedSource : descriptor.formattedSource;
+        item.insert(u"resolutionSource"_qs, descriptor.resolutionSource
+                == AxisResolutionSource::StandardSemanticGuid ? u"Semantic GUID"_qs
+            : descriptor.resolutionSource == AxisResolutionSource::ReportedOffset
+                ? u"Reported DirectInput offset"_qs
+            : descriptor.resolutionSource == AxisResolutionSource::Manual ? u"Manual"_qs
+            : u"Unresolved"_qs);
+        item.insert(u"resolutionConfidence"_qs, manualOverride ? u"Manual"_qs
+            : descriptor.resolutionConfidence == AxisResolutionConfidence::High ? u"High"_qs
+            : descriptor.resolutionConfidence == AxisResolutionConfidence::Medium ? u"Medium"_qs
+            : descriptor.resolutionConfidence == AxisResolutionConfidence::Contradictory
+                ? u"Contradictory"_qs : u"Low"_qs);
+        item.insert(u"metadataContradiction"_qs, descriptor.metadataContradiction);
+        item.insert(u"formattedSourceEvidence"_qs,
+            descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::MetadataAgreement
+                ? u"Metadata agreement"_qs
+            : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::SemanticFallback
+                ? u"Native identity fallback"_qs
+            : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetCandidate
+                ? u"Reported field candidate (unverified)"_qs
+            : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::ReportedOffsetFallback
+                ? u"Reported state field"_qs
+            : descriptor.formattedSourceEvidence == AxisFormattedSourceEvidence::BufferedObjectCorrelation
+                ? u"Buffered object correlation"_qs : u"Not resolved"_qs);
+        item.insert(u"formattedSourceVerified"_qs, descriptor.formattedSourceVerified);
+        item.insert(u"canonicalAxis"_qs, validAxis(effectiveTarget)
+            ? physicalAxisLabel(static_cast<PhysicalAxis>(effectiveTarget)) : physicalAxisLabel(axis));
+        item.insert(u"manualTargetAxisIndex"_qs, manualOverride ? effectiveTarget : -1);
+        item.insert(u"manualAutomaticTarget"_qs, manualOverride && override.automaticTarget);
+        item.insert(u"manualAutomaticSource"_qs, manualOverride
+            && override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+            && override.formattedSource < 0);
+        item.insert(u"formattedSource"_qs, displaySource >= 0 && displaySource < kPhysicalAxisCount
+            ? physicalAxisLabel(static_cast<PhysicalAxis>(displaySource)) : u"Not resolved"_qs);
+        item.insert(u"formattedSourceIndex"_qs, displaySource);
+        item.insert(u"manualOverride"_qs, manualOverride);
+        item.insert(u"manualOverrideMode"_qs, !manualOverride ? u"Automatic"_qs
+            : override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+                ? (override.formattedSource < 0 ? u"Automatic DirectInput source"_qs
+                                                : u"DirectInput formatted source"_qs)
+            : override.mode == AxisAcquisitionMode::NativeDirectInputObject
+                ? u"Exact native object"_qs : u"Raw HID unavailable"_qs);
+        item.insert(u"manualRangePolicy"_qs, override.rangePolicy == AxisRawRangePolicy::Manual
+                ? u"Manual"_qs
+            : override.rangePolicy == AxisRawRangePolicy::Observed ? u"Observed snapshot"_qs
+            : override.rangePolicy == AxisRawRangePolicy::DriverReported ? u"Driver-reported"_qs
+            : u"Automatic"_qs);
+        item.insert(u"manualMinimum"_qs, override.manualMinimum);
+        item.insert(u"manualMaximum"_qs, override.manualMaximum);
+        item.insert(u"manualInterpretation"_qs,
+            override.interpretation == AxisRawInterpretation::OneSidedAbsolute
+                ? u"One-sided absolute"_qs
+            : override.interpretation == AxisRawInterpretation::CenteredAbsolute
+                ? u"Centered absolute"_qs
+            : override.interpretation == AxisRawInterpretation::Relative ? u"Relative"_qs
+            : u"Automatic"_qs);
+        item.insert(u"manualPolarity"_qs, override.polarity == AxisRawPolarity::Reversed
+            ? u"Reversed"_qs : override.polarity == AxisRawPolarity::Normal
+                ? u"Normal"_qs : u"Automatic"_qs);
+        const bool rawSourceAvailable = sourceTelemetry && sourceTelemetry->available.load(
+            std::memory_order_relaxed) && displaySource >= 0 && displaySource < kPhysicalAxisCount;
+        const size_t rawSourceIndex = static_cast<size_t>(std::max(0, displaySource));
+        item.insert(u"observedRangeAvailable"_qs, rawSourceAvailable);
+        item.insert(u"observedMinimum"_qs, rawSourceAvailable
+            ? sourceTelemetry->observedMinimum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"observedMaximum"_qs, rawSourceAvailable
+            ? sourceTelemetry->observedMaximum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"rawValue"_qs, rawSourceAvailable
+            ? sourceTelemetry->value[rawSourceIndex].load(std::memory_order_relaxed) : 0);
         const int acquisitionMethod = exactLiveSource
             ? (sourceMemberIndex >= 0
                 ? runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(sourceMemberIndex)]
@@ -923,8 +1219,10 @@ QVariantList AppBackend::axisConfiguration() const
             : -1;
         item.insert(u"acquisitionSourceResolved"_qs,
             descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
-        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 1
+        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 2
+            ? u"Manual acquisition binding"_qs : acquisitionMethod == 1
             ? u"Buffered DirectInput object"_qs
+            : acquisitionMethod == 3 ? u"Resolving verified DirectInput state field"_qs
             : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
             : u"Not resolved"_qs);
         item.insert(u"liveMovementObserved"_qs, liveMovementObserved);
@@ -976,16 +1274,52 @@ QVariantList AppBackend::axisTelemetry() const
     const AtomicRuntimeState &runtime = m_worker.runtime();
     const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
     const AxisMappings emptyAxes{};
+    const SavedControllerRecord *sourceRecord = selectedEditingControllerRecord();
     const AxisMappings &mappings = deviceMapping ? deviceMapping->axes
-        : selectedEditingControllerRecord() ? emptyAxes : currentProfile().axes;
+        : sourceRecord ? emptyAxes : currentProfile().axes;
     int sourceMemberIndex = -1;
     const AtomicAdaptiveTelemetry *liveSource = adaptiveTelemetrySource(nullptr, &sourceMemberIndex);
-    const bool exactLiveSource = selectedEditingControllerRecord() && liveSource
+    const bool exactLiveSource = sourceRecord && liveSource
         && (sourceMemberIndex < 0 || runtime.deviceRigMemberPhysicalConnected[
             static_cast<size_t>(sourceMemberIndex)].load());
+    const AtomicAxisSourceTelemetry *sourceTelemetry = !exactLiveSource ? nullptr
+        : sourceMemberIndex < 0 ? &runtime.axisSourceTelemetry
+                                : &runtime.deviceRigMemberAxisSourceTelemetry[
+                                      static_cast<size_t>(sourceMemberIndex)];
+    const auto automaticSourceForTarget = [sourceRecord](int target) -> const NativeAxisDescriptor * {
+        if (!sourceRecord) return nullptr;
+        const NativeAxisDescriptor *resolved = nullptr;
+        for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount; ++descriptorIndex) {
+            const NativeAxisDescriptor &candidate = sourceRecord->axisDescriptors[
+                static_cast<size_t>(descriptorIndex)];
+            const int candidateTarget = candidate.canonicalAxis >= 0
+                ? candidate.canonicalAxis : descriptorIndex;
+            if (!candidate.present || candidate.formattedSource < 0 || candidateTarget != target) continue;
+            if (resolved) return nullptr;
+            resolved = &candidate;
+        }
+        return resolved;
+    };
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const AxisMapping &mapping = mappings[index];
-        const SavedControllerRecord *sourceRecord = selectedEditingControllerRecord();
+        const NativeAxisDescriptor descriptor = sourceRecord
+            ? sourceRecord->axisDescriptors[static_cast<size_t>(index)] : NativeAxisDescriptor{};
+        const AxisAcquisitionOverride override = sourceRecord
+            ? sourceRecord->axisAcquisitionOverrides[static_cast<size_t>(index)]
+            : AxisAcquisitionOverride{};
+        const bool manualOverride = override.enabled
+            && override.mode != AxisAcquisitionMode::Automatic;
+        const int automaticTarget = descriptor.canonicalAxis >= 0 ? descriptor.canonicalAxis : index;
+        const int effectiveTarget = manualOverride ? static_cast<int>(override.target) : automaticTarget;
+        const NativeAxisDescriptor *automaticSourceDescriptor = manualOverride
+            && override.mode == AxisAcquisitionMode::DirectInputFormattedSlot
+            && override.formattedSource < 0 ? automaticSourceForTarget(effectiveTarget) : nullptr;
+        const int displaySource = manualOverride && override.formattedSource >= 0
+            ? override.formattedSource : automaticSourceDescriptor
+                ? automaticSourceDescriptor->formattedSource : descriptor.formattedSource;
+        const bool rawSourceAvailable = sourceTelemetry && sourceTelemetry->available.load(
+            std::memory_order_relaxed) && displaySource >= 0 && displaySource < kPhysicalAxisCount;
+        const size_t rawSourceIndex = static_cast<size_t>(std::max(0, displaySource));
         const bool fixed = sourceRecord
             && sourceRecord->axisActivity[static_cast<size_t>(index)] == PhysicalAxisActivity::Fixed;
         const int targetIndex = static_cast<int>(mapping.target);
@@ -1001,9 +1335,74 @@ QVariantList AppBackend::axisTelemetry() const
         item.insert(u"calibrated"_qs, exactLiveSource ? liveSource->normalized[index].load() : unavailable);
         item.insert(u"curveResponse"_qs, exactLiveSource ? liveSource->curveResponse[index].load() : unavailable);
         item.insert(u"transformed"_qs, exactLiveSource ? liveSource->transformed[index].load() : unavailable);
+        // Raw acquisition evidence is numeric telemetry, not configuration.
+        // Keep it in this small snapshot so the compact Ultra Nerd readouts
+        // update with their normalized siblings rather than stale axis cards.
+        item.insert(u"rawValueAvailable"_qs, rawSourceAvailable);
+        item.insert(u"rawValue"_qs, rawSourceAvailable
+            ? sourceTelemetry->value[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"observedRangeAvailable"_qs, rawSourceAvailable);
+        item.insert(u"observedMinimum"_qs, rawSourceAvailable
+            ? sourceTelemetry->observedMinimum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"observedMaximum"_qs, rawSourceAvailable
+            ? sourceTelemetry->observedMaximum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"liveMovementObserved"_qs, exactLiveSource
+            && (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLiveMovementObserved[static_cast<size_t>(index)].load()));
+        item.insert(u"lastMovementAgeMs"_qs, exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load()
+                : runtime.axisLastMovementAgeMs[static_cast<size_t>(index)].load())
+            : -1);
         item.insert(u"virtualValue"_qs, virtualValue);
         item.insert(u"virtualRouted"_qs, virtualRouted);
         item.insert(u"virtualValid"_qs, virtualRouted && std::isfinite(virtualValue));
+        result.append(item);
+    }
+    return result;
+}
+
+QVariantList AppBackend::axisSourceMonitor() const
+{
+    QVariantList result;
+    const SavedControllerRecord *record = selectedEditingControllerRecord();
+    const AtomicRuntimeState &runtime = m_worker.runtime();
+    int sourceMemberIndex = -1;
+    const AtomicAdaptiveTelemetry *liveSource = adaptiveTelemetrySource(nullptr, &sourceMemberIndex);
+    const bool connected = record && liveSource && (sourceMemberIndex < 0
+        ? runtime.physicalConnected.load(std::memory_order_relaxed)
+        : runtime.deviceRigMemberPhysicalConnected[static_cast<size_t>(sourceMemberIndex)].load(
+            std::memory_order_relaxed));
+    const AtomicAxisSourceTelemetry *telemetry = !connected ? nullptr
+        : sourceMemberIndex < 0 ? &runtime.axisSourceTelemetry
+                                : &runtime.deviceRigMemberAxisSourceTelemetry[
+                                      static_cast<size_t>(sourceMemberIndex)];
+    const bool available = telemetry && telemetry->available.load(std::memory_order_relaxed);
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const size_t index = static_cast<size_t>(source);
+        QVariantMap item;
+        item.insert(u"index"_qs, source);
+        item.insert(u"key"_qs, physicalAxisKey(static_cast<PhysicalAxis>(source)));
+        item.insert(u"label"_qs, physicalAxisLabel(static_cast<PhysicalAxis>(source)));
+        item.insert(u"available"_qs, available);
+        item.insert(u"value"_qs, available ? telemetry->value[index].load(std::memory_order_relaxed) : 0);
+        item.insert(u"observedMinimum"_qs, available
+            ? telemetry->observedMinimum[index].load(std::memory_order_relaxed) : 0);
+        item.insert(u"observedMaximum"_qs, available
+            ? telemetry->observedMaximum[index].load(std::memory_order_relaxed) : 0);
+        item.insert(u"changeCount"_qs, available
+            ? QVariant::fromValue<qulonglong>(telemetry->changeCount[index].load(std::memory_order_relaxed))
+            : QVariant::fromValue<qulonglong>(0));
+        item.insert(u"recentMovementMagnitude"_qs, available
+            ? telemetry->recentMovementMagnitude[index].load(std::memory_order_relaxed) : 0);
+        item.insert(u"lastChangeAgeMs"_qs, available
+            ? telemetry->lastChangeAgeMs[index].load(std::memory_order_relaxed) : -1);
+        item.insert(u"state"_qs, !available ? u"UNAVAILABLE"_qs
+            : telemetry->recentMovementMagnitude[index].load(std::memory_order_relaxed) != 0
+                ? u"ACTIVE"_qs : u"IDLE"_qs);
         result.append(item);
     }
     return result;
@@ -1082,6 +1481,7 @@ QVariantList AppBackend::axes() const
             descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
         item.insert(u"acquisitionSource"_qs, acquisitionMethod == 1
             ? u"Buffered DirectInput object"_qs
+            : acquisitionMethod == 3 ? u"Resolving verified DirectInput state field"_qs
             : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
             : u"Not resolved"_qs);
         item.insert(u"liveMovementObserved"_qs, liveMovementObserved);
@@ -2233,6 +2633,145 @@ bool AppBackend::configureActivationTransactionFixtureForTest()
     emit deviceRigsChanged();
     emit stateChanged();
     return true;
+}
+
+bool AppBackend::configureAxisAcquisitionFixtureForTest()
+{
+    if (!configureActivationTransactionFixtureForTest()) return false;
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [](const SavedControllerRecord &candidate) {
+            return candidate.id == u"activation-transaction-controller"_qs;
+        });
+    if (record == m_configuration.savedControllers.end()) return false;
+
+    record->axisCount = kPhysicalAxisCount;
+    for (int index = 0; index < kPhysicalAxisCount; ++index) {
+        const PhysicalAxis axis = static_cast<PhysicalAxis>(index);
+        NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(index)];
+        descriptor.present = true;
+        descriptor.nativeName = QString(u"Fixture %1"_qs).arg(physicalAxisLabel(axis));
+        descriptor.directInputGuid = QString(u"GUID_%1Axis"_qs)
+            .arg(physicalAxisKey(axis).toUpper().replace(u'-', u""_qs));
+        descriptor.directInputType = 0x1000U + static_cast<quint32>(index);
+        descriptor.directInputOffset = 0x2000U + static_cast<quint32>(index * 4);
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.acquisitionSourceResolved = true;
+        descriptor.acquisitionMethod = 0;
+        descriptor.canonicalAxis = index;
+        descriptor.formattedSource = index;
+        descriptor.resolutionSource = AxisResolutionSource::StandardSemanticGuid;
+        descriptor.resolutionConfidence = AxisResolutionConfidence::High;
+        record->axes[static_cast<size_t>(index)] = true;
+        record->axisAcquisitionOverrides[static_cast<size_t>(index)] = {};
+    }
+    if (!ConfigStore::save(m_configuration) || !selectControllerForEditing(record->id)) return false;
+
+    m_axisIdentificationTimer.stop();
+    m_axisIdentification = {};
+    m_axisSourceMonitorVisible = false;
+    m_worker.updateConfiguration(m_configuration);
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    AtomicAxisSourceTelemetry &telemetry = runtime.deviceRigMemberAxisSourceTelemetry[0];
+    for (int source = 0; source < kPhysicalAxisCount; ++source) {
+        const size_t index = static_cast<size_t>(source);
+        telemetry.value[index].store(0, std::memory_order_relaxed);
+        telemetry.observedMinimum[index].store(0, std::memory_order_relaxed);
+        telemetry.observedMaximum[index].store(65535, std::memory_order_relaxed);
+        telemetry.changeCount[index].store(0, std::memory_order_relaxed);
+        telemetry.recentMovementMagnitude[index].store(0, std::memory_order_relaxed);
+        telemetry.lastChangeAgeMs[index].store(-1, std::memory_order_relaxed);
+    }
+    telemetry.available.store(true, std::memory_order_relaxed);
+    m_worker.setAxisSourceMonitorRequested(false);
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::axisAcquisitionPreviewIsHardwareIsolatedForTest() const
+{
+    return m_axisAcquisitionPreview
+        && !m_controllerDiscoveryTimer.isActive()
+        && !m_gameDetectionTimer.isActive()
+        && !m_worker.isRunning();
+}
+
+bool AppBackend::unchangedControllerInventoryIsStableForTest()
+{
+    // The first publication establishes the inventory baseline. An identical
+    // later discovery pass is the production timer's common path and must not
+    // recreate Device Rig state or schedule another activation transition.
+    applyControllerInventory(m_discoveredControllers);
+    const quint64 baselineGeneration = m_inventoryGeneration;
+    applyControllerInventory(m_discoveredControllers);
+    return m_inventoryGeneration == baselineGeneration;
+}
+
+bool AppBackend::setAxisSourceMonitorCandidateForTest(int source, qint32 value,
+                                                      qint32 observedMinimum, qint32 observedMaximum,
+                                                      quint64 changeCount, int movementMagnitude)
+{
+    if (source < 0 || source >= kPhysicalAxisCount || observedMinimum > observedMaximum) return false;
+    AtomicRuntimeState &runtime = m_worker.runtimeForTest();
+    runtime.deviceRigMemberPhysicalConnected[0].store(true, std::memory_order_relaxed);
+    AtomicAxisSourceTelemetry &telemetry = runtime.deviceRigMemberAxisSourceTelemetry[0];
+    const size_t index = static_cast<size_t>(source);
+    telemetry.value[index].store(value, std::memory_order_relaxed);
+    telemetry.observedMinimum[index].store(observedMinimum, std::memory_order_relaxed);
+    telemetry.observedMaximum[index].store(observedMaximum, std::memory_order_relaxed);
+    telemetry.changeCount[index].store(changeCount, std::memory_order_relaxed);
+    telemetry.recentMovementMagnitude[index].store(movementMagnitude, std::memory_order_relaxed);
+    telemetry.lastChangeAgeMs[index].store(0, std::memory_order_relaxed);
+    telemetry.available.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+void AppBackend::completeAxisIdentificationForTest()
+{
+    finishAxisIdentification();
+}
+
+bool AppBackend::applyIdentifiedAxisSourceWithRefreshedCapabilitiesForTest()
+{
+    const int target = m_axisIdentification.result.value(u"axis"_qs, -1).toInt();
+    const int source = m_axisIdentification.result.value(u"selectedSource"_qs, -1).toInt();
+    const QString recordId = selectedEditingControllerId();
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
+            return candidate.id == recordId;
+        });
+    if (!validAxis(target) || source < 0 || source >= kPhysicalAxisCount
+        || record == m_configuration.savedControllers.end()) {
+        return false;
+    }
+
+    // Keep an exact in-memory proof, then make the stored capability record
+    // emulate the pre-refresh stale state. Production obtains this proof from
+    // a read-only exact-controller probe instead.
+    DirectInputControllerProbe probe;
+    probe.acquired = true;
+    probe.name = record->displayName;
+    probe.directInputId = record->lastDirectInputId;
+    probe.axes = record->axes;
+    probe.axisDescriptors = record->axisDescriptors;
+    probe.axisCount = record->axisCount;
+    for (NativeAxisDescriptor &descriptor : record->axisDescriptors) {
+        descriptor.canonicalAxis = -1;
+        descriptor.formattedSource = -1;
+        descriptor.acquisitionSourceResolved = false;
+    }
+
+    const quint64 generation = ++m_axisIdentificationGeneration;
+    m_axisIdentification.result.insert(u"applying"_qs, true);
+    finishIdentifiedAxisSourceRefresh(generation, recordId, record->lastDirectInputId,
+                                      target, source, probe);
+    return m_axisIdentification.result.value(u"applied"_qs).toBool();
+}
+
+bool AppBackend::axisSourceMonitorRequestedForTest() const
+{
+    return m_worker.runtime().axisSourceMonitorRequested.load(std::memory_order_relaxed);
 }
 
 bool AppBackend::configureSelectedButtonPresentationFixtureForTest(int buttonCount)
@@ -15036,6 +15575,461 @@ void AppBackend::setSelectedAxis(int physicalAxis)
     emit stateChanged();
 }
 
+void AppBackend::setShowUltraNerdControls(bool enabled)
+{
+    if (m_showUltraNerdControls == enabled) return;
+    m_showUltraNerdControls = enabled;
+    QSettings settings;
+    settings.setValue(u"presentation/showUltraNerdControls"_qs, enabled);
+    if (!enabled) {
+        // Disabling the specialty surface revokes its presentation lease.
+        // A bounded Identify Axis capture may still finish independently,
+        // after which it restores this false (closed) state.
+        m_axisSourceMonitorVisible = false;
+        if (!m_axisIdentification.active) {
+            m_worker.setAxisSourceMonitorRequested(false);
+        }
+    }
+    emit stateChanged();
+}
+
+void AppBackend::setAxisSourceMonitorVisible(bool visible)
+{
+    m_axisSourceMonitorVisible = visible;
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible || m_axisIdentification.active);
+    emit inputTelemetryChanged();
+}
+
+bool AppBackend::beginAxisIdentification(int physicalAxis)
+{
+    const QString recordId = selectedEditingControllerId();
+    if (!validAxis(physicalAxis) || recordId.isEmpty() || !selectedEditingControllerRecord()) {
+        appendEvent(u"Select one verified physical controller before identifying an axis"_qs);
+        emit stateChanged();
+        return false;
+    }
+    m_axisIdentificationTimer.stop();
+    m_axisIdentification = {};
+    m_axisIdentification.active = true;
+    m_axisIdentification.targetAxis = physicalAxis;
+    m_axisIdentification.controllerRecordId = recordId;
+    m_axisIdentification.result = {{u"active"_qs, true}, {u"status"_qs, u"CAPTURING"_qs},
+        {u"axis"_qs, physicalAxis},
+        {u"message"_qs, u"Move ONLY this control through its normal range. Keep other controls still."_qs}};
+    m_worker.setAxisSourceMonitorRequested(true);
+    for (const QVariant &entry : axisSourceMonitor()) {
+        const QVariantMap candidate = entry.toMap();
+        const int source = candidate.contains(u"index"_qs) ? candidate.value(u"index"_qs).toInt() : -1;
+        if (source >= 0 && source < kPhysicalAxisCount) {
+            m_axisIdentification.baselineChanges[static_cast<size_t>(source)] =
+                candidate.value(u"changeCount"_qs).toULongLong();
+        }
+    }
+    m_axisIdentificationTimer.start(3500);
+    emit stateChanged();
+    return true;
+}
+
+void AppBackend::finishAxisIdentification()
+{
+    if (!m_axisIdentification.active) return;
+    m_axisIdentificationTimer.stop();
+    QVariantList candidates;
+    int bestSource = -1;
+    quint64 bestChanges = 0;
+    quint64 secondChanges = 0;
+    for (const QVariant &entry : axisSourceMonitor()) {
+        QVariantMap candidate = entry.toMap();
+        const int source = candidate.contains(u"index"_qs) ? candidate.value(u"index"_qs).toInt() : -1;
+        if (source < 0 || source >= kPhysicalAxisCount || !candidate.value(u"available"_qs).toBool()) {
+            continue;
+        }
+        const quint64 changes = candidate.value(u"changeCount"_qs).toULongLong()
+            - m_axisIdentification.baselineChanges[static_cast<size_t>(source)];
+        candidate.insert(u"identificationChanges"_qs, QVariant::fromValue<qulonglong>(changes));
+        candidates.append(candidate);
+        if (changes > bestChanges) {
+            secondChanges = bestChanges;
+            bestChanges = changes;
+            bestSource = source;
+        } else if (changes > secondChanges) {
+            secondChanges = changes;
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const QVariant &left, const QVariant &right) {
+        return left.toMap().value(u"identificationChanges"_qs).toULongLong()
+            > right.toMap().value(u"identificationChanges"_qs).toULongLong();
+    });
+    const bool strong = bestSource >= 0 && bestChanges >= 2
+        && (secondChanges == 0 || bestChanges >= secondChanges * 4);
+    const QString status = strong ? u"STRONG MATCH FOUND"_qs
+        : bestSource < 0 || bestChanges == 0 ? u"NO MOVEMENT OBSERVED"_qs
+                                            : u"NO UNIQUE SOURCE IDENTIFIED"_qs;
+    const QString message = strong
+        ? QString(u"DirectInput %1 showed the strongest bounded movement evidence."_qs)
+              .arg(physicalAxisLabel(static_cast<PhysicalAxis>(bestSource)))
+        : bestChanges == 0 ? u"No candidate channel changed during the capture interval."_qs
+                            : u"More than one candidate moved. Choose a source explicitly; nothing was saved."_qs;
+    m_axisIdentification.active = false;
+    ++m_axisIdentificationGeneration;
+    m_axisIdentification.result = {{u"active"_qs, false}, {u"status"_qs, status},
+        {u"axis"_qs, m_axisIdentification.targetAxis}, {u"selectedSource"_qs, strong ? bestSource : -1},
+        {u"changeCount"_qs, QVariant::fromValue<qulonglong>(bestChanges)}, {u"candidates"_qs, candidates},
+        {u"message"_qs, message}};
+    // Identification owns the monitor only for its bounded capture. An
+    // already-open panel remains live; otherwise the worker immediately
+    // returns to the no-snapshot report path.
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible);
+    emit stateChanged();
+}
+
+void AppBackend::cancelAxisIdentification()
+{
+    m_axisIdentificationTimer.stop();
+    ++m_axisIdentificationGeneration;
+    m_axisIdentification.active = false;
+    m_axisIdentification.result = {};
+    m_worker.setAxisSourceMonitorRequested(m_axisSourceMonitorVisible);
+    emit stateChanged();
+}
+
+bool AppBackend::useIdentifiedAxisSource()
+{
+    const int target = m_axisIdentification.result.contains(u"axis"_qs)
+        ? m_axisIdentification.result.value(u"axis"_qs).toInt() : -1;
+    const int source = m_axisIdentification.result.contains(u"selectedSource"_qs)
+        ? m_axisIdentification.result.value(u"selectedSource"_qs).toInt() : -1;
+    const QString recordId = selectedEditingControllerId();
+    const SavedControllerRecord *record = selectedEditingControllerRecord();
+    if (!validAxis(target) || source < 0 || source >= kPhysicalAxisCount || !record
+        || recordId != m_axisIdentification.controllerRecordId) {
+        setAxisIdentificationApplyFailure(
+            u"Select the same verified controller and identify its axis again before applying a source."_qs);
+        return false;
+    }
+    if (m_axisIdentification.result.value(u"applying"_qs).toBool()) return false;
+
+    const bool sourceKnown = std::find_if(record->axisDescriptors.cbegin(),
+        record->axisDescriptors.cend(), [source](const NativeAxisDescriptor &descriptor) {
+            return descriptor.present && descriptor.formattedSource == source;
+        }) != record->axisDescriptors.cend();
+    if (sourceKnown) {
+        if (!saveAxisAcquisitionOverride(target, target, source, u"direct-input"_qs,
+                u"automatic"_qs, 0, 0, u"automatic"_qs, u"automatic"_qs)) {
+            setAxisIdentificationApplyFailure(
+                u"HOTAS BF6 could not save the identified DirectInput source. No mapping was changed."_qs);
+            return false;
+        }
+        m_axisIdentification.result.insert(u"applying"_qs, false);
+        m_axisIdentification.result.insert(u"applied"_qs, true);
+        m_axisIdentification.result.remove(u"applyError"_qs);
+        m_axisIdentification.result.insert(u"status"_qs, u"SOURCE APPLIED"_qs);
+        m_axisIdentification.result.insert(u"message"_qs,
+            QString(u"DirectInput %1 is now saved for this axis."_qs)
+                .arg(physicalAxisLabel(static_cast<PhysicalAxis>(source))));
+        emit stateChanged();
+        return true;
+    }
+
+    const QString directInputId = record->lastDirectInputId.trimmed();
+    if (recordId.isEmpty() || directInputId.isEmpty()) {
+        setAxisIdentificationApplyFailure(
+            u"The selected controller has no exact DirectInput identity to refresh safely."_qs);
+        return false;
+    }
+
+    // The movement monitor is live while a saved descriptor can be stale.
+    // Refresh only this exact controller, off the UI and report threads,
+    // before committing the manual source choice.
+    const quint64 generation = ++m_axisIdentificationGeneration;
+    m_axisIdentification.result.insert(u"applying"_qs, true);
+    m_axisIdentification.result.insert(u"applied"_qs, false);
+    m_axisIdentification.result.remove(u"applyError"_qs);
+    m_axisIdentification.result.insert(u"status"_qs, u"REFRESHING CONTROLLER"_qs);
+    m_axisIdentification.result.insert(u"message"_qs,
+        u"Refreshing this controller's DirectInput capability record before saving the identified source."_qs);
+
+    QPointer<AppBackend> backend(this);
+    QThread *thread = QThread::create([backend, generation, recordId, directInputId, target, source] {
+        const DirectInputControllerProbe probe =
+            MappingWorker::probeExactPhysicalController(directInputId);
+        if (!backend) return;
+        QMetaObject::invokeMethod(backend, [backend, generation, recordId, directInputId, target, source, probe] {
+            if (!backend) return;
+            backend->finishIdentifiedAxisSourceRefresh(generation, recordId, directInputId,
+                                                       target, source, probe);
+        }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start(QThread::LowPriority);
+    emit stateChanged();
+    return true;
+}
+
+bool AppBackend::applyIdentifiedAxisSourceFromProbe(const QString &recordId,
+                                                     const QString &expectedDirectInputId,
+                                                     int targetAxis, int formattedSource,
+                                                     const DirectInputControllerProbe &probe,
+                                                     QString *failure)
+{
+    const auto fail = [failure](const QString &message) {
+        if (failure) *failure = message;
+        return false;
+    };
+    if (!validAxis(targetAxis) || formattedSource < 0 || formattedSource >= kPhysicalAxisCount) {
+        return fail(u"The identified axis source is no longer valid. Identify the axis again."_qs);
+    }
+    if (!probe.acquired) {
+        return fail(QString(u"DirectInput could not refresh the selected controller: %1"_qs)
+                        .arg(probe.diagnostic));
+    }
+    if (probe.directInputId.trimmed().compare(expectedDirectInputId, Qt::CaseInsensitive) != 0) {
+        return fail(u"DirectInput returned a different controller, so no source was applied."_qs);
+    }
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
+            return candidate.id == recordId;
+        });
+    if (record == m_configuration.savedControllers.end()
+        || record->lastDirectInputId.trimmed().compare(expectedDirectInputId, Qt::CaseInsensitive) != 0) {
+        return fail(u"The selected controller changed while DirectInput was refreshing it. Identify the axis again."_qs);
+    }
+    const auto sourceDescriptor = std::find_if(probe.axisDescriptors.cbegin(),
+        probe.axisDescriptors.cend(), [formattedSource](const NativeAxisDescriptor &descriptor) {
+            return descriptor.present && descriptor.formattedSource == formattedSource;
+        });
+    if (sourceDescriptor == probe.axisDescriptors.cend()) {
+        return fail(QString(u"DirectInput refreshed the controller but did not expose the identified %1 source."_qs)
+                        .arg(physicalAxisLabel(static_cast<PhysicalAxis>(formattedSource))));
+    }
+
+    const auto previousAxes = record->axes;
+    const auto previousDescriptors = record->axisDescriptors;
+    const int previousAxisCount = record->axisCount;
+    record->axes = probe.axes;
+    record->axisDescriptors = probe.axisDescriptors;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        reuseVerifiedFormattedSource(&record->axisDescriptors[static_cast<size_t>(axis)],
+                                     previousDescriptors[static_cast<size_t>(axis)]);
+    }
+    record->axisCount = std::clamp(probe.axisCount, 0, kPhysicalAxisCount);
+    if (!saveAxisAcquisitionOverride(targetAxis, targetAxis, formattedSource, u"direct-input"_qs,
+            u"automatic"_qs, 0, 0, u"automatic"_qs, u"automatic"_qs)) {
+        record->axes = previousAxes;
+        record->axisDescriptors = previousDescriptors;
+        record->axisCount = previousAxisCount;
+        return fail(u"HOTAS BF6 could not save the refreshed DirectInput source. No mapping was changed."_qs);
+    }
+    return true;
+}
+
+void AppBackend::finishIdentifiedAxisSourceRefresh(quint64 generation, const QString &recordId,
+                                                    const QString &expectedDirectInputId, int targetAxis,
+                                                    int formattedSource,
+                                                    const DirectInputControllerProbe &probe)
+{
+    if (m_axisIdentificationGeneration != generation
+        || !m_axisIdentification.result.value(u"applying"_qs).toBool()) {
+        return;
+    }
+    if (selectedEditingControllerId() != recordId
+        || m_axisIdentification.controllerRecordId != recordId) {
+        setAxisIdentificationApplyFailure(
+            u"The selected controller changed while DirectInput was refreshing it. Identify the axis again."_qs);
+        return;
+    }
+    QString failure;
+    if (!applyIdentifiedAxisSourceFromProbe(recordId, expectedDirectInputId, targetAxis,
+                                            formattedSource, probe, &failure)) {
+        setAxisIdentificationApplyFailure(failure);
+        return;
+    }
+    m_axisIdentification.result.insert(u"applying"_qs, false);
+    m_axisIdentification.result.insert(u"applied"_qs, true);
+    m_axisIdentification.result.remove(u"applyError"_qs);
+    m_axisIdentification.result.insert(u"status"_qs, u"SOURCE APPLIED"_qs);
+    m_axisIdentification.result.insert(u"message"_qs,
+        QString(u"DirectInput %1 is now saved for this axis."_qs)
+            .arg(physicalAxisLabel(static_cast<PhysicalAxis>(formattedSource))));
+    emit stateChanged();
+}
+
+void AppBackend::setAxisIdentificationApplyFailure(const QString &failure)
+{
+    m_axisIdentification.result.insert(u"applying"_qs, false);
+    m_axisIdentification.result.insert(u"applied"_qs, false);
+    m_axisIdentification.result.insert(u"applyError"_qs, failure);
+    m_axisIdentification.result.insert(u"status"_qs, u"SOURCE NOT APPLIED"_qs);
+    m_axisIdentification.result.insert(u"message"_qs, failure);
+    appendEvent(QString(u"Identified DirectInput source was not applied: %1"_qs).arg(failure));
+    emit stateChanged();
+}
+
+bool AppBackend::saveAxisAcquisitionOverride(int physicalAxis, int targetAxis,
+                                             int formattedSource, const QString &mode,
+                                             const QString &rangePolicy, qint32 manualMinimum,
+                                             qint32 manualMaximum, const QString &interpretation,
+                                             const QString &polarity)
+{
+    if (!validAxis(physicalAxis) || (targetAxis != -1 && !validAxis(targetAxis))) return false;
+    const QString recordId = selectedEditingControllerId();
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
+            return candidate.id == recordId;
+        });
+    if (record == m_configuration.savedControllers.end()) {
+        appendEvent(u"Manual raw-input overrides require one selected verified controller"_qs);
+        emit stateChanged();
+        return false;
+    }
+    const NativeAxisDescriptor &native = record->axisDescriptors[static_cast<size_t>(physicalAxis)];
+    const bool automaticTarget = targetAxis == -1;
+    const int resolvedTarget = automaticTarget
+        ? (native.canonicalAxis >= 0 ? native.canonicalAxis : physicalAxis) : targetAxis;
+    if (!validAxis(resolvedTarget)) return false;
+    const auto automaticSourceForTarget = [&record](int target) -> const NativeAxisDescriptor * {
+        const NativeAxisDescriptor *resolved = nullptr;
+        for (int descriptorIndex = 0; descriptorIndex < kPhysicalAxisCount; ++descriptorIndex) {
+            const NativeAxisDescriptor &candidate = record->axisDescriptors[
+                static_cast<size_t>(descriptorIndex)];
+            const int candidateTarget = candidate.canonicalAxis >= 0
+                ? candidate.canonicalAxis : descriptorIndex;
+            if (!candidate.present || candidate.formattedSource < 0 || candidateTarget != target) continue;
+            if (resolved) return nullptr;
+            resolved = &candidate;
+        }
+        return resolved;
+    };
+    const QString normalizedMode = mode.trimmed().toCaseFolded();
+    const bool automaticSource = normalizedMode == u"automatic-source"_qs;
+    if (!automaticSource && normalizedMode != u"direct-input"_qs
+        && normalizedMode != u"exact-native"_qs) {
+        appendEvent(u"That raw acquisition source mode is not available in this build"_qs);
+        emit stateChanged();
+        return false;
+    }
+    AxisAcquisitionOverride override;
+    override.enabled = true;
+    override.target = static_cast<PhysicalAxis>(resolvedTarget);
+    override.automaticTarget = automaticTarget;
+    override.mode = normalizedMode == u"exact-native"_qs
+        ? AxisAcquisitionMode::NativeDirectInputObject : AxisAcquisitionMode::DirectInputFormattedSlot;
+    override.formattedSource = automaticSource ? -1 : formattedSource;
+    const QString normalizedRange = rangePolicy.trimmed().toCaseFolded();
+    override.rangePolicy = normalizedRange == u"manual"_qs ? AxisRawRangePolicy::Manual
+        : normalizedRange == u"observed"_qs ? AxisRawRangePolicy::Observed
+        : normalizedRange == u"driver"_qs ? AxisRawRangePolicy::DriverReported
+                                            : AxisRawRangePolicy::Automatic;
+    const QString normalizedInterpretation = interpretation.trimmed().toCaseFolded();
+    override.interpretation = normalizedInterpretation == u"centered"_qs
+        ? AxisRawInterpretation::CenteredAbsolute
+        : normalizedInterpretation == u"one-sided"_qs ? AxisRawInterpretation::OneSidedAbsolute
+        : normalizedInterpretation == u"relative"_qs ? AxisRawInterpretation::Relative
+                                                        : AxisRawInterpretation::Automatic;
+    override.polarity = polarity.trimmed().compare(u"reversed"_qs, Qt::CaseInsensitive) == 0
+        ? AxisRawPolarity::Reversed : polarity.trimmed().compare(u"normal"_qs, Qt::CaseInsensitive) == 0
+            ? AxisRawPolarity::Normal : AxisRawPolarity::Automatic;
+    if (override.interpretation == AxisRawInterpretation::Relative) {
+        appendEvent(u"Relative raw acquisition is not supported; automatic handling remains active"_qs);
+        emit stateChanged();
+        return false;
+    }
+    if (automaticTarget && automaticSource
+        && override.rangePolicy == AxisRawRangePolicy::Automatic
+        && override.interpretation == AxisRawInterpretation::Automatic
+        && override.polarity == AxisRawPolarity::Automatic) {
+        return resetAxisAcquisitionOverride(physicalAxis);
+    }
+    int resolvedFormattedSource = override.formattedSource;
+    if (override.mode == AxisAcquisitionMode::DirectInputFormattedSlot) {
+        const NativeAxisDescriptor *sourceDescriptor = automaticSource
+            ? automaticSourceForTarget(resolvedTarget) : nullptr;
+        if (!automaticSource) {
+            const auto found = std::find_if(record->axisDescriptors.cbegin(),
+                record->axisDescriptors.cend(), [formattedSource](const NativeAxisDescriptor &descriptor) {
+                    return descriptor.present && descriptor.formattedSource == formattedSource;
+                });
+            if (found != record->axisDescriptors.cend()) sourceDescriptor = &*found;
+        }
+        if (!sourceDescriptor || sourceDescriptor->formattedSource < 0
+            || sourceDescriptor->formattedSource >= kPhysicalAxisCount) {
+            appendEvent(automaticSource
+                ? u"Automatic DirectInput source is not uniquely resolved for that canonical axis"_qs
+                : u"That DirectInput source is not available on the selected controller"_qs);
+            emit stateChanged();
+            return false;
+        }
+        resolvedFormattedSource = sourceDescriptor->formattedSource;
+    }
+    if (override.mode == AxisAcquisitionMode::NativeDirectInputObject) {
+        if (!native.present || native.directInputGuid.isEmpty() || native.formattedSource < 0) {
+            appendEvent(u"The selected native axis does not have a safe stable DirectInput identity"_qs);
+            emit stateChanged();
+            return false;
+        }
+        override.formattedSource = native.formattedSource;
+        override.nativeSemanticGuid = native.directInputGuid;
+        override.nativeDirectInputType = native.directInputType;
+        override.nativeDirectInputOffset = native.directInputOffset;
+        override.nativeName = native.nativeName;
+        resolvedFormattedSource = native.formattedSource;
+    }
+    if (override.rangePolicy == AxisRawRangePolicy::Observed) {
+        const QVariantList sources = axisSourceMonitor();
+        if (resolvedFormattedSource < 0 || resolvedFormattedSource >= sources.size()) {
+            appendEvent(u"Open the live source monitor and move the control before using its observed range"_qs);
+            emit stateChanged();
+            return false;
+        }
+        const QVariantMap observed = sources.at(resolvedFormattedSource).toMap();
+        manualMinimum = observed.value(u"observedMinimum"_qs).toInt();
+        manualMaximum = observed.value(u"observedMaximum"_qs).toInt();
+    }
+    if ((override.rangePolicy == AxisRawRangePolicy::Manual
+         || override.rangePolicy == AxisRawRangePolicy::Observed)
+        && manualMinimum >= manualMaximum) {
+        appendEvent(u"Raw range minimum must remain below raw range maximum"_qs);
+        emit stateChanged();
+        return false;
+    }
+    override.manualMinimum = manualMinimum;
+    override.manualMaximum = manualMaximum;
+    for (int candidate = 0; candidate < kPhysicalAxisCount; ++candidate) {
+        if (candidate == physicalAxis) continue;
+        const AxisAcquisitionOverride &existing = record->axisAcquisitionOverrides[
+            static_cast<size_t>(candidate)];
+        if (existing.enabled && existing.mode != AxisAcquisitionMode::Automatic
+            && existing.target == override.target) {
+            appendEvent(u"Another saved raw-input override already owns that canonical axis"_qs);
+            emit stateChanged();
+            return false;
+        }
+    }
+    record->axisAcquisitionOverrides[static_cast<size_t>(physicalAxis)] = std::move(override);
+    persistAndApply();
+    appendEvent(QString(u"Manual raw-input override saved for %1"_qs)
+        .arg(physicalAxisLabel(static_cast<PhysicalAxis>(physicalAxis))));
+    return true;
+}
+
+bool AppBackend::resetAxisAcquisitionOverride(int physicalAxis)
+{
+    if (!validAxis(physicalAxis)) return false;
+    const QString recordId = selectedEditingControllerId();
+    auto record = std::find_if(m_configuration.savedControllers.begin(),
+        m_configuration.savedControllers.end(), [&recordId](const SavedControllerRecord &candidate) {
+            return candidate.id == recordId;
+        });
+    if (record == m_configuration.savedControllers.end()) return false;
+    AxisAcquisitionOverride &override = record->axisAcquisitionOverrides[static_cast<size_t>(physicalAxis)];
+    if (!override.enabled && override.mode == AxisAcquisitionMode::Automatic) return true;
+    override = {};
+    persistAndApply();
+    appendEvent(QString(u"Raw-input acquisition reset to automatic for %1"_qs)
+        .arg(physicalAxisLabel(static_cast<PhysicalAxis>(physicalAxis))));
+    return true;
+}
+
 void AppBackend::setAxisInverted(int physicalAxis, bool inverted)
 {
     if (!validAxis(physicalAxis)) return;
@@ -16791,10 +17785,11 @@ void AppBackend::resolveActivationNow()
         && decision.reason == ActivationDecisionReason::ManualOverrideExpired) {
         clearManualActivationOverride(u"Manual Override ended because the game/application context changed."_qs);
     }
-    if (!decision.valid || !decision.changed) {
-        emit stateChanged();
-        return;
-    }
+    // This resolver is also driven by background control-plane observers. A
+    // no-op decision has no new property value to publish; emitting the broad
+    // stateChanged signal here reconstructs QML model delegates and closes
+    // open Popups/TextFields despite there being no state transition.
+    if (!decision.valid || !decision.changed) return;
     if (applyActivationDecision(decision, ActivationIntent::Automatic)) {
         appendEvent(QString(u"Activation Resolver (%1): %2"_qs)
             .arg(trigger.isEmpty() ? u"state change"_qs : trigger, decision.explanation));
@@ -20121,11 +21116,38 @@ ControllerDiagnosticsSnapshot AppBackend::controllerDiagnosticsSnapshot() const
     diagnostics.activeProfileName = activeProfile(m_configuration).name;
     diagnostics.privatePaths = {QDir::homePath(), QCoreApplication::applicationDirPath()};
     const AtomicRuntimeState &runtime = m_worker.runtime();
+    const QVariantList rawAxisEvidence = axisConfiguration();
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const Calibration &calibration = m_configuration.calibration[static_cast<size_t>(index)];
-        diagnostics.axes.append({physicalAxisLabel(static_cast<PhysicalAxis>(index)), calibration.minimum,
-            calibration.center, calibration.maximum, runtime.normalized[index].load(),
-            runtime.transformed[index].load(), m_configuration.axisActivity[static_cast<size_t>(index)]});
+        ControllerAxisDiagnostic axis;
+        axis.label = physicalAxisLabel(static_cast<PhysicalAxis>(index));
+        axis.rawMinimum = calibration.minimum;
+        axis.rawNeutral = calibration.center;
+        axis.rawMaximum = calibration.maximum;
+        axis.calibratedInput = runtime.normalized[index].load();
+        axis.mappedOutput = runtime.transformed[index].load();
+        axis.activity = m_configuration.axisActivity[static_cast<size_t>(index)];
+        if (index < rawAxisEvidence.size()) {
+            const QVariantMap evidence = rawAxisEvidence.at(index).toMap();
+            axis.nativeName = evidence.value(u"nativeObjectName"_qs).toString();
+            axis.semanticGuid = evidence.value(u"directInputGuid"_qs).toString();
+            axis.reportedOffset = evidence.contains(u"directInputOffset"_qs)
+                ? evidence.value(u"directInputOffset"_qs).toInt() : -1;
+            axis.resolutionSource = evidence.value(u"resolutionSource"_qs).toString();
+            axis.resolutionConfidence = evidence.value(u"resolutionConfidence"_qs).toString();
+            axis.metadataContradiction = evidence.value(u"metadataContradiction"_qs).toBool();
+            axis.manualOverride = evidence.value(u"manualOverride"_qs).toBool();
+            axis.manualOverrideMode = evidence.value(u"manualOverrideMode"_qs).toString();
+            axis.runtimeSource = evidence.contains(u"formattedSourceIndex"_qs)
+                ? evidence.value(u"formattedSourceIndex"_qs).toInt() : -1;
+            axis.nativeMinimum = evidence.value(u"nativeRangeMinimum"_qs).toInt();
+            axis.nativeMaximum = evidence.value(u"nativeRangeMaximum"_qs).toInt();
+            axis.observedMinimum = evidence.value(u"observedMinimum"_qs).toInt();
+            axis.observedMaximum = evidence.value(u"observedMaximum"_qs).toInt();
+            axis.rawValue = evidence.value(u"rawValue"_qs).toInt();
+            axis.movementObserved = evidence.value(u"liveMovementObserved"_qs).toBool();
+        }
+        diagnostics.axes.append(std::move(axis));
     }
     for (const VirtualOutputLayout &layout : m_configuration.outputLayouts) {
         QStringList axes;
@@ -20279,6 +21301,10 @@ bool AppBackend::rememberCurrentController(const QString &expectedRecordId,
         bool updated = false;
         for (SavedControllerRecord &existing : candidate.savedControllers) {
             if (existing.id != existingId) continue;
+            for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+                reuseVerifiedFormattedSource(&record.axisDescriptors[static_cast<size_t>(axis)],
+                                             existing.axisDescriptors[static_cast<size_t>(axis)]);
+            }
             record.ownedHidHideDeviceInstances = existing.ownedHidHideDeviceInstances;
             existing = std::move(record);
             candidate.activeControllerRecordId = existingId;
@@ -20341,8 +21367,13 @@ bool AppBackend::commitExactControllerVerification(const QString &recordId,
     found->lastDirectInputId = observedProof.directInputId;
     if (!observedProof.hidInstanceId.isEmpty()) found->hidInstanceId = observedProof.hidInstanceId;
     if (!observedProof.hidContainerId.isEmpty()) found->hidContainerId = observedProof.hidContainerId;
+    const auto priorAxisDescriptors = found->axisDescriptors;
     found->axes = observedProof.axes;
     found->axisDescriptors = observedProof.axisDescriptors;
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        reuseVerifiedFormattedSource(&found->axisDescriptors[static_cast<size_t>(axis)],
+                                     priorAxisDescriptors[static_cast<size_t>(axis)]);
+    }
     found->axisCount = std::count(found->axes.cbegin(), found->axes.cend(), true);
     found->buttonCount = observedProof.buttons;
     found->povCount = observedProof.povs;
@@ -20995,6 +22026,10 @@ void AppBackend::refreshControllerInventory()
 void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInventory)
 {
     const bool inventoryChanged = !sameControllerInventory(m_discoveredControllers, latestInventory);
+    const bool requiresSetupReconciliation = m_setupReconnectInventoryRefreshPending
+        || m_setupSoftwareReacquisitionInventoryRefreshPending;
+    const bool requiresInventoryReconciliation = !m_controllerInventoryInitialized
+        || inventoryChanged || requiresSetupReconciliation;
     if (inventoryChanged) m_discoveredControllers = latestInventory;
     QStringList newlyDiscoveredUnverifiedIds;
     for (const DiscoveredController &controller : m_discoveredControllers) {
@@ -21007,7 +22042,7 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
         }
     }
     m_controllerInventoryInitialized = true;
-    reconcileDeviceRigInventory();
+    if (requiresInventoryReconciliation) reconcileDeviceRigInventory();
     if (m_setupReconnectInventoryRefreshPending
         && m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
         && !m_readiness.reconnectVerificationPending()
@@ -21043,11 +22078,13 @@ void AppBackend::applyControllerInventory(QList<DiscoveredController> latestInve
     }
     if (m_setupTruthStartupInspectionPending) scheduleStartupSetupTruthInspection();
     else if (inventoryChanged) scheduleAutomaticSetupTruthRefresh();
-    tryAutoSwitchVerifiedController();
-    // Existing verified records from an earlier candidate are reconciled once
-    // too. A user should never need to forget/re-add a controller merely
-    // because a prior build failed to install its default HidHide rule.
-    scheduleVerifiedControllerDefaultIsolation();
+    if (requiresInventoryReconciliation) {
+        tryAutoSwitchVerifiedController();
+        // Existing verified records from an earlier candidate are reconciled once
+        // too. A user should never need to forget/re-add a controller merely
+        // because a prior build failed to install its default HidHide rule.
+        scheduleVerifiedControllerDefaultIsolation();
+    }
     if (!newlyDiscoveredUnverifiedIds.isEmpty() && !m_verificationInProgress && !m_controllerSelectionInProgress) {
         appendEvent(newlyDiscoveredUnverifiedIds.size() == 1
             ? QString(u"New controller detected: %1. Select Set Up to explicitly verify it."_qs)
@@ -21679,7 +22716,28 @@ void AppBackend::refreshUiSnapshot()
                         : m_worker.runtime().deviceRigMemberAxisAcquisitionSource[
                             static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
                     NativeAxisDescriptor &descriptor = record->axisDescriptors[static_cast<size_t>(axis)];
-                    if (descriptor.present && method == 1 && descriptor.acquisitionMethod != 1) {
+                    if (descriptor.present && method == 3) {
+                        const int correlatedSource = sourceMemberIndex < 0
+                            ? m_worker.runtime().axisResolvedFormattedSource[
+                                static_cast<size_t>(axis)].load()
+                            : m_worker.runtime().deviceRigMemberAxisResolvedFormattedSource[
+                                static_cast<size_t>(sourceMemberIndex)][static_cast<size_t>(axis)].load();
+                        if (correlatedSource >= 0 && correlatedSource < kPhysicalAxisCount
+                            && (!descriptor.formattedSourceVerified
+                                || descriptor.formattedSource != correlatedSource
+                                || descriptor.formattedSourceEvidence
+                                    != AxisFormattedSourceEvidence::BufferedObjectCorrelation
+                                || descriptor.acquisitionMethod != 0)) {
+                            descriptor.formattedSource = correlatedSource;
+                            descriptor.formattedSourceEvidence =
+                                AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+                            descriptor.formattedSourceVerified = true;
+                            descriptor.acquisitionMethod = 0;
+                            descriptor.acquisitionSourceResolved = true;
+                            changed = true;
+                        }
+                    } else if (descriptor.present && method == 1
+                               && descriptor.acquisitionMethod != 1) {
                         descriptor.acquisitionMethod = 1;
                         descriptor.acquisitionSourceResolved = true;
                         changed = true;
@@ -21689,7 +22747,7 @@ void AppBackend::refreshUiSnapshot()
             if (changed && ConfigStore::save(m_configuration)) {
                 ++m_configurationGeneration;
                 m_worker.updateConfiguration(m_configuration);
-                appendEvent(u"DirectInput object acquisition evidence saved for the selected controller"_qs);
+                appendEvent(u"DirectInput acquisition evidence saved for the selected controller"_qs);
             }
         }
     }

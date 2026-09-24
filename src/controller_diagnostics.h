@@ -17,6 +17,23 @@ struct ControllerAxisDiagnostic {
     float calibratedInput = 0.0F;
     float mappedOutput = 0.0F;
     PhysicalAxisActivity activity = PhysicalAxisActivity::Unknown;
+    // Raw-acquisition evidence is assembled by AppBackend on demand. These
+    // values are never read, formatted, or allocated by MappingWorker.
+    QString nativeName;
+    QString semanticGuid;
+    int reportedOffset = -1;
+    QString resolutionSource;
+    QString resolutionConfidence;
+    bool metadataContradiction = false;
+    bool manualOverride = false;
+    QString manualOverrideMode;
+    int runtimeSource = -1;
+    int nativeMinimum = 0;
+    int nativeMaximum = 0;
+    int observedMinimum = 0;
+    int observedMaximum = 0;
+    int rawValue = 0;
+    bool movementObserved = false;
 };
 
 struct VirtualOutputDiagnostic {

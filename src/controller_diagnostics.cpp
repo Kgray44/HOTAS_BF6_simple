@@ -144,6 +144,18 @@ QString buildControllerDiagnostics(const ControllerDiagnosticsSnapshot &snapshot
             .arg(axis.label).arg(axis.rawMinimum, 0, 'f', 3).arg(axis.rawNeutral, 0, 'f', 3)
             .arg(axis.rawMaximum, 0, 'f', 3).arg(axis.calibratedInput, 0, 'f', 3)
             .arg(axis.mappedOutput, 0, 'f', 3).arg(physicalAxisActivityLabel(axis.activity)));
+        if (!axis.nativeName.isEmpty() || !axis.semanticGuid.isEmpty()) {
+            lines.append(QStringLiteral("  RAW INPUT: native=%1  semantic=%2  offset=%3  resolver=%4  confidence=%5  contradiction=%6")
+                .arg(axis.nativeName.isEmpty() ? QStringLiteral("not recorded") : axis.nativeName,
+                     axis.semanticGuid.isEmpty() ? QStringLiteral("not recorded") : axis.semanticGuid)
+                .arg(axis.reportedOffset).arg(axis.resolutionSource, axis.resolutionConfidence)
+                .arg(yesNo(axis.metadataContradiction)));
+            lines.append(QStringLiteral("  ACQUISITION: %1  runtime-source=%2  native-range=%3..%4  observed=%5..%6  raw=%7  movement=%8")
+                .arg(axis.manualOverride ? axis.manualOverrideMode : QStringLiteral("Automatic"))
+                .arg(axis.runtimeSource).arg(axis.nativeMinimum).arg(axis.nativeMaximum)
+                .arg(axis.observedMinimum).arg(axis.observedMaximum).arg(axis.rawValue)
+                .arg(yesNo(axis.movementObserved)));
+        }
     }
     lines.append(QString{});
     lines.append(QStringLiteral("ADVANCED / TECHNICAL"));

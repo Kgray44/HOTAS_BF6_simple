@@ -18,6 +18,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QQmlError>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -221,12 +222,24 @@ int main(int argc, char *argv[])
     }
     const bool isolatedStartupSmoke = hasArgument(argc, argv, "--startup-smoke-isolated");
     const bool nativeQualification = hotas::NativeQualificationDriver::requested();
+    // This opens an in-memory, visibly simulated controller for owner review
+    // when physical hardware is unavailable. It is intentionally an isolated
+    // presentation route, never a normal-mapper fallback.
+    // The standalone candidate is a copy of this built mapper binary with a
+    // distinct file name. It avoids requiring a launcher to understand
+    // preview-only arguments while keeping the normal executable unchanged.
+    const bool axisAcquisitionPreviewExecutable = argc > 0
+        && QFileInfo(QString::fromLocal8Bit(argv[0])).completeBaseName()
+            == QStringLiteral("HOTAS Axis Acquisition Preview");
+    const bool axisAcquisitionPreview = hasArgument(argc, argv, "--axis-acquisition-preview")
+        || axisAcquisitionPreviewExecutable;
     // Manual qualification needs the real interactive QML surface without
     // attaching to the owner's active mapper or persisted settings.  This is
     // intentionally distinct from startup smoke: it isolates QSettings and
     // asks AppBackend to keep its smoke-safe hardware boundary, but still
     // enters the normal event loop for native pointer review.
-    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation") || nativeQualification;
+    const bool isolatedPresentation = hasArgument(argc, argv, "--isolated-presentation")
+        || nativeQualification || axisAcquisitionPreview;
     const bool startupSmoke = hasArgument(argc, argv, "--startup-smoke") || isolatedStartupSmoke;
     if (isolatedStartupSmoke || isolatedPresentation) {
         // Keep a local package smoke run away from the user's established
@@ -240,6 +253,10 @@ int main(int argc, char *argv[])
         // setup inspection alone.
         qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
         qputenv("HOTAS_RESPONSIVENESS_INTERACTION_SOURCE", "native-window-synthetic");
+    }
+    if (axisAcquisitionPreview) {
+        qputenv("HOTAS_AXIS_ACQUISITION_PREVIEW", "1");
+        qputenv("HOTAS_DISABLE_EXTERNAL_SETUP_INSPECTION", "1");
     }
     // AppBackend owns a QSystemTrayIcon context QMenu. QMenu is a Qt Widgets
     // class, so the shipped application must use QApplication rather than
@@ -357,6 +374,11 @@ int main(int argc, char *argv[])
         [] { hotas::CrashDiagnostics::markCleanShutdown(); });
     QObject::connect(&application, &QCoreApplication::aboutToQuit, &application,
         [] { hotas::ResponsivenessProbe::exportActive(); });
+    if (axisAcquisitionPreview) {
+        // Test-mode settings make this a process-local preview choice. The
+        // owner can still switch Light/Dark and text size inside Flight Deck.
+        themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    }
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.rootContext()->setContextProperty(QStringLiteral("contentionResilience"),

@@ -869,6 +869,11 @@ private slots:
     void nativeAxisIdentityIsIndependentOfEnumerationOrder();
     void saitekRzObjectIdentityOverridesContradictoryStateOffset();
     void directInputOffsetAccessIgnoresEnumerationOrder();
+    void semanticDirectInputGuidWinsContradictoryReportedOffset();
+    void evidenceResolvedSourcesRemainSignatureBoundAndFixed();
+    void duplicateSemanticDirectInputGuidsRetainUniqueStateSlots();
+    void compiledManualAxisAcquisitionOverridesAreSafeAndDeterministic();
+    void axisAcquisitionOverridePersistenceRejectsInvalidRange();
     void nativeAxisNormalizationUsesObservedRange();
     void nativeAxisAcquisitionEvidencePersists();
     void saitekRudderRzSamplesDistinctly();
@@ -4442,27 +4447,39 @@ void MappingCoreTests::saitekRzObjectIdentityOverridesContradictoryStateOffset()
 {
     // Fixture from the physical Saitek Pro Flight Rudder Pedals capture:
     // `Z Rotation` reports GUID_RzAxis and dwOfs=DIJOFS_Z, while movement
-    // changes DIJOYSTATE2::lRz (not lZ). Keep the raw offset as evidence but
-    // bind to the stable native-object GUID for runtime acquisition.
+    // changes DIJOYSTATE2::lRz (not lZ). Start with the reported field as an
+    // unverified candidate, then model the generic buffered correlation that
+    // verifies the separate lRz storage location.
     DIDEVICEOBJECTINSTANCEW object{};
     object.guidType = GUID_RzAxis;
     object.dwOfs = DIJOFS_Z;
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Rz));
+    const NativeAxisDescriptor rudder = describeDirectInputAxisObject(nullptr, object);
+    QCOMPARE(rudder.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(rudder.formattedSource, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(rudder.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!rudder.formattedSourceVerified);
+
+    NativeAxisDescriptor verifiedRudder = rudder;
+    verifiedRudder.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    verifiedRudder.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+    verifiedRudder.formattedSourceVerified = true;
 
     DIJOYSTATE2 state{};
     state.lZ = 0;
     state.lRz = 65535;
-    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
-        physicalAxisIndexForDirectInputObject(object))), 65535L);
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(verifiedRudder.formattedSource)), 65535L);
 
     object.guidType = GUID_XAxis;
     object.dwOfs = DIJOFS_RZ;
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(describeDirectInputAxisObject(nullptr, object).canonicalAxis,
+             static_cast<int>(PhysicalAxis::X));
 
     // Unknown object GUIDs preserve the established offset fallback.
     object.guidType = GUID_Slider;
     object.dwOfs = DIJOFS_SLIDER(1);
-    QCOMPARE(physicalAxisIndexForDirectInputObject(object), static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(describeDirectInputAxisObject(nullptr, object).canonicalAxis,
+             static_cast<int>(PhysicalAxis::Slider1));
 }
 
 void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()
@@ -4487,6 +4504,529 @@ void MappingCoreTests::directInputOffsetAccessIgnoresEnumerationOrder()
         QCOMPARE(directInputAxisValueAtOffset(state, scrambled[static_cast<size_t>(index)]),
                  expected[static_cast<size_t>(index)]);
     }
+}
+
+void MappingCoreTests::semanticDirectInputGuidWinsContradictoryReportedOffset()
+{
+    struct Case {
+        GUID semantic;
+        DWORD offset;
+        PhysicalAxis expected;
+    };
+    const std::array<Case, 6> cases{{
+        {GUID_XAxis, DIJOFS_RZ, PhysicalAxis::X},
+        {GUID_YAxis, DIJOFS_Z, PhysicalAxis::Y},
+        {GUID_ZAxis, DIJOFS_RZ, PhysicalAxis::Z},
+        {GUID_RxAxis, DIJOFS_X, PhysicalAxis::Rx},
+        {GUID_RyAxis, DIJOFS_Y, PhysicalAxis::Ry},
+        {GUID_RzAxis, DIJOFS_Z, PhysicalAxis::Rz},
+    }};
+    for (const Case &test : cases) {
+        DIDEVICEOBJECTINSTANCEW instance{};
+        instance.dwSize = sizeof(instance);
+        instance.guidType = test.semantic;
+        instance.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(1);
+        instance.dwOfs = test.offset;
+        const NativeAxisDescriptor descriptor = describeDirectInputAxisObject(nullptr, instance);
+        QCOMPARE(descriptor.canonicalAxis, static_cast<int>(test.expected));
+        QCOMPARE(descriptor.formattedSource, physicalAxisIndexForDirectInputOffset(test.offset));
+        QCOMPARE(descriptor.resolutionSource, AxisResolutionSource::StandardSemanticGuid);
+        QCOMPARE(descriptor.resolutionConfidence, AxisResolutionConfidence::High);
+        QVERIFY(descriptor.metadataContradiction);
+        QCOMPARE(descriptor.formattedSourceEvidence,
+                 AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+        QVERIFY(!descriptor.formattedSourceVerified);
+    }
+
+    // Slider GUIDs are intentionally not used as a fake Slider0/Slider1
+    // identity. Their explicit slots remain distinct and deterministic.
+    DIDEVICEOBJECTINSTANCEW slider{};
+    slider.dwSize = sizeof(slider);
+    slider.guidType = GUID_Slider;
+    slider.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(0);
+    slider.dwOfs = DIJOFS_SLIDER(1);
+    const NativeAxisDescriptor sliderDescriptor = describeDirectInputAxisObject(nullptr, slider);
+    QCOMPARE(sliderDescriptor.canonicalAxis, static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(sliderDescriptor.formattedSource, static_cast<int>(PhysicalAxis::Slider1));
+    QCOMPARE(sliderDescriptor.resolutionSource, AxisResolutionSource::ReportedOffset);
+    QVERIFY(!sliderDescriptor.metadataContradiction);
+}
+
+void MappingCoreTests::evidenceResolvedSourcesRemainSignatureBoundAndFixed()
+{
+    // The normal fixture agrees in both metadata channels. The Saitek fixture
+    // begins with DIJOFS_Z as an unverified candidate, then proves lRz from
+    // native events. The T.Flight fixture keeps X/Y as identities, starts
+    // with its cross-wired reported candidates, then verifies those fields
+    // through the same buffered-object correlation path.
+    DIDEVICEOBJECTINSTANCEW normal{};
+    normal.dwSize = sizeof(normal);
+    normal.guidType = GUID_ZAxis;
+    normal.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(0);
+    normal.dwOfs = DIJOFS_Z;
+    const NativeAxisDescriptor normalZ = describeDirectInputAxisObject(nullptr, normal);
+    QCOMPARE(normalZ.canonicalAxis, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(normalZ.formattedSource, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(normalZ.formattedSourceEvidence, AxisFormattedSourceEvidence::MetadataAgreement);
+    QVERIFY(normalZ.formattedSourceVerified);
+
+    DIDEVICEOBJECTINSTANCEW saitek{};
+    saitek.dwSize = sizeof(saitek);
+    saitek.guidType = GUID_RzAxis;
+    saitek.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(1);
+    saitek.dwOfs = DIJOFS_Z;
+    const NativeAxisDescriptor saitekRz = describeDirectInputAxisObject(nullptr, saitek);
+    QCOMPARE(saitekRz.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(saitekRz.formattedSource, static_cast<int>(PhysicalAxis::Z));
+    QCOMPARE(saitekRz.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!saitekRz.formattedSourceVerified);
+
+    DIDEVICEOBJECTINSTANCEW tFlightX{};
+    tFlightX.dwSize = sizeof(tFlightX);
+    tFlightX.guidType = GUID_XAxis;
+    tFlightX.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(2);
+    tFlightX.dwOfs = DIJOFS_Y;
+    const NativeAxisDescriptor initialX = describeDirectInputAxisObject(nullptr, tFlightX);
+    QCOMPARE(initialX.canonicalAxis, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(initialX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(initialX.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!initialX.formattedSourceVerified);
+
+    DIDEVICEOBJECTINSTANCEW tFlightY{};
+    tFlightY.dwSize = sizeof(tFlightY);
+    tFlightY.guidType = GUID_YAxis;
+    tFlightY.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(3);
+    tFlightY.dwOfs = DIJOFS_X;
+    const NativeAxisDescriptor initialY = describeDirectInputAxisObject(nullptr, tFlightY);
+    QCOMPARE(initialY.canonicalAxis, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(initialY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(initialY.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::ReportedOffsetCandidate);
+    QVERIFY(!initialY.formattedSourceVerified);
+
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> initialDescriptors{};
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::X)] = initialX;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Y)] = initialY;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Z)] = normalZ;
+    initialDescriptors[static_cast<size_t>(PhysicalAxis::Rz)] = saitekRz;
+    const auto initialBindings = compileRuntimeAxisAcquisitions(initialDescriptors, {});
+    QCOMPARE(initialBindings[static_cast<size_t>(PhysicalAxis::X)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Y));
+    QCOMPARE(initialBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Z));
+
+    // Every promoted fixed field needs two fresh, unique correlations with
+    // different native-object values. This unit-level fixture directly
+    // models the bounded evidence record the worker owns per axis.
+    const auto persistBufferedProof = [](NativeAxisDescriptor descriptor, int source) {
+        descriptor.formattedSource = source;
+        descriptor.formattedSourceEvidence = AxisFormattedSourceEvidence::BufferedObjectCorrelation;
+        descriptor.formattedSourceVerified = true;
+        return descriptor;
+    };
+    NativeAxisDescriptor verifiedX = initialX;
+    NativeAxisDescriptor verifiedY = initialY;
+    NativeAxisDescriptor verifiedRz = saitekRz;
+    DIJOYSTATE2 evidenceState{};
+    evidenceState.lX = 101;
+    evidenceState.lY = 202;
+    evidenceState.lZ = 303;
+    evidenceState.lRz = 606;
+
+    // A: one uniquely matching T.Flight X event is provisional only.
+    BufferedObjectCorrelationEvidence tFlightXEvidence;
+    const int tFlightXFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lY, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(tFlightXFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXFirst,
+                                               evidenceState.lY));
+    QVERIFY(tFlightXEvidence.hasProvisional);
+    QCOMPARE(tFlightXEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!verifiedX.formattedSourceVerified);
+    // Re-delivering the same native value is still not a second independent
+    // corroboration; only a later distinct value may promote the source.
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXFirst,
+                                               evidenceState.lY));
+
+    // B/F: a later, distinct event for the same T.Flight field verifies X -> lY.
+    evidenceState.lY = 1202;
+    const int tFlightXSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lY, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(tFlightXSecond, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(observeBufferedObjectCorrelation(&tFlightXEvidence, tFlightXSecond,
+                                              evidenceState.lY));
+    verifiedX = persistBufferedProof(verifiedX, tFlightXSecond);
+    QCOMPARE(verifiedX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(verifiedX.formattedSourceVerified);
+
+    // F: T.Flight Y follows the same generic cross-field proof to lX.
+    BufferedObjectCorrelationEvidence tFlightYEvidence;
+    const int tFlightYFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lX, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Y)]);
+    QCOMPARE(tFlightYFirst, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(!observeBufferedObjectCorrelation(&tFlightYEvidence, tFlightYFirst,
+                                               evidenceState.lX));
+    evidenceState.lX = 1101;
+    const int tFlightYSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lX, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Y)]);
+    QCOMPARE(tFlightYSecond, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(observeBufferedObjectCorrelation(&tFlightYEvidence, tFlightYSecond,
+                                              evidenceState.lX));
+    verifiedY = persistBufferedProof(verifiedY, tFlightYSecond);
+    QCOMPARE(verifiedY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QVERIFY(verifiedY.formattedSourceVerified);
+
+    // E: the original Saitek contradiction still resolves canonical Rz to lRz.
+    BufferedObjectCorrelationEvidence saitekEvidence;
+    const int saitekFirst = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lRz, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QCOMPARE(saitekFirst, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(!observeBufferedObjectCorrelation(&saitekEvidence, saitekFirst,
+                                               evidenceState.lRz));
+    evidenceState.lRz = 1606;
+    const int saitekSecond = uniqueCorrelatedDirectInputStateField(
+        evidenceState.lRz, evidenceState, initialBindings[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QCOMPARE(saitekSecond, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(observeBufferedObjectCorrelation(&saitekEvidence, saitekSecond,
+                                              evidenceState.lRz));
+    verifiedRz = persistBufferedProof(verifiedRz, saitekSecond);
+    QCOMPARE(verifiedRz.formattedSource, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(verifiedRz.formattedSourceVerified);
+
+    // C: ambiguous samples neither advance nor erase an independent first
+    // correlation. D: a unique conflicting source replaces the provisional
+    // candidate, so neither field can falsely verify from the two samples.
+    DIJOYSTATE2 ambiguousState{};
+    ambiguousState.lY = 701;
+    BufferedObjectCorrelationEvidence ambiguousEvidence;
+    const int unambiguousFirst = uniqueCorrelatedDirectInputStateField(
+        ambiguousState.lY, ambiguousState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(unambiguousFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&ambiguousEvidence, unambiguousFirst,
+                                               ambiguousState.lY));
+    ambiguousState.lY = 702;
+    ambiguousState.lRx = 702;
+    QCOMPARE(uniqueCorrelatedDirectInputStateField(
+        702L, ambiguousState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]), -1);
+    QVERIFY(!observeBufferedObjectCorrelation(&ambiguousEvidence, -1, 702L));
+    QCOMPARE(ambiguousEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(ambiguousEvidence.firstNativeValue, 701L);
+
+    DIJOYSTATE2 conflictingState{};
+    conflictingState.lY = 8001;
+    conflictingState.lRx = 16002;
+    BufferedObjectCorrelationEvidence conflictingEvidence;
+    const int conflictingFirst = uniqueCorrelatedDirectInputStateField(
+        conflictingState.lY, conflictingState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(conflictingFirst, static_cast<int>(PhysicalAxis::Y));
+    QVERIFY(!observeBufferedObjectCorrelation(&conflictingEvidence, conflictingFirst,
+                                               conflictingState.lY));
+    const int conflictingSecond = uniqueCorrelatedDirectInputStateField(
+        conflictingState.lRx, conflictingState, initialBindings[static_cast<size_t>(PhysicalAxis::X)]);
+    QCOMPARE(conflictingSecond, static_cast<int>(PhysicalAxis::Rx));
+    QVERIFY(!observeBufferedObjectCorrelation(&conflictingEvidence, conflictingSecond,
+                                               conflictingState.lRx));
+    QCOMPARE(conflictingEvidence.provisionalSource, static_cast<int>(PhysicalAxis::Rx));
+    QCOMPARE(conflictingEvidence.firstNativeValue, 16002L);
+    QVERIFY(!initialX.formattedSourceVerified);
+
+    NativeAxisDescriptor reconnectX = describeDirectInputAxisObject(nullptr, tFlightX);
+    NativeAxisDescriptor reconnectY = describeDirectInputAxisObject(nullptr, tFlightY);
+    NativeAxisDescriptor reconnectRz = describeDirectInputAxisObject(nullptr, saitek);
+    QVERIFY(reuseVerifiedFormattedSource(&reconnectX, verifiedX));
+    QVERIFY(reuseVerifiedFormattedSource(&reconnectY, verifiedY));
+    QVERIFY(reuseVerifiedFormattedSource(&reconnectRz, verifiedRz));
+    QCOMPARE(reconnectX.canonicalAxis, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(reconnectX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(reconnectY.canonicalAxis, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(reconnectY.formattedSource, static_cast<int>(PhysicalAxis::X));
+    QCOMPARE(reconnectRz.canonicalAxis, static_cast<int>(PhysicalAxis::Rz));
+    QCOMPARE(reconnectRz.formattedSource, static_cast<int>(PhysicalAxis::Rz));
+
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> descriptors{};
+    descriptors[static_cast<size_t>(PhysicalAxis::X)] = reconnectX;
+    descriptors[static_cast<size_t>(PhysicalAxis::Y)] = reconnectY;
+    descriptors[static_cast<size_t>(PhysicalAxis::Z)] = normalZ;
+    descriptors[static_cast<size_t>(PhysicalAxis::Rz)] = reconnectRz;
+    const auto fixedBindings = compileRuntimeAxisAcquisitions(descriptors, {});
+    QCOMPARE(fixedBindings[static_cast<size_t>(PhysicalAxis::X)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Y));
+    QCOMPARE(fixedBindings[static_cast<size_t>(PhysicalAxis::Y)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::X));
+    QCOMPARE(fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Rz));
+
+    DIJOYSTATE2 state{};
+    state.lX = 101;
+    state.lY = 202;
+    state.lZ = 303;
+    state.lRz = 606;
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
+        fixedBindings[static_cast<size_t>(PhysicalAxis::X)].sourceIndex)), 202L);
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
+        fixedBindings[static_cast<size_t>(PhysicalAxis::Y)].sourceIndex)), 101L);
+    QCOMPARE(directInputAxisValue(state, static_cast<PhysicalAxis>(
+        fixedBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex)), 606L);
+
+    // A changed native layout cannot inherit a prior cross-field decision.
+    DIDEVICEOBJECTINSTANCEW changedX = tFlightX;
+    changedX.dwOfs = DIJOFS_RZ;
+    NativeAxisDescriptor staleX = describeDirectInputAxisObject(nullptr, changedX);
+    QVERIFY(!reuseVerifiedFormattedSource(&staleX, verifiedX));
+    QCOMPARE(staleX.formattedSource, static_cast<int>(PhysicalAxis::Rz));
+    QVERIFY(!staleX.formattedSourceVerified);
+
+    MapperConfiguration configuration = defaultConfiguration();
+    SavedControllerRecord record;
+    record.id = QStringLiteral("evidence-resolved-fixture");
+    record.displayName = QStringLiteral("Evidence-resolved fixture");
+    record.lastDirectInputId = QStringLiteral("{EVIDENCE-RESOLVED}");
+    record.axisDescriptors = descriptors;
+    record.axes[static_cast<size_t>(PhysicalAxis::X)] = true;
+    record.axes[static_cast<size_t>(PhysicalAxis::Y)] = true;
+    record.axes[static_cast<size_t>(PhysicalAxis::Z)] = true;
+    record.axes[static_cast<size_t>(PhysicalAxis::Rz)] = true;
+    configuration.savedControllers.push_back(record);
+    configuration.activeControllerRecordId = record.id;
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const NativeAxisDescriptor &persistedX = restored.savedControllers.front().axisDescriptors[
+        static_cast<size_t>(PhysicalAxis::X)];
+    QCOMPARE(persistedX.formattedSource, static_cast<int>(PhysicalAxis::Y));
+    QCOMPARE(persistedX.formattedSourceEvidence,
+             AxisFormattedSourceEvidence::BufferedObjectCorrelation);
+    QVERIFY(persistedX.formattedSourceVerified);
+}
+
+void MappingCoreTests::duplicateSemanticDirectInputGuidsRetainUniqueStateSlots()
+{
+    // Several drivers reuse GUID_ZAxis for independent controls. Preserve
+    // the object actually occupying lZ, then retain later duplicates in their
+    // own fixed reported slots regardless of enumeration order.
+    DIDEVICEOBJECTINSTANCEW primary{};
+    primary.dwSize = sizeof(primary);
+    primary.guidType = GUID_ZAxis;
+    primary.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(0);
+    primary.dwOfs = DIJOFS_Z;
+    DIDEVICEOBJECTINSTANCEW duplicate{};
+    duplicate.dwSize = sizeof(duplicate);
+    duplicate.guidType = GUID_ZAxis;
+    duplicate.dwType = DIDFT_AXIS | DIDFT_MAKEINSTANCE(1);
+    duplicate.dwOfs = DIJOFS_SLIDER(0);
+
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> forward{};
+    NativeAxisDescriptor first = describeDirectInputAxisObject(nullptr, primary);
+    QCOMPARE(resolveUniqueDirectInputAxisSlot(&first, &forward), static_cast<int>(PhysicalAxis::Z));
+    forward[static_cast<size_t>(PhysicalAxis::Z)] = first;
+    NativeAxisDescriptor second = describeDirectInputAxisObject(nullptr, duplicate);
+    QCOMPARE(resolveUniqueDirectInputAxisSlot(&second, &forward),
+             static_cast<int>(PhysicalAxis::Slider0));
+    QCOMPARE(second.canonicalAxis, static_cast<int>(PhysicalAxis::Slider0));
+    QCOMPARE(second.formattedSource, static_cast<int>(PhysicalAxis::Slider0));
+
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> reverse{};
+    NativeAxisDescriptor firstDuplicate = describeDirectInputAxisObject(nullptr, duplicate);
+    QCOMPARE(resolveUniqueDirectInputAxisSlot(&firstDuplicate, &reverse),
+             static_cast<int>(PhysicalAxis::Z));
+    reverse[static_cast<size_t>(PhysicalAxis::Z)] = firstDuplicate;
+    NativeAxisDescriptor laterPrimary = describeDirectInputAxisObject(nullptr, primary);
+    QCOMPARE(resolveUniqueDirectInputAxisSlot(&laterPrimary, &reverse),
+             static_cast<int>(PhysicalAxis::Z));
+    QVERIFY(!reverse[static_cast<size_t>(PhysicalAxis::Z)].present);
+    reverse[static_cast<size_t>(PhysicalAxis::Z)] = laterPrimary;
+    QCOMPARE(reverse[static_cast<size_t>(PhysicalAxis::Z)].directInputOffset, DIJOFS_Z);
+    QCOMPARE(reverse[static_cast<size_t>(PhysicalAxis::Slider0)].directInputOffset,
+             DIJOFS_SLIDER(0));
+}
+
+void MappingCoreTests::compiledManualAxisAcquisitionOverridesAreSafeAndDeterministic()
+{
+    std::array<NativeAxisDescriptor, kPhysicalAxisCount> descriptors{};
+    for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
+        NativeAxisDescriptor &descriptor = descriptors[static_cast<size_t>(axis)];
+        descriptor.present = true;
+        descriptor.canonicalAxis = axis;
+        descriptor.formattedSource = axis;
+        descriptor.nativeMinimum = 0;
+        descriptor.nativeMaximum = 65535;
+        descriptor.directInputGuid = QStringLiteral("{TEST-%1}").arg(axis);
+        descriptor.directInputType = 0x100U + static_cast<quint32>(axis);
+        descriptor.directInputOffset = 0x200U + static_cast<quint32>(axis);
+    }
+    for (int target = 0; target < kPhysicalAxisCount; ++target) {
+        std::array<AxisAcquisitionOverride, kPhysicalAxisCount> overrides{};
+        AxisAcquisitionOverride &override = overrides[0];
+        override.enabled = true;
+        override.target = static_cast<PhysicalAxis>(target);
+        override.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+        override.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+        override.rangePolicy = AxisRawRangePolicy::Manual;
+        override.manualMinimum = 100;
+        override.manualMaximum = 1100;
+        override.interpretation = AxisRawInterpretation::CenteredAbsolute;
+        override.polarity = AxisRawPolarity::Reversed;
+        std::array<bool, kPhysicalAxisCount> manual{};
+        const auto bindings = compileRuntimeAxisAcquisitions(descriptors, overrides, &manual);
+        const RuntimeAxisAcquisition &binding = bindings[static_cast<size_t>(target)];
+        QVERIFY(binding.valid);
+        QCOMPARE(binding.sourceIndex, static_cast<std::uint8_t>(PhysicalAxis::Rz));
+        QVERIFY((binding.flags & RuntimeAxisAcquisitionManual) != 0);
+        QVERIFY((binding.flags & RuntimeAxisAcquisitionReversed) != 0);
+        QVERIFY(manual[static_cast<size_t>(target)]);
+        QCOMPARE(normalizeRuntimeAxisAcquisition(100, binding), 1.0F);
+        QCOMPARE(normalizeRuntimeAxisAcquisition(1100, binding), -1.0F);
+        if (target != static_cast<int>(PhysicalAxis::Rz)) {
+            QVERIFY(!bindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+        }
+    }
+
+    // One object cannot be manually claimed twice. The compiler leaves its
+    // ordinary automatic binding intact instead of guessing which owner wins.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> duplicateSource{};
+    duplicateSource[0].enabled = true;
+    duplicateSource[0].target = PhysicalAxis::X;
+    duplicateSource[0].mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    duplicateSource[0].formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    duplicateSource[1] = duplicateSource[0];
+    duplicateSource[1].target = PhysicalAxis::Y;
+    const auto duplicateSourceBindings = compileRuntimeAxisAcquisitions(descriptors, duplicateSource);
+    QVERIFY(!((duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::X)].flags
+        & RuntimeAxisAcquisitionManual) != 0));
+    QVERIFY(!((duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::Y)].flags
+        & RuntimeAxisAcquisitionManual) != 0));
+    QVERIFY(duplicateSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+
+    // A manual range/polarity policy may deliberately retain the automatic
+    // source. The compiler resolves it once from the canonical target, then
+    // the report path sees the same fixed primitive binding as any other
+    // override. No source ordinal is persisted for this choice.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> automaticSourceOverrides{};
+    AxisAcquisitionOverride &automaticSource = automaticSourceOverrides[
+        static_cast<size_t>(PhysicalAxis::Rz)];
+    automaticSource.enabled = true;
+    automaticSource.target = PhysicalAxis::Rz;
+    automaticSource.automaticTarget = true;
+    automaticSource.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    automaticSource.formattedSource = -1;
+    automaticSource.rangePolicy = AxisRawRangePolicy::Manual;
+    automaticSource.manualMinimum = 0;
+    automaticSource.manualMaximum = 65535;
+    std::array<bool, kPhysicalAxisCount> automaticSourceApplied{};
+    const auto automaticSourceBindings = compileRuntimeAxisAcquisitions(
+        descriptors, automaticSourceOverrides, &automaticSourceApplied);
+    QVERIFY(automaticSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QCOMPARE(automaticSourceBindings[static_cast<size_t>(PhysicalAxis::Rz)].sourceIndex,
+             static_cast<std::uint8_t>(PhysicalAxis::Rz));
+    QVERIFY(automaticSourceApplied[static_cast<size_t>(PhysicalAxis::Rz)]);
+
+    // An observed bounded span is captured on the control plane but compiles
+    // to the same fixed constants as an explicit manual range. Runtime never
+    // reinterprets the diagnostic policy or consults the source monitor.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> observedOverrides{};
+    AxisAcquisitionOverride &observed = observedOverrides[0];
+    observed.enabled = true;
+    observed.target = PhysicalAxis::X;
+    observed.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    observed.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    observed.rangePolicy = AxisRawRangePolicy::Observed;
+    observed.manualMinimum = 200;
+    observed.manualMaximum = 1200;
+    const auto observedBindings = compileRuntimeAxisAcquisitions(descriptors, observedOverrides);
+    QVERIFY(observedBindings[static_cast<size_t>(PhysicalAxis::X)].valid);
+    QCOMPARE(normalizeRuntimeAxisAcquisition(200,
+        observedBindings[static_cast<size_t>(PhysicalAxis::X)]), -1.0F);
+    QCOMPARE(normalizeRuntimeAxisAcquisition(1200,
+        observedBindings[static_cast<size_t>(PhysicalAxis::X)]), 1.0F);
+
+    // Exact native binding survives a matching reconnect, but any changed
+    // identity falls back safely to the automatic acquisition binding.
+    std::array<AxisAcquisitionOverride, kPhysicalAxisCount> exactOverrides{};
+    AxisAcquisitionOverride &exact = exactOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    exact.enabled = true;
+    exact.target = PhysicalAxis::Rz;
+    exact.mode = AxisAcquisitionMode::NativeDirectInputObject;
+    exact.nativeSemanticGuid = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputGuid;
+    exact.nativeDirectInputType = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputType;
+    exact.nativeDirectInputOffset = descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputOffset;
+    std::array<bool, kPhysicalAxisCount> exactManual{};
+    const auto exactBindings = compileRuntimeAxisAcquisitions(descriptors, exactOverrides, &exactManual);
+    QVERIFY(exactBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QVERIFY(exactManual[static_cast<size_t>(PhysicalAxis::Rz)]);
+    descriptors[static_cast<size_t>(PhysicalAxis::Rz)].directInputOffset++;
+    const auto staleBindings = compileRuntimeAxisAcquisitions(descriptors, exactOverrides, &exactManual);
+    QVERIFY(staleBindings[static_cast<size_t>(PhysicalAxis::Rz)].valid);
+    QVERIFY(!exactManual[static_cast<size_t>(PhysicalAxis::Rz)]);
+    QVERIFY((staleBindings[static_cast<size_t>(PhysicalAxis::Rz)].flags
+        & RuntimeAxisAcquisitionManual) == 0);
+}
+
+void MappingCoreTests::axisAcquisitionOverridePersistenceRejectsInvalidRange()
+{
+    MapperConfiguration configuration = defaultConfiguration();
+    DiscoveredController controller;
+    controller.name = QStringLiteral("Manual acquisition fixture");
+    controller.directInputId = QStringLiteral("{MANUAL-AXIS}");
+    controller.connected = true;
+    controller.axes[static_cast<size_t>(PhysicalAxis::Rz)] = true;
+    controller.axisDescriptors[static_cast<size_t>(PhysicalAxis::Rz)].present = true;
+    configuration.savedControllers.push_back(ControllerManager::verifiedRecord(controller, {}, {}));
+    AxisAcquisitionOverride &override = configuration.savedControllers.front()
+        .axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    override.enabled = true;
+    override.target = PhysicalAxis::Rz;
+    override.mode = AxisAcquisitionMode::DirectInputFormattedSlot;
+    override.formattedSource = static_cast<int>(PhysicalAxis::Rz);
+    override.rangePolicy = AxisRawRangePolicy::Manual;
+    override.manualMinimum = 12;
+    override.manualMaximum = 400;
+    override.automaticTarget = true;
+
+    bool valid = false;
+    const MapperConfiguration restored = ConfigStore::fromJson(ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const AxisAcquisitionOverride &restoredOverride = restored.savedControllers.front()
+        .axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    QVERIFY(restoredOverride.enabled);
+    QVERIFY(restoredOverride.automaticTarget);
+    QCOMPARE(restoredOverride.manualMinimum, 12);
+    QCOMPARE(restoredOverride.manualMaximum, 400);
+
+    override.rangePolicy = AxisRawRangePolicy::Observed;
+    override.manualMinimum = 18;
+    override.manualMaximum = 900;
+    const MapperConfiguration observedRestored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    QCOMPARE(observedRestored.savedControllers.front().axisAcquisitionOverrides[
+                 static_cast<size_t>(PhysicalAxis::Rz)].rangePolicy,
+             AxisRawRangePolicy::Observed);
+
+    override.formattedSource = -1;
+    override.automaticTarget = true;
+    const MapperConfiguration automaticSourceRestored = ConfigStore::fromJson(
+        ConfigStore::toJson(configuration), &valid);
+    QVERIFY(valid);
+    const AxisAcquisitionOverride &automaticSourceRestoredOverride = automaticSourceRestored
+        .savedControllers.front().axisAcquisitionOverrides[static_cast<size_t>(PhysicalAxis::Rz)];
+    QCOMPARE(automaticSourceRestoredOverride.formattedSource, -1);
+    QVERIFY(automaticSourceRestoredOverride.automaticTarget);
+
+    QJsonObject invalid = ConfigStore::toJson(configuration);
+    QJsonArray records = invalid.value(QStringLiteral("savedControllers")).toArray();
+    QJsonObject record = records.at(0).toObject();
+    QJsonArray overrides = record.value(QStringLiteral("axisAcquisitionOverrides")).toArray();
+    QJsonObject invalidOverride = overrides.at(static_cast<int>(PhysicalAxis::Rz)).toObject();
+    invalidOverride.insert(QStringLiteral("manualMinimum"), 400);
+    invalidOverride.insert(QStringLiteral("manualMaximum"), 12);
+    overrides.replace(static_cast<int>(PhysicalAxis::Rz), invalidOverride);
+    record.insert(QStringLiteral("axisAcquisitionOverrides"), overrides);
+    records.replace(0, record);
+    invalid.insert(QStringLiteral("savedControllers"), records);
+    ConfigStore::fromJson(invalid, &valid);
+    QVERIFY(!valid);
 }
 
 void MappingCoreTests::nativeAxisNormalizationUsesObservedRange()

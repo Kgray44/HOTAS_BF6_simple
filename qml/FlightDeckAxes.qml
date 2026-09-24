@@ -22,6 +22,7 @@ Flickable {
     property string conflictTarget: ""
     property string conflictNotice: ""
     property var conflictOwner: ({})
+    property var ultraMonitorAxes: ({})
     signal navigateToPage(int page)
     signal requestAxisLearning(string target)
     signal requestQuickMap()
@@ -332,10 +333,42 @@ Flickable {
         navigateToPage(9);
     }
 
+    function setUltraNerdMonitor(axisIndex, visible) {
+        const next = Object.assign({}, ultraMonitorAxes)
+        next[String(axisIndex)] = visible
+        ultraMonitorAxes = next
+        let anyOpen = false
+        for (const key in ultraMonitorAxes) {
+            if (ultraMonitorAxes[key]) {
+                anyOpen = true
+                break
+            }
+        }
+        backend.setAxisSourceMonitorVisible(anyOpen)
+    }
+
+    function openUltraNerdEditor(axisIndex) {
+        ultraNerdEditor.axisIndex = axisIndex
+        ultraNerdEditor.axis = axisForIndex(axisIndex) || ({})
+        ultraNerdEditor.sourceMonitor = backend.axisSourceMonitor
+        ultraNerdEditor.open()
+    }
+
+    function identifyUltraNerdAxis(axisIndex) {
+        if (!backend.beginAxisIdentification(axisIndex)) return
+        identifyAxisDialog.open()
+    }
+
     Connections {
         target: backend
         function onStateChanged() {
             root.configurationRevision += 1;
+            const identification = backend.axisIdentification || {};
+            // A capability refresh is asynchronous. Close only after its
+            // durable override commit succeeds, not when the button is pressed.
+            if (identifyAxisDialog.visible && Boolean(identification.applied)) {
+                identifyAxisDialog.close();
+            }
         }
     }
 
@@ -511,6 +544,7 @@ Flickable {
             || aliasEditor.focus || nameEditor.focus
         )
         property bool technicalDetailsOpen: false
+        property bool ultraNerdOpen: false
 
         objectName: "flightDeckAxisCard_" + axisIndex
         Layout.fillWidth: true
@@ -684,6 +718,30 @@ Flickable {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 1
                         color: deck.divider
+                    }
+
+                    FlightDeckUltraNerdPanel {
+                        visible: backend.showUltraNerdControls
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: visible ? implicitHeight : 0
+                        tokens: deck
+                        axis: card.axis
+                        telemetry: card.telemetry
+                        expanded: card.ultraNerdOpen
+                        sourceMonitor: backend.axisSourceMonitor
+                        onExpandedChanged: card.ultraNerdOpen = expanded
+                        onMonitorVisibilityRequested: function(visible) {
+                            root.setUltraNerdMonitor(card.axisIndex, visible)
+                        }
+                        onManualOverrideRequested: function(axisIndex) {
+                            root.openUltraNerdEditor(axisIndex)
+                        }
+                        onIdentifyRequested: function(axisIndex) {
+                            root.identifyUltraNerdAxis(axisIndex)
+                        }
+                        onResetRequested: function(axisIndex) {
+                            backend.resetAxisAcquisitionOverride(axisIndex)
+                        }
                     }
 
                     Rectangle {
@@ -1380,6 +1438,92 @@ Flickable {
                 required property var modelData
                 axis: modelData
             }
+        }
+    }
+
+    FlightDeckAxisAcquisitionDialog {
+        id: ultraNerdEditor
+        tokens: deck
+    }
+
+    FlightDeckDialog {
+        id: identifyAxisDialog
+        objectName: "flightDeckAxisIdentify"
+        tokens: deck
+        heading: "Identify raw input source"
+        tone: "informational"
+        preferredWidth: 560
+        contentItem: ColumnLayout {
+            width: identifyAxisDialog.availableWidth
+            spacing: deck.space12
+            Text {
+                text: String((backend.axisIdentification || {}).status || "CAPTURING")
+                color: String((backend.axisIdentification || {}).status || "") === "SOURCE APPLIED"
+                    || String((backend.axisIdentification || {}).status || "").indexOf("STRONG") >= 0
+                    ? deck.healthy : String((backend.axisIdentification || {}).status || "").indexOf("NO ") === 0
+                        || String((backend.axisIdentification || {}).status || "").indexOf("NOT APPLIED") >= 0
+                        ? deck.attention : deck.accent
+                font.family: deck.telemetryFont
+                font.pixelSize: deck.scale(12)
+                font.bold: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: String((backend.axisIdentification || {}).message || "Move only the selected control through its normal range.")
+                color: deck.textPrimary
+                font.pixelSize: deck.scale(11)
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            Rectangle {
+                visible: !Boolean((backend.axisIdentification || {}).active)
+                    && ((backend.axisIdentification || {}).candidates || []).length > 0
+                Layout.fillWidth: true
+                implicitHeight: candidateContent.implicitHeight + deck.space16
+                radius: 6
+                color: deck.primarySurface
+                border.color: deck.border
+                ColumnLayout {
+                    id: candidateContent
+                    anchors.fill: parent
+                    anchors.margins: deck.space8
+                    spacing: deck.space4
+                    Repeater {
+                        model: (backend.axisIdentification || {}).candidates || []
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Text { text: String(modelData.label || "?"); color: deck.textPrimary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10); Layout.fillWidth: true }
+                            Text { text: String(modelData.identificationChanges || 0) + " changes"; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10) }
+                            Text { text: String(modelData.observedMinimum || 0) + "–" + String(modelData.observedMaximum || 0); color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(10) }
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: "CANCEL"
+                    onClicked: { backend.cancelAxisIdentification(); identifyAxisDialog.close() }
+                    contentItem: Text { text: parent.text; color: deck.textSecondary; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: 5; color: parent.down ? deck.accentMuted : parent.hovered ? deck.selected : "transparent"; border.color: parent.activeFocus ? deck.focus : deck.border; border.width: parent.activeFocus ? 2 : 1 }
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    visible: !Boolean((backend.axisIdentification || {}).active)
+                        && Number((backend.axisIdentification || {}).selectedSource) >= 0
+                    enabled: !Boolean((backend.axisIdentification || {}).applying)
+                    text: Boolean((backend.axisIdentification || {}).applying)
+                        ? "REFRESHING..." : "USE THIS SOURCE"
+                    onClicked: backend.useIdentifiedAxisSource()
+                    contentItem: Text { text: parent.text; color: deck.primarySurface; font.family: deck.telemetryFont; font.pixelSize: deck.scale(9); font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: 5; color: parent.down ? deck.accentMuted : parent.hovered ? deck.focus : deck.accent; border.color: parent.activeFocus ? deck.focus : deck.accent; border.width: parent.activeFocus ? 2 : 1 }
+                }
+            }
+        }
+        onClosed: {
+            if (Boolean((backend.axisIdentification || {}).active)
+                || Boolean((backend.axisIdentification || {}).applying)) backend.cancelAxisIdentification()
         }
     }
 
