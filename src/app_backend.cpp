@@ -8479,6 +8479,7 @@ QVariantMap AppBackend::signalFlowInsertProcessor(const QString &segmentId,
 QVariantList AppBackend::signalFlowAvailableProcessorsForSegment(const QString &segmentId,
                                                                   qulonglong expectedRevision) const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_signalFlowProcessorCompatibilityCalls;
     QVariantList available;
     if (expectedRevision != m_configurationGeneration) return available;
     const QString requestedSegment = segmentId.trimmed();
@@ -14985,6 +14986,8 @@ QVariantMap AppBackend::uiPerformanceCounters() const
             {u"uiSnapshotTotalDurationUs"_qs, QVariant::fromValue(m_uiSnapshotTotalDurationUs)},
             {u"uiSnapshotMaxDurationUs"_qs, m_uiSnapshotMaxDurationUs},
             {u"signalFlowPreviewCalls"_qs, QVariant::fromValue(m_signalFlowPreviewCalls)},
+            {u"signalFlowProcessorCompatibilityCalls"_qs,
+             QVariant::fromValue(m_signalFlowProcessorCompatibilityCalls)},
             {u"uiEventLoopMaxDelayMs"_qs, m_uiEventLoopMaxDelayMs},
             {u"uiEventLoopDelayOver16Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver16Ms)},
             {u"uiEventLoopDelayOver50Ms"_qs, QVariant::fromValue(m_uiEventLoopDelayOver50Ms)},
@@ -15012,6 +15015,7 @@ void AppBackend::resetUiPerformanceCounters()
     m_uiSnapshotTotalDurationUs = 0;
     m_uiSnapshotMaxDurationUs = 0;
     m_signalFlowPreviewCalls = 0;
+    m_signalFlowProcessorCompatibilityCalls = 0;
     m_uiEventLoopMaxDelayMs = 0;
     m_uiEventLoopDelayOver16Ms = 0;
     m_uiEventLoopDelayOver50Ms = 0;

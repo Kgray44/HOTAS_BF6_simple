@@ -1367,6 +1367,9 @@ private:
     quint64 m_uiSnapshotTotalDurationUs = 0;
     qint64 m_uiSnapshotMaxDurationUs = 0;
     mutable quint64 m_signalFlowPreviewCalls = 0;
+    // Test-only measurement of the authoritative compatibility preflight.
+    // Pointer movement must use the QML-side cached segment set instead.
+    mutable quint64 m_signalFlowProcessorCompatibilityCalls = 0;
     qint64 m_uiEventLoopMaxDelayMs = 0;
     quint64 m_uiEventLoopDelayOver16Ms = 0;
     quint64 m_uiEventLoopDelayOver50Ms = 0;

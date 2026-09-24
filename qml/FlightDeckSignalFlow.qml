@@ -91,6 +91,10 @@ Item {
     // Retain the source entry through Qt Quick's DragHandler/DropArea release
     // ordering. A palette card is never consumed by a drag.
     property var libraryDragEntry: ({})
+    // The palette and graph live in different overlay branches. Retain the
+    // graph-space release point so a completed native drag can still use the
+    // canonical placement path if Qt delivers no DropArea event.
+    property var libraryDragReleasePoint: ({})
     property real blockLibraryPositionX: -1
     property real blockLibraryPositionY: -1
     property real graphSettingsPositionX: -1
@@ -3754,6 +3758,17 @@ Item {
             + (entry.processorType || "") + " " + (entry.detail || ""))
         return haystack.indexOf(needle) >= 0
     }
+    function librarySearchRank(entry, needle) {
+        const label = normalized(entry && entry.label)
+        const kind = normalized(entry && entry.kind)
+        const aliases = normalized(entry && entry.aliases)
+        if (label === needle) return 0
+        if (label.indexOf(needle) === 0) return 1
+        if ((" " + label).indexOf(" " + needle) >= 0) return 2
+        if (kind.indexOf(needle) === 0) return 3
+        if (aliases.indexOf(needle) === 0 || (" " + aliases).indexOf(" " + needle) >= 0) return 4
+        return 5
+    }
     function buildBlockLibraryEntries() {
         const entries = []
         const nodes = (graph.nodes || []).slice().filter(function(nodeData) {
@@ -3783,7 +3798,19 @@ Item {
             "label": "Text Note", "aliases": "annotation comment documentation presentation" })
         entries.push({ "type": "annotation", "id": "group", "kind": "group", "category": "OTHER",
             "label": "Group / Section", "aliases": "annotation organize presentation section" })
-        return entries.filter(function(entry) { return libraryEntryMatches(entry) })
+        const matches = entries.filter(function(entry) { return libraryEntryMatches(entry) })
+        const needle = normalized(blockLibraryQuery)
+        if (needle.length) {
+            // Keyboard placement arms the highlighted first result. Prefer a
+            // direct label match over a word merely found in another card's
+            // name or aliases, while retaining stable alphabetical ties.
+            matches.sort(function(left, right) {
+                const rankDelta = librarySearchRank(left, needle) - librarySearchRank(right, needle)
+                if (rankDelta !== 0) return rankDelta
+                return String(left.label || "").localeCompare(String(right.label || ""))
+            })
+        }
+        return matches
     }
     function rebuildBlockLibraryEntries() {
         const next = buildBlockLibraryEntries()
@@ -4791,13 +4818,26 @@ Item {
         interval: 80
         repeat: false
         onTriggered: {
-            // If no canvas drop arrived, this was a miss rather than an
-            // ongoing placement. The Library's retained catalog stays intact.
-            if (root.libraryDragActive && !root.libraryDragDropHandled)
-                root.cancelLibraryPlacement()
+            // DropArea delivery can be absent when a native drag crosses the
+            // popup/viewport boundary. Resolve its graph-space release point
+            // through the same canonical placement function before declaring
+            // the drag a miss. This never creates a synthetic route and the
+            // persistent palette model remains untouched.
+            if (root.libraryDragActive && !root.libraryDragDropHandled) {
+                const entry = root.libraryDragEntry && root.libraryDragEntry.type
+                    ? root.libraryDragEntry : root.armedLibraryEntry
+                const point = root.libraryDragReleasePoint || ({})
+                const inGraph = Number(point.x) >= 0 && Number(point.y) >= 0
+                    && Number(point.x) <= Number(scene.width) && Number(point.y) <= Number(scene.height)
+                if (entry && entry.type && inGraph)
+                    root.finishLibraryDragDrop(entry, Number(point.x), Number(point.y))
+                else
+                    root.cancelLibraryPlacement()
+            }
             root.libraryDragActive = false
             root.libraryDragDropHandled = false
             root.libraryDragEntry = ({})
+            root.libraryDragReleasePoint = ({})
         }
     }
 
@@ -7073,6 +7113,22 @@ Item {
         // lives on the focused search field below.  The native close policy
         // still handles Escape whenever focus moves elsewhere in the panel.
         onClosed: root.cancelLibraryPlacement()
+        // A popup can move focus from its editable search field while a card
+        // is being inspected or drag-prepared.  Keep Return and keypad Enter
+        // owned by the open palette so either native key always arms the
+        // currently highlighted result instead of silently doing nothing.
+        Shortcut {
+            sequence: "Return"
+            context: Qt.WindowShortcut
+            enabled: blockLibrary.visible
+            onActivated: root.armLibraryEntry(root.selectedLibraryEntry())
+        }
+        Shortcut {
+            sequence: "Enter"
+            context: Qt.WindowShortcut
+            enabled: blockLibrary.visible
+            onActivated: root.armLibraryEntry(root.selectedLibraryEntry())
+        }
         background: Rectangle {
             radius: deck.radiusPanel
             color: deck.elevatedSurface
@@ -7112,11 +7168,31 @@ Item {
                 color: deck.textPrimary
                 placeholderTextColor: deck.textMuted
                 selectByMouse: true
+                // The filter must see navigation and placement keys before
+                // the editable TextField consumes them as text input.  This
+                // also makes native Return and keypad Enter follow exactly
+                // the same selected-card placement path.
+                Keys.priority: Keys.BeforeItem
                 background: Rectangle { radius: deck.radiusControl; color: deck.secondarySurface; border.width: 1; border.color: blockLibrarySearch.activeFocus ? deck.focus : deck.border }
                 onTextChanged: { root.blockLibraryQuery = text; root.blockLibrarySelectionIndex = 0 }
                 onAccepted: root.armLibraryEntry(root.selectedLibraryEntry())
+                // `accepted` is the normal TextField route. Retain an
+                // explicit key route as well because Return and keypad Enter
+                // arrive through different native paths on Qt Quick windows.
+                // Both invoke the same canonical placement arm function.
+                Keys.onReturnPressed: function(event) {
+                    root.armLibraryEntry(root.selectedLibraryEntry())
+                    event.accepted = true
+                }
+                Keys.onEnterPressed: function(event) {
+                    root.armLibraryEntry(root.selectedLibraryEntry())
+                    event.accepted = true
+                }
                 Keys.onPressed: function(event) {
-                    if (event.key === Qt.Key_Up) { root.moveLibrarySelection(-1); event.accepted = true }
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        root.armLibraryEntry(root.selectedLibraryEntry())
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Up) { root.moveLibrarySelection(-1); event.accepted = true }
                     else if (event.key === Qt.Key_Down) { root.moveLibrarySelection(1); event.accepted = true }
                     else if (event.key === Qt.Key_Escape) {
                         if (!root.cancelLibraryPlacement()) blockLibrary.close()
@@ -7189,11 +7265,17 @@ Item {
                                             root.libraryDragActive = true
                                             root.libraryDragDropHandled = false
                                             root.libraryDragEntry = modelData
+                                            root.libraryDragReleasePoint = ({})
                                             root.armLibraryEntry(modelData)
                                         } else if (root.libraryDragActive) {
                                             // Let DropArea.onDropped for this
                                             // release run first, regardless of
                                             // Qt's handler ordering.
+                                            const releasePoint = libraryBlockCard.mapToItem(scene,
+                                                Number(libraryBlockDrag.centroid.position.x),
+                                                Number(libraryBlockDrag.centroid.position.y))
+                                            root.libraryDragReleasePoint = ({ "x": Number(releasePoint.x),
+                                                "y": Number(releasePoint.y) })
                                             libraryDragCompletionTimer.restart()
                                         }
                                     }

@@ -71,6 +71,81 @@ QStringList signalFlowRouteSignature(const QVariantMap &graph)
     return signature;
 }
 
+bool verifySignalFlowCatalogAndEditingContext(hotas::AppBackend &backend)
+{
+    // The palette is allowed to expose only processor kinds that the canonical
+    // backend can actually insert. Keep this direct assertion independent of
+    // the QML filtering test so a visually plausible catalog cannot drift from
+    // the authoritative processor inventory.
+    const QVariantList catalog = backend.signalFlowProcessorCatalog();
+    const auto catalogEntry = [&catalog](const QString &key) {
+        return std::find_if(catalog.cbegin(), catalog.cend(), [&key](const QVariant &entry) {
+            return entry.toMap().value(QStringLiteral("key")).toString() == key;
+        });
+    };
+    const auto responseCurve = catalogEntry(QStringLiteral("curve"));
+    const auto invert = catalogEntry(QStringLiteral("invert"));
+    const bool hasOnlyCanonicalAxisProcessors = catalog.size() == 6
+        && responseCurve != catalog.cend()
+        && invert != catalog.cend()
+        && responseCurve->toMap().value(QStringLiteral("label")).toString()
+            == QStringLiteral("Response Curve")
+        && invert->toMap().value(QStringLiteral("label")).toString()
+            == QStringLiteral("Invert")
+        && catalogEntry(QStringLiteral("deadzone")) != catalog.cend()
+        && catalogEntry(QStringLiteral("center-hold")) != catalog.cend()
+        && catalogEntry(QStringLiteral("limits")) != catalog.cend()
+        && catalogEntry(QStringLiteral("adaptive-response")) != catalog.cend()
+        && catalogEntry(QStringLiteral("mixer")) == catalog.cend()
+        && catalogEntry(QStringLiteral("or")) == catalog.cend()
+        && catalogEntry(QStringLiteral("and")) == catalog.cend()
+        && catalogEntry(QStringLiteral("toggle")) == catalog.cend()
+        && catalogEntry(QStringLiteral("pulse")) == catalog.cend()
+        && catalogEntry(QStringLiteral("gate")) == catalog.cend();
+    if (!hasOnlyCanonicalAxisProcessors) {
+        std::fprintf(stderr, "signal-flow catalog is not the six canonical axis processors (count=%lld curve=%d invert=%d)\n",
+                     static_cast<long long>(catalog.size()), responseCurve != catalog.cend(), invert != catalog.cend());
+        return false;
+    }
+
+    // Signal Flow's Profile control chooses an editing context. It must never
+    // be an alias for the explicit runtime activation transaction.
+    backend.resetApplicationConfiguration();
+    const QString activeProfileBefore = backend.activeProfileId();
+    const QVariantMap graphBefore = backend.signalFlowGraph();
+    const QString effectiveProfileBefore = graphBefore.value(QStringLiteral("effectiveProfileId")).toString();
+    const QVariantList profiles = backend.profiles();
+    const auto otherProfile = std::find_if(profiles.cbegin(), profiles.cend(),
+        [&activeProfileBefore](const QVariant &entry) {
+            const QVariantMap profile = entry.toMap();
+            return profile.value(QStringLiteral("enabled")).toBool()
+                && profile.value(QStringLiteral("id")).toString() != activeProfileBefore;
+        });
+    if (otherProfile == profiles.cend()) {
+        std::fputs("signal-flow editing-context fixture needs a second enabled profile\n", stderr);
+        return false;
+    }
+    const QString editingProfileId = otherProfile->toMap().value(QStringLiteral("id")).toString();
+    const bool selectedEditingContext = backend.setSignalFlowEditingProfileContext(editingProfileId);
+    const QVariantMap graphAfterSelection = backend.signalFlowGraph();
+    const bool runtimeRemainedUntouched = backend.activeProfileId() == activeProfileBefore
+        && graphAfterSelection.value(QStringLiteral("effectiveProfileId")).toString() == effectiveProfileBefore
+        && graphAfterSelection.value(QStringLiteral("profileId")).toString() == editingProfileId
+        && graphAfterSelection.value(QStringLiteral("editingDiffersFromEffective")).toBool();
+    const bool restoredEditingContext = backend.setSignalFlowEditingProfileContext(activeProfileBefore)
+        && backend.signalFlowGraph().value(QStringLiteral("profileId")).toString() == activeProfileBefore;
+    if (!selectedEditingContext || !runtimeRemainedUntouched || !restoredEditingContext) {
+        std::fprintf(stderr,
+            "signal-flow editing profile changed runtime state or did not restore (selected=%d runtime=%d restored=%d active=%s effective=%s editing=%s)\n",
+            selectedEditingContext, runtimeRemainedUntouched, restoredEditingContext,
+            backend.activeProfileId().toUtf8().constData(),
+            graphAfterSelection.value(QStringLiteral("effectiveProfileId")).toString().toUtf8().constData(),
+            graphAfterSelection.value(QStringLiteral("profileId")).toString().toUtf8().constData());
+        return false;
+    }
+    return true;
+}
+
 bool verifySignalFlowPhase6Transactions(hotas::AppBackend &backend)
 {
     // Use the same public command surface as the graph. The smoke-safe test
@@ -185,6 +260,7 @@ int main(int argc, char *argv[])
 
     hotas::AppBackend backend;
     if (!verifyActivationTransactionFaults()) return 1;
+    if (!verifySignalFlowCatalogAndEditingContext(backend)) return 1;
     if (!verifySignalFlowPhase6Transactions(backend)) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real

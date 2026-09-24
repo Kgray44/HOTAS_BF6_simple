@@ -8158,6 +8158,12 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
     bool responseGhostVisible = false;
     bool compatibleRoutePreview = false;
     bool processorPlacementCancelled = false;
+    bool processorCompatibilityPrecomputed = false;
+    bool processorTargetingStayedLocal = false;
+    QString keyboardSelectedEntry;
+    QString keyboardArmedEntry;
+    bool keyboardSearchFocused = false;
+    int compatiblePointerCandidates = 0;
     if (libraryOpened && librarySearch) {
         QQmlExpression clearPlacement(qmlContext(page), page,
             QStringLiteral("cancelLibraryPlacement(); true"));
@@ -8177,43 +8183,85 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
         // Select its first (and only matching) rendered card before sending
         // the native Enter that arms Response Curve.
         page->setProperty("blockLibrarySelectionIndex", 0);
+        const QVariantList keyboardEntries = page->property("blockLibraryEntries").toList();
+        if (!keyboardEntries.isEmpty()) {
+            const QVariantMap selected = keyboardEntries.constFirst().toMap();
+            keyboardSelectedEntry = selected.value(QStringLiteral("type")).toString()
+                + QStringLiteral(":") + selected.value(QStringLiteral("id")).toString();
+        }
+        keyboardSearchFocused = librarySearch->hasActiveFocus();
+        const QVariantMap beforeArmCounters = backend.uiPerformanceCounters();
+        const bool compatibilityCounterEnabled = beforeArmCounters.contains(
+            QStringLiteral("signalFlowProcessorCompatibilityCalls"));
+        const quint64 compatibilityCallsBeforeArm = beforeArmCounters.value(
+            QStringLiteral("signalFlowProcessorCompatibilityCalls")).toULongLong();
         QTest::keyClick(window, Qt::Key_Return);
         settlePresentation();
+        const quint64 compatibilityCallsAfterArm = backend.uiPerformanceCounters().value(
+            QStringLiteral("signalFlowProcessorCompatibilityCalls")).toULongLong();
+        processorCompatibilityPrecomputed = !compatibilityCounterEnabled
+            || compatibilityCallsAfterArm > compatibilityCallsBeforeArm;
         const QVariantMap armedProcessor = page->property("armedLibraryEntry").toMap();
+        keyboardArmedEntry = armedProcessor.value(QStringLiteral("type")).toString()
+            + QStringLiteral(":") + armedProcessor.value(QStringLiteral("id")).toString();
         responsePlacementArmed = armedProcessor.value(QStringLiteral("type")).toString() == QStringLiteral("processor")
             && armedProcessor.value(QStringLiteral("id")).toString() == QStringLiteral("curve");
         auto *placementGhost = findVisualItemByObjectName(pageItem,
             QStringLiteral("signalFlowLibraryPlacementGhost"));
         responseGhostVisible = placementGhost && placementGhost->isVisible();
-        QQmlExpression compatibleTarget(qmlContext(page), page, QStringLiteral(
+        QQmlExpression compatibleTargets(qmlContext(page), page, QStringLiteral(
             "(function() {"
             " const processor = libraryEntries().filter(function(entry) { return entry.type === 'processor' && entry.id === 'curve'; })[0];"
-            " if (!processor) return ({}); rebuildWireGeometry();"
+            " if (!processor) return []; rebuildWireGeometry();"
             " const geometry = wireGeometry || [];"
+            " const candidates = [];"
             " for (let entryIndex = 0; entryIndex < geometry.length; ++entryIndex) {"
             "   const segments = geometry[entryIndex].segments || [];"
             "   for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {"
             "     const points = segments[segmentIndex].points || [];"
             "     if (points.length < 2) continue;"
-            "     const point = points[Math.floor(points.length / 2)];"
-            "     const target = libraryProcessorTargetAt(processor, Number(point.x), Number(point.y));"
-            "     if (target && target.segmentId) return { x: Number(point.x), y: Number(point.y), segmentId: String(target.segmentId) };"
+            "     for (let pointIndex = 1; pointIndex < points.length; ++pointIndex) {"
+            "       const previous = points[pointIndex - 1]; const next = points[pointIndex];"
+            "       const point = { x: (Number(previous.x) + Number(next.x)) * 0.5, y: (Number(previous.y) + Number(next.y)) * 0.5 };"
+            "       const target = libraryProcessorTargetAt(processor, point.x, point.y);"
+            "       if (target && target.segmentId)"
+            "         candidates.push({ x: point.x, y: point.y, segmentId: String(target.segmentId) });"
+            "     }"
             "   }"
-            " } return ({});"
+            " } return candidates;"
             "})()"));
-        const QVariantMap target = compatibleTarget.evaluate().toMap();
-        if (!compatibleTarget.hasError() && wireLayer && target.contains(QStringLiteral("segmentId"))) {
-            QTest::mouseMove(window, wireLayer->mapToScene(QPointF(target.value(QStringLiteral("x")).toReal(),
-                target.value(QStringLiteral("y")).toReal())).toPoint());
-            settlePresentation();
-            compatibleRoutePreview = page->property("pendingProcessorSegmentId").toString()
-                == target.value(QStringLiteral("segmentId")).toString();
+        const QVariantList targets = compatibleTargets.evaluate().toList();
+        compatiblePointerCandidates = targets.size();
+        if (!compatibleTargets.hasError() && wireLayer && !targets.isEmpty()) {
+            const quint64 compatibilityCallsBeforePointer = backend.uiPerformanceCounters().value(
+                QStringLiteral("signalFlowProcessorCompatibilityCalls")).toULongLong();
+            const QRectF libraryBounds(libraryPanel->property("x").toReal(),
+                libraryPanel->property("y").toReal(), libraryPanel->property("width").toReal(),
+                libraryPanel->property("height").toReal());
+            for (const QVariant &candidateValue : targets) {
+                const QVariantMap candidate = candidateValue.toMap();
+                const QPointF windowPoint = wireLayer->mapToScene(QPointF(
+                    candidate.value(QStringLiteral("x")).toReal(), candidate.value(QStringLiteral("y")).toReal()));
+                if (libraryBounds.contains(windowPoint)) continue;
+                QTest::mouseMove(window, windowPoint.toPoint());
+                settlePresentation();
+                if (page->property("pendingProcessorSegmentId").toString()
+                    == candidate.value(QStringLiteral("segmentId")).toString()) {
+                    compatibleRoutePreview = true;
+                    break;
+                }
+            }
+            const quint64 compatibilityCallsAfterPointer = backend.uiPerformanceCounters().value(
+                QStringLiteral("signalFlowProcessorCompatibilityCalls")).toULongLong();
+            processorTargetingStayedLocal = !compatibilityCounterEnabled
+                || compatibilityCallsAfterPointer == compatibilityCallsBeforePointer;
         }
         QTest::keyClick(window, Qt::Key_Escape);
         settlePresentation();
         processorPlacementCancelled = page->property("armedLibraryEntry").toMap().isEmpty();
         keyboardPlacementArmed = responsePlacementArmed && responseGhostVisible
-            && compatibleRoutePreview && processorPlacementCancelled;
+            && compatibleRoutePreview && processorPlacementCancelled
+            && processorCompatibilityPrecomputed && processorTargetingStayedLocal;
     }
     const bool libraryOnRight = libraryPanel->property("x").toReal()
         >= window->width() * 0.45;
@@ -8252,15 +8300,17 @@ bool verifySignalFlowNativeWorkspaceControls(QObject *page, QQuickWindow *window
         || !libraryOnRight || !keyboardPlacementArmed
         || !settingsOpened || !provenanceVisibleAndCurrent || !portsOpened || !zoomed || !rigOpened || !profileOpened) {
         return failPresentationLifecycleTest(QStringLiteral(
-            "Signal Flow native workspace controls failed (inspector=%1 library=%2 catalog=%3 catalogError=%4 right=%5 keyboard=%6 responseArmed=%7 ghost=%8 target=%9 cancelled=%10 settings=%11 provenance=%12 ports=%13 zoom=%14 rig=%15 profile=%16)")
+            "Signal Flow native workspace controls failed (inspector=%1 library=%2 catalog=%3 catalogError=%4 right=%5 keyboard=%6 responseArmed=%7 ghost=%8 target=%9 cancelled=%10 compatibilityPrecomputed=%11 compatibilityLocal=%12 settings=%13 provenance=%14 ports=%15 zoom=%16 rig=%17 profile=%18 selected=%19 armed=%20 searchFocused=%21 pointerCandidates=%22)")
             .arg(inspectorOpened).arg(libraryOpened).arg(canonicalCatalogVisible)
             .arg(canonicalLibrary.hasError()).arg(libraryOnRight).arg(keyboardPlacementArmed)
             .arg(responsePlacementArmed).arg(responseGhostVisible).arg(compatibleRoutePreview)
             .arg(processorPlacementCancelled)
+            .arg(processorCompatibilityPrecomputed).arg(processorTargetingStayedLocal)
             .arg(settingsOpened).arg(provenanceVisibleAndCurrent).arg(portsOpened).arg(zoomed)
-            .arg(rigOpened).arg(profileOpened));
+            .arg(rigOpened).arg(profileOpened).arg(keyboardSelectedEntry).arg(keyboardArmedEntry)
+            .arg(keyboardSearchFocused).arg(compatiblePointerCandidates));
     }
-    qInfo().noquote() << "signal_flow_native_workspace_controls inspector=1 library=1 catalog=1 search_respo=1 search_invert=1 keyboard=1 processor_ghost=1 processor_target=1 settings=1 provenance=1 ports=1 zoom=1 rig=1 profile=1";
+    qInfo().noquote() << "signal_flow_native_workspace_controls inspector=1 library=1 catalog=1 search_respo=1 search_invert=1 keyboard=1 processor_ghost=1 processor_target=1 compatibility_precomputed=1 pointer_compatibility_calls=0 settings=1 provenance=1 ports=1 zoom=1 rig=1 profile=1";
     return true;
 }
 
