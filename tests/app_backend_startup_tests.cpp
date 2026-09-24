@@ -1442,9 +1442,20 @@ bool verifyAxisAcquisitionPreviewIsIsolatedAndInteractive()
     if (!rudder.value(QStringLiteral("nativeObjectName")).toString().contains(QStringLiteral("Simulated"))
         || !rudder.value(QStringLiteral("metadataContradiction")).toBool()
         || rudder.value(QStringLiteral("formattedSourceIndex")).toInt() != rz
+        || rudder.contains(QStringLiteral("rawValue"))
+        || rudder.contains(QStringLiteral("observedMinimum"))
+        || rudder.contains(QStringLiteral("observedMaximum"))
+        || rudder.contains(QStringLiteral("liveMovementObserved"))
+        || rudder.contains(QStringLiteral("lastMovementAgeMs"))
+        || rudder.contains(QStringLiteral("sourceConnected"))
+        || rudder.contains(QStringLiteral("liveAvailable"))
+        || rudder.contains(QStringLiteral("acquisitionSource"))
         || !rudderTelemetry.value(QStringLiteral("rawValueAvailable")).toBool()
         || rudderTelemetry.value(QStringLiteral("rawValue")).toInt()
             != rudderMonitor.value(QStringLiteral("value")).toInt()
+        || !rudderTelemetry.value(QStringLiteral("sourceConnected")).toBool()
+        || !rudderTelemetry.value(QStringLiteral("liveAvailable")).toBool()
+        || rudderTelemetry.value(QStringLiteral("acquisitionSource")).toString().isEmpty()
         || !rudderTelemetry.value(QStringLiteral("liveMovementObserved")).toBool()
         || rudderTelemetry.value(QStringLiteral("lastMovementAgeMs")).toLongLong() != 0
         || !rudderMonitor.value(QStringLiteral("available")).toBool()
@@ -1523,6 +1534,30 @@ bool verifyStandaloneVerificationAndAxisEvidenceOwnership()
         && restarted->deviceRigs().isEmpty();
 }
 
+bool verifyAutomaticAxisEvidencePersistenceRecovery()
+{
+    constexpr auto kRecordId = "standalone-axis-evidence-controller";
+    auto backend = std::make_unique<hotas::AppBackend>();
+    const int x = static_cast<int>(hotas::PhysicalAxis::X);
+    const int y = static_cast<int>(hotas::PhysicalAxis::Y);
+    if (!backend->configureStandaloneAxisEvidenceFixtureForTest()) return false;
+    // The first normal asynchronous write fails. The next regular UI
+    // snapshot must retain the in-memory proof, queue recovery, and leave a
+    // durable record for a fresh ConfigStore consumer.
+    backend->setAutomaticAxisEvidencePersistenceFailuresForTest(1);
+    if (!backend->publishRuntimeAxisEvidenceForTest(QLatin1String(kRecordId), x, y)
+        || !backend->persistRuntimeAxisEvidenceForTest()
+        || !hasVerifiedBufferedEvidence(
+            backend->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y)) {
+        std::fprintf(stderr, "automatic axis evidence did not recover after its asynchronous save failed\n");
+        return false;
+    }
+    backend.reset();
+    auto restarted = std::make_unique<hotas::AppBackend>();
+    return hasVerifiedBufferedEvidence(
+        restarted->persistedAxisEvidenceForTest(QLatin1String(kRecordId), x), y);
+}
+
 bool verifyDeviceRigAxisEvidenceIgnoresEditorSelection()
 {
     constexpr auto kPrimaryId = "activation-transaction-controller";
@@ -1591,9 +1626,9 @@ bool verifyAxisConfigurationNotificationIgnoresSetupStatus()
 
 using StartupFixture = bool (*)();
 
-const std::array<std::pair<QString, StartupFixture>, 28> &startupFixtures()
+const std::array<std::pair<QString, StartupFixture>, 29> &startupFixtures()
 {
-    static const std::array<std::pair<QString, StartupFixture>, 28> fixtures{{
+    static const std::array<std::pair<QString, StartupFixture>, 29> fixtures{{
         {QStringLiteral("startup-truth"), verifyStartupSetupTruthPublication},
         {QStringLiteral("hidhide-timeout"), verifyHidHideTimeoutRetainsLastKnownGoodReadback},
         {QStringLiteral("activation-faults"), verifyActivationTransactionFaults},
@@ -1620,6 +1655,7 @@ const std::array<std::pair<QString, StartupFixture>, 28> &startupFixtures()
         {QStringLiteral("axis-acquisition-preview"), verifyAxisAcquisitionPreviewIsIsolatedAndInteractive},
         {QStringLiteral("stable-controller-inventory"), verifyUnchangedControllerInventoryDoesNotRebuildReadiness},
         {QStringLiteral("standalone-axis-evidence"), verifyStandaloneVerificationAndAxisEvidenceOwnership},
+        {QStringLiteral("axis-evidence-persistence-recovery"), verifyAutomaticAxisEvidencePersistenceRecovery},
         {QStringLiteral("rig-axis-evidence"), verifyDeviceRigAxisEvidenceIgnoresEditorSelection},
         {QStringLiteral("axis-configuration-notification"), verifyAxisConfigurationNotificationIgnoresSetupStatus},
     }};

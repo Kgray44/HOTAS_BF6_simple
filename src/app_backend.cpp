@@ -588,6 +588,7 @@ AppBackend::AppBackend(QObject *parent)
     // session-local editor choice until the user changes it. It is never a
     // hidden activation request.
     m_selectedProfileId = m_configuration.activeProfileId;
+    m_axisEvidencePersistenceClock.start();
     m_adaptiveResponseHistoryClock.start();
     m_adaptiveResponseSimulatorClock.start();
     m_adaptiveResponseSimulatorHistory.resize(1800);
@@ -1037,26 +1038,15 @@ QVariantList AppBackend::axisConfiguration() const
 {
     if (m_uiPerformanceInstrumentationEnabled) ++m_axisConfigurationGetterCalls;
     QVariantList result;
-    const AtomicRuntimeState &runtime = m_worker.runtime();
     const ControllerProfile &profile = currentProfile();
     const DeviceProfileMapping *deviceMapping = editingDeviceMapping();
     const SavedControllerRecord *sourceRecord = selectedEditingControllerRecord();
     const AxisMappings emptyAxes{};
     const AxisMappings &axes = deviceMapping ? deviceMapping->axes
         : sourceRecord ? emptyAxes : profile.axes;
-    int sourceMemberIndex = -1;
-    const AtomicAdaptiveTelemetry *liveSource = adaptiveTelemetrySource(nullptr, &sourceMemberIndex);
-    const bool exactLiveSource = sourceRecord && liveSource
-        && (sourceMemberIndex < 0 || runtime.deviceRigMemberPhysicalConnected[
-            static_cast<size_t>(sourceMemberIndex)].load());
-    const AtomicAxisSourceTelemetry *sourceTelemetry = !exactLiveSource ? nullptr
-        : sourceMemberIndex < 0 ? &runtime.axisSourceTelemetry
-                                : &runtime.deviceRigMemberAxisSourceTelemetry[
-                                      static_cast<size_t>(sourceMemberIndex)];
     const QString sourceName = sourceRecord ? sourceRecord->displayName : u"All Devices"_qs;
     const DiscoveredController *observedController = sourceRecord
         ? discoveredController(sourceRecord->lastDirectInputId) : nullptr;
-    const bool sourceConnected = observedController != nullptr;
     const auto automaticSourceForTarget = [sourceRecord](int target) -> const NativeAxisDescriptor * {
         if (!sourceRecord) return nullptr;
         const NativeAxisDescriptor *resolved = nullptr;
@@ -1174,51 +1164,12 @@ QVariantList AppBackend::axisConfiguration() const
         item.insert(u"manualPolarity"_qs, override.polarity == AxisRawPolarity::Reversed
             ? u"Reversed"_qs : override.polarity == AxisRawPolarity::Normal
                 ? u"Normal"_qs : u"Automatic"_qs);
-        const bool rawSourceAvailable = sourceTelemetry && sourceTelemetry->available.load(
-            std::memory_order_relaxed) && displaySource >= 0 && displaySource < kPhysicalAxisCount;
-        const size_t rawSourceIndex = static_cast<size_t>(std::max(0, displaySource));
-        item.insert(u"observedRangeAvailable"_qs, rawSourceAvailable);
-        item.insert(u"observedMinimum"_qs, rawSourceAvailable
-            ? sourceTelemetry->observedMinimum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
-        item.insert(u"observedMaximum"_qs, rawSourceAvailable
-            ? sourceTelemetry->observedMaximum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
-        item.insert(u"rawValue"_qs, rawSourceAvailable
-            ? sourceTelemetry->value[rawSourceIndex].load(std::memory_order_relaxed) : 0);
-        const int acquisitionMethod = exactLiveSource
-            ? (sourceMemberIndex >= 0
-                ? runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(sourceMemberIndex)]
-                    [static_cast<size_t>(index)].load()
-                : runtime.axisAcquisitionSource[static_cast<size_t>(index)].load())
-            : descriptor.acquisitionMethod;
-        const bool liveMovementObserved = exactLiveSource
-            ? (sourceMemberIndex >= 0
-                ? runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(sourceMemberIndex)]
-                    [static_cast<size_t>(index)].load()
-                : runtime.axisLiveMovementObserved[static_cast<size_t>(index)].load())
-            : false;
-        const qint64 lastMovementAgeMs = exactLiveSource
-            ? (sourceMemberIndex >= 0
-                ? runtime.deviceRigMemberAxisLastMovementAgeMs[static_cast<size_t>(sourceMemberIndex)]
-                    [static_cast<size_t>(index)].load()
-                : runtime.axisLastMovementAgeMs[static_cast<size_t>(index)].load())
-            : -1;
-        item.insert(u"acquisitionSourceResolved"_qs,
-            descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
-        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 2
-            ? u"Manual acquisition binding"_qs : acquisitionMethod == 1
-            ? u"Buffered DirectInput object"_qs
-            : acquisitionMethod == 3 ? u"Resolving verified DirectInput state field"_qs
-            : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
-            : u"Not resolved"_qs);
-        item.insert(u"liveMovementObserved"_qs, liveMovementObserved);
-        item.insert(u"lastMovementAgeMs"_qs, lastMovementAgeMs);
         item.insert(u"sourceDevice"_qs, sourceName);
-        item.insert(u"sourceConnected"_qs, sourceConnected);
         item.insert(u"specificSource"_qs, sourceRecord != nullptr);
-        const bool runtimeAvailable = exactLiveSource && acquisitionMethod >= 0;
-        const bool available = presentation.configuredAvailable || runtimeAvailable;
-        item.insert(u"available"_qs, available);
-        item.insert(u"liveAvailable"_qs, exactLiveSource && available);
+        // Card presence is a saved/discovered presentation fact. Runtime
+        // connection, acquisition method, and samples belong exclusively to
+        // axisTelemetry so a moving stick never reconstructs this model.
+        item.insert(u"available"_qs, presentation.configuredAvailable);
         const PhysicalAxisActivity activity = sourceRecord
             ? sourceRecord->axisActivity[static_cast<size_t>(index)]
             : PhysicalAxisActivity::Unknown;
@@ -1306,6 +1257,13 @@ QVariantList AppBackend::axisTelemetry() const
         const bool rawSourceAvailable = sourceTelemetry && sourceTelemetry->available.load(
             std::memory_order_relaxed) && displaySource >= 0 && displaySource < kPhysicalAxisCount;
         const size_t rawSourceIndex = static_cast<size_t>(std::max(0, displaySource));
+        const int acquisitionMethod = exactLiveSource
+            ? (sourceMemberIndex >= 0
+                ? runtime.deviceRigMemberAxisAcquisitionSource[static_cast<size_t>(sourceMemberIndex)]
+                    [static_cast<size_t>(index)].load(std::memory_order_relaxed)
+                : runtime.axisAcquisitionSource[static_cast<size_t>(index)].load(
+                    std::memory_order_relaxed))
+            : descriptor.acquisitionMethod;
         const bool fixed = sourceRecord
             && sourceRecord->axisActivity[static_cast<size_t>(index)] == PhysicalAxisActivity::Fixed;
         const int targetIndex = static_cast<int>(mapping.target);
@@ -1332,6 +1290,16 @@ QVariantList AppBackend::axisTelemetry() const
             ? sourceTelemetry->observedMinimum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
         item.insert(u"observedMaximum"_qs, rawSourceAvailable
             ? sourceTelemetry->observedMaximum[rawSourceIndex].load(std::memory_order_relaxed) : 0);
+        item.insert(u"sourceConnected"_qs, exactLiveSource);
+        item.insert(u"liveAvailable"_qs, exactLiveSource && acquisitionMethod >= 0);
+        item.insert(u"acquisitionSourceResolved"_qs,
+            descriptor.acquisitionSourceResolved && acquisitionMethod >= 0);
+        item.insert(u"acquisitionSource"_qs, acquisitionMethod == 2
+            ? u"Manual acquisition binding"_qs : acquisitionMethod == 1
+            ? u"Buffered DirectInput object"_qs
+            : acquisitionMethod == 3 ? u"Resolving verified DirectInput state field"_qs
+            : acquisitionMethod == 0 && descriptor.present ? u"DirectInput state field"_qs
+            : u"Not resolved"_qs);
         item.insert(u"liveMovementObserved"_qs, exactLiveSource
             && (sourceMemberIndex >= 0
                 ? runtime.deviceRigMemberAxisLiveMovementObserved[static_cast<size_t>(sourceMemberIndex)]
@@ -2246,6 +2214,85 @@ QList<AppBackend::RuntimeAxisEvidenceOwner> AppBackend::runtimeAxisEvidenceOwner
     return owners;
 }
 
+bool AppBackend::automaticAxisEvidenceIsDurable(
+    const PendingAutomaticAxisEvidencePersistence &pending) const
+{
+    // The coordinator's generation tells us a writer completed, but a later
+    // coalesced snapshot can only prove this source fact by its contents.
+    // Read the durable record once at that completion boundary; never trust a
+    // RAM-only descriptor merely because a different configuration write won.
+    const ConfigStore::LoadResult loaded = ConfigStore::loadDetailed();
+    if (!loaded.documentValid || !loaded.configurationValid) return false;
+    for (auto entry = pending.axesByRecord.cbegin(); entry != pending.axesByRecord.cend(); ++entry) {
+        const auto expectedRecord = std::find_if(m_configuration.savedControllers.cbegin(),
+            m_configuration.savedControllers.cend(), [&entry](const SavedControllerRecord &record) {
+                return record.id == entry.key();
+            });
+        const auto durableRecord = std::find_if(loaded.configuration.savedControllers.cbegin(),
+            loaded.configuration.savedControllers.cend(), [&entry](const SavedControllerRecord &record) {
+                return record.id == entry.key();
+            });
+        if (expectedRecord == m_configuration.savedControllers.cend()
+            || durableRecord == loaded.configuration.savedControllers.cend()) {
+            return false;
+        }
+        for (const int axis : entry.value()) {
+            if (!validAxis(axis)) return false;
+            const NativeAxisDescriptor &expected = expectedRecord->axisDescriptors[
+                static_cast<size_t>(axis)];
+            const NativeAxisDescriptor &durable = durableRecord->axisDescriptors[
+                static_cast<size_t>(axis)];
+            if (durable.formattedSource != expected.formattedSource
+                || durable.formattedSourceEvidence != expected.formattedSourceEvidence
+                || durable.formattedSourceVerified != expected.formattedSourceVerified
+                || durable.acquisitionMethod != expected.acquisitionMethod
+                || durable.acquisitionSourceResolved != expected.acquisitionSourceResolved) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void AppBackend::recoverAutomaticAxisEvidencePersistence()
+{
+    if (!m_persistence || !m_pendingAutomaticAxisEvidencePersistence) return;
+    PendingAutomaticAxisEvidencePersistence &pending = *m_pendingAutomaticAxisEvidencePersistence;
+    const ConfigPersistenceCoordinator::Statistics statistics = m_persistence->statistics();
+    if (statistics.durableGeneration >= pending.generation
+        && automaticAxisEvidenceIsDurable(pending)) {
+        m_pendingAutomaticAxisEvidencePersistence.reset();
+        return;
+    }
+
+    // A failed request or a newer durable snapshot that lacks the exact
+    // descriptor proof both need recovery. Keep retries on the GUI control
+    // plane with a bounded backoff; this never runs from the DirectInput to
+    // MappingWorker to vJoy report path.
+    const bool failed = statistics.lastFailedGeneration >= pending.generation;
+    const bool durableButMissing = statistics.durableGeneration >= pending.generation;
+    if (!failed && !durableButMissing) return;
+    const qint64 nowMs = m_axisEvidencePersistenceClock.elapsed();
+    if (nowMs < pending.retryNotBeforeMs) return;
+
+    const ConfigPersistenceCoordinator::RequestReceipt retry =
+        m_persistence->request(m_configuration);
+    recordPersistenceProbeTelemetry();
+    if (retry.generation == 0) return;
+
+    pending.generation = retry.generation;
+    ++pending.retryCount;
+    // Retry once immediately after the first observed failure. Repeated
+    // failures back off without losing the authoritative in-memory proof.
+    const int exponent = std::min(std::max(0, pending.retryCount - 2), 7);
+    const qint64 delayMs = pending.retryCount <= 1 ? 0 : std::min(30000, 250 << exponent);
+    pending.retryNotBeforeMs = nowMs + delayMs;
+    appendEvent(pending.retryCount == 1
+        ? u"Automatic DirectInput acquisition evidence persistence failed; retry queued."_qs
+        : QString(u"Automatic DirectInput acquisition evidence persistence retry %1 queued."_qs)
+              .arg(pending.retryCount));
+}
+
 QVariantMap AppBackend::adaptiveResponseTelemetry() const
 {
     const int axis = std::clamp(m_configuration.selectedAxisIndex, 0, kPhysicalAxisCount - 1);
@@ -2912,9 +2959,39 @@ bool AppBackend::publishRuntimeAxisEvidenceForTest(const QString &recordId, int 
 
 bool AppBackend::persistRuntimeAxisEvidenceForTest()
 {
-    refreshUiSnapshot();
     if (!m_persistence) return false;
+    // The second control-plane tick mirrors the regular UI snapshot timer:
+    // it sees a completed failed asynchronous write and queues recovery.
+    // Normal success still returns after the first bounded flush.
+    refreshUiSnapshot();
+    if (m_persistence->flushLatest(kPersistenceTransactionTimeoutMs).durable()) return true;
+    refreshUiSnapshot();
     return m_persistence->flushLatest(kPersistenceTransactionTimeoutMs).durable();
+}
+
+void AppBackend::setAutomaticAxisEvidencePersistenceFailuresForTest(int failures)
+{
+    if (m_persistence) m_persistence->stop(kPersistenceShutdownTimeoutMs);
+    const auto remainingFailures = std::make_shared<std::atomic<int>>(std::max(0, failures));
+    const auto consumeFailure = [remainingFailures] {
+        int remaining = remainingFailures->load(std::memory_order_relaxed);
+        while (remaining > 0) {
+            if (remainingFailures->compare_exchange_weak(remaining, remaining - 1,
+                                                          std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    m_persistence = std::make_unique<ConfigPersistenceCoordinator>(
+        [consumeFailure](const MapperConfiguration &configuration) {
+            return consumeFailure() ? ConfigStore::SaveResult{} : ConfigStore::saveDetailed(configuration);
+        },
+        [consumeFailure](const MapperConfiguration &configuration) {
+            return !consumeFailure() && ConfigStore::save(configuration);
+        });
+    m_persistence->setTelemetryEnabled(ResponsivenessProbe::active() != nullptr);
+    m_pendingAutomaticAxisEvidencePersistence.reset();
 }
 
 QVariantMap AppBackend::persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const
@@ -21801,6 +21878,7 @@ void AppBackend::refreshUiSnapshot()
     // DirectInput -> MappingWorker -> vJoy report path.
     MapperConfiguration evidenceCandidate = m_configuration;
     QStringList evidenceOwnerIds;
+    QHash<QString, QSet<int>> evidenceAxesByRecord;
     const AtomicRuntimeState &runtime = m_worker.runtime();
     for (const RuntimeAxisEvidenceOwner &owner : runtimeAxisEvidenceOwners()) {
         auto record = std::find_if(evidenceCandidate.savedControllers.begin(),
@@ -21834,11 +21912,13 @@ void AppBackend::refreshUiSnapshot()
                     descriptor.acquisitionMethod = 0;
                     descriptor.acquisitionSourceResolved = true;
                     ownerChanged = true;
+                    evidenceAxesByRecord[owner.recordId].insert(axis);
                 }
             } else if (descriptor.present && method == 1 && descriptor.acquisitionMethod != 1) {
                 descriptor.acquisitionMethod = 1;
                 descriptor.acquisitionSourceResolved = true;
                 ownerChanged = true;
+                evidenceAxesByRecord[owner.recordId].insert(axis);
             }
         }
         if (ownerChanged) evidenceOwnerIds.append(owner.recordId);
@@ -21849,6 +21929,10 @@ void AppBackend::refreshUiSnapshot()
         recordPersistenceProbeTelemetry();
         if (persistence.generation != 0) {
             m_configuration = std::move(evidenceCandidate);
+            PendingAutomaticAxisEvidencePersistence pending;
+            pending.axesByRecord = std::move(evidenceAxesByRecord);
+            pending.generation = persistence.generation;
+            m_pendingAutomaticAxisEvidencePersistence = std::move(pending);
             ++m_configurationGeneration;
             m_worker.updateConfiguration(m_configuration);
             emit axisConfigurationChanged();
@@ -21858,6 +21942,7 @@ void AppBackend::refreshUiSnapshot()
             appendEvent(u"DirectInput acquisition evidence was not queued because configuration persistence stopped."_qs);
         }
     }
+    recoverAutomaticAxisEvidencePersistence();
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();

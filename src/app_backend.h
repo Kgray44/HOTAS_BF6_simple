@@ -30,6 +30,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QAction;
@@ -377,6 +378,11 @@ public:
     bool publishRuntimeAxisEvidenceForTest(const QString &recordId, int canonicalAxis,
                                            int formattedSource);
     bool persistRuntimeAxisEvidenceForTest();
+    // Makes the next bounded automatic-evidence save attempts fail. This
+    // startup-test seam proves that the GUI control plane retries a proof
+    // after an asynchronous writer failure; it is not compiled into product
+    // binaries and never affects device discovery or MappingWorker.
+    void setAutomaticAxisEvidencePersistenceFailuresForTest(int failures);
     QVariantMap persistedAxisEvidenceForTest(const QString &recordId, int canonicalAxis) const;
     // Verifies that the axis-acquisition candidate never starts a DirectInput
     // discovery timer, game probe, or MappingWorker. The fixture is in-memory
@@ -1301,6 +1307,15 @@ private:
     // saved physical identity, while active Rig sessions use their compiled
     // member record IDs.
     QList<RuntimeAxisEvidenceOwner> runtimeAxisEvidenceOwners() const;
+    struct PendingAutomaticAxisEvidencePersistence {
+        QHash<QString, QSet<int>> axesByRecord;
+        quint64 generation = 0;
+        int retryCount = 0;
+        qint64 retryNotBeforeMs = 0;
+    };
+    bool automaticAxisEvidenceIsDurable(
+        const PendingAutomaticAxisEvidencePersistence &pending) const;
+    void recoverAutomaticAxisEvidencePersistence();
     void sampleAdaptiveResponseHistory();
     void publishProfilePresentationIfChanged();
     void appendAdaptiveResponseSimulatorSample(const AdaptiveResponseSimulatorSample &sample);
@@ -1556,6 +1571,12 @@ private:
 
     MapperConfiguration m_configuration;
     std::unique_ptr<ConfigPersistenceCoordinator> m_persistence;
+    // Automatic buffered-object proof is useful immediately to this session,
+    // but it is not considered complete until a later persisted read-back
+    // confirms the exact descriptor fields. This small GUI-side checkpoint
+    // retries a failed asynchronous request with bounded backoff.
+    std::optional<PendingAutomaticAxisEvidencePersistence> m_pendingAutomaticAxisEvidencePersistence;
+    QElapsedTimer m_axisEvidencePersistenceClock;
     // Session-only editor context. It is intentionally outside
     // MapperConfiguration so persisting an edit never converts selection into
     // a runtime activation request.

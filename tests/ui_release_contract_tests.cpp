@@ -1445,8 +1445,14 @@ void UiReleaseContractTests::evidenceResolvedAxisUiKeepsApplyAndRawTelemetryCont
     QVERIFY(axes.contains(QStringLiteral("onClicked: backend.useIdentifiedAxisSource()")));
     QVERIFY(axes.contains(QStringLiteral("Boolean(identification.applied)")));
     QVERIFY(axes.contains(QStringLiteral("identifyAxisDialog.close()")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.liveMovementObserved")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.lastMovementAgeMs")));
+    QVERIFY(axes.contains(QStringLiteral("card.telemetry.acquisitionSource")));
+    QVERIFY(!axes.contains(QStringLiteral("axis.liveMovementObserved")));
+    QVERIFY(!axes.contains(QStringLiteral("axis.lastMovementAgeMs")));
     QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.rawValue")));
     QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.observedRangeAvailable")));
+    QVERIFY(ultraNerd.contains(QStringLiteral("root.telemetry.liveAvailable")));
     QVERIFY(ultraNerd.contains(QStringLiteral("SOURCE EVIDENCE")));
 }
 

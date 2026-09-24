@@ -334,7 +334,7 @@ Item {
                     spacing: root.tokens.space8
                     Button {
                         text: "IDENTIFY AXIS"
-                        enabled: Boolean(root.axis.liveAvailable)
+                        enabled: Boolean(root.telemetry.liveAvailable)
                         onClicked: root.identifyRequested(Number(root.axis.index))
                         contentItem: Text { text: parent.text; color: parent.enabled ? root.tokens.textPrimary : root.tokens.disabled; font.family: root.tokens.telemetryFont; font.pixelSize: root.tokens.caption; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { radius: 5; color: parent.down ? root.tokens.accentMuted : parent.hovered ? root.tokens.selected : root.tokens.secondarySurface; border.color: parent.activeFocus ? root.tokens.focus : root.tokens.border; border.width: parent.activeFocus ? 2 : 1 }
