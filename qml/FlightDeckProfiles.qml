@@ -1297,6 +1297,7 @@ Flickable {
                 onClicked: newCategoryDialog.open()
             }
             DeckButton {
+                objectName: "flightDeckNewProfile"
                 visible: root.view === "library"
                 text: "+ PROFILE"
                 enabled: !root.usingPresentationFixture && root.categories.length > 0
@@ -1333,9 +1334,8 @@ Flickable {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Text { text: "CONFIGURATION LIBRARY"; color: deck.textPrimary; font.family: deck.displayFont; font.pixelSize: deck.scale(15); font.bold: true }
-                                Text { text: "Categories contain profiles"; color: deck.textMuted; font.pixelSize: deck.scale(9) }
+                                Text { text: root.guidedPresentation ? "Choose a profile to use or manage." : "Categories contain profiles"; color: deck.textMuted; font.pixelSize: deck.scale(9) }
                             }
-                            DeckButton { objectName: "flightDeckNewProfile"; text: "+ PROFILE"; enabled: !root.usingPresentationFixture && root.categories.length > 0; onClicked: root.openNewProfile(root.selectedCategoryId || backend.activeCategoryId) }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -1426,7 +1426,6 @@ Flickable {
                         RowLayout {
                             Layout.fillWidth: true
                             DeckButton { visible: !root.guidedPresentation; objectName: "flightDeckNewCategory"; text: "+ CATEGORY"; subdued: true; enabled: !root.usingPresentationFixture; onClicked: newCategoryDialog.open() }
-                            DeckButton { objectName: "flightDeckProfilesTransfer"; text: "IMPORT / EXPORT"; subdued: true; onClicked: transferDialog.openTransfer("import", "profile", "", "") }
                         }
                     }
                 }

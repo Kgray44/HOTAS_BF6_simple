@@ -11,6 +11,7 @@ FlightDeckDialog {
 
     required property var backendObject
     signal navigateToPage(int page)
+    signal requestFullAccess(int page, var context)
 
     property string pendingIntent: ""
     property var pendingContext: ({})
@@ -130,13 +131,57 @@ FlightDeckDialog {
     }
 
     function selectedOutputId() {
+        const saved = String(task.outputLayoutId || "")
+        if (saved.length > 0)
+            return saved
+        // Guided never silently chooses one item from an ambiguous list. A
+        // lone compatible output is a fact, not a hidden user decision.
+        if (guidedPresentation && outputs.length === 1)
+            return String(outputs[0] && outputs[0].id || "")
         const item = outputChoice.currentIndex >= 0 ? outputs[outputChoice.currentIndex] : ({})
         return String(item && item.id || "")
     }
 
     function selectedCategoryId() {
+        const saved = String(task.categoryId || "")
+        if (saved.length > 0)
+            return saved
+        if (guidedPresentation && categories.length === 1)
+            return String(categories[0] && categories[0].id || "")
         const item = categoryChoice.currentIndex >= 0 ? categories[categoryChoice.currentIndex] : ({})
         return String(item && item.id || "")
+    }
+
+    function hasUnambiguousOutput() {
+        return String(task.outputLayoutId || "").length > 0 || outputs.length === 1
+    }
+
+    function hasUnambiguousCategory() {
+        return String(task.categoryId || "").length > 0 || categories.length === 1
+    }
+
+    function hasSelectedOutput() {
+        return selectedOutputId().length > 0
+    }
+
+    function hasSelectedCategory() {
+        return selectedCategoryId().length > 0
+    }
+
+    function outputName() {
+        const id = selectedOutputId()
+        for (let index = 0; index < outputs.length; ++index)
+            if (String(outputs[index] && outputs[index].id || "") === id)
+                return String(outputs[index].name || "Controller output")
+        return "Choose in Full"
+    }
+
+    function categoryName() {
+        const id = selectedCategoryId()
+        for (let index = 0; index < categories.length; ++index)
+            if (String(categories[index] && categories[index].id || "") === id)
+                return String(categories[index].name || "Profile group")
+        return "Choose in Full"
     }
 
     function saveControllerChoice() {
@@ -147,11 +192,12 @@ FlightDeckDialog {
     }
 
     function savePurposeChoice() {
+        const copyEnabled = copyProfile.checked
         const result = backendObject.updateSetupAssistantTask({
             rigId: selectedRigId(), profileId: selectedProfileId(), outputLayoutId: selectedOutputId(),
-            categoryId: selectedCategoryId(), copyProfileId: copyProfile.checked ? String(copyChoice.currentValue || "") : "",
+            categoryId: selectedCategoryId(), copyProfileId: copyEnabled ? String(copyChoice.currentValue || "") : "",
             rigNameDraft: rigName.text, profileNameDraft: profileName.text,
-            copyExistingDraft: copyProfile.checked, requiredMembershipDraft: requiredMembership.checked,
+            copyExistingDraft: copyEnabled, requiredMembershipDraft: requiredMembership.checked,
             stage: "purpose"
         })
         showResult(result, "Setup choices could not be saved.")
@@ -164,15 +210,16 @@ FlightDeckDialog {
 
     function commitPurpose() {
         savePurposeChoice()
+        const copyEnabled = copyProfile.checked
         let result
         if (taskIntent === "add-to-rig") {
             result = backendObject.commitSetupAssistantSharedMember(selectedRigId(), selectedControllerId(),
                 requiredMembership.checked, selectedProfileId(), profileName.text,
-                selectedCategoryId(), copyProfile.checked ? String(copyChoice.currentValue || "") : "")
+                selectedCategoryId(), copyEnabled ? String(copyChoice.currentValue || "") : "")
         } else {
             result = backendObject.commitSetupAssistantRigAndProfile(
                 rigName.text, profileName.text, selectedControllerId(), selectedOutputId(),
-                selectedCategoryId(), copyProfile.checked ? String(copyChoice.currentValue || "") : "",
+                selectedCategoryId(), copyEnabled ? String(copyChoice.currentValue || "") : "",
                 taskIntent === "profile-for-rig" ? selectedRigId() : "")
         }
         showResult(result, "The selected setup could not be saved.")
@@ -549,9 +596,9 @@ FlightDeckDialog {
                 Flow {
                     Layout.fillWidth: true
                     spacing: root.tokens.space8
-                    SetupButton { objectName: "flightDeckSetupIntentFirst"; text: "FIRST CONTROLLER"; subdued: root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("first-controller") }
-                    SetupButton { objectName: "flightDeckSetupIntentIndependent"; text: root.guidedPresentation ? "CREATE A SETUP" : "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent"; onClicked: root.chooseIntent("independent") }
-                    SetupButton { objectName: "flightDeckSetupIntentShared"; text: root.guidedPresentation ? "USE WITH CURRENT SETUP" : "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
+                    SetupButton { objectName: "flightDeckSetupIntentFirst"; visible: !root.guidedPresentation; text: "FIRST CONTROLLER"; subdued: root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("first-controller") }
+                    SetupButton { objectName: "flightDeckSetupIntentIndependent"; text: root.guidedPresentation ? "CREATE A SEPARATE SETUP" : "INDEPENDENT RIG"; subdued: root.taskIntent !== "independent" && root.taskIntent !== "first-controller"; onClicked: root.chooseIntent("independent") }
+                    SetupButton { objectName: "flightDeckSetupIntentShared"; visible: !root.guidedPresentation || root.rigs.length > 0; text: root.guidedPresentation ? "ADD TO A CURRENT SETUP" : "ADD TO EXISTING RIG"; subdued: root.taskIntent !== "add-to-rig"; onClicked: root.chooseIntent("add-to-rig") }
                     SetupButton { objectName: "flightDeckSetupIntentProfile"; visible: !root.guidedPresentation; text: "PROFILE FOR EXISTING RIG"; subdued: root.taskIntent !== "profile-for-rig"; onClicked: root.chooseIntent("profile-for-rig") }
                 }
                 Text { visible: root.taskIntent === "issue"; Layout.fillWidth: true; text: "This issue handoff begins with review. Select the safe topology that matches the current controller and continue."; color: root.tokens.attention; font.pixelSize: root.tokens.bodySmall; wrapMode: Text.WordWrap }
@@ -565,7 +612,7 @@ FlightDeckDialog {
                     textRole: "name"
                     onActivated: root.savePurposeDraft()
                 }
-                Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: "DEVICE RIG NAME"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: root.guidedPresentation ? "SETUP NAME" : "DEVICE RIG NAME"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 TextField {
                     id: rigName
                     objectName: "flightDeckSetupRigName"
@@ -597,27 +644,49 @@ FlightDeckDialog {
                     implicitHeight: root.tokens.controlHeight
                     background: Rectangle { radius: root.tokens.radiusControl; color: root.tokens.secondarySurface; border.width: 1; border.color: parent.activeFocus ? root.tokens.focus : root.tokens.border }
                 }
-                Text { visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"; text: root.guidedPresentation ? "CONTROLLER OUTPUT" : "VIRTUAL OUTPUT"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                Text { visible: (root.taskIntent === "first-controller" || root.taskIntent === "independent") && (!root.guidedPresentation || !root.hasUnambiguousOutput()); text: root.guidedPresentation ? "CONTROLLER OUTPUT" : "VIRTUAL OUTPUT"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: outputChoice
                     objectName: "flightDeckSetupOutputChoice"
-                    visible: root.taskIntent === "first-controller" || root.taskIntent === "independent"
+                    visible: (root.taskIntent === "first-controller" || root.taskIntent === "independent") && (!root.guidedPresentation || root.outputs.length > 1)
                     Layout.fillWidth: true
                     model: root.outputs
                     currentIndex: root.outputIndexFor(root.task.outputLayoutId)
                     textRole: "name"
                     onActivated: root.savePurposeDraft()
                 }
-                Text { visible: root.taskIntent !== "add-to-rig"; text: root.guidedPresentation ? "PROFILE GROUP" : "PROFILE CATEGORY"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
+                Text {
+                    visible: root.guidedPresentation && (root.taskIntent === "first-controller" || root.taskIntent === "independent") && root.hasUnambiguousOutput()
+                    Layout.fillWidth: true
+                    text: "Connection: " + root.outputName()
+                    color: root.tokens.textSecondary
+                    font.pixelSize: root.tokens.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+                SetupButton {
+                    visible: root.guidedPresentation && (root.taskIntent === "first-controller" || root.taskIntent === "independent") && !root.hasUnambiguousOutput()
+                    text: "CHOOSE CONNECTION IN FULL"
+                    subdued: true
+                    onClicked: root.requestFullAccess(2, { section: "virtual-output", source: "setup-assistant" })
+                }
+                Text { visible: root.taskIntent !== "add-to-rig" && (!root.guidedPresentation || !root.hasUnambiguousCategory()); text: root.guidedPresentation ? "PROFILE GROUP" : "PROFILE CATEGORY"; color: root.tokens.textMuted; font.family: root.tokens.bodyFont; font.pixelSize: root.tokens.caption; font.bold: true }
                 SetupCombo {
                     id: categoryChoice
                     objectName: "flightDeckSetupCategoryChoice"
-                    visible: root.taskIntent !== "add-to-rig"
+                    visible: root.taskIntent !== "add-to-rig" && (!root.guidedPresentation || root.categories.length > 1)
                     Layout.fillWidth: true
                     model: root.categories
                     currentIndex: root.categoryIndexFor(root.task.categoryId)
                     textRole: "name"
                     onActivated: root.savePurposeDraft()
+                }
+                Text {
+                    visible: root.guidedPresentation && root.taskIntent !== "add-to-rig" && root.hasUnambiguousCategory()
+                    Layout.fillWidth: true
+                    text: "Profile group: " + root.categoryName()
+                    color: root.tokens.textSecondary
+                    font.pixelSize: root.tokens.bodySmall
+                    wrapMode: Text.WordWrap
                 }
                 SetupCheckBox {
                     id: copyProfile
@@ -680,10 +749,10 @@ FlightDeckDialog {
                     Item { Layout.fillWidth: true }
                     SetupButton {
                         objectName: "flightDeckSetupCommitPurpose"
-                        text: root.taskIntent === "add-to-rig" ? "ADD CONTROLLER TO RIG" : "SAVE RIG AND PROFILE"
-                        enabled: root.taskIntent === "add-to-rig" ? rigChoice.currentIndex >= 0 && controllerChoice.currentIndex >= 0
-                            : (root.taskIntent === "profile-for-rig" ? rigChoice.currentIndex >= 0 && profileName.text.trim().length > 0
-                                : controllerChoice.currentIndex >= 0 && rigName.text.trim().length > 0 && profileName.text.trim().length > 0 && outputChoice.currentIndex >= 0 && categoryChoice.currentIndex >= 0)
+                    text: root.taskIntent === "add-to-rig" ? "ADD CONTROLLER TO RIG" : "SAVE RIG AND PROFILE"
+                    enabled: root.taskIntent === "add-to-rig" ? rigChoice.currentIndex >= 0 && controllerChoice.currentIndex >= 0
+                        : (root.taskIntent === "profile-for-rig" ? rigChoice.currentIndex >= 0 && profileName.text.trim().length > 0
+                                : controllerChoice.currentIndex >= 0 && rigName.text.trim().length > 0 && profileName.text.trim().length > 0 && root.hasSelectedOutput() && root.hasSelectedCategory())
                         onClicked: root.commitPurpose()
                     }
                 }

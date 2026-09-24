@@ -33,6 +33,9 @@ Flickable {
     signal requestButtonLearning()
     signal requestQuickMap()
     signal requestPovLearning(int virtualButton)
+    signal requestDevicePicker()
+    signal requestSetup(string intent, var context)
+    signal requestFullAccess(int page, var context)
 
     // The normal grid is permanently keyed by Virtual Output.  Changing the
     // top-bar Selected Device changes only the source chooser inside an
@@ -72,6 +75,15 @@ Flickable {
         }
         return false
     }
+    readonly property var selectedControllerInfo: controllerForSelectedDevice()
+    readonly property int knownControllerCount: (backend.controllers || []).length
+    readonly property int selectedControlCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
+        + Number(selectedControllerInfo.povCount || 0)
+    readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
+    readonly property int assignedControlCount: configuredControlCount()
+    readonly property string inputPreparationState: preparationState()
+    readonly property bool canShowInputContent: selectedInputDeviceId.length > 0
+        && (selectedControlCapabilityCount > 0 || hasVisibleButtons || povItems.length > 0)
 
     contentWidth: width
     contentHeight: buttonsContent.implicitHeight + deck.space24
@@ -96,6 +108,103 @@ Flickable {
             if (Boolean(device.selected)) return String(device.id || "")
         }
         return ""
+    }
+    function controllerForSelectedDevice() {
+        const selectedId = selectedDeviceId()
+        const controllers = backend.controllers || []
+        for (let index = 0; index < controllers.length; ++index) {
+            const controller = controllers[index] || ({})
+            if (String(controller.id || controller.directInputId || "") === selectedId)
+                return controller
+        }
+        return ({})
+    }
+    function configuredControlCount() {
+        let count = assignedButtonCount()
+        for (let index = 0; index < povInputItems.length; ++index) {
+            if (Number((povInputItems[index] || {}).target || 0) > 0) ++count
+        }
+        return count
+    }
+    function preparationState() {
+        if (selectedInputDeviceId.length === 0) {
+            if (knownControllerCount === 0)
+                return backend.controllerSetupInProgress ? "looking" : "connect"
+            return "choose"
+        }
+        if (!selectedInputDeviceConnected) return "offline"
+        if (selectedControllerInfo && selectedControllerInfo.verified === false) return "setup"
+        if (selectedControlCapabilityCount === 0 && !hasVisibleButtons && povItems.length === 0)
+            return "no-controls"
+        if (buttonItems.length === 0 && povItems.length === 0) return "setup"
+        if (!backend.vjoyReady) return "output"
+        if (assignedControlCount === 0) return "first-assignment"
+        return "ready"
+    }
+    function preparationHeading() {
+        switch (inputPreparationState) {
+        case "looking": return "Looking for controllers"
+        case "connect": return "Connect your controller"
+        case "choose": return "Choose a controller"
+        case "setup": return "Set up " + inputDeviceName
+        case "offline": return inputDeviceName + " is not connected"
+        case "no-controls": return "This controller has no buttons or hat switches"
+        case "output": return "Connection needs a check"
+        case "first-assignment": return "Assign your first button"
+        }
+        return "Buttons ready"
+    }
+    function preparationDetail() {
+        switch (inputPreparationState) {
+        case "looking": return "HOTAS BF6 is checking the current controller list."
+        case "connect": return "Plug in a controller, then scan for it here."
+        case "choose": return "Choose the controller whose buttons or hat switches you want to map."
+        case "setup": return "Finish setup for this exact controller before mapping it."
+        case "offline": return "Saved routes stay editable. Live learning and tests wait for the controller to reconnect."
+        case "no-controls": return "This is not a fault. Try Axes if this controller has analog controls."
+        case "output": return "Your saved routes are still visible. Check this setup before testing mapped output."
+        case "first-assignment": return "Choose a button or hat direction, then select the output it should control."
+        }
+        return "Choose a control to view its input, output, and simple mapping controls."
+    }
+    function preparationPills() {
+        const controllerPill = selectedInputDeviceId.length > 0
+            ? { label: "CONTROLLER", value: selectedInputDeviceConnected ? "CONNECTED" : "OFFLINE",
+                tone: selectedInputDeviceConnected ? "healthy" : "attention" }
+            : { label: "CONTROLLER", value: knownControllerCount > 0 ? "CHOOSE" : "NOT FOUND",
+                tone: knownControllerCount > 0 ? "informational" : "attention" }
+        const outputPill = { label: "OUTPUT", value: backend.vjoyReady ? "READY" : "CHECK",
+            tone: backend.vjoyReady ? "healthy" : "attention" }
+        return [controllerPill, outputPill]
+    }
+    function preparationPrimaryText() {
+        switch (inputPreparationState) {
+        case "connect": return "SCAN FOR CONTROLLERS"
+        case "choose": return "CHOOSE CONTROLLER"
+        case "setup": return "SET UP THIS CONTROLLER"
+        case "offline": return "CHANGE CONTROLLER"
+        case "no-controls": return selectedAxisCapabilityCount > 0 ? "OPEN AXES" : "OPEN DEVICES & SETUP"
+        case "output": return "CHECK SETUP"
+        case "first-assignment": return backend.selectedDeviceButtonChoices().length > 1 ? "QUICK MAP" : ""
+        }
+        return ""
+    }
+    function preparationSecondaryText() {
+        return inputPreparationState === "offline" ? "CHECK CONNECTION" : ""
+    }
+    function invokePreparationPrimary() {
+        switch (inputPreparationState) {
+        case "connect": backend.refreshControllers(); break
+        case "choose": requestDevicePicker(); break
+        case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 1 }); break
+        case "offline": requestDevicePicker(); break
+        case "no-controls": navigateToPage(selectedAxisCapabilityCount > 0 ? 0 : 2); break
+        case "output": navigateToPage(2); break
+        case "first-assignment": requestQuickMap(); break
+        }
+    }
+    function invokePreparationSecondary() {
+        if (inputPreparationState === "offline") navigateToPage(2)
     }
     function profileChoiceIndex(profileId) {
         for (let index = 0; index < profileChoices.length; ++index) {
@@ -1387,6 +1496,57 @@ Flickable {
                 onActivated: backend.setNativePovOutput(card.hatIndex, hat.nativeEnabled,
                     root.nativeChoiceKey(currentIndex))
             }
+            // A whole-hat destination is an everyday mapping decision.  Keep
+            // the native-descriptor name and its extended diagnostics in Full,
+            // but expose the same canonical command plainly in Guided.
+            ColumnLayout {
+                visible: root.guidedPresentation
+                Layout.fillWidth: true
+                spacing: deck.space8
+                Text {
+                    text: "WHOLE-HAT DESTINATION"
+                    color: deck.textSecondary
+                    font.family: deck.telemetryFont
+                    font.pixelSize: deck.scale(9)
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: hat.nativeEnabled
+                        ? "This whole hat sends " + String(hat.nativeTargetLabel || "the selected POV") + "."
+                        : "Choose a game POV for the whole hat, or map directions separately above."
+                    color: deck.textMuted
+                    font.pixelSize: deck.scale(9)
+                    wrapMode: Text.WordWrap
+                }
+                DeckCombo {
+                    id: guidedPovSelector
+                    objectName: "flightDeckGuidedPovSelector_" + card.hatIndex
+                    Layout.fillWidth: true
+                    model: root.nativePovChoices
+                    textRole: "label"
+                    valueRole: "key"
+                    enabled: root.nativePovChoices.length > 0
+                    currentIndex: root.nativeChoiceIndex(hat.nativeTargetKey)
+                    onActivated: backend.setNativePovOutput(card.hatIndex, hat.nativeEnabled,
+                        root.nativeChoiceKey(currentIndex))
+                }
+                DeckButton {
+                    text: hat.nativeEnabled ? "TURN OFF WHOLE-HAT POV" : "USE WHOLE HAT AS POV"
+                    subdued: !hat.nativeEnabled
+                    enabled: hat.nativeEnabled || root.nativePovChoices.length > 0
+                    onClicked: backend.setNativePovOutput(card.hatIndex, !hat.nativeEnabled,
+                        root.nativeChoiceKey(guidedPovSelector.currentIndex))
+                }
+                Text {
+                    visible: root.nativePovChoices.length === 0
+                    Layout.fillWidth: true
+                    text: "No game POV target is available for this output. Direction mappings remain available."
+                    color: deck.attention
+                    font.pixelSize: deck.scale(9)
+                    wrapMode: Text.WordWrap
+                }
+            }
             Text {
                 visible: !root.guidedPresentation && root.nativePovChoices.length === 0
                 text: "The selected vJoy device exposes no native POV target. Direction routes above remain available."
@@ -1551,100 +1711,26 @@ Flickable {
         width: root.width - deck.space8
         spacing: deck.space16
 
-        RowLayout {
-            Layout.fillWidth: true
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Text {
-                    text: buttonItems.length + " virtual buttons · "
-                        + (selectedInputDeviceId.length > 0
-                            ? "source selector: " + inputDeviceName
-                            : "select a controller to choose a source")
-                    color: deck.textMuted
-                    font.family: deck.telemetryFont
-                    font.pixelSize: deck.scale(10)
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-            }
-            DeckButton {
-                objectName: "flightDeckButtonsLearn"
-                text: "LEARN ROUTE"
-                subdued: true
-                enabled: root.selectedInputDeviceId.length > 0
-                    && root.selectedInputDeviceConnected && backend.vjoyButtonCount > 0
-                onClicked: root.requestButtonLearning()
-            }
-            DeckButton {
-                objectName: "flightDeckButtonsQuickMap"
-                text: "QUICK MAP"
-                subdued: true
-                enabled: root.selectedInputDeviceId.length > 0
-                    && backend.selectedDeviceButtonChoices().length > 1
-                onClicked: root.requestQuickMap()
-            }
-        }
-
-        FlightDeckCard {
+        FlightDeckInputStatusCard {
+            id: buttonsInputStatus
+            objectName: "flightDeckButtonsInputStatus"
             tokens: deck
-            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: statusContent.implicitHeight + contentPadding * 2
-            color: root.selectedInputDeviceId.length === 0 || root.selectedInputDeviceConnected
-                ? deck.secondarySurface : deck.elevatedSurface
-            ColumnLayout {
-                id: statusContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                RowLayout {
-                    Layout.fillWidth: true
-                    SummaryChip {
-                        label: root.selectedInputDeviceId.length === 0 ? "SELECT A CONTROLLER"
-                            : root.selectedInputDeviceConnected ? "SELECTED CONTROLLER CONNECTED"
-                            : "SELECTED CONTROLLER DISCONNECTED"
-                        tone: root.selectedInputDeviceId.length === 0 ? "informational"
-                            : root.selectedInputDeviceConnected ? "healthy" : "attention"
-                    }
-                    SummaryChip {
-                        label: backend.vjoyReady ? "VIRTUAL OUTPUT READY" : "VIRTUAL OUTPUT ATTENTION"
-                        tone: backend.vjoyReady ? "healthy" : "attention"
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        text: root.selectedInputDeviceId.length === 0
-                            ? "Choose a source in SELECTED DEVICE to edit button routing"
-                            : root.selectedInputDeviceConnected
-                                ? "Live state waits for input from " + root.inputDeviceName
-                                : root.inputDeviceName + " is disconnected; saved routes remain editable"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(9)
-                        elide: Text.ElideRight
-                    }
-                }
-                RowLayout {
-                    visible: root.selectedInputDeviceId.length === 0
-                        || !root.selectedInputDeviceConnected || !backend.vjoyReady
-                    Layout.fillWidth: true
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.selectedInputDeviceId.length === 0
-                            ? "Use SELECTED DEVICE in the top bar to choose the controller whose physical buttons you want to route."
-                            : !root.selectedInputDeviceConnected
-                            ? root.inputDeviceName + " is disconnected. Its saved routes remain available for editing."
-                            : "Virtual output needs attention. You can still inspect existing physical controls and routes."
-                        color: deck.textSecondary
-                        font.pixelSize: deck.scale(10)
-                        wrapMode: Text.WordWrap
-                    }
-                    DeckButton { text: "OPEN SETUP"; subdued: true; onClicked: root.navigateToPage(2) }
-                }
-            }
+            heading: root.preparationHeading()
+            detail: root.preparationDetail()
+            statusPills: root.preparationPills()
+            primaryText: root.preparationPrimaryText()
+            secondaryText: root.preparationSecondaryText()
+            // Retain the established quick-map control identity while making
+            // its presentation conditional on a usable next action.
+            primaryObjectName: "flightDeckButtonsQuickMap"
+            secondaryObjectName: "flightDeckButtonsInputSecondary"
+            onPrimaryAction: root.invokePreparationPrimary()
+            onSecondaryAction: root.invokePreparationSecondary()
         }
 
         RowLayout {
+            visible: root.canShowInputContent
             Layout.fillWidth: true
             spacing: deck.space8
             Text {
@@ -1665,16 +1751,17 @@ Flickable {
             }
         }
 
-        SectionLabel { text: "VIRTUAL BUTTONS" }
+        SectionLabel { visible: root.canShowInputContent; text: "VIRTUAL BUTTONS" }
         Text {
-            visible: buttonItems.length === 0
-            text: "No virtual button outputs are available for the selected Profile."
+            visible: root.canShowInputContent && buttonItems.length === 0
+            text: "No button outputs are available for this setup yet."
             color: deck.textMuted
             font.pixelSize: deck.scale(10)
             Layout.fillWidth: true
         }
         Flow {
             id: virtualButtonFlow
+            visible: root.canShowInputContent
             Layout.fillWidth: true
             spacing: deck.space12
             Repeater {
@@ -1686,17 +1773,19 @@ Flickable {
             }
         }
 
-        SectionLabel { visible: root.povItems.length > 0; text: "HATS / POV" }
+        SectionLabel { visible: root.canShowInputContent && root.povItems.length > 0; text: "HATS / POV" }
         Text {
-            visible: root.povItems.length > 0
-            text: "Directions use the authoritative discrete POV routes. Native vJoy POV output, when available, stays a separate existing path."
+            visible: root.canShowInputContent && root.povItems.length > 0
+            text: root.guidedPresentation
+                ? "Map directions to game buttons, or send the whole hat to a game POV."
+                : "Map a hat direction to a button, or choose a whole-hat POV destination when one is available."
             color: deck.textMuted
             font.pixelSize: deck.scale(10)
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
         Repeater {
-            model: root.povItems
+            model: root.canShowInputContent ? root.povItems : []
             delegate: HatCard {
                 required property var modelData
                 hat: modelData
@@ -1730,7 +1819,7 @@ Flickable {
                 DeckButton { text: "CANCEL"; subdued: true; onClicked: mappingConflict.close() }
                 Item { Layout.fillWidth: true }
                 DeckButton {
-                    visible: conflictButtonIndex > 0
+                    visible: conflictButtonIndex > 0 && !root.guidedPresentation
                     text: "MIX"
                     subdued: true
                     onClicked: {
@@ -1745,6 +1834,19 @@ Flickable {
                             ? root.requestButtonMapping(conflictButtonIndex, conflictTarget, true)
                             : root.requestPovMapping(conflictHatIndex, conflictDirectionIndex, conflictTarget, true)
                         if (changed) mappingConflict.close()
+                    }
+                }
+                DeckButton {
+                    visible: conflictButtonIndex > 0 && root.guidedPresentation
+                    text: "OPEN IN FULL"
+                    subdued: true
+                    onClicked: {
+                        mappingConflict.close()
+                        root.requestFullAccess(11, { source: "button-conflict",
+                            buttonIndex: root.conflictButtonIndex,
+                            hatIndex: root.conflictHatIndex,
+                            directionIndex: root.conflictDirectionIndex,
+                            target: root.conflictTarget, owner: root.conflictOwner })
                     }
                 }
             }

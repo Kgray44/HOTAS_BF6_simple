@@ -95,6 +95,8 @@ Item {
         if (destination < 0 || !themeManager.chooseGuidanceLevel("Full"))
             return false
         const context = pendingFullDestination.context || ({})
+        if (destination === 6 && Number(context.axisIndex) >= 0)
+            backend.setSelectedAxis(Number(context.axisIndex))
         if (destination === 2 && (String(context.section || "") === "virtual-output"
                 || String(context.section || "") === "isolation"))
             standardPageHost.flightDeckDevicesContext = String(context.section)
@@ -136,6 +138,9 @@ Item {
             return "Signal Flow";
         }
         return "Overview";
+    }
+    function openSelectedDevicePicker() {
+        selectedDeviceSelector.openPicker()
     }
     FlightDeckReadiness {
         id: readinessModel
@@ -399,6 +404,7 @@ Item {
                         elide: Text.ElideRight
                     }
                     FlightDeckSelectedDeviceSelector {
+                        id: selectedDeviceSelector
                         compact: root.width < 1380
                         backendObject: backend
                         tokens: deck
@@ -412,6 +418,7 @@ Item {
                     }
                     FlightDeckHeaderPill {
                         objectName: "flightDeckControllerPill"
+                        visible: root.width >= 1240
                         tokens: deck
                         text: "CONTROLLER"
                         value: backend.physicalConnected ? "CONNECTED" : "WAITING"
@@ -420,6 +427,9 @@ Item {
                     }
                     FlightDeckHeaderPill {
                         objectName: "flightDeckAppearancePill"
+                        // Controller/Profile selectors are more useful than
+                        // an appearance shortcut on a narrow Flight Deck.
+                        visible: root.width >= 1100
                         tokens: deck
                         text: "APPEARANCE"
                         value: themeManager.flightDeckAppearance.toUpperCase()
@@ -474,6 +484,13 @@ Item {
                         }
                         onFlightDeckFullAccessRequested: function(page, context) {
                             root.requestFullDestination(page, context)
+                        }
+                        onFlightDeckDevicePickerRequested: root.openSelectedDevicePicker()
+                        onFlightDeckSetupRequested: function(intent, context) {
+                            if (backend.hasSetupAssistantTask)
+                                setupAssistantDialog.openForResume()
+                            else
+                                setupAssistantDialog.openFor(intent, context)
                         }
                     }
                     Loader {
@@ -555,6 +572,9 @@ Item {
         tokens: deck
         onNavigateToPage: function(page) {
             root.navigateTo(page, { source: "setup-assistant" })
+        }
+        onRequestFullAccess: function(page, context) {
+            root.requestFullDestination(page, context)
         }
     }
 

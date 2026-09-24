@@ -480,7 +480,7 @@ Flickable {
         SettingsGroup {
             objectName: "flightDeckSettingsApplicationInfo"
             title: "HOTAS BF6"
-            detail: "Flight Deck application identity from the compiled release authority."
+            detail: "Version and support information for this application."
             SettingsRow {
                 objectName: "flightDeckSettingsApplicationVersion"
                 title: "VERSION"
@@ -490,11 +490,12 @@ Flickable {
         }
         SettingsGroup {
             objectName: "flightDeckSettingsGeneralGroup"
-            title: "Application behavior"
-            detail: "Preferences apply immediately through HOTAS BF6's existing configuration ownership."
+            title: "Everyday preferences"
+            detail: "These choices change how the app opens and appears."
             SettingsRow {
                 title: "KEEP RUNNING IN SYSTEM TRAY"
                 detail: backend.trayAvailable ? "Closing the window keeps mapping and monitoring available from the system tray." : "System tray is unavailable in this Windows session."
+                last: root.guidedPresentation
                 DeckToggle {
                     objectName: "flightDeckSettingsTrayToggle"
                     checked: backend.keepRunningInTray
@@ -503,6 +504,7 @@ Flickable {
                 }
             }
             SettingsRow {
+                visible: !root.guidedPresentation
                 title: "CONTROLLER SELECTION"
                 detail: "Choose, verify, or repair the active physical controller in Devices & setup."
                 DeckButton {
@@ -512,6 +514,7 @@ Flickable {
                 }
             }
             SettingsRow {
+                visible: !root.guidedPresentation
                 title: "AUTO-SWITCH VERIFIED CONTROLLER"
                 detail: "Switch only to one unambiguous remembered controller when the active controller is unavailable."
                 DeckToggle {
@@ -521,6 +524,7 @@ Flickable {
                 }
             }
             SettingsRow {
+                visible: !root.guidedPresentation
                 title: "PREFERRED PHYSICAL DEVICE"
                 detail: backend.deviceId.length > 0 ? backend.deviceName : "Automatic selection prefers a known controller."
                 last: true
@@ -537,9 +541,12 @@ Flickable {
         }
         SettingsGroup {
             objectName: "flightDeckSettingsAppearanceGroup"
-            title: "Experience"
-            detail: "Switching presentation never changes profiles, mappings, Automation, Adaptive Response, device verification, vJoy, or HidHide configuration."
+            title: "Appearance"
+            detail: root.guidedPresentation
+                ? "Choose a color mode and text size that are comfortable to use."
+                : "Switching presentation never changes profiles, mappings, Automation, Adaptive Response, device verification, vJoy, or HidHide configuration."
             Flow {
+                visible: !root.guidedPresentation
                 Layout.fillWidth: true
                 spacing: deck.space12
                 Repeater {

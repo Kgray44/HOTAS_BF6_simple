@@ -25,6 +25,9 @@ Flickable {
     signal navigateToPage(int page)
     signal requestAxisLearning(string target)
     signal requestQuickMap()
+    signal requestDevicePicker()
+    signal requestSetup(string intent, var context)
+    signal requestFullAccess(int page, var context)
 
     readonly property bool usingPresentationOverride: axisPresentationOverride !== null
     // The card model is configuration-only.  Numeric values arrive in a tiny
@@ -56,6 +59,16 @@ Flickable {
         { key: "average", label: "Average" }
     ]
     readonly property bool hasVisibleAxes: visibleAxisCount() > 0
+    readonly property var selectedControllerInfo: controllerForSelectedDevice()
+    readonly property int knownControllerCount: (backend.controllers || []).length
+    readonly property int selectedAxisCapabilityCount: Number(selectedControllerInfo.axisCount || 0)
+    readonly property int selectedButtonCapabilityCount: Number(selectedControllerInfo.buttonCount || 0)
+        + Number(selectedControllerInfo.povCount || 0)
+    readonly property int assignedAxisCount: configuredAxisCount()
+    readonly property string inputPreparationState: preparationState()
+    readonly property bool canShowAxisCards: usingPresentationOverride
+        || (selectedInputDeviceId.length > 0
+            && (hasVisibleAxes || selectedAxisCapabilityCount > 0))
 
     contentWidth: width
     contentHeight: axesContent.implicitHeight + deck.space24
@@ -92,6 +105,117 @@ Flickable {
             if (Boolean(device.selected)) return String(device.id || "")
         }
         return ""
+    }
+
+    function controllerForSelectedDevice() {
+        const selectedId = selectedDeviceId()
+        const controllers = backend.controllers || []
+        for (let index = 0; index < controllers.length; ++index) {
+            const controller = controllers[index] || ({})
+            if (String(controller.id || controller.directInputId || "") === selectedId)
+                return controller
+        }
+        return ({})
+    }
+
+    function configuredAxisCount() {
+        let count = 0
+        for (let index = 0; index < axisItems.length; ++index) {
+            const axis = axisItems[index] || ({})
+            if (axis.available && String(axis.target || "Disabled") !== "Disabled") ++count
+        }
+        return count
+    }
+
+    function preparationState() {
+        if (selectedInputDeviceId.length === 0) {
+            if (knownControllerCount === 0)
+                return backend.controllerSetupInProgress ? "looking" : "connect"
+            return "choose"
+        }
+        if (!selectedInputDeviceConnected) return "offline"
+        if (selectedControllerInfo && selectedControllerInfo.verified === false) return "setup"
+        if (selectedAxisCapabilityCount === 0 && !hasVisibleAxes) return "no-axes"
+        if (!backend.vjoyReady) return "output"
+        if (assignedAxisCount === 0) return "first-assignment"
+        return "ready"
+    }
+
+    function preparationHeading() {
+        switch (inputPreparationState) {
+        case "looking": return "Looking for controllers"
+        case "connect": return "Connect your controller"
+        case "choose": return "Choose a controller"
+        case "setup": return "Set up " + inputDeviceName
+        case "offline": return inputDeviceName + " is not connected"
+        case "no-axes": return "This controller has no axes"
+        case "output": return "Connection needs a check"
+        case "first-assignment": return "Assign your first axis"
+        }
+        return "Axes ready"
+    }
+
+    function preparationDetail() {
+        switch (inputPreparationState) {
+        case "looking": return "HOTAS BF6 is checking the current controller list."
+        case "connect": return "Plug in a controller, then scan for it here."
+        case "choose": return "Choose the controller whose axes you want to map."
+        case "setup": return "Finish identity setup for this exact controller before mapping it."
+        case "offline": return "Saved axis mappings stay editable. Live input and testing wait for the controller to reconnect."
+        case "no-axes": return "This is not a fault. Try Buttons for its buttons or hat switches."
+        case "output": return "Your saved mappings are still visible. Check this setup before testing mapped output."
+        case "first-assignment": return "Choose an axis, then select the output it should control."
+        }
+        return "Choose an axis to view its input, output, and simple mapping controls."
+    }
+
+    function preparationPills() {
+        const controllerPill = inputPreparationState === "offline"
+            ? { label: "CONTROLLER", value: "OFFLINE", tone: "attention" }
+            : selectedInputDeviceId.length > 0
+                ? { label: "CONTROLLER", value: selectedInputDeviceConnected ? "CONNECTED" : "OFFLINE",
+                    tone: selectedInputDeviceConnected ? "healthy" : "attention" }
+                : { label: "CONTROLLER", value: knownControllerCount > 0 ? "CHOOSE" : "NOT FOUND",
+                    tone: knownControllerCount > 0 ? "informational" : "attention" }
+        const outputPill = { label: "OUTPUT", value: backend.vjoyReady ? "READY" : "CHECK",
+            tone: backend.vjoyReady ? "healthy" : "attention" }
+        return [controllerPill, outputPill]
+    }
+
+    function preparationPrimaryText() {
+        switch (inputPreparationState) {
+        case "connect": return "SCAN FOR CONTROLLERS"
+        case "choose": return "CHOOSE CONTROLLER"
+        case "setup": return "SET UP THIS CONTROLLER"
+        case "offline": return "CHANGE CONTROLLER"
+        case "no-axes": return selectedButtonCapabilityCount > 0 ? "OPEN BUTTONS" : "OPEN DEVICES & SETUP"
+        case "output": return "CHECK SETUP"
+        case "first-assignment": return backend.quickAssignAxisTargets.length > 0 ? "QUICK MAP" : ""
+        }
+        return ""
+    }
+
+    function preparationSecondaryText() {
+        if (inputPreparationState === "offline") return "CHECK CONNECTION"
+        if (inputPreparationState === "connect") return ""
+        if (inputPreparationState === "choose") return ""
+        return ""
+    }
+
+    function invokePreparationPrimary() {
+        switch (inputPreparationState) {
+        case "connect": backend.refreshControllers(); break
+        case "choose": requestDevicePicker(); break
+        case "setup": requestSetup("independent", { controllerRecordId: selectedInputDeviceId, returnPage: 0 }); break
+        case "offline": requestDevicePicker(); break
+        case "no-axes": navigateToPage(selectedButtonCapabilityCount > 0 ? 1 : 2); break
+        case "output": navigateToPage(2); break
+        case "first-assignment": requestQuickMap(); break
+        }
+    }
+
+    function invokePreparationSecondary() {
+        if (inputPreparationState === "offline") navigateToPage(2)
     }
 
     function axisForIndex(index) {
@@ -456,8 +580,13 @@ Flickable {
                     }
                 }
                 SummaryChip {
-                    label: axis.target === "Disabled" ? "OUTPUT DISABLED" : (axis.fixed ? "FIXED INPUT" : "OUTPUT ACTIVE")
-                    tone: axis.target === "Disabled" ? "attention" : (axis.fixed ? "attention" : "healthy")
+                    // A configured destination is not proof that a vJoy
+                    // report has been delivered. Keep this pill about the
+                    // editable route only.
+                    label: axis.target === "Disabled" ? "NOT ASSIGNED"
+                        : (axis.fixed ? "INPUT FIXED" : "ASSIGNED")
+                    tone: axis.target === "Disabled" ? "informational"
+                        : (axis.fixed ? "attention" : "healthy")
                 }
                 SummaryChip {
                     visible: Boolean(card.sharedOutput.mixed)
@@ -564,7 +693,7 @@ Flickable {
                 }
                 SummaryChip {
                     visible: Boolean(axis.axisDiscovered)
-                    label: Boolean(axis.liveMovementObserved) ? "LIVE VERIFIED" : "WAITING FOR MOVEMENT"
+                    label: Boolean(axis.liveMovementObserved) ? "INPUT DETECTED" : "NOT TESTED"
                     tone: Boolean(axis.liveMovementObserved) ? "healthy" : "informational"
                 }
             }
@@ -868,10 +997,16 @@ Flickable {
                                 onClicked: { backend.setSelectedAxis(card.axisIndex); root.navigateToPage(6) }
                             }
                             RowLayout {
-                                visible: String(card.curveState.family || "") === "J-Curve" || String(card.curveState.family || "") === "S-Curve"
+                                // This is the canonical J/S curve-strength
+                                // field, not a general sensitivity or gain
+                                // setting. Basic does not expose a renamed
+                                // mathematical control it cannot describe.
+                                visible: !root.guidedPresentation
+                                    && (String(card.curveState.family || "") === "J-Curve"
+                                        || String(card.curveState.family || "") === "S-Curve")
                                 Layout.fillWidth: true
                                 SettingTitle {
-                                    text: root.guidedPresentation ? "SENSITIVITY" : "CURVE STRENGTH"
+                                    text: "CURVE STRENGTH"
                                     Layout.preferredWidth: 108
                                 }
                                 DeckSlider {
@@ -1246,148 +1381,27 @@ Flickable {
         width: root.width - deck.space24
         spacing: deck.space12
 
-        FlightDeckCard {
+        FlightDeckInputStatusCard {
+            id: axesInputStatus
+            objectName: "flightDeckAxesInputStatus"
             tokens: deck
-            contentPadding: deck.cardPadding
             Layout.fillWidth: true
-            implicitHeight: contextContent.implicitHeight + contentPadding * 2
-            color: deck.elevatedSurface
-            ColumnLayout {
-                id: contextContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                RowLayout {
-                    Layout.fillWidth: true
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "AXIS OVERVIEW"
-                            color: deck.textMuted
-                            font.family: deck.telemetryFont
-                            font.pixelSize: deck.scale(9)
-                            font.bold: true
-                        }
-                        Text {
-                            text: "Physical control → configured transformation → virtual output"
-                            color: deck.textPrimary
-                            font.family: deck.displayFont
-                            font.pixelSize: deck.scale(14)
-                            font.bold: true
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                        }
-                    }
-                    SummaryChip {
-                        label: backend.vjoyReady ? "VJOY READY" : "VJOY ATTENTION"
-                        tone: backend.vjoyReady ? "healthy" : "attention"
-                    }
-                    SummaryChip {
-                        visible: root.selectedInputDeviceId.length > 0
-                        label: root.selectedInputDeviceConnected ? "SELECTED DEVICE CONNECTED"
-                            : "SELECTED DEVICE DISCONNECTED"
-                        tone: root.selectedInputDeviceConnected ? "healthy" : "attention"
-                    }
-                    DeckButton {
-                        objectName: "flightDeckAxesQuickMap"
-                        text: "QUICK MAP"
-                        subdued: true
-                        enabled: backend.selectedDeviceIsSpecific && backend.quickAssignAxisTargets.length > 0
-                        onClicked: root.requestQuickMap()
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "INPUT CONTEXT"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(8)
-                        font.bold: true
-                    }
-                    Text {
-                        text: inputDeviceName
-                        color: deck.textSecondary
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(10)
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        text: "PROFILE"
-                        color: deck.textMuted
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(8)
-                        font.bold: true
-                    }
-                    Text {
-                        text: backend.selectedProfileDisplayName || backend.selectedProfileName
-                        color: deck.textSecondary
-                        font.family: deck.telemetryFont
-                        font.pixelSize: deck.scale(10)
-                        Layout.maximumWidth: 240
-                        elide: Text.ElideRight
-                    }
-                }
-                Text {
-                    visible: !backend.selectedDeviceIsSpecific && !usingPresentationOverride
-                    text: "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices is an overview only and never chooses a controller for you."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-                Text {
-                    text: "Live meters consume the existing bounded presentation snapshot. Configuration remains available when no game is detected."
-                    color: deck.textMuted
-                    font.pixelSize: deck.scale(9)
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
-
-        FlightDeckCard {
-            tokens: deck
-            contentPadding: deck.cardPaddingCompact
-            visible: !root.hasVisibleAxes
-            Layout.fillWidth: true
-            implicitHeight: emptyContent.implicitHeight + contentPadding * 2
-            color: deck.secondarySurface
-            ColumnLayout {
-                id: emptyContent
-                anchors.fill: parent
-                anchors.margins: parent.contentPadding
-                spacing: deck.space8
-                Text {
-                    text: backend.selectedDeviceIsSpecific ? "NO PHYSICAL AXES AVAILABLE" : "SELECT A SPECIFIC CONTROLLER"
-                    color: deck.textPrimary
-                    font.family: deck.displayFont
-                    font.pixelSize: deck.scale(15)
-                    font.bold: true
-                }
-                Text {
-                    text: backend.selectedDeviceIsSpecific
-                        ? root.selectedInputDeviceConnected
-                            ? "The selected saved controller has no axis descriptors. Existing mappings are not changed while it is unavailable."
-                            : root.inputDeviceName + " is disconnected. Its saved axis routes remain available for editing."
-                        : "Use the SELECTED DEVICE dropdown in the top bar to choose a specific controller. All Devices only shows overview state."
-                    color: deck.textSecondary
-                    font.pixelSize: deck.scale(10)
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-                DeckButton {
-                    visible: backend.selectedDeviceIsSpecific
-                    text: "OPEN DEVICES & SETUP"
-                    Layout.preferredWidth: 172
-                    onClicked: root.navigateToPage(2)
-                }
-            }
+            heading: root.preparationHeading()
+            detail: root.preparationDetail()
+            statusPills: root.preparationPills()
+            primaryText: root.preparationPrimaryText()
+            secondaryText: root.preparationSecondaryText()
+            // Retain the established quick-map test/control identity.  Its
+            // label is state-specific rather than a permanently disabled
+            // toolbar action.
+            primaryObjectName: "flightDeckAxesQuickMap"
+            secondaryObjectName: "flightDeckAxesInputSecondary"
+            onPrimaryAction: root.invokePreparationPrimary()
+            onSecondaryAction: root.invokePreparationSecondary()
         }
 
         Repeater {
-            model: root.axisItems
+            model: root.canShowAxisCards ? root.axisItems : []
             delegate: AxisCard {
                 required property var modelData
                 axis: modelData
@@ -1414,7 +1428,9 @@ Flickable {
                 Layout.fillWidth: true
             }
             Text {
-                text: "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
+                text: root.guidedPresentation
+                    ? "Replace moves the existing route. Use Full only when you need to combine sources."
+                    : "Replace moves the route. Mix creates the same explicit canonical mixer used by the Graphical Editor."
                 color: deck.textMuted
                 font.pixelSize: deck.scale(10)
                 wrapMode: Text.WordWrap
@@ -1445,9 +1461,20 @@ Flickable {
                     onClicked: root.replaceMappingConflict()
                 }
                 DeckButton {
+                    visible: !root.guidedPresentation
                     text: "MIX"
                     Layout.preferredWidth: 88
                     onClicked: { routeConflictDialog.close(); mixerModeDialog.open(); }
+                }
+                DeckButton {
+                    visible: root.guidedPresentation
+                    text: "OPEN IN FULL"
+                    subdued: true
+                    onClicked: {
+                        routeConflictDialog.close()
+                        root.requestFullAccess(6, { source: "axis-conflict", axisIndex: root.conflictAxis,
+                            target: root.conflictTarget, owner: root.conflictOwner })
+                    }
                 }
             }
         }

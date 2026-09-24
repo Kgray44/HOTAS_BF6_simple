@@ -45,6 +45,11 @@ Page {
     // Flight Deck pages keep their established signals, but their host routes
     // every destination through the shell's Guided/Full policy.
     signal flightDeckNavigationRequested(int page, var context)
+    // The header selector remains the single canonical selected-device model.
+    // Input pages use this relay to open that exact picker rather than a
+    // parallel page-local selector.
+    signal flightDeckDevicePickerRequested()
+    signal flightDeckSetupRequested(string intent, var context)
     property var flightDeckReadiness: null
     property string flightDeckDevicesContext: ""
     // A durable AppIssue payload is the Flight Deck handoff contract. It is
@@ -1980,6 +1985,9 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "axes" }) }
+                onRequestDevicePicker: root.flightDeckDevicePickerRequested()
+                onRequestSetup: function(intent, context) { root.flightDeckSetupRequested(intent, context) }
+                onRequestFullAccess: function(page, context) { root.flightDeckFullAccessRequested(page, context) }
                 onRequestAxisLearning: function(target) { root.openFlightDeckAxisLearning(target) }
                 onRequestQuickMap: root.openFlightDeckQuickAxisMap()
             }
@@ -1990,6 +1998,9 @@ Page {
                 anchors.fill: parent
                 readinessModel: root.flightDeckReadiness
                 onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "buttons" }) }
+                onRequestDevicePicker: root.flightDeckDevicePickerRequested()
+                onRequestSetup: function(intent, context) { root.flightDeckSetupRequested(intent, context) }
+                onRequestFullAccess: function(page, context) { root.flightDeckFullAccessRequested(page, context) }
                 onNavigateToProfile: function(profileId) {
                     root.flightDeckProfileContext = profileId
                     root.flightDeckNavigationRequested(5, { source: "buttons", profileId: profileId })
@@ -2115,6 +2126,9 @@ Page {
                 onNavigateToPage: function(page) { root.flightDeckNavigationRequested(page, { source: "devices" }) }
                 onRequestFullAccess: function(context) {
                     root.flightDeckFullAccessRequested(2, context)
+                }
+                onRequestSetup: function(intent, context) {
+                    root.flightDeckSetupRequested(intent, context)
                 }
                 onRequestProfileWorkflow: function(rigId, mode) {
                     root.flightDeckProfileCreationRequest = {

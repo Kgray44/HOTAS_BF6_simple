@@ -3054,6 +3054,11 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
                 && findVisualItemByObjectName(axes, QStringLiteral("flightDeckAxisLearn_0"))
                 && hidden(findQuickItemByObjectName(axes, QStringLiteral("flightDeckAxesProcessingDisclosure_0")))
                 && hidden(findQuickItemByObjectName(axes, QStringLiteral("flightDeckAxesAdvancedControls_0")));
+            auto *axesInputStatus = findVisualItemByObjectName(axes,
+                QStringLiteral("flightDeckAxesInputStatus"));
+            const bool axesSharedPreparation = axesInputStatus && axesInputStatus->isVisible()
+                && !axesInputStatus->property("heading").toString().isEmpty()
+                && !axesInputStatus->property("detail").toString().isEmpty();
             axes->setProperty("axisPresentationOverride", QVariant{});
 
             if (!selectPage(surface, 1)) return false;
@@ -3077,6 +3082,11 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
                     QStringLiteral("flightDeckButtonsBehaviorDisclosure_") + QString::number(buttonIndex)))
                 && hidden(findQuickItemByObjectName(buttons,
                     QStringLiteral("flightDeckButtonsBehaviorControls_") + QString::number(buttonIndex)));
+            auto *buttonsInputStatus = findVisualItemByObjectName(buttons,
+                QStringLiteral("flightDeckButtonsInputStatus"));
+            const bool buttonsSharedPreparation = buttonsInputStatus && buttonsInputStatus->isVisible()
+                && !buttonsInputStatus->property("heading").toString().isEmpty()
+                && !buttonsInputStatus->property("detail").toString().isEmpty();
 
             if (!selectPage(surface, 5)) return false;
             auto *profilesPage = qobject_cast<QQuickItem *>(pageItem(surface, 5));
@@ -3102,7 +3112,8 @@ bool verifyFlightDeckSettings(hotas::AppBackend &backend, hotas::ThemeManager &t
                 && hidden(findQuickItemByObjectName(settingsPage, QStringLiteral("flightDeckSettingsVirtualOutputGroup")))
                 && hidden(findQuickItemByObjectName(settingsPage, QStringLiteral("flightDeckSettingsHidHideGroup")))
                 && hidden(findQuickItemByObjectName(settingsPage, QStringLiteral("flightDeckSettingsMaintenanceGroup")));
-            return axesBasic && buttonsBasic && profilesBasic && devicesBasic && settingsBasic;
+            return axesBasic && axesSharedPreparation && buttonsBasic && buttonsSharedPreparation
+                && profilesBasic && devicesBasic && settingsBasic;
         }
         if (!selectPage(surface, 0)) { qWarning() << "guidance groups could not select Axes"; return false; }
         settlePresentation();
@@ -4006,6 +4017,41 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || !selectedProfileSelector->property("visible").toBool()
         || sharedTitle->property("text").toString() != QStringLiteral("Overview")) {
         return failPresentationLifecycleTest(QStringLiteral("Flight Deck shared header is incomplete on Overview"));
+    }
+    // The always-present controller picker is the one direct prerequisite
+    // action shared by Axes and Buttons. Opening it must remain a harmless
+    // view/selection affordance: pointer and keyboard can reach it without
+    // activating a rig, changing Mapping On/Off, or rebuilding configuration.
+    const QVariantMap pickerConfigurationBefore = flightDeckConfigurationSnapshot(backend);
+    auto *selectedDevicePopup = window->findChild<QObject *>(
+        QStringLiteral("flightDeckSelectedDevicePopup"));
+    QQmlExpression devicePickerAccessible(qmlContext(selectedDeviceSelector), selectedDeviceSelector,
+        QStringLiteral("Accessible.name"));
+    const QString devicePickerAccessibleName = devicePickerAccessible.evaluate().toString();
+    const bool devicePickerReadable = selectedDeviceSelector->implicitWidth() >= 150.0
+        && selectedProfileSelector->implicitWidth() >= 150.0
+        && !devicePickerAccessible.hasError()
+        && devicePickerAccessibleName.contains(QStringLiteral("Selected Device"));
+    const bool devicePickerPointer = selectedDevicePopup
+        && clickFlightDeckSettingsItem(window, window->contentItem(), selectedDeviceSelector)
+        && selectedDevicePopup->property("visible").toBool();
+    if (devicePickerPointer) QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (selectedDeviceSelector) selectedDeviceSelector->forceActiveFocus(Qt::TabFocusReason);
+    const bool devicePickerKeyboardFocus = selectedDeviceSelector
+        && selectedDeviceSelector->hasActiveFocus();
+    if (devicePickerKeyboardFocus) QTest::keyClick(window, Qt::Key_Return);
+    settlePresentation();
+    const bool devicePickerKeyboard = devicePickerKeyboardFocus && selectedDevicePopup
+        && selectedDevicePopup->property("visible").toBool();
+    if (devicePickerKeyboard) QTest::keyClick(window, Qt::Key_Escape);
+    settlePresentation();
+    if (!devicePickerReadable || !devicePickerPointer || !devicePickerKeyboard
+        || flightDeckConfigurationSnapshot(backend) != pickerConfigurationBefore) {
+        return failPresentationLifecycleTest(QStringLiteral(
+            "Flight Deck direct controller picker was not readable, pointer/keyboard reachable, or configuration-neutral "
+            "(readable=%1 pointer=%2 keyboard=%3)")
+            .arg(devicePickerReadable).arg(devicePickerPointer).arg(devicePickerKeyboard));
     }
     // The default strip is one restrained toolbar row.  It may grow when text
     // genuinely needs to wrap, but it must not retain the former permanent
@@ -6716,7 +6762,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!devices || devices->property("readiness").toMap() != sharedReadiness || controllerCount != 4
         || !emptyState || emptyState->property("visible").toBool() || !controllerRepeater
         || controllerRepeater->property("count").toInt() != 4
-        || firstAction != QStringLiteral("SELECTED") || secondAction != QStringLiteral("SELECT DEVICE")
+        || firstAction != QStringLiteral("SET UP THIS CONTROLLER") || secondAction != QStringLiteral("SET UP THIS CONTROLLER")
         || thirdAction != QStringLiteral("VERIFY CONTROLLER") || fourthAction != QStringLiteral("RESCAN")
         || !textFitsCardSafeArea(longName, longNameCard)
         || !multiCaptured) {

@@ -383,6 +383,10 @@ Flickable {
 
         FlightDeckCard {
             objectName: "flightDeckPrioritizedAttention"
+            // A clean inspection should leave the overview calm.  The ready
+            // summary above remains available; this card exists only when
+            // there is a concrete item the operator can review.
+            visible: (root.setupTruth.issues || []).length > 0 || root.issueHandoffMessage.length > 0
             tokens: deck
             Layout.fillWidth: true
             implicitHeight: attentionContent.implicitHeight + contentPadding * 2
