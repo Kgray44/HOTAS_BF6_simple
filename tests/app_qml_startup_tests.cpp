@@ -4101,9 +4101,19 @@ bool verifyOverviewIssueTransitions(hotas::AppBackend &backend, hotas::ThemeMana
         return failPresentationLifecycleTest(QStringLiteral("Overview uninspected empty transition lost Check Setup"));
     publishIssues({issueC});
     if (subsequentIssue.evaluate().toString() != QStringLiteral("C") || !reviewIssue->isVisible()
-        || !clickFlightDeckSettingsItem(window, qobject_cast<QQuickItem *>(overview), reviewIssue)
-        || subsequentNavigation.size() != 1 || subsequentNavigation.at(0).at(0).toMap() != issueC)
+        || !reviewIssue->isEnabled())
         return failPresentationLifecycleTest(QStringLiteral("Overview subsequent C was not reachable on the retained page"));
+    // Exercise the rendered control's keyboard path after it reappears. A
+    // still-loaded page must not require a new pointer hit-test publication.
+    reviewIssue->forceActiveFocus(Qt::TabFocusReason);
+    settlePresentation();
+    if (!reviewIssue->hasActiveFocus())
+        return failPresentationLifecycleTest(QStringLiteral("Overview subsequent C Review could not receive keyboard focus"));
+    QTest::keyClick(window, Qt::Key_Space);
+    settlePresentation();
+    if (subsequentNavigation.size() != 1 || subsequentNavigation.at(0).at(0).toMap() != issueC)
+        return failPresentationLifecycleTest(QStringLiteral("Overview subsequent C keyboard Review did not open its exact current issue (signals=%1)")
+            .arg(subsequentNavigation.size()));
     settlePresentation();
     issueDevices = pageItem(surface, 2);
     if (!issueDevices || issueDevices->property("requestedIssueTarget").toMap() != issueC)
