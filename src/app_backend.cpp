@@ -2954,6 +2954,23 @@ bool AppBackend::configureSidebarActivationFixtureForTest()
     return true;
 }
 
+bool AppBackend::configureNeverCheckedOutputFixtureForTest()
+{
+    if (!configureSetupTruthReadyToActivateFixtureForTest()) return false;
+    // Keep the completed general plan, but remove the selected output's evidence.
+    m_virtualOutputReadinessPlans.clear();
+    m_setupTruthSnapshot = buildSetupTruthSnapshot();
+    m_setupTruthCheckSnapshot = m_setupTruthSnapshot;
+    emit stateChanged();
+    return true;
+}
+
+void AppBackend::publishSetupTruthSnapshotForTest(const QVariantMap &snapshot)
+{
+    m_setupTruthSnapshot = snapshot;
+    emit stateChanged();
+}
+
 bool AppBackend::configureSetupTruthReadyToActivateFixtureForTest()
 {
     if (!configureRigOwnedOutputFixtureForTest()) return false;
@@ -10461,6 +10478,14 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
     addGroup(u"vjoy"_qs, u"Virtual output"_qs, vjoyState, vjoyDetail,
         QVariantMap{{u"outputs"_qs, outputEvidence}, {u"rigId"_qs, rig ? rig->id : QString{}},
                     {u"outputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{}}});
+    // The selected primary output owns these facts; the general plan may
+    // contain a completed inspection of a different output.
+    QVariantMap outputGroup = groups.last().toMap();
+    const QVariantMap primaryOutputEvidence = outputEvidence.isEmpty()
+        ? QVariantMap{} : outputEvidence.first().toMap();
+    outputGroup.insert(u"checked"_qs, primaryOutputEvidence.value(u"checked"_qs).toBool());
+    outputGroup.insert(u"fresh"_qs, primaryOutputEvidence.value(u"fresh"_qs).toBool());
+    groups.last() = outputGroup;
 
     SetupTruthStatus hidState = SetupTruthStatus::Unknown;
     QString hidDetail = u"No fresh HidHide inspection has completed."_qs;

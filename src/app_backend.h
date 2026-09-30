@@ -400,6 +400,8 @@ public:
     bool configureUnmappedRigActivationFixtureForTest();
     bool configureRigProfileResolutionFixtureForTest(const QString &mode);
     bool configureRigOwnedOutputFixtureForTest();
+    bool configureNeverCheckedOutputFixtureForTest();
+    void publishSetupTruthSnapshotForTest(const QVariantMap &snapshot);
     bool configureSidebarActivationFixtureForTest();
     bool configureSetupTruthReadyToActivateFixtureForTest();
     bool configureStartupSetupTruthFixtureForTest();

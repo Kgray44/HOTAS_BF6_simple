@@ -27,6 +27,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSignalSpy>
 #include <QStringList>
 #include <QStandardPaths>
 #include <QTest>
@@ -3957,6 +3958,174 @@ bool verifyFlightDeckSidebarActivationOnly(hotas::AppBackend &backend,
     return true;
 }
 
+bool verifyOverviewIssueTransitions(hotas::AppBackend &backend, hotas::ThemeManager &themeManager)
+{
+    themeManager.setCurrentExperience(QStringLiteral("Flight Deck"));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    engine.rootContext()->setContextProperty(QStringLiteral("themeManager"), &themeManager);
+    engine.loadFromModule(u"HOTASMapper"_qs, u"Main"_qs);
+    auto *window = engine.rootObjects().isEmpty() ? nullptr
+        : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (!window) return false;
+    settlePresentation();
+    QObject *surface = window->findChild<QObject *>(QStringLiteral("flightDeckSurface"));
+    if (!surface || !selectPage(surface, 8)) return false;
+    QObject *overview = pageItem(surface, 8);
+    if (!overview) return false;
+    const QVariantMap setupTruthBeforeReadiness = backend.setupTruthSnapshot();
+    QVariantMap noIssueTruth{{QStringLiteral("fresh"), true},
+        {QStringLiteral("setupTargetRigId"), backend.editingDeviceRigId()},
+        {QStringLiteral("issues"), QVariantList{}}, {QStringLiteral("groups"), QVariantList{}}};
+    QVariantMap uninspectedTruth = noIssueTruth;
+    uninspectedTruth.insert(QStringLiteral("fresh"), false);
+    QQuickItem *overviewAction = nullptr;
+    QObject *readinessModel = surface->findChild<QObject *>(QStringLiteral("flightDeckReadinessModel"));
+    if (!readinessModel) return false;
+    const auto inputStatusFor = [&](const QString &truth, const QString &rigId) {
+        QQmlExpression expression(qmlContext(readinessModel), readinessModel,
+            QStringLiteral("editorInputStatus({kind:'buttons', selectedDeviceId:'saved-member', "
+                "selectedDeviceConnected:true, eligibleMemberCount:1, capabilityKnown:true, "
+                "capabilityCount:12, assignedCount:2, verified:true, rigId:'%2', setupTruth:%1})")
+                .arg(truth, rigId));
+        return expression.evaluate().toMap();
+    };
+    const auto outputPillValue = [](const QVariantMap &status) {
+        const QVariantList pills = status.value(QStringLiteral("pills")).toList();
+        return pills.size() > 1 ? pills.at(1).toMap().value(QStringLiteral("value")).toString() : QString{};
+    };
+    const QVariantMap neverCheckedTruth = [] {
+        const QString priorName = QCoreApplication::applicationName();
+        QCoreApplication::setApplicationName(priorName + QStringLiteral("-output-contract"));
+        QVariantMap snapshot;
+        {
+            hotas::AppBackend fixtureBackend;
+            if (fixtureBackend.configureNeverCheckedOutputFixtureForTest())
+                snapshot = fixtureBackend.setupTruthSnapshot();
+        }
+        QCoreApplication::setApplicationName(priorName);
+        return snapshot;
+    }();
+    if (neverCheckedTruth.isEmpty())
+        return failPresentationLifecycleTest(QStringLiteral("Could not construct never-checked backend fixture"));
+    QVariantMap neverCheckedOutput;
+    for (const QVariant &entry : neverCheckedTruth.value(QStringLiteral("groups")).toList()) {
+        if (entry.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("vjoy"))
+            neverCheckedOutput = entry.toMap();
+    }
+    const QVariantMap presentUncheckedStatus = inputStatusFor(QString::fromUtf8(
+        QJsonDocument::fromVariant(neverCheckedTruth).toJson(QJsonDocument::Compact)),
+        neverCheckedTruth.value(QStringLiteral("setupTargetRigId")).toString());
+    if (neverCheckedOutput.isEmpty()
+        || neverCheckedOutput.value(QStringLiteral("status")).toString() != QStringLiteral("UNKNOWN / INSPECTION FAILED")
+        || !neverCheckedOutput.contains(QStringLiteral("checked"))
+        || neverCheckedOutput.value(QStringLiteral("checked")).toBool()
+        || neverCheckedOutput.value(QStringLiteral("checking")).toBool()
+        || neverCheckedOutput.value(QStringLiteral("fresh")).toBool()
+        || outputPillValue(presentUncheckedStatus) != QStringLiteral("NOT CHECKED")
+        || presentUncheckedStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output has not been checked")
+        || presentUncheckedStatus.value(QStringLiteral("detail")).toString().contains(QStringLiteral("Last checked result"))
+        ) return failPresentationLifecycleTest(QStringLiteral("Backend never-checked output contract was not preserved"));
+    // Reconcile only the displayed selection. Captured review targets still
+    // reject removed IDs. Exercise Next and Review through rendered buttons.
+    const QString priorGuidance = themeManager.guidanceLevel();
+    themeManager.chooseGuidanceLevel(QStringLiteral("Guided"));
+    const auto issue = [&](const QString &id) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("title"), id},
+            {QStringLiteral("explanation"), QStringLiteral("Transition fixture")},
+            {QStringLiteral("severity"), QStringLiteral("attention")},
+            {QStringLiteral("navigationTarget"), QVariantMap{{QStringLiteral("page"), 10},
+                {QStringLiteral("section"), QStringLiteral("verification")}}}};
+    };
+    const QVariantMap issueA = issue(QStringLiteral("A"));
+    const QVariantMap issueB = issue(QStringLiteral("B"));
+    const QVariantMap issueC = issue(QStringLiteral("C"));
+    const auto publishIssues = [&](const QVariantList &issues) {
+        QVariantMap truth = noIssueTruth;
+        truth.insert(QStringLiteral("issues"), issues);
+        backend.publishSetupTruthSnapshotForTest(truth);
+        overview->setProperty("setupTruthOverride", truth);
+        settlePresentation();
+    };
+    overview->setProperty("guidedIssueId", QString{});
+    overview->setProperty("guidedIssueIndex", 0);
+    publishIssues({issueA, issueB});
+    auto *nextIssue = findQuickItemByObjectName(qobject_cast<QQuickItem *>(overview),
+        QStringLiteral("flightDeckAdditionalIssueAction"));
+    if (!nextIssue || !nextIssue->isVisible()
+        || !clickFlightDeckSettingsItem(window, qobject_cast<QQuickItem *>(overview), nextIssue)
+        || overview->property("guidedIssueId").toString() != QStringLiteral("B"))
+        return failPresentationLifecycleTest(QStringLiteral("Overview Next did not select B"));
+    publishIssues({issueB, issueA});
+    QQmlExpression selectedIssue(qmlContext(overview), overview, QStringLiteral("prioritizedIssue().id"));
+    if (selectedIssue.evaluate().toString() != QStringLiteral("B"))
+        return failPresentationLifecycleTest(QStringLiteral("Overview lost selected ID across reorder"));
+    publishIssues({issueA});
+    QSignalSpy issueNavigation(overview, SIGNAL(navigateToIssue(QVariant)));
+    QQmlExpression staleReview(qmlContext(overview), overview, QStringLiteral("reviewIssue({id:'B'})"));
+    if (!issueNavigation.isValid() || staleReview.evaluate().toBool() || !issueNavigation.isEmpty())
+        return failPresentationLifecycleTest(QStringLiteral("Overview retargeted a captured stale review"));
+    auto *reviewIssue = findVisualItemByObjectName(qobject_cast<QQuickItem *>(overview),
+        QStringLiteral("flightDeckPrioritizedIssueReview"));
+    if (selectedIssue.evaluate().toString() != QStringLiteral("A") || !reviewIssue || !reviewIssue->isVisible()
+        || !clickFlightDeckSettingsItem(window, qobject_cast<QQuickItem *>(overview), reviewIssue)
+        || issueNavigation.size() != 1 || issueNavigation.at(0).at(0).toMap() != issueA)
+        return failPresentationLifecycleTest(QStringLiteral("Overview surviving A was not reachable by exact review"));
+    settlePresentation();
+    QObject *issueDevices = pageItem(surface, 2);
+    if (!issueDevices || issueDevices->property("requestedIssueTarget").toMap() != issueA)
+        return failPresentationLifecycleTest(QStringLiteral("Overview A review did not open its current Devices target"));
+    if (!selectPage(surface, 8)) return false;
+    settlePresentation();
+    overview = pageItem(surface, 8);
+    if (!overview) return failPresentationLifecycleTest(QStringLiteral("Overview did not return after A review"));
+    reviewIssue = findVisualItemByObjectName(qobject_cast<QQuickItem *>(overview),
+        QStringLiteral("flightDeckPrioritizedIssueReview"));
+    nextIssue = findQuickItemByObjectName(qobject_cast<QQuickItem *>(overview),
+        QStringLiteral("flightDeckAdditionalIssueAction"));
+    QSignalSpy subsequentNavigation(overview, SIGNAL(navigateToIssue(QVariant)));
+    QQmlExpression subsequentIssue(qmlContext(overview), overview, QStringLiteral("prioritizedIssue().id"));
+    overview->setProperty("guidedIssueId", QStringLiteral("B"));
+    publishIssues({issueA, issueB});
+    publishIssues({});
+    QQmlExpression emptyIssue(qmlContext(overview), overview, QStringLiteral("prioritizedIssue() === null"));
+    overviewAction = findVisualItemByObjectName(qobject_cast<QQuickItem *>(overview),
+        QStringLiteral("flightDeckOverviewNextSetupAction"));
+    if (!reviewIssue || !nextIssue || !emptyIssue.evaluate().toBool() || reviewIssue->isVisible() || nextIssue->isVisible()
+        || !overviewAction || overviewAction->property("text").toString() != QStringLiteral("VIEW SETUP"))
+        return failPresentationLifecycleTest(QStringLiteral("Overview empty transition invented an issue"));
+    overview->setProperty("setupTruthOverride", uninspectedTruth);
+    settlePresentation();
+    if (!emptyIssue.evaluate().toBool() || reviewIssue->isVisible()
+        || overviewAction->property("text").toString() != QStringLiteral("CHECK SETUP"))
+        return failPresentationLifecycleTest(QStringLiteral("Overview uninspected empty transition lost Check Setup"));
+    publishIssues({issueC});
+    if (subsequentIssue.evaluate().toString() != QStringLiteral("C") || !reviewIssue->isVisible()
+        || !clickFlightDeckSettingsItem(window, qobject_cast<QQuickItem *>(overview), reviewIssue)
+        || subsequentNavigation.size() != 1 || subsequentNavigation.at(0).at(0).toMap() != issueC)
+        return failPresentationLifecycleTest(QStringLiteral("Overview subsequent C was not reachable on the retained page"));
+    settlePresentation();
+    issueDevices = pageItem(surface, 2);
+    if (!issueDevices || issueDevices->property("requestedIssueTarget").toMap() != issueC)
+        return failPresentationLifecycleTest(QStringLiteral("Overview C review did not open its current Devices target"));
+    if (!selectPage(surface, 8)) return false;
+    settlePresentation();
+    overview = pageItem(surface, 8);
+    if (!overview) return false;
+    overview->setProperty("setupTruthOverride", QVariant{});
+    overview->setProperty("guidedIssueId", QString{});
+    overview->setProperty("guidedIssueIndex", 0);
+    backend.publishSetupTruthSnapshotForTest(setupTruthBeforeReadiness);
+    surface->setProperty("flightDeckIssueTarget", QVariantMap{});
+    surface->setProperty("flightDeckDevicesContext", QString{});
+    themeManager.chooseGuidanceLevel(priorGuidance);
+    settlePresentation();
+    std::fprintf(stderr, "overview_issue_transitions=surviving subsequent reorder stale-rejection passed; output_contract=backend-present-never-checked passed\n");
+
+    themeManager.setCurrentExperience(QStringLiteral("Existing"));
+    return true;
+}
+
 bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &themeManager,
                            const QString &appearance)
 {
@@ -4598,6 +4767,8 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
             .arg(truth, rigId)).toMap();
     };
     const QVariantMap uninspectedInputStatus = inputStatusFor(QStringLiteral("{fresh:false,groups:[]}"));
+    const QVariantMap legacyUnknownStatus = inputStatusFor(QStringLiteral(
+        "{fresh:false,groups:[{id:'vjoy',status:'UNKNOWN / INSPECTION FAILED',fresh:false}]}"));
     const QVariantMap checkingInputStatus = inputStatusFor(QStringLiteral(
         "{fresh:false,groups:[{id:'vjoy',status:'CHECKING',checking:true,checked:false,fresh:false,detail:'Scoped output'}]}"));
     const QVariantMap readyInputStatus = inputStatusFor(QStringLiteral(
@@ -4622,6 +4793,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
         || hidHideAttention.value(QStringLiteral("tone")).toString() != QStringLiteral("attention")
         || uninspectedInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Virtual output has not been checked")
         || outputPillValue(uninspectedInputStatus) != QStringLiteral("NOT CHECKED")
+        || outputPillValue(legacyUnknownStatus) != QStringLiteral("NOT CHECKED")
         || checkingInputStatus.value(QStringLiteral("heading")).toString() != QStringLiteral("Checking virtual output")
         || outputPillValue(checkingInputStatus) != QStringLiteral("CHECKING")
         || checkingInputStatus.value(QStringLiteral("primaryAction")).toString() != QStringLiteral("check")
@@ -4689,6 +4861,7 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!overview) return failPresentationLifecycleTest(QStringLiteral("Flight Deck did not restore Overview after the uninspected route"));
     overview->setProperty("setupTruthOverride", QVariant{});
     settlePresentation();
+
 
     QObject *attentionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckPrioritizedAttention"));
     QObject *connectionCard = overview->findChild<QObject *>(QStringLiteral("flightDeckConnectionEvidence"));
@@ -5661,8 +5834,10 @@ bool verifyFlightDeckShell(hotas::AppBackend &backend, hotas::ThemeManager &them
     if (!transferDialog || !transferDialog->property("visible").toBool()
         || surface->property("currentPage").toInt() != 5
         || !captureShell(QStringLiteral("profiles-transfer"))) {
-        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 transfer entry leaked to a non-native host")
-            .arg(appearance));
+        return failPresentationLifecycleTest(QStringLiteral("Flight Deck %1 transfer entry leaked to a non-native host (dialog=%2 visible=%3 page=%4 window=%5x%6)")
+            .arg(appearance).arg(transferDialog != nullptr)
+            .arg(transferDialog && transferDialog->property("visible").toBool())
+            .arg(surface->property("currentPage").toInt()).arg(window->width()).arg(window->height()));
     }
     QTest::keyClick(window, Qt::Key_Escape);
     settlePresentation();
@@ -10158,7 +10333,7 @@ int main(int argc, char *argv[])
         const bool axesLoaded = setupReady && verifyFlightDeckAxesQmlLoad(backend, themeManager);
         const bool basicPolicy = axesLoaded && verifyFlightDeckGuidedBasicMode(backend, themeManager);
         const bool setupJourney = basicPolicy && verifyFlightDeckShell(backend, themeManager, QStringLiteral("Dark"));
-        const bool qualified = setupJourney;
+        const bool qualified = setupJourney && verifyOverviewIssueTransitions(backend, themeManager);
         const bool released = backend.deviceRigs().isEmpty();
         std::fprintf(stderr, "guidance_qualification=guided-basic-allowlist full-only-recovery basic-mapping-and-test result=%s\n",
             qualified && released ? "PASS" : "FAIL");

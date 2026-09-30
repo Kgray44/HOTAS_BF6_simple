@@ -84,7 +84,13 @@ Flickable {
         const issues = setupTruth.issues || []
         if (issues.length === 0) return null
         if (!guidedPresentation) return validIssue(issues[0]) ? issues[0] : null
-        if (guidedIssueId.length > 0) return currentIssueById(guidedIssueId)
+        if (guidedIssueId.length > 0) {
+            const selected = currentIssueById(guidedIssueId)
+            if (validIssue(selected)) return selected
+            // Reconcile the dashboard only. reviewIssue still validates the
+            // exact ID captured by any previously initiated action.
+            return validIssue(issues[0]) ? issues[0] : null
+        }
         const index = Math.max(0, Math.min(guidedIssueIndex, issues.length - 1))
         return validIssue(issues[index]) ? issues[index] : null
     }
@@ -94,8 +100,8 @@ Flickable {
         if (issues.length === 0) return false
         const current = prioritizedIssue()
         if (!current) {
-            // A removed selection never redirects itself. Choosing Next is an
-            // explicit request to select a current issue again.
+            // Explicit cycling can recover a selection when the current
+            // publication has no valid prioritized entry.
             guidedIssueId = String(issues[0].id || "")
             guidedIssueIndex = 0
             return validIssue(issues[0])

@@ -329,8 +329,10 @@ Item {
         const scopeMatches = !requestedRigId.length || !snapshotRigId.length || requestedRigId === snapshotRigId
         const hasOutputGroup = Boolean(output.present) && scopeMatches
         const outputChecking = hasOutputGroup && (Boolean(output.checking) || outputState === "CHECKING")
-        const outputChecked = hasOutputGroup && (Boolean(output.checked)
-            || (outputState.length > 0 && outputState !== "NOT CHECKED" && outputState !== "CHECKING"))
+        const outputChecked = hasOutputGroup && (Object.prototype.hasOwnProperty.call(output, "checked")
+            ? Boolean(output.checked)
+            : (outputState === "READY" || outputState === "READY TO ACTIVATE"
+                || outputState === "FAILED" || outputState === "UNAVAILABLE"))
         const outputFresh = outputChecked && (Object.prototype.hasOwnProperty.call(output, "fresh")
             ? Boolean(output.fresh) : Boolean(truth.fresh))
         const outputReady = outputFresh && (outputState === "READY" || outputState === "READY TO ACTIVATE")
