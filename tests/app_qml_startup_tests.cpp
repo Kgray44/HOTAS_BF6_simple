@@ -334,7 +334,7 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
             return failPresentationLifecycleTest(QStringLiteral("Human-Like Rapid Reversal lacks its stationary settling tail"));
         }
     }
-    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive")}) {
+    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), backend.activeProfileId(), 0, preset)) {
             return failPresentationLifecycleTest(QStringLiteral("Built-in Adaptive Response preset %1 was unavailable").arg(preset));
         }
@@ -352,7 +352,7 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
             }
         }
         const double predictorOnlyStep = human.value(QStringLiteral("maximumArtificialPredictorStep")).toDouble();
-        qInfo().noquote() << QStringLiteral("test_lab preset=%1 scenario=human_like mae=%2 rms=%3 p95=%4 max=%5 physical_reversal_ms=%6 detection_latency_ms=%7 opposite_lead_ms=%8 false_reversals=%9 predictor_only_step=%10 virtual_output_step=%11 settling_ms=%12")
+        qWarning().noquote() << QStringLiteral("test_lab preset=%1 scenario=human_like mae=%2 rms=%3 p95=%4 max=%5 physical_reversal_ms=%6 detection_latency_ms=%7 opposite_lead_ms=%8 false_reversals=%9 predictor_only_step=%10 virtual_output_step=%11 settling_ms=%12")
             .arg(preset).arg(human.value(QStringLiteral("meanAbsolutePredictionError")).toDouble(), 0, 'f', 5)
             .arg(human.value(QStringLiteral("rmsPredictionError")).toDouble(), 0, 'f', 5)
             .arg(human.value(QStringLiteral("p95PredictionError")).toDouble(), 0, 'f', 5)
@@ -364,7 +364,7 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
             .arg(predictorOnlyStep, 0, 'f', 5)
             .arg(human.value(QStringLiteral("maximumVirtualOutputStep")).toDouble(), 0, 'f', 5)
             .arg(human.value(QStringLiteral("settlingTimeMs")).toDouble(), 0, 'f', 1);
-        qInfo().noquote() << QStringLiteral("test_lab preset=%1 scenario=instant_torture predictor_only_step=%2 virtual_output_step=%3")
+        qWarning().noquote() << QStringLiteral("test_lab preset=%1 scenario=instant_torture predictor_only_step=%2 virtual_output_step=%3")
             .arg(preset).arg(torture.value(QStringLiteral("maximumArtificialPredictorStep")).toDouble(), 0, 'f', 5)
             .arg(torture.value(QStringLiteral("maximumVirtualOutputStep")).toDouble(), 0, 'f', 5);
         if (predictorOnlyStep > 0.030) {
