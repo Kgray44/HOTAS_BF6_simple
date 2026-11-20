@@ -467,6 +467,33 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+option(HOTAS_BUILD_ADAPTIVE_FORECAST_RESEARCH
+    "Build the V2.4.R0 offline forecastability research runners" OFF)
+if (HOTAS_BUILD_ADAPTIVE_FORECAST_RESEARCH)
+    function(add_adaptive_forecastability_runner target_name)
+        qt_add_executable(${target_name}
+            tests/adaptive_response_forecastability_research.cpp
+            src/mapping_types.h
+            src/adaptive_response.h
+            src/adaptive_response.cpp
+            src/response_curve.h
+            src/response_curve.cpp
+            src/automation_engine.h
+            src/automation_engine.cpp
+        )
+        target_link_libraries(${target_name} PRIVATE Qt6::Core)
+        target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        set_target_properties(${target_name} PROPERTIES WIN32_EXECUTABLE FALSE)
+    endfunction()
+
+    # The baseline executable has no research compile definition. The research
+    # executable is then compared against its exact production-output rows.
+    add_adaptive_forecastability_runner(adaptive_forecastability_baseline)
+    add_adaptive_forecastability_runner(adaptive_forecastability_research)
+    target_compile_definitions(adaptive_forecastability_research PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
