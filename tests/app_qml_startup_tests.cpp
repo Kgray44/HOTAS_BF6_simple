@@ -334,7 +334,7 @@ bool verifyAdaptiveResponseSimulator(hotas::AppBackend &backend)
             return failPresentationLifecycleTest(QStringLiteral("Human-Like Rapid Reversal lacks its stationary settling tail"));
         }
     }
-    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive")}) {
+    for (const QString &preset : {QStringLiteral("fast"), QStringLiteral("balanced"), QStringLiteral("aggressive"), QStringLiteral("extreme")}) {
         if (!backend.setAdaptiveResponsePresetAtContext(QStringLiteral("profile"), backend.activeProfileId(), 0, preset)) {
             return failPresentationLifecycleTest(QStringLiteral("Built-in Adaptive Response preset %1 was unavailable").arg(preset));
         }
