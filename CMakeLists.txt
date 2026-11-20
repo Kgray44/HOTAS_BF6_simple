@@ -467,6 +467,29 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1B-R2 is a compile-gated, offline-only directional ownership
+# revalidation.  It is never linked into DirectInput, vJoy, QML,
+# MappingWorker, or a production output target.
+option(HOTAS_BUILD_ADAPTIVE_R1BR2_REVALIDATION
+    "Build the V2.4.R1B-R2 direction-tagged Predictor D revalidation" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1BR2_REVALIDATION)
+    qt_add_executable(adaptive_response_r1br2_direction_tagged_revalidation
+        tests/adaptive_response_r1br2_direction_tagged_revalidation.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1br2_direction_tagged_revalidation PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1br2_direction_tagged_revalidation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_r1br2_direction_tagged_revalidation PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1br2_direction_tagged_revalidation PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
