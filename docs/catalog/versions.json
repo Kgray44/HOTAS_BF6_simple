@@ -302,5 +302,17 @@
       "Makes saved offline controllers, zero-connected state, selected-offline state, and automatic verified-controller switching visually clear across Legacy, Standard, and Top Gun.",
       "Repairs shared Settings row layout and fully themes the vJoy device SpinBox controls while applying generic Controller and Device wording to universal-controller UI."
     ]
+  },
+  {
+    "version": "2.0.4",
+    "title": "UI Responsiveness Hotfix",
+    "summary": "Restores smooth HOTAS BF6 UI responsiveness by separating high-frequency telemetry from controller and configuration state while preserving the mapper's low-latency report path.",
+    "highlights": [
+      "Separates live input and mapper telemetry notifications from slow controller, device, setup, and configuration state notifications.",
+      "Caches the controller presentation list and updates it only after a material inventory, active-selection, verification, or saved-controller change.",
+      "Prevents unchanged discovery ticks and telemetry refreshes from recreating Settings controller cards or re-running controller matching.",
+      "Uses a cached connected-controller count and one Settings-page controller-model reference instead of repeatedly reconstructing the C++ property in QML loops.",
+      "Adds a focused ten-second steady-state UI/control-plane performance contract while leaving the DirectInput-to-vJoy mapper hot path unchanged."
+    ]
   }
 ]

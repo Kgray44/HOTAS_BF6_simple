@@ -42,6 +42,21 @@ using namespace Qt::StringLiterals;
 
 namespace {
 
+bool sameControllerInventory(const QList<DiscoveredController> &left,
+                             const QList<DiscoveredController> &right)
+{
+    if (left.size() != right.size()) return false;
+    return std::equal(left.cbegin(), left.cend(), right.cbegin(),
+                      [](const DiscoveredController &first, const DiscoveredController &second) {
+        return first.name == second.name && first.directInputId == second.directInputId
+            && first.productGuid == second.productGuid && first.hidInstanceId == second.hidInstanceId
+            && first.vendorId == second.vendorId && first.productId == second.productId
+            && first.axes == second.axes && first.axisCount == second.axisCount
+            && first.buttonCount == second.buttonCount && first.povCount == second.povCount
+            && first.connected == second.connected && first.virtualDevice == second.virtualDevice;
+    });
+}
+
 QString automationProfileName(const MapperConfiguration &configuration, const QString &id)
 {
     if (const ControllerProfile *profile = findProfile(configuration, id)) return profile->name;
@@ -248,7 +263,21 @@ AppBackend::AppBackend(QObject *parent)
     connect(&m_snapshotTimer, &QTimer::timeout, this, &AppBackend::refreshUiSnapshot);
     connect(&m_controllerDiscoveryTimer, &QTimer::timeout, this, &AppBackend::refreshControllerInventory);
     connect(&m_worker, &MappingWorker::workerEvent, this, &AppBackend::appendEvent, Qt::QueuedConnection);
-    connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] { emit stateChanged(); }, Qt::QueuedConnection);
+    connect(&m_worker, &MappingWorker::hardwareStateChanged, this, [this] {
+        // A generic hardware change also covers vJoy readiness and status.
+        // Rebuild controller presentation only when the worker's active
+        // DirectInput identity changed; inventory changes use their dedicated
+        // low-frequency path below.
+        if (deviceId() != m_controllerUiModelLiveDeviceId) rebuildControllerUiModel();
+        emit stateChanged();
+    }, Qt::QueuedConnection);
+    m_uiPerformanceInstrumentationEnabled = qEnvironmentVariableIntValue("HOTAS_ENABLE_UI_PERFORMANCE_INSTRUMENTATION") != 0;
+    if (m_uiPerformanceInstrumentationEnabled) {
+        connect(this, &AppBackend::stateChanged, this, [this] { ++m_stateChangedNotifications; });
+        connect(this, &AppBackend::telemetryChanged, this, [this] { ++m_telemetryChangedNotifications; });
+        connect(this, &AppBackend::inputTelemetryChanged, this, [this] { ++m_inputTelemetryChangedNotifications; });
+        connect(this, &AppBackend::controllersChanged, this, [this] { ++m_controllersChangedNotifications; });
+    }
     connect(&m_worker, &MappingWorker::buttonConfigurationSuggested, this,
             &AppBackend::initializeDefaultButtonMappings, Qt::QueuedConnection);
     m_snapshotTimer.setInterval(16); // UI-only latest-state projection, never the mapping cadence.
@@ -298,6 +327,7 @@ AppBackend::AppBackend(QObject *parent)
         m_updateReply->abort();
     });
     rebuildSelectedAxisCurve();
+    rebuildControllerUiModel();
     appendEvent(u"HOTAS Mapper ready"_qs);
     // The mapping thread consumes physical reports while the GUI may be
     // rebuilding editor data. HighPriority is intentionally below
@@ -865,9 +895,16 @@ QString AppBackend::deviceName() const { return m_worker.deviceSnapshot().name; 
 QString AppBackend::deviceId() const { return m_worker.deviceSnapshot().id; }
 QVariantList AppBackend::controllers() const
 {
+    if (m_uiPerformanceInstrumentationEnabled) ++m_controllerGetterCalls;
+    return m_controllerUiModel;
+}
+
+bool AppBackend::rebuildControllerUiModel()
+{
     QVariantList result;
     QSet<QString> represented;
     const QString liveId = deviceId();
+    int connectedCount = 0;
     for (const DiscoveredController &controller : m_discoveredControllers) {
         if (controller.virtualDevice) continue;
         const ControllerMatch match = ControllerManager::match(controller, m_configuration.savedControllers);
@@ -887,6 +924,7 @@ QVariantList AppBackend::controllers() const
                        : u"Connected · Verified"_qs);
         represented.insert(match.recordId);
         result.append(item);
+        if (controller.connected) ++connectedCount;
     }
     for (const SavedControllerRecord &record : m_configuration.savedControllers) {
         if (represented.contains(record.id)) continue;
@@ -899,7 +937,13 @@ QVariantList AppBackend::controllers() const
             {u"state"_qs, record.id == m_configuration.activeControllerRecordId
                 ? u"Selected · Offline · Verified"_qs : u"Offline · Verified"_qs}});
     }
-    return result;
+    m_controllerUiModelLiveDeviceId = liveId;
+    if (m_controllerUiModel == result) return false;
+    m_controllerUiModel = std::move(result);
+    m_connectedControllerCount = connectedCount;
+    if (m_uiPerformanceInstrumentationEnabled) ++m_controllerUiModelRebuilds;
+    emit controllersChanged();
+    return true;
 }
 QString AppBackend::activeControllerRecordId() const { return m_configuration.activeControllerRecordId; }
 bool AppBackend::autoSwitchVerifiedController() const { return m_configuration.autoSwitchVerifiedController; }
@@ -3075,6 +3119,7 @@ void AppBackend::rememberCurrentController()
     m_configuration.preferredDeviceId = controller->directInputId;
     ConfigStore::save(m_configuration);
     m_worker.updateConfiguration(m_configuration);
+    rebuildControllerUiModel();
     appendEvent(QString(u"Verified controller remembered: %1"_qs).arg(controller->name));
 }
 
@@ -3157,6 +3202,7 @@ bool AppBackend::setActiveController(const QString &recordId)
                 m_configuration = targetConfiguration;
                 ConfigStore::save(m_configuration);
                 rebuildSelectedAxisCurve();
+                rebuildControllerUiModel();
                 emit selectedAxisCurveChanged();
                 appendEvent(reusedExistingVjoy
                     ? QString(u"Active controller switched to %1; existing vJoy capability superset was reused"_qs).arg(selectedTarget.name)
@@ -3186,6 +3232,7 @@ bool AppBackend::selectNewController(const QString &directInputId)
     m_configuration.activeControllerRecordId.clear();
     m_configuration.preferredDeviceId = target->directInputId;
     persistAndApply();
+    rebuildControllerUiModel();
     appendEvent(QString(u"Selected new controller for explicit verification: %1"_qs).arg(target->name));
     startExplicitNewControllerVerification(target->directInputId, target->name);
     return true;
@@ -3237,6 +3284,7 @@ bool AppBackend::forgetController(const QString &recordId)
         m_configuration.preferredDeviceId.clear();
     }
     persistAndApply();
+    rebuildControllerUiModel();
     if (active) m_worker.requestPhysicalControllerSelection();
     appendEvent(QString(u"Forgot saved controller: %1"_qs).arg(name));
     return true;
@@ -3290,6 +3338,7 @@ void AppBackend::forgetAllSavedControllers()
     m_configuration.activeControllerRecordId.clear();
     m_configuration.preferredDeviceId.clear();
     persistAndApply();
+    rebuildControllerUiModel();
     m_worker.requestPhysicalControllerSelection();
     appendEvent(u"All saved controllers were forgotten; profiles and automation were preserved"_qs);
 }
@@ -3322,7 +3371,9 @@ bool AppBackend::launchUninstaller()
 
 void AppBackend::refreshControllerInventory()
 {
-    m_discoveredControllers = ControllerDiscovery::enumerate();
+    const QList<DiscoveredController> latestInventory = ControllerDiscovery::enumerate();
+    const bool inventoryChanged = !sameControllerInventory(m_discoveredControllers, latestInventory);
+    if (inventoryChanged) m_discoveredControllers = latestInventory;
     QStringList newlyDiscoveredUnverifiedIds;
     for (const DiscoveredController &controller : m_discoveredControllers) {
         if (controller.virtualDevice || !controller.connected || controller.directInputId.isEmpty()) continue;
@@ -3343,7 +3394,7 @@ void AppBackend::refreshControllerInventory()
                 .arg(newlyDiscoveredUnverifiedIds.size()));
         emit controllerSetupRequested(newlyDiscoveredUnverifiedIds);
     }
-    emit stateChanged();
+    if (inventoryChanged && rebuildControllerUiModel()) emit stateChanged();
 }
 
 void AppBackend::tryAutoSwitchVerifiedController()
@@ -3396,6 +3447,7 @@ void AppBackend::resetApplicationConfiguration()
     m_worker.setMappingEnabled(false);
     m_configuration = defaultConfiguration();
     persistAndApply();
+    rebuildControllerUiModel();
     appendEvent(u"Application settings, saved controllers, and calibration reset to safe defaults"_qs);
 }
 
@@ -3469,6 +3521,7 @@ void AppBackend::refreshUiSnapshot()
     const bool selectedAxisChanged = fallBackToAvailableAxis();
     if (selectedAxisChanged) emit selectedAxisCurveChanged();
     const bool connected = m_worker.runtime().physicalConnected.load();
+    const bool connectionChanged = connected != m_physicalControllerWasConnected;
     if (ControllerReadinessService::isNewPhysicalControllerArrival(
             m_physicalControllerWasConnected, connected) && !m_verificationInProgress) {
         m_pendingControllerArrivalId = deviceId();
@@ -3478,8 +3531,33 @@ void AppBackend::refreshUiSnapshot()
         m_pendingControllerArrivalId.clear();
     }
     m_physicalControllerWasConnected = connected;
+    if (connectionChanged) rebuildControllerUiModel();
     refreshTrayStatus();
-    emit stateChanged();
+    if (selectedAxisChanged || connectionChanged) emit stateChanged();
+    emit inputTelemetryChanged();
+    emit telemetryChanged();
+}
+
+QVariantMap AppBackend::uiPerformanceCounters() const
+{
+    if (!m_uiPerformanceInstrumentationEnabled) return {};
+    return {{u"controllerGetterCalls"_qs, QVariant::fromValue(m_controllerGetterCalls)},
+            {u"controllerModelRebuilds"_qs, QVariant::fromValue(m_controllerUiModelRebuilds)},
+            {u"stateChanged"_qs, QVariant::fromValue(m_stateChangedNotifications)},
+            {u"telemetryChanged"_qs, QVariant::fromValue(m_telemetryChangedNotifications)},
+            {u"inputTelemetryChanged"_qs, QVariant::fromValue(m_inputTelemetryChangedNotifications)},
+            {u"controllersChanged"_qs, QVariant::fromValue(m_controllersChangedNotifications)}};
+}
+
+void AppBackend::resetUiPerformanceCounters()
+{
+    if (!m_uiPerformanceInstrumentationEnabled) return;
+    m_controllerGetterCalls = 0;
+    m_controllerUiModelRebuilds = 0;
+    m_stateChangedNotifications = 0;
+    m_telemetryChangedNotifications = 0;
+    m_inputTelemetryChangedNotifications = 0;
+    m_controllersChangedNotifications = 0;
 }
 
 void AppBackend::appendEvent(const QString &event)

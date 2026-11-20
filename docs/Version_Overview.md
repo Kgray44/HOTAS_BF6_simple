@@ -2,11 +2,21 @@
 
 # HOTAS BF6 Simple — Version Overview
 
-**Current release: v2.0.3**
+**Current release: v2.0.4**
 
 This document summarizes what each published project version added. It is intentionally separated from the README so the README can describe the current product instead of becoming a geological core sample of old release notes.
 
 Versions are shown newest first.
+
+## v2.0.4 — UI Responsiveness Hotfix
+
+Restores smooth HOTAS BF6 UI responsiveness by separating high-frequency telemetry from controller and configuration state while preserving the mapper's low-latency report path.
+
+- Separates live input and mapper telemetry notifications from slow controller, device, setup, and configuration state notifications.
+- Caches the controller presentation list and updates it only after a material inventory, active-selection, verification, or saved-controller change.
+- Prevents unchanged discovery ticks and telemetry refreshes from recreating Settings controller cards or re-running controller matching.
+- Uses a cached connected-controller count and one Settings-page controller-model reference instead of repeatedly reconstructing the C++ property in QML loops.
+- Adds a focused ten-second steady-state UI/control-plane performance contract while leaving the DirectInput-to-vJoy mapper hot path unchanged.
 
 ## v2.0.3 — Multi-Controller Setup & vJoy Reliability Hotfix
 

@@ -28,7 +28,7 @@ namespace hotas {
 
 class AppBackend final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList axes READ axes NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList axes READ axes NOTIFY inputTelemetryChanged)
     Q_PROPERTY(int selectedAxisIndex READ selectedAxisIndex NOTIFY stateChanged)
     Q_PROPERTY(QVariantList selectedAxisCurve READ selectedAxisCurve NOTIFY selectedAxisCurveChanged)
     Q_PROPERTY(QVariantList curveEditorResponseCurve READ curveEditorResponseCurve NOTIFY selectedAxisCurveChanged)
@@ -45,18 +45,19 @@ class AppBackend final : public QObject {
     Q_PROPERTY(QVariantList curveComparisonChoices READ curveComparisonChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curvePreviewChoices READ curvePreviewChoices NOTIFY stateChanged)
     Q_PROPERTY(QVariantList curveCopyChoices READ curveCopyChoices NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList povs READ povs NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList buttons READ buttons NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QVariantList povs READ povs NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QVariantList povInputs READ povInputs NOTIFY inputTelemetryChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileId READ activeProfileId NOTIFY stateChanged)
     Q_PROPERTY(QString activeProfileName READ activeProfileName NOTIFY stateChanged)
-    Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY stateChanged)
-    Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY stateChanged)
+    Q_PROPERTY(QString effectiveProfileName READ effectiveProfileName NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(QString profileSourceLabel READ profileSourceLabel NOTIFY inputTelemetryChanged)
     Q_PROPERTY(int activeProfileIndex READ activeProfileIndex NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceId READ deviceId NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList controllers READ controllers NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList controllers READ controllers NOTIFY controllersChanged)
+    Q_PROPERTY(int connectedControllerCount READ connectedControllerCount NOTIFY controllersChanged)
     Q_PROPERTY(QString activeControllerRecordId READ activeControllerRecordId NOTIFY stateChanged)
     Q_PROPERTY(bool autoSwitchVerifiedController READ autoSwitchVerifiedController NOTIFY stateChanged)
     Q_PROPERTY(bool keepRunningInTray READ keepRunningInTray NOTIFY stateChanged)
@@ -65,15 +66,15 @@ class AppBackend final : public QObject {
     Q_PROPERTY(int axisCount READ axisCount NOTIFY stateChanged)
     Q_PROPERTY(int buttonCount READ buttonCount NOTIFY stateChanged)
     Q_PROPERTY(int povCount READ povCount NOTIFY stateChanged)
-    Q_PROPERTY(int povValue READ povValue NOTIFY stateChanged)
+    Q_PROPERTY(int povValue READ povValue NOTIFY inputTelemetryChanged)
     Q_PROPERTY(int vjoyButtonCount READ vjoyButtonCount NOTIFY stateChanged)
     Q_PROPERTY(int vjoyContinuousPovCount READ vjoyContinuousPovCount NOTIFY stateChanged)
     Q_PROPERTY(int vjoyDiscretePovCount READ vjoyDiscretePovCount NOTIFY stateChanged)
     Q_PROPERTY(int vjoyRequiredButtonCount READ vjoyRequiredButtonCount NOTIFY stateChanged)
     Q_PROPERTY(bool vjoyCapacitySufficient READ vjoyCapacitySufficient NOTIFY stateChanged)
     Q_PROPERTY(int vjoyRecommendedButtonCount READ vjoyRecommendedButtonCount CONSTANT)
-    Q_PROPERTY(int lastPhysicalButton READ lastPhysicalButton NOTIFY stateChanged)
-    Q_PROPERTY(int lastPhysicalButtonTarget READ lastPhysicalButtonTarget NOTIFY stateChanged)
+    Q_PROPERTY(int lastPhysicalButton READ lastPhysicalButton NOTIFY inputTelemetryChanged)
+    Q_PROPERTY(int lastPhysicalButtonTarget READ lastPhysicalButtonTarget NOTIFY inputTelemetryChanged)
     Q_PROPERTY(bool mappingActive READ mappingActive NOTIFY stateChanged)
     Q_PROPERTY(bool mappingRequested READ mappingRequested NOTIFY stateChanged)
     Q_PROPERTY(QString mappingStatus READ mappingStatus NOTIFY stateChanged)
@@ -107,24 +108,24 @@ class AppBackend final : public QObject {
     Q_PROPERTY(bool updateCheckFailed READ updateCheckFailed NOTIFY stateChanged)
     Q_PROPERTY(QString updateAvailableVersion READ updateAvailableVersion NOTIFY stateChanged)
     Q_PROPERTY(QString updateStatusText READ updateStatusText NOTIFY stateChanged)
-    Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY stateChanged)
-    Q_PROPERTY(qint64 lastPhysicalUpdateAgeMs READ lastPhysicalUpdateAgeMs NOTIFY stateChanged)
-    Q_PROPERTY(double vjoyWritesPerSecond READ vjoyWritesPerSecond NOTIFY stateChanged)
-    Q_PROPERTY(double overviewInputRate READ overviewInputRate NOTIFY stateChanged)
-    Q_PROPERTY(double overviewMapperLatencyUs READ overviewMapperLatencyUs NOTIFY stateChanged)
-    Q_PROPERTY(double overviewOutputRate READ overviewOutputRate NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong latencyP95Us READ latencyP95Us NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong latencyP99Us READ latencyP99Us NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY stateChanged)
+    Q_PROPERTY(double inputReportsPerSecond READ inputReportsPerSecond NOTIFY telemetryChanged)
+    Q_PROPERTY(qint64 lastPhysicalUpdateAgeMs READ lastPhysicalUpdateAgeMs NOTIFY telemetryChanged)
+    Q_PROPERTY(double vjoyWritesPerSecond READ vjoyWritesPerSecond NOTIFY telemetryChanged)
+    Q_PROPERTY(double overviewInputRate READ overviewInputRate NOTIFY telemetryChanged)
+    Q_PROPERTY(double overviewMapperLatencyUs READ overviewMapperLatencyUs NOTIFY telemetryChanged)
+    Q_PROPERTY(double overviewOutputRate READ overviewOutputRate NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong latencyCurrentUs READ latencyCurrentUs NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong latencyAverageUs READ latencyAverageUs NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong latencyPeakUs READ latencyPeakUs NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong latencyP95Us READ latencyP95Us NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong latencyP99Us READ latencyP99Us NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong profileSwitchCount READ profileSwitchCount NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong lastProfileSwapUs READ lastProfileSwapUs NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong lastCurveCompileUs READ lastCurveCompileUs NOTIFY telemetryChanged)
     Q_PROPERTY(bool automationEngineEnabled READ automationEngineEnabled NOTIFY stateChanged)
     Q_PROPERTY(int automationRuleCount READ automationRuleCount NOTIFY stateChanged)
-    Q_PROPERTY(int automationActiveRuleCount READ automationActiveRuleCount NOTIFY stateChanged)
-    Q_PROPERTY(qulonglong automationEvaluationUs READ automationEvaluationUs NOTIFY stateChanged)
+    Q_PROPERTY(int automationActiveRuleCount READ automationActiveRuleCount NOTIFY telemetryChanged)
+    Q_PROPERTY(qulonglong automationEvaluationUs READ automationEvaluationUs NOTIFY telemetryChanged)
     Q_PROPERTY(QVariantList automationRules READ automationRules NOTIFY stateChanged)
     Q_PROPERTY(QString automationValidationMessage READ automationValidationMessage NOTIFY stateChanged)
     Q_PROPERTY(QStringList buttonOutputChoices READ buttonOutputChoices NOTIFY stateChanged)
@@ -169,6 +170,7 @@ public:
     QString deviceName() const;
     QString deviceId() const;
     QVariantList controllers() const;
+    int connectedControllerCount() const { return m_connectedControllerCount; }
     QString activeControllerRecordId() const;
     bool autoSwitchVerifiedController() const;
     bool keepRunningInTray() const;
@@ -247,6 +249,10 @@ public:
     QVariantList nativePovTargetChoices() const;
     QStringList profileTriggerBehaviorChoices() const;
     QStringList eventLog() const { return m_events.entries(); }
+    // These counters are enabled only for the focused test process.
+    // Production returns an empty map and keeps the presentation path clean.
+    Q_INVOKABLE QVariantMap uiPerformanceCounters() const;
+    Q_INVOKABLE void resetUiPerformanceCounters();
 
     Q_INVOKABLE void toggleMapping();
     Q_INVOKABLE void setMappingActive(bool active);
@@ -350,6 +356,9 @@ public:
 
 signals:
     void stateChanged();
+    void telemetryChanged();
+    void inputTelemetryChanged();
+    void controllersChanged();
     void selectedAxisCurveChanged();
     void eventLogChanged();
     // Setup presentation must keep the discovered controller identity instead
@@ -366,6 +375,7 @@ private slots:
 private:
     void persistAndApply();
     void refreshControllerInventory();
+    bool rebuildControllerUiModel();
     const DiscoveredController *discoveredController(const QString &directInputId) const;
     SavedControllerRecord *activeControllerRecord();
     const SavedControllerRecord *activeControllerRecord() const;
@@ -416,6 +426,9 @@ private:
     bool m_controllerSetupSuggested = false;
     bool m_physicalControllerWasConnected = false;
     QList<DiscoveredController> m_discoveredControllers;
+    QVariantList m_controllerUiModel;
+    QString m_controllerUiModelLiveDeviceId;
+    int m_connectedControllerCount = 0;
     QSet<QString> m_observedControllerIds;
     bool m_controllerInventoryInitialized = false;
     QPointer<QWindow> m_mainWindow;
@@ -471,6 +484,13 @@ private:
     bool m_updateCheckFailed = false;
     QString m_updateAvailableVersion;
     QString m_updateStatusText = u"Update status not checked"_qs;
+    bool m_uiPerformanceInstrumentationEnabled = false;
+    mutable quint64 m_controllerGetterCalls = 0;
+    quint64 m_controllerUiModelRebuilds = 0;
+    quint64 m_stateChangedNotifications = 0;
+    quint64 m_telemetryChangedNotifications = 0;
+    quint64 m_inputTelemetryChangedNotifications = 0;
+    quint64 m_controllersChangedNotifications = 0;
 };
 
 } // namespace hotas
