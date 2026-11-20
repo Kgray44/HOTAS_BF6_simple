@@ -494,6 +494,20 @@ if (HOTAS_BUILD_ADAPTIVE_FORECAST_RESEARCH)
         HOTAS_ADAPTIVE_FORECAST_RESEARCH)
 endif()
 
+# R0.65 is deliberately a corpus-only executable.  It links no mapper or
+# adaptive-response production source and never opens DirectInput or vJoy.
+option(HOTAS_BUILD_ADAPTIVE_HUMAN_MOTION_AUDIT
+    "Build the V2.4.R0.65 offline human-motion envelope audit" OFF)
+if (HOTAS_BUILD_ADAPTIVE_HUMAN_MOTION_AUDIT)
+    add_executable(adaptive_human_motion_audit
+        tests/adaptive_response_human_motion_audit.cpp
+    )
+    target_compile_features(adaptive_human_motion_audit PRIVATE cxx_std_20)
+    target_compile_definitions(adaptive_human_motion_audit PRIVATE
+        HOTAS_ADAPTIVE_HUMAN_MOTION_AUDIT=1)
+    set_target_properties(adaptive_human_motion_audit PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
