@@ -4,6 +4,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
 
 #ifndef HOTAS_SPEED_DECAY_GATE_PROFILE_MODE
 // V2.3.T candidate default. Profiling builds override this with 0, 1, 2,
@@ -49,6 +50,55 @@ struct AdaptiveResponseTelemetry {
 #endif
 };
 
+// This exists only in the standalone Pattern-73 investigation executable.
+// The production targets do not define HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE, so
+// their estimator layout and per-report path are unchanged.
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+struct AdaptiveResponseDiagnosticSnapshot {
+    float normalizedMeasurement = 0.0F;
+    float previousPhysical = 0.0F;
+    float measuredDelta = 0.0F;
+    float dtSeconds = 0.0F;
+    float directionalTrend = 0.0F;
+    float absoluteTrend = 0.0F;
+    float trendAgeSeconds = 0.0F;
+    float trendVelocity = 0.0F;
+    float meaningfulDelta = 0.0F;
+    float holdConfidence = 1.0F;
+    float holdRatio = 1.0F;
+    float expectedHoldSeconds = 0.0F;
+    float graceSeconds = 0.0F;
+    float settleSeconds = 0.0F;
+    float sourceUpdatePeriodSeconds = 0.0F;
+    float quietDurationSeconds = 0.0F;
+    float minimumReversalSpeed = 0.0F;
+    float softReversalMotion = 0.0F;
+    float hardReversalDisplacement = 0.0F;
+    float softReversalThreshold = 0.0F;
+    float brakingReductionTarget = 0.0F;
+    float brakingReductionFactor = 0.0F;
+    float rawLead = 0.0F;
+    float rawPredicted = 0.0F;
+    int rawDirection = 0;
+    int motionDirectionBefore = 0;
+    int motionDirectionAfter = 0;
+    std::uint8_t oppositeEvidenceCount = 0;
+    std::uint8_t sourceDecayEvidence = 0;
+    bool directMeaningful = false;
+    bool accumulatedMeaningful = false;
+    bool meaningfulMeasurement = false;
+    bool sourceUpdated = false;
+    bool oppositeRawDirection = false;
+    bool hardReversal = false;
+    bool softReversal = false;
+    bool safetyCancellation = false;
+    bool trustedMeasurement = false;
+    bool decelerating = false;
+    bool braking = false;
+    bool sourceBrakingDetected = false;
+};
+#endif
+
 // Runtime-only, allocation-free per-axis estimator state.  The Alpha-Beta
 // variants own their own state estimate, but their position is telemetry and
 // motion-estimation data only: the mapper always applies predictive lead to
@@ -61,6 +111,9 @@ public:
                                       std::chrono::steady_clock::time_point timestamp);
     std::uint64_t reversalCount() const { return m_reversalCount; }
     std::uint64_t safetyClampCount() const { return m_safetyClampCount; }
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+    const AdaptiveResponseDiagnosticSnapshot &diagnosticSnapshot() const { return m_diagnosticSnapshot; }
+#endif
 
 private:
     bool m_initialized = false;
@@ -100,6 +153,9 @@ private:
     std::chrono::steady_clock::time_point m_lastSourceTimestamp{};
     std::uint64_t m_reversalCount = 0;
     std::uint64_t m_safetyClampCount = 0;
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+    AdaptiveResponseDiagnosticSnapshot m_diagnosticSnapshot{};
+#endif
 };
 
 QString adaptiveResponseModelKey(AdaptiveResponseModel model);

@@ -537,6 +537,27 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
     )
     set_target_properties(adaptive_response_monster_phase1 PROPERTIES WIN32_EXECUTABLE FALSE)
 
+    # Single-scenario diagnostic target. It enables trace-only estimator
+    # snapshots in this executable alone; ordinary mapper, benchmark, and
+    # verification targets keep the production per-report layout untouched.
+    qt_add_executable(adaptive_response_pattern73_investigation
+        tests/adaptive_response/pattern73_investigation.cpp
+        ${HOTAS_ADAPTIVE_VERIFICATION_SOURCES}
+    )
+    target_link_libraries(adaptive_response_pattern73_investigation PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_pattern73_investigation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_pattern73_investigation PRIVATE
+        HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE
+        HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_pattern73_investigation PROPERTIES WIN32_EXECUTABLE FALSE)
+
     if (BUILD_TESTING)
         qt_add_executable(adaptive_response_verification_tests
             tests/adaptive_response/verification_tests.cpp

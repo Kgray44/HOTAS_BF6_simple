@@ -330,6 +330,9 @@ void AdaptiveResponseProcessor::reset()
     m_lastSourceTimestamp = {};
     m_reversalCount = 0;
     m_safetyClampCount = 0;
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+    m_diagnosticSnapshot = {};
+#endif
 }
 
 AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
@@ -361,6 +364,13 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         result.estimated = physical;
         result.predicted = physical;
         result.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+        m_diagnosticSnapshot = {};
+        m_diagnosticSnapshot.normalizedMeasurement = physical;
+        m_diagnosticSnapshot.previousPhysical = physical;
+        m_diagnosticSnapshot.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
+        m_diagnosticSnapshot.rawPredicted = physical;
+#endif
         return result;
     }
     float dt = static_cast<float>(std::chrono::duration<double>(timestamp - m_lastTimestamp).count());
@@ -445,6 +455,9 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     const float velocityThreshold = std::max(0.002F, configuration.motionSensitivity * 0.10F);
     const int rawDirection = directionOf(measuredDelta, kMinimumMeaningfulDelta * 0.25F);
     if (m_motionDirection == 0) m_motionDirection = directionOf(priorVelocity, velocityThreshold);
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+    const int motionDirectionBefore = m_motionDirection;
+#endif
     const bool oppositeRawDirection = rawDirection != 0 && m_motionDirection != 0
         && rawDirection != m_motionDirection;
     if (oppositeRawDirection && absoluteDelta >= kMinimumMeaningfulDelta) {
@@ -717,6 +730,53 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         : decelerating ? AdaptiveMotionState::Decelerating
         : std::abs(m_acceleration) > speed * 2.5F ? AdaptiveMotionState::Accelerating
         : intensity > 0.74F ? AdaptiveMotionState::Fast : AdaptiveMotionState::Moving;
+#if defined(HOTAS_ADAPTIVE_DIAGNOSTIC_TRACE)
+    m_diagnosticSnapshot.normalizedMeasurement = physical;
+    m_diagnosticSnapshot.previousPhysical = m_lastPhysical;
+    m_diagnosticSnapshot.measuredDelta = measuredDelta;
+    m_diagnosticSnapshot.dtSeconds = dt;
+    m_diagnosticSnapshot.directionalTrend = m_directionalTrend;
+    m_diagnosticSnapshot.absoluteTrend = m_absoluteTrend;
+    m_diagnosticSnapshot.trendAgeSeconds = m_trendAgeSeconds;
+    m_diagnosticSnapshot.trendVelocity = trendVelocity;
+    m_diagnosticSnapshot.meaningfulDelta = meaningfulDelta;
+    m_diagnosticSnapshot.holdConfidence = holdConfidence;
+    m_diagnosticSnapshot.holdRatio = holdRatio;
+    m_diagnosticSnapshot.expectedHoldSeconds = expectedHoldSeconds;
+    m_diagnosticSnapshot.graceSeconds = graceSeconds;
+    m_diagnosticSnapshot.settleSeconds = settleSeconds;
+    m_diagnosticSnapshot.sourceUpdatePeriodSeconds = m_sourceUpdatePeriodSeconds;
+    m_diagnosticSnapshot.quietDurationSeconds = m_quietDurationSeconds;
+    m_diagnosticSnapshot.minimumReversalSpeed = minimumReversalSpeed;
+    m_diagnosticSnapshot.softReversalMotion = m_softReversalMotion;
+    m_diagnosticSnapshot.hardReversalDisplacement = hardReversalDisplacement;
+    m_diagnosticSnapshot.softReversalThreshold = softReversalThreshold;
+    m_diagnosticSnapshot.rawLead = unclampedLead;
+    m_diagnosticSnapshot.rawPredicted = physical + unclampedLead;
+    m_diagnosticSnapshot.rawDirection = rawDirection;
+    m_diagnosticSnapshot.motionDirectionBefore = motionDirectionBefore;
+    m_diagnosticSnapshot.motionDirectionAfter = directionOf(m_velocity, velocityThreshold);
+    m_diagnosticSnapshot.oppositeEvidenceCount = m_oppositeEvidenceCount;
+    m_diagnosticSnapshot.directMeaningful = directMeaningful;
+    m_diagnosticSnapshot.accumulatedMeaningful = accumulatedMeaningful;
+    m_diagnosticSnapshot.meaningfulMeasurement = meaningfulMeasurement;
+    m_diagnosticSnapshot.sourceUpdated = sourceUpdated;
+    m_diagnosticSnapshot.oppositeRawDirection = oppositeRawDirection;
+    m_diagnosticSnapshot.hardReversal = hardReversal;
+    m_diagnosticSnapshot.softReversal = softReversal;
+    m_diagnosticSnapshot.safetyCancellation = safetyCancellation;
+    m_diagnosticSnapshot.trustedMeasurement = trustedMeasurement;
+    m_diagnosticSnapshot.decelerating = decelerating;
+    m_diagnosticSnapshot.braking = braking;
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 2
+    m_diagnosticSnapshot.sourceDecayEvidence = m_sourceDecayEvidence;
+#endif
+#if defined(HOTAS_SPEED_DECAY_GATE_PROFILE_MODE) && HOTAS_SPEED_DECAY_GATE_PROFILE_MODE >= 3
+    m_diagnosticSnapshot.brakingReductionTarget = m_brakingReductionTarget;
+    m_diagnosticSnapshot.brakingReductionFactor = m_brakingReductionFactor;
+    m_diagnosticSnapshot.sourceBrakingDetected = sourceBrakingDetected;
+#endif
+#endif
     m_lastPhysical = physical;
     m_lastTimestamp = timestamp;
     return result;

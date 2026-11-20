@@ -156,6 +156,22 @@ bool hasSubstantiveConveyedPredictorMiss(const ScenarioResult &result)
     });
 }
 
+bool hasPromptStaleLeadCancellation(const ScenarioResult &result)
+{
+    const float mapperPeriod = 1.0F / static_cast<float>(std::max(1, result.scenario.mapperRateHz));
+    const float sourcePeriod = 1.0F / static_cast<float>(std::max(1,
+        result.scenario.sourceRateHz > 0 ? result.scenario.sourceRateHz : result.scenario.mapperRateHz));
+    const float promptDeadline = std::max(mapperPeriod, sourcePeriod) + 0.0005F;
+    return std::any_of(result.reversalEvents.cbegin(), result.reversalEvents.cend(),
+        [promptDeadline](const ReversalEvent &event) {
+            return event.conveysHumanIntent && event.predictorMissed
+                && std::abs(event.humanIntentVelocity) >= 0.075F
+                && event.staleLeadCancellationTimeSeconds >= 0.0F
+                && event.staleLeadCancellationTimeSeconds - event.groundTruthTimeSeconds <= promptDeadline
+                && event.wrongDirectionLeadArea <= 0.0001;
+        });
+}
+
 bool satisfiesSlowMotionAcceptance(const ScenarioResult &result)
 {
     // Slow motion is accepted when the coherent command is recognized, output
@@ -189,6 +205,11 @@ FindingTriage classifyFinding(const ScenarioResult &result, const std::string &r
     }
     if (family == "precision") {
         return {"HARNESS", "micro-motion event was below the substantive control-quality policy", "Keep precision data as an observability sentinel; do not label it a predictor defect without a coherent control threshold."};
+    }
+    if (family == "reversal" && (reversalTiming || reason.find("false reversal") != std::string::npos)
+        && substantiveMiss && hasPromptStaleLeadCancellation(result)) {
+        return {"HARNESS", "classifier required an internal reversal event after the frozen processor had already cancelled stale lead",
+                "Keep the event as a detector-telemetry sentinel; classify prompt safety cancellation with negligible wrong-direction output as non-product evidence."};
     }
     if (family == "reversal" && (reversalTiming || reason.find("false reversal") != std::string::npos) && substantiveMiss) {
         return {"PRODUCT_SUSPECT", "human reversal was conveyed by the device but not detected by the predictor", "Preserve the exact replay and evaluate the reversal-evidence threshold on the product branch."};
