@@ -467,6 +467,24 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Offline-only V2.4-X2 resumed independent qualification. This target is
+# disabled by default and has no production, device, UI, or MappingWorker path.
+option(HOTAS_BUILD_V24_X2_RESUMED_QUALIFICATION
+    "Build the V2.4-X2 one-shot resumed HOLDOUT qualification runner" OFF)
+if (HOTAS_BUILD_V24_X2_RESUMED_QUALIFICATION)
+    qt_add_executable(adaptive_response_v24_x2_resumed_holdout_qualification
+        tests/adaptive_response_v24_x2_resumed_holdout_qualification.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x2_resumed_holdout_qualification PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x2_resumed_holdout_qualification PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x2_resumed_holdout_qualification PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x2_resumed_holdout_qualification PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
