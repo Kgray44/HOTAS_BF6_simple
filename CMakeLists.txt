@@ -467,6 +467,37 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R0.7R is an offline, compile-gated requalification.  The baseline
+# runner contains no research telemetry; the requalification runner is linked
+# only to the estimator/test sources and cannot enter DirectInput, vJoy, QML,
+# or MappingWorker.
+option(HOTAS_BUILD_ADAPTIVE_R07R_RESEARCH
+    "Build the V2.4.R0.7R audited-corpus error-bound requalification" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R07R_RESEARCH)
+    function(add_adaptive_r07r_runner target_name source_file)
+        qt_add_executable(${target_name}
+            ${source_file}
+            src/mapping_types.h
+            src/adaptive_response.h
+            src/adaptive_response.cpp
+            src/response_curve.h
+            src/response_curve.cpp
+            src/automation_engine.h
+            src/automation_engine.cpp
+        )
+        target_link_libraries(${target_name} PRIVATE Qt6::Core)
+        target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        set_target_properties(${target_name} PROPERTIES WIN32_EXECUTABLE FALSE)
+    endfunction()
+
+    add_adaptive_r07r_runner(adaptive_forecastability_baseline
+        tests/adaptive_response_forecastability_research.cpp)
+    add_adaptive_r07r_runner(adaptive_response_r07r_requalification
+        tests/adaptive_response_r07r_requalification.cpp)
+    target_compile_definitions(adaptive_response_r07r_requalification PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
