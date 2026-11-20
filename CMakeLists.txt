@@ -467,6 +467,25 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4-X1R is a default-OFF, offline-only calibration runner.  Its only
+# inputs are the sealed DEVELOPMENT scenarios and the copied locked X0/X1
+# research framework; it has no production or device integration.
+option(HOTAS_BUILD_V24_X1R_TAIL_CALIBRATED_HORIZON
+    "Build the V2.4-X1R tail-calibrated source-native horizon research runner" OFF)
+if (HOTAS_BUILD_V24_X1R_TAIL_CALIBRATED_HORIZON)
+    qt_add_executable(adaptive_response_v24_x1r_tail_calibrated
+        tests/adaptive_response_v24_x1r_tail_calibrated.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x1r_tail_calibrated PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x1r_tail_calibrated PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x1r_tail_calibrated PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x1r_tail_calibrated PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
