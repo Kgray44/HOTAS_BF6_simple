@@ -467,6 +467,29 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1A is an offline, compile-gated source-domain estimator study. It
+# links only deterministic estimator/test sources and cannot enter DirectInput,
+# vJoy, QML, or MappingWorker.
+option(HOTAS_BUILD_ADAPTIVE_R1A_RESEARCH
+    "Build the V2.4.R1A source-domain estimator shadow characterization" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1A_RESEARCH)
+    qt_add_executable(adaptive_response_r1a_source_domain_estimator
+        tests/adaptive_response_r1a_source_domain_estimator.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1a_source_domain_estimator PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1a_source_domain_estimator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_r1a_source_domain_estimator PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1a_source_domain_estimator PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
