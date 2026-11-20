@@ -467,6 +467,40 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Phase 2 is an offline preset-search workstream.  This target links the exact
+# production estimator only; it never links the mapper, DirectInput, vJoy, or
+# UI.  It is opt-in so ordinary developer and release builds are unchanged.
+option(HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE2_OPTIMIZER
+    "Build the offline V2.3.T Adaptive Response preset optimizer" OFF)
+if (HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE2_OPTIMIZER)
+    qt_add_executable(adaptive_response_phase2_optimizer
+        tests/adaptive_response/phase2_preset_optimizer.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase2_optimizer PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase2_optimizer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase2_optimizer PRIVATE
+        HOTAS_PHASE2_FREEZE_SHA="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase2-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}")
+    set_target_properties(adaptive_response_phase2_optimizer PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
