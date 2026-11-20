@@ -467,6 +467,30 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1B-F is a compile-gated, offline-only final Predictor-D authority
+# decision. It is deliberately absent from the mapper, DirectInput, vJoy,
+# presets, and normal test targets.
+option(HOTAS_BUILD_ADAPTIVE_R1BF_FINAL_AUTHORITY_RECONCILIATION
+    "Build the V2.4.R1B-F Predictor-D final authority reconciliation" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1BF_FINAL_AUTHORITY_RECONCILIATION)
+    set(R1BF_RESEARCH_ROOT "C:/Users/kkids/Documents/HOTAS_BF6-v2.4.R1B-R2-direction-tagged-revalidation")
+    qt_add_executable(adaptive_response_r1bf_final_authority_reconciliation
+        tests/adaptive_response_r1bf_final_authority_reconciliation.cpp
+        ${R1BF_RESEARCH_ROOT}/src/adaptive_response.h
+        ${R1BF_RESEARCH_ROOT}/src/adaptive_response.cpp
+        ${R1BF_RESEARCH_ROOT}/src/response_curve.h
+        ${R1BF_RESEARCH_ROOT}/src/response_curve.cpp
+        ${R1BF_RESEARCH_ROOT}/src/automation_engine.h
+        ${R1BF_RESEARCH_ROOT}/src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1bf_final_authority_reconciliation PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1bf_final_authority_reconciliation PRIVATE
+        ${R1BF_RESEARCH_ROOT}/src)
+    target_compile_definitions(adaptive_response_r1bf_final_authority_reconciliation PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1bf_final_authority_reconciliation PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
