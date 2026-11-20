@@ -467,6 +467,25 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4-X1 stays a default-OFF, offline shadow laboratory.  It consumes only
+# the sealed source-native corpus split named on its command line and has no
+# MappingWorker, DirectInput, vJoy, QML, or production-output integration.
+option(HOTAS_BUILD_V24_X1_FORECASTABILITY
+    "Build the V2.4-X1 source-native forecastability research runner" OFF)
+if (HOTAS_BUILD_V24_X1_FORECASTABILITY)
+    qt_add_executable(adaptive_response_v24_x1_forecastability
+        tests/adaptive_response_v24_x1_forecastability.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x1_forecastability PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x1_forecastability PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x1_forecastability PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x1_forecastability PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
