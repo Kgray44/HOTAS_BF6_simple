@@ -972,7 +972,7 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
         }
         if (!result.trace.empty() && (result.scenario.retainTrace || result.retainedForWorstCase || result.retainedForFailure)) {
             std::ostringstream trace;
-            trace << "time_seconds,human_intent,human_intent_velocity,human_intent_acceleration,human_intent_direction,human_intent_reversal,human_intent_stop,observed_device,observed_device_velocity,observed_device_direction,observed_device_reversal,estimated,predicted,lead,predictor_velocity,predictor_acceleration,horizon_ms,confidence,motion_intensity,predictor_state,predictor_reversal,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop\n";
+            trace << "time_seconds,human_intent,human_intent_velocity,human_intent_acceleration,human_intent_direction,human_intent_reversal,human_intent_stop,observed_device,observed_device_velocity,observed_device_direction,observed_device_reversal,estimated,predicted,lead,predictor_velocity,predictor_acceleration,horizon_ms,confidence,motion_intensity,motion_coherence,source_stopping_ms,braking_reduction_factor,source_braking_detected,predictor_state,predictor_reversal,source_sample_updated,source_sample_time_seconds,dt_seconds,target_arrival,physical_stop\n";
             for (size_t index = 0; index < result.trace.size(); ++index) {
                 const TraceSample &sample = result.trace[index];
                 const AdaptiveResponseTelemetry &telemetry = result.telemetry[index];
@@ -983,7 +983,10 @@ bool writeArtifacts(const CampaignOptions &options, const QString &directory,
                     << (sample.observedDeviceReversal ? 1 : 0) << ',' << telemetry.estimated << ','
                     << telemetry.predicted << ',' << telemetry.lead << ',' << telemetry.velocity << ',' << telemetry.acceleration << ','
                     << telemetry.activeHorizonSeconds * 1000.0F << ',' << telemetry.confidence << ',' << telemetry.motionIntensity << ','
-                    << static_cast<int>(telemetry.state) << ',' << (telemetry.reversal ? 1 : 0) << ','
+                    << telemetry.motionCoherence << ',' << telemetry.sourceStoppingSeconds * 1000.0F << ','
+                    << telemetry.brakingReductionFactor << ',' << (telemetry.sourceBrakingDetected ? 1 : 0) << ','
+                    << static_cast<int>(telemetry.state) << ','
+                    << (telemetry.reversal ? 1 : 0) << ','
                     << (sample.sourceSampleUpdated ? 1 : 0) << ',' << sample.sourceSampleTimeSeconds << ',' << sample.dtSeconds << ','
                     << (sample.targetArrival ? 1 : 0) << ',' << (sample.physicalStop ? 1 : 0) << '\n';
             }
@@ -1805,9 +1808,9 @@ void retainWorstReversalTraces(std::vector<TimedResult> &results)
 
 } // namespace
 
-ScenarioResult replayScenario(const ScenarioDefinition &scenario,
-                              const RuntimeAdaptiveResponseConfig &providedConfiguration,
-                              const std::string &configurationName, bool retainSamples)
+ScenarioResult replayTraceSamples(const ScenarioDefinition &scenario, std::vector<TraceSample> trace,
+                                  const RuntimeAdaptiveResponseConfig &providedConfiguration,
+                                  const std::string &configurationName, bool retainSamples)
 {
     ScenarioResult result;
     result.scenario = scenario;
@@ -1815,7 +1818,6 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     RuntimeAdaptiveResponseConfig configuration = providedConfiguration;
     configuration.domainMinimum = scenario.unipolar ? 0.0F : -1.0F;
     configuration.domainMaximum = 1.0F;
-    std::vector<TraceSample> trace = generateTrace(scenario);
     if (retainSamples) {
         result.telemetry.reserve(trace.size());
     }
@@ -2206,6 +2208,14 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
     if (result.metrics.wrongDirectionLeadArea > 0.004) result.failures.push_back("FINDING: elevated stale-direction lead area");
     if (retainSamples) result.trace = std::move(trace);
     return result;
+}
+
+ScenarioResult replayScenario(const ScenarioDefinition &scenario,
+                              const RuntimeAdaptiveResponseConfig &configuration,
+                              const std::string &configurationName, bool retainSamples)
+{
+    return replayTraceSamples(scenario, generateTrace(scenario), configuration, configurationName,
+                              retainSamples);
 }
 
 bool selfValidate(QStringList *failures)

@@ -222,6 +222,13 @@ ScenarioResult replayScenario(const ScenarioDefinition &scenario,
                               const RuntimeAdaptiveResponseConfig &configuration,
                               const std::string &configurationName,
                               bool retainSamples = true);
+// Replays caller-supplied reports directly. Unlike replayScenario(), it does
+// not synthesize a mapper or source cadence from control points.
+ScenarioResult replayTraceSamples(const ScenarioDefinition &scenario,
+                                  std::vector<TraceSample> trace,
+                                  const RuntimeAdaptiveResponseConfig &configuration,
+                                  const std::string &configurationName,
+                                  bool retainSamples = true);
 
 bool selfValidate(QStringList *failures = nullptr);
 bool compareCampaignDirectories(const QString &baselineDirectory, const QString &candidateDirectory,

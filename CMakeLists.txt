@@ -490,6 +490,8 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
         tests/adaptive_response/verification_harness.h
         tests/adaptive_response/trajectory_generator.cpp
         tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/physical_trace_io.h
+        tests/adaptive_response/physical_trace_io.cpp
         tests/adaptive_response/verification_harness.cpp
         src/mapping_types.h
         src/axis_mapping_transition.h
@@ -509,12 +511,116 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
     )
     target_compile_definitions(adaptive_response_verification PRIVATE
+        HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY=1
+        HOTAS_SPEED_DECAY_GATE_PROFILE_MODE=3
         HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
         HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
         HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
         HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
     )
     set_target_properties(adaptive_response_verification PROPERTIES WIN32_EXECUTABLE FALSE)
+
+    # Test-only DirectInput reader for real HOTAS evidence. It deliberately
+    # has no MappingWorker or vJoy dependency and is never installed.
+    set(HOTAS_PHYSICAL_TRACE_CAPTURE_SOURCES
+        tests/adaptive_response/physical_trace_capture.cpp
+        tests/adaptive_response/physical_trace_io.h
+        tests/adaptive_response/physical_trace_io.cpp
+        tests/adaptive_response/verification_harness.h
+        src/mapping_types.h
+        src/axis_transform.h
+        src/axis_transform.cpp
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/button_mapping.h
+        src/button_mapping.cpp
+        src/input_learning.h
+        src/input_learning.cpp
+        src/profile_model.h
+        src/profile_model.cpp
+        src/profile_portability.h
+        src/profile_portability.cpp
+        src/profile_trigger_runtime.h
+        src/profile_trigger_runtime.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+        src/config_store.h
+        src/config_store.cpp
+        src/controller_manager.h
+        src/controller_manager.cpp
+        src/event_log.h
+    )
+    qt_add_executable(adaptive_physical_trace_capture ${HOTAS_PHYSICAL_TRACE_CAPTURE_SOURCES})
+    target_link_libraries(adaptive_physical_trace_capture PRIVATE Qt6::Core dinput8 dxguid)
+    target_include_directories(adaptive_physical_trace_capture PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_physical_trace_capture PRIVATE
+        HOTAS_SPEED_DECAY_GATE_PROFILE_MODE=0
+        NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
+    )
+    set_target_properties(adaptive_physical_trace_capture PROPERTIES WIN32_EXECUTABLE FALSE)
+
+    # Compile the exact same offline replay runner twice. Profile 0 is the
+    # current V2.3.0 baseline and profile 3 is the retained candidate; neither
+    # target opens DirectInput or references MappingWorker/vJoy.
+    foreach(HOTAS_PHYSICAL_REPLAY_VARIANT baseline candidate)
+        # Keep the VS target short enough for its generated autogen/tlog paths
+        # in this intentionally long-lived verification worktree. The public
+        # executable names below remain stable for the replay script.
+        set(HOTAS_PHYSICAL_REPLAY_TARGET "v23t_replay_${HOTAS_PHYSICAL_REPLAY_VARIANT}")
+        set(HOTAS_PHYSICAL_REPLAY_OUTPUT "adaptive_physical_trace_replay_${HOTAS_PHYSICAL_REPLAY_VARIANT}")
+        if (HOTAS_PHYSICAL_REPLAY_VARIANT STREQUAL "baseline")
+            set(HOTAS_PHYSICAL_REPLAY_PROFILE_MODE 0)
+        else()
+            set(HOTAS_PHYSICAL_REPLAY_PROFILE_MODE 3)
+        endif()
+        qt_add_executable(${HOTAS_PHYSICAL_REPLAY_TARGET}
+            tests/adaptive_response/physical_trace_replay.cpp
+            ${HOTAS_ADAPTIVE_VERIFICATION_SOURCES}
+        )
+        target_link_libraries(${HOTAS_PHYSICAL_REPLAY_TARGET} PRIVATE Qt6::Core)
+        target_include_directories(${HOTAS_PHYSICAL_REPLAY_TARGET} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+        )
+        target_compile_definitions(${HOTAS_PHYSICAL_REPLAY_TARGET} PRIVATE
+            HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY=1
+            HOTAS_SPEED_DECAY_GATE_PROFILE_MODE=${HOTAS_PHYSICAL_REPLAY_PROFILE_MODE}
+            HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
+            HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
+            HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
+            HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+        )
+        set_target_properties(${HOTAS_PHYSICAL_REPLAY_TARGET} PROPERTIES
+            WIN32_EXECUTABLE FALSE
+            OUTPUT_NAME "${HOTAS_PHYSICAL_REPLAY_OUTPUT}"
+        )
+    endforeach()
+
+    # Focused, report-only turning-point diagnostic.  This drives the exact
+    # production processor offline; it is deliberately not part of the mapper,
+    # installer, or normal CTest suite.
+    qt_add_executable(adaptive_turning_point_diagnostic
+        tests/adaptive_response/turning_point_diagnostic.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_turning_point_diagnostic PRIVATE Qt6::Core)
+    target_include_directories(adaptive_turning_point_diagnostic PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(adaptive_turning_point_diagnostic PRIVATE
+        HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY=1
+        HOTAS_SPEED_DECAY_GATE_PROFILE_MODE=3
+    )
+    set_target_properties(adaptive_turning_point_diagnostic PROPERTIES WIN32_EXECUTABLE FALSE)
 
     if (BUILD_TESTING)
         qt_add_executable(adaptive_response_verification_tests
@@ -527,6 +633,8 @@ if (HOTAS_BUILD_ADAPTIVE_RESPONSE_VERIFICATION)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
         )
         target_compile_definitions(adaptive_response_verification_tests PRIVATE
+            HOTAS_ADAPTIVE_TURNING_POINT_TELEMETRY=1
+            HOTAS_SPEED_DECAY_GATE_PROFILE_MODE=3
             HOTAS_VERIFICATION_SOURCE_COMMIT="${HOTAS_VERIFICATION_SOURCE_COMMIT}"
             HOTAS_VERIFICATION_SOURCE_BRANCH="${HOTAS_VERIFICATION_SOURCE_BRANCH}"
             HOTAS_VERIFICATION_HARNESS_COMMIT="${HOTAS_VERIFICATION_HARNESS_COMMIT}"
