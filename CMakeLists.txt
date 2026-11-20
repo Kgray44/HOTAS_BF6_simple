@@ -467,6 +467,30 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1B-R2.1 is a compile-gated, measurement-only replay of the already
+# consumed R1A/R2 corpora. The preserved R2 research sources are immutable
+# inputs; this target is never linked into the normal mapper.
+option(HOTAS_BUILD_ADAPTIVE_R1BR21_GAIN_COLLAPSE_AUDIT
+    "Build the V2.4.R1B-R2.1 Predictor-D gain-collapse audit" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1BR21_GAIN_COLLAPSE_AUDIT)
+    set(R1BR2_RESEARCH_ROOT "C:/Users/kkids/Documents/HOTAS_BF6-v2.4.R1B-R2-direction-tagged-revalidation")
+    qt_add_executable(adaptive_response_r1br21_gain_collapse_audit
+        tests/adaptive_response_r1br21_gain_collapse_audit.cpp
+        ${R1BR2_RESEARCH_ROOT}/src/adaptive_response.h
+        ${R1BR2_RESEARCH_ROOT}/src/adaptive_response.cpp
+        ${R1BR2_RESEARCH_ROOT}/src/response_curve.h
+        ${R1BR2_RESEARCH_ROOT}/src/response_curve.cpp
+        ${R1BR2_RESEARCH_ROOT}/src/automation_engine.h
+        ${R1BR2_RESEARCH_ROOT}/src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1br21_gain_collapse_audit PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1br21_gain_collapse_audit PRIVATE
+        ${R1BR2_RESEARCH_ROOT}/src)
+    target_compile_definitions(adaptive_response_r1br21_gain_collapse_audit PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1br21_gain_collapse_audit PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
