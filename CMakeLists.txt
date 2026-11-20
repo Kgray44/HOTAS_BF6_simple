@@ -467,6 +467,91 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Offline-only V2.4-X2S shared directional-safety forensics and qualification.
+# This target is disabled by default and is not linked into the mapper, device,
+# UI, DirectInput, or vJoy paths.
+option(HOTAS_BUILD_V24_X2S_DIRECTIONAL_SAFETY
+    "Build the V2.4-X2S directional-safety research runner" OFF)
+if (HOTAS_BUILD_V24_X2S_DIRECTIONAL_SAFETY)
+    qt_add_executable(adaptive_response_v24_x2s_directional_safety
+        tests/adaptive_response_v24_x2s_directional_safety.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x2s_directional_safety PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x2s_directional_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x2s_directional_safety PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x2s_directional_safety PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
+# Offline-only V2.4-X2S-C paired five-sensor coverage supplement. It imports
+# the qualified X2S runner and is never linked into the mapper or device paths.
+option(HOTAS_BUILD_V24_X2S_SENSOR_COVERAGE
+    "Build the V2.4-X2S-C paired sensor-coverage research runner" OFF)
+if (HOTAS_BUILD_V24_X2S_SENSOR_COVERAGE)
+    qt_add_executable(adaptive_response_v24_x2s_sensor_coverage
+        tests/adaptive_response_v24_x2s_sensor_coverage.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x2s_sensor_coverage PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x2s_sensor_coverage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x2s_sensor_coverage PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x2s_sensor_coverage PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
+# Offline-only V2.4-X3 production-shaped fixed-state shadow replay.  This
+# target deliberately has no MappingWorker/DirectInput/vJoy linkage and cannot
+# alter shipping output.
+option(HOTAS_BUILD_V24_X3_RUNTIME_SHADOW
+    "Build the V2.4-X3 source-native production-shaped shadow runner" OFF)
+if (HOTAS_BUILD_V24_X3_RUNTIME_SHADOW)
+    qt_add_executable(adaptive_response_v24_x3_runtime_shadow
+        tests/adaptive_response_v24_x3_runtime_shadow.cpp
+        src/source_native_adaptive_response.h
+        src/source_native_adaptive_response.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x3_runtime_shadow PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x3_runtime_shadow PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x3_runtime_shadow PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x3_runtime_shadow PROPERTIES
+        WIN32_EXECUTABLE FALSE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+    )
+endif()
+
+# Offline-only V2.4-X3B source-event augmentation feasibility research. This
+# executable has no MappingWorker linkage and its Win32 API prototypes are
+# never invoked unless a separately authorized future probe is added.
+option(HOTAS_BUILD_V24_X3B_SOURCE_EVENT_RESEARCH
+    "Build the V2.4-X3B source-event augmentation research runner" OFF)
+if (HOTAS_BUILD_V24_X3B_SOURCE_EVENT_RESEARCH)
+    qt_add_executable(adaptive_response_v24_x3b_source_event_research
+        tests/adaptive_response_v24_x3b_source_event_research.cpp
+        src/source_freshness_research.h
+        src/source_native_adaptive_response.h
+        src/source_native_adaptive_response.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x3b_source_event_research PRIVATE
+        Qt6::Core dinput8 dxguid hid user32)
+    target_include_directories(adaptive_response_v24_x3b_source_event_research PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x3b_source_event_research PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x3b_source_event_research PROPERTIES
+        WIN32_EXECUTABLE FALSE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+    )
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
