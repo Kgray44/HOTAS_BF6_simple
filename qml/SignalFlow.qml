@@ -1450,7 +1450,15 @@ Item {
     }
     function saveWorkspace() {
         if (!workspaceDirty || !graph.workspace) return true
-        return persistWorkspace({}, "")
+        // Viewport persistence is presentation-only.  Its debounce must not
+        // refresh graph routes or clear the just-committed card placement.
+        const saved = backendObject.signalFlowSaveWorkspaceSilently(workspaceSnapshot({}))
+        if (saved) workspaceDirty = false
+        else {
+            feedback = "Signal Flow workspace could not be saved."
+            feedbackError = true
+        }
+        return saved
     }
     function toggleWireStyle() {
         const nextStyle = graph.workspace && graph.workspace.wireStyle === "orthogonal" ? "smooth" : "orthogonal"
@@ -1476,11 +1484,16 @@ Item {
             ? "Snap to Grid enabled. Cards remain free until release."
             : "Snap to Grid disabled. Card positions will stay exactly where released.")
     }
-    function saveNodePlacement(node, x, y, pinned) {
+    function saveNodePlacement(node, x, y, pinned, refreshGraph) {
         if (!node || !node.objectId) return false
         const saved = backendObject.signalFlowSaveNodeLayout(String(node.objectId), x, y, Boolean(pinned))
         if (saved) {
-            graph = backendObject.signalFlowGraph
+            // A drag has already committed this exact coordinate to
+            // nodePositions. AppBackend persists layout silently, so forcing
+            // a new graph projection here would clear that position map and
+            // recreate every wire after the pointer release. Commands such
+            // as pinning still refresh their changed node metadata.
+            if (refreshGraph !== false) graph = backendObject.signalFlowGraph
             feedback = Boolean(pinned) ? "Pinned node placement saved." : "Node placement saved."
             feedbackError = false
         } else {
@@ -2480,8 +2493,7 @@ Item {
                                                 Boolean(mouse.modifiers & Qt.AltModifier))
                                             flowNode.x = Number(settled.x)
                                             flowNode.y = Number(settled.y)
-                                            root.saveNodePlacement(node, Number(settled.x), Number(settled.y), Boolean(node.pinned))
-                                            root.workspaceDirty = true
+                                            root.saveNodePlacement(node, Number(settled.x), Number(settled.y), Boolean(node.pinned), false)
                                         } else root.cancelNodeSnapDrag()
                                         mouse.accepted = false
                                     }

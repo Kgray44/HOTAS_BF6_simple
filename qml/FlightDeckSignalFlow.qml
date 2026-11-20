@@ -70,10 +70,38 @@ Item {
     // Diagnostic-only lifecycle counters.  They make event-driven rendering
     // observable in tests without adding product logging.
     property int canvasPaintCount: 0
+    // Keep the interaction contract observable. These counters are read only
+    // by native qualification fixtures; they do not write logs or allocate on
+    // an input frame.
+    property int settledCanvasPaintCount: 0
+    property int activeCanvasPaintCount: 0
     property int geometryRebuildCount: 0
+    property int wireBucketFullRebuildCount: 0
+    property int graphRefreshCount: 0
+    property int sceneBoundsChangeCount: 0
+    property int portAnchorMutationCount: 0
     property int liveDragGeometryUpdates: 0
     property int liveDragAffectedSegments: 0
     property int nodePlacementWriteCount: 0
+    // A placement commit is a presentation-only mutation.  Keep its small
+    // cache update observable independently from graph-wide topology work.
+    property int incidentWireGeometryUpdateCount: 0
+    // A moved card can become (or cease to be) an obstacle for a route that
+    // does not terminate on that card.  Count those release-only cache
+    // replacements separately from endpoint movement for qualification.
+    property int obstacleWireGeometryUpdateCount: 0
+    property int incrementalWireBucketUpdateCount: 0
+    property int layoutPersistenceAcknowledgementCount: 0
+    // Hover is presentation-only: a graph card stays compact until the
+    // pointer reaches it, then exposes every port section for direct work.
+    property string hoveredNodeId: ""
+    // Native anchor qualification may explicitly render every port row. It
+    // is test-only; ordinary graph presentation remains hover-driven.
+    property bool diagnosticExpandAllNodeSections: false
+    // Native interaction qualification keeps its before-release references
+    // here so it can prove unchanged route records survive a layout commit.
+    // Product rendering never reads this diagnostic snapshot.
+    property var dropContinuityBaseline: ({})
     property int pointerHitCandidateCount: 0
     property int liveSampleCount: 0
     property var retiringWireGeometry: []
@@ -84,6 +112,9 @@ Item {
     property var reflowWireSegmentIndex: ({})
     property bool wireReflowPending: false
     property real wireReflow: 1.0
+    // An incremental release can also change a route not carried by the
+    // active drag overlay. That settled layer needs the same reflow cadence.
+    property bool wireReflowTouchesSettledRoutes: false
     // A freshly added route has no prior curve to morph from. Reveal only
     // that route while every surviving route transitions from its snapshot.
     property var appearingWireRouteIds: ({})
@@ -97,10 +128,27 @@ Item {
     // when the pointer is released.
     property var liveNodePositions: ({})
     property string liveDragNodeId: ""
-    // Pointer input can arrive much faster than a visible frame. Keep only
-    // the newest position and apply it once per frame so Canvas, snap guides,
-    // and the incident-wire cache do not compete with the next pointer event.
+    // Retains the final live endpoint offset for the short release handoff
+    // while the one allowed settled-geometry pass is being prepared.
+    property string liveDragRenderNodeId: ""
+    property var liveDragPosition: ({})
+    property real liveDragDeltaX: 0
+    property real liveDragDeltaY: 0
+    // The settled canvas deliberately omits these routes while a card owns a
+    // pointer. Their lightweight interaction layer then redraws only the
+    // incident segments. A released card keeps its updated incident routes on
+    // this overlay until a genuine topology rebuild, avoiding an ordinary-drop
+    // reset of the complete settled Canvas.
+    property var activeDragRouteIds: ({})
+    property bool liveDragRouteSettlePending: false
+    property string layoutCommitAnchorSuppressionNodeId: ""
+    property var pendingNodePlacementPersistences: []
+    // Pointer state belongs to the gesture, never to the persisted graph.
+    // Qt Quick naturally presents property changes at its render cadence, so
+    // the interaction path must not insert a second timer/event-turn throttle
+    // between a native pointer event and the moving card.
     property var pendingLiveNodeDrag: ({})
+    property bool dragFrameRequested: false
     property int liveDragFrameCount: 0
     // Assistive snapping is a workspace-only release decision.  The ghost and
     // guides are transient; a held card always tracks the pointer freely.
@@ -147,9 +195,11 @@ Item {
     readonly property real magneticPortRadius: 28
     readonly property real magneticPortHysteresis: 6
     property var dragWire: ({ "active": false, "source": ({}), "x": 0, "y": 0 })
-    // Source-wire dragging also performs compatibility preview work. Coalesce
-    // high-rate pointer samples here for the same frame budget as card drags.
+    // Source-wire dragging also performs compatibility preview work. Like
+    // card dragging it applies the current native pointer sample immediately
+    // and leaves presentation cadence to Qt Quick.
     property var pendingSourceDragPoint: ({})
+    property bool sourceDragFrameRequested: false
     property int liveWireDragFrameCount: 0
     // A DropArea is permitted to report its drop either before or after the
     // source DragHandler becomes inactive. Keep the initiating port through
@@ -168,11 +218,40 @@ Item {
     }
     readonly property int canvasPortLimit: semanticDensity === "overview" ? 12
         : semanticDensity === "compact" ? 18 : 48
-    readonly property var sceneBounds: graphLayoutBounds()
+    // The scene extent is a settled-layout cache.  A source-wire pointer
+    // changes only the interaction overlay; keeping a reactive bounds binding
+    // here caused QML to re-run the full card-height walk for every pointer
+    // sample even though its result could not affect the gesture.
+    property var sceneBounds: ({ "maxX": 976, "maxY": 636 })
     readonly property real sceneLogicalWidth: Math.max(1040, Number(sceneBounds.maxX || 0) + 64)
     readonly property real sceneLogicalHeight: Math.max(700, Number(sceneBounds.maxY || 0) + 64)
 
     signal navigateRequested(int page, int axis, var state)
+
+    function routeIsActiveDrag(routeId) {
+        return Boolean(activeDragRouteIds[String(routeId || "")])
+    }
+    function hasWireOverlayRoutes() {
+        return Object.keys(activeDragRouteIds || ({})).length > 0
+    }
+    function requestWirePaint() {
+        // Never wake the settled layer for a pointer-owned card or a wire
+        // preview.  Canvas otherwise clears and redraws every static route
+        // (and the grid) for a local interaction.
+        if (liveDragNodeId || liveDragRouteSettlePending || hasWireOverlayRoutes()
+                || (dragWire && dragWire.active)) {
+            if (activeDiagram) activeDiagram.requestPaint()
+        } else if (diagram) {
+            diagram.requestPaint()
+        }
+    }
+    function requestSettledWirePaint() {
+        if (diagram) diagram.requestPaint()
+    }
+    // QQmlExpression-based native tests cannot resolve a component-local id
+    // directly.  Expose the rendered viewport through the page API so the
+    // test continues to drive the actual Flickable rather than a helper.
+    function graphViewportForTest() { return graphViewport }
 
     function normalized(value) { return String(value || "").toLowerCase() }
     function nodeMotionDuration(nodeData) {
@@ -442,9 +521,39 @@ Item {
         }
         return cardGroupRouteCount(nodeData, group, destination) > 0
     }
+    function cardIsHovered(nodeData) {
+        const id = nodeIdentity(nodeData)
+        return id.length > 0 && String(hoveredNodeId || "") === id
+    }
+    function cardKeepsActiveWireSource(nodeData) {
+        const activeSource = dragWire && dragWire.active ? dragWire.source : ({});
+        const ownerId = portOwnerNodeId(activeSource)
+        return ownerId.length > 0 && nodeMatchesId(nodeData, ownerId)
+    }
+    function cardIsExpanded(nodeData) {
+        // A live source DragHandler belongs to its original port item. Keep
+        // that one card expanded while the pointer moves across another card
+        // that is opening as a possible destination.
+        return diagnosticExpandAllNodeSections || cardIsHovered(nodeData)
+            || cardKeepsActiveWireSource(nodeData)
+    }
+    function setNodeHovered(nodeData, hovered) {
+        // Keep the card that owns a drag stable. Hover changes to cards under
+        // it would otherwise resize unrelated port sections mid-gesture.
+        if (liveDragNodeId) return false
+        const id = nodeIdentity(nodeData)
+        if (!id) return false
+        const next = hovered ? id : (String(hoveredNodeId || "") === id ? "" : hoveredNodeId)
+        if (String(hoveredNodeId || "") === String(next || "")) return false
+        hoveredNodeId = String(next || "")
+        refreshSceneBounds()
+        return true
+    }
     function cardGroupCollapsed(nodeData, group, destination) {
-        return cardGroupStoredCollapsed(nodeData, group)
-            && !cardGroupNeedsAttention(nodeData, group, destination)
+        // Graph cards deliberately minimize every section at rest. Hovering
+        // the card is the single, immediate expansion affordance; it never
+        // persists a workspace preference or mutates canonical configuration.
+        return !cardIsExpanded(nodeData)
     }
     function cardGroupPorts(nodeData, group, destination) {
         const storedCollapsed = cardGroupStoredCollapsed(nodeData, group)
@@ -454,7 +563,7 @@ Item {
         })
         // A collapsed group that is temporarily revealed by a live selection
         // shows the related endpoints, not a surprise bank of 32 controls.
-        if (storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
+        if (!cardIsExpanded(nodeData) && storedCollapsed && attention && normalized(query).length === 0 && filter === "all"
                 && routeStateFilter === "all") {
             result = result.filter(function(port) {
                 return Boolean(port.mapped) || (source && source.id && (!destination
@@ -484,7 +593,10 @@ Item {
         }
         return all.slice(0, 96)
     }
-    function destinationPorts() { return ports("output").filter(function(port) { return matching(port, true) && !groupCollapsed("output", port.group) }) }
+    // Port-group collapse is a visual density choice. Routing helpers must
+    // continue to enumerate every compatible canonical endpoint, including
+    // a destination card that will expand as the pointer reaches it.
+    function destinationPorts() { return ports("output").filter(function(port) { return matching(port, true) }) }
     function visibleCardPorts(nodeData, destination) {
         let result = []
         const state = cardGroups(nodeData)
@@ -516,11 +628,23 @@ Item {
         let maxY = 636
         for (let index = 0; index < nodes.length; ++index) {
             const nodeData = nodes[index]
-            const position = nodePosition(nodeData, nodeData.kind === "output" ? 1320 : nodeData.kind === "processor" ? 680 : 80, 120)
+            // Viewport extent is a settled-layout concern.  Making it depend
+            // on a transient pointer position invalidates scene dimensions
+            // and both canvas textures for every drag sample.
+            const position = settledNodePosition(nodeData,
+                nodeData.kind === "output" ? 1320 : nodeData.kind === "processor" ? 680 : 80, 120)
             maxX = Math.max(maxX, Number(position.x || 0) + graphCardWidth(nodeData))
             maxY = Math.max(maxY, Number(position.y || 0) + graphCardHeight(nodeData))
         }
         return ({ "maxX": maxX, "maxY": maxY })
+    }
+    function refreshSceneBounds() {
+        // Do not make either pointer-owned gesture pay for a full graph walk.
+        // The release or the canonical graph update immediately afterwards
+        // refreshes this stable viewport extent.
+        if (liveDragNodeId || (dragWire && dragWire.active)) return false
+        sceneBounds = graphLayoutBounds()
+        return true
     }
     function updateInteraction(changes) {
         const next = ({})
@@ -554,7 +678,7 @@ Item {
     function cancelRouting(reason, announceCancellation) {
         const hadRouting = routingActive || Boolean(dragWire && dragWire.active)
         pendingSourceDragPoint = ({})
-        sourceDragFrameTimer.stop()
+        sourceDragFrameRequested = false
         interaction = ({ "mode": "IDLE", "source": ({}), "target": ({}),
             "expectedRevision": 0, "profileId": "", "rigId": "", "token": interactionToken })
         source = ({})
@@ -790,7 +914,7 @@ Item {
     function beginSourceDrag(port, point) {
         if (!armSource(port, true)) return false
         pendingSourceDragPoint = ({})
-        sourceDragFrameTimer.stop()
+        sourceDragFrameRequested = false
         lastSourceDragPort = port
         sourceDragDropHandled = false
         dragWire = ({ "active": true, "source": port,
@@ -812,13 +936,12 @@ Item {
     function queueSourceDrag(point) {
         if (!dragWire.active || !point || !isFinite(Number(point.x)) || !isFinite(Number(point.y))) return false
         pendingSourceDragPoint = ({ "x": Number(point.x), "y": Number(point.y) })
-        if (!sourceDragFrameTimer.running) sourceDragFrameTimer.start()
-        return true
+        return flushQueuedSourceDrag()
     }
     function flushQueuedSourceDrag() {
         const pending = pendingSourceDragPoint || ({})
         pendingSourceDragPoint = ({})
-        sourceDragFrameTimer.stop()
+        sourceDragFrameRequested = false
         if (!dragWire.active || !isFinite(Number(pending.x)) || !isFinite(Number(pending.y))) return false
         updateSourceDrag(pending)
         liveWireDragFrameCount += 1
@@ -892,7 +1015,7 @@ Item {
         if (!sourceDragDropHandled) flushQueuedSourceDrag()
         else {
             pendingSourceDragPoint = ({})
-            sourceDragFrameTimer.stop()
+            sourceDragFrameRequested = false
         }
         const sourcePort = sourceDragPortFromDrop(null)
         const releasePoint = ({ "x": Number(dragWire.x || 0), "y": Number(dragWire.y || 0) })
@@ -918,6 +1041,13 @@ Item {
             cancelRouting("The graph changed while the connection was being prepared. No route was changed.", true)
             return
         }
+        // A held pointer commonly delivers multiple samples inside the same
+        // magnetic target.  The canonical graph and compatibility inputs are
+        // unchanged in that case, so keep the existing preview rather than
+        // asking AppBackend to calculate it again for every sample.
+        if (String(connectionPreview && connectionPreview.portId || "") === String(port.id || "")
+                && String(connectionPreview && connectionPreview.sourcePortId || "")
+                    === String(activeSource.id || "")) return
         const sourceEndpoint = String(activeSource.endpointId || activeSource.id || "")
         const destinationEndpoint = String(port.endpointId || port.id || "")
         const preview = sourceEndpoint.length > 0 && destinationEndpoint.length > 0
@@ -1021,14 +1151,36 @@ Item {
     }
     function nodePosition(nodeData, fallbackX, fallbackY) {
         if (!nodeData) return ({ "x": fallbackX, "y": fallbackY })
+        if (liveDragNodeId && nodeMatchesId(nodeData, liveDragNodeId)
+                && isFinite(Number(liveDragPosition.x)) && isFinite(Number(liveDragPosition.y)))
+            return liveDragPosition
         const livePosition = liveNodePositions[String(nodeData.id || "")]
             || liveNodePositions[String(nodeData.objectId || "")]
         if (livePosition) return livePosition
+        return settledNodePosition(nodeData, fallbackX, fallbackY)
+    }
+    function settledNodePosition(nodeData, fallbackX, fallbackY) {
+        if (!nodeData) return ({ "x": fallbackX, "y": fallbackY })
         const saved = nodePositions[String(nodeData.objectId || nodeData.id || "")]
             || nodePositions[String(nodeData.id || "")]
         if (saved) return saved
         return ({ "x": Number(nodeData.x === undefined ? fallbackX : nodeData.x),
                   "y": Number(nodeData.y === undefined ? fallbackY : nodeData.y) })
+    }
+    // Keep a dragging card's layout rectangle at its settled position and
+    // move the visual subtree with a scenegraph transform.  Port anchors are
+    // recorded in card-local coordinates, so currentGraphSpacePortCenter()
+    // can use the same delta for exact wire attachment without re-laying out
+    // every child on each pointer sample.
+    function liveNodeTranslationX(nodeData, fallbackX, fallbackY) {
+        if (!nodeData || !isLiveNodeDrag(nodeData)
+                || !isFinite(Number(liveDragPosition.x))) return 0
+        return liveDragDeltaX
+    }
+    function liveNodeTranslationY(nodeData, fallbackX, fallbackY) {
+        if (!nodeData || !isLiveNodeDrag(nodeData)
+                || !isFinite(Number(liveDragPosition.y))) return 0
+        return liveDragDeltaY
     }
     function snapNodeSize(nodeData) {
         return ({ "width": graphCardWidth(nodeData), "height": graphCardHeight(nodeData) })
@@ -1087,7 +1239,7 @@ Item {
         for (let index = 0; index < nodes.length; ++index) {
             const other = nodes[index]
             if (!other || nodeMatchesId(other, identity)) continue
-            const position = nodePosition(other, Number(other.x || 0), Number(other.y || 0))
+            const position = settledNodePosition(other, Number(other.x || 0), Number(other.y || 0))
             const otherSize = snapNodeSize(other)
             // Keep the alignment field small and intentional.  It assists
             // the nearest meaningful edge/center relationship, never a
@@ -1202,6 +1354,13 @@ Item {
                 && !portAnchorDiagnosticsEnabled) return
         const endpointKey = String(port.endpointId || "")
         const legacyKey = String(port.id || "")
+        // Moving a card does not change any port's local position. Its prior
+        // measured offset remains exact after the committed card coordinate
+        // changes, so ignore the one delegate-polish echo that follows a
+        // release instead of scheduling a graph-wide cache rebuild.
+        if (layoutCommitAnchorSuppressionNodeId
+                && nodeMatchesId(nodeForId(ownerId), layoutCommitAnchorSuppressionNodeId)
+                && (portAnchorOffsets[endpointKey] || portAnchorOffsets[legacyKey])) return
         const endpointAnchor = portAnchors[endpointKey]
         const legacyAnchor = portAnchors[legacyKey]
         const unchanged = function(anchor) {
@@ -1221,6 +1380,7 @@ Item {
         if (port.id) rememberPortAnchor(port, String(port.id), x, y, next, offsets)
         portAnchors = next
         portAnchorOffsets = offsets
+        portAnchorMutationCount += 1
         wireGeometryTimer.restart()
     }
     // A hidden or destroyed port row no longer describes a rendered endpoint.
@@ -1239,6 +1399,7 @@ Item {
             if (key !== endpointKey && key !== legacyKey) offsets[key] = portAnchorOffsets[key]
         portAnchors = next
         portAnchorOffsets = offsets
+        portAnchorMutationCount += 1
         wireGeometryTimer.restart()
     }
     // This is the sole endpoint resolver for Canvas geometry, its spatial hit
@@ -1390,7 +1551,7 @@ Item {
         if (hoveredRouteId !== next || hoveredSegmentId !== nextSegment) {
             hoveredRouteId = next
             hoveredSegmentId = nextSegment
-            if (diagram) diagram.requestPaint()
+            requestWirePaint()
         }
     }
     function obstaclePlan(startX, startY, endX, endY, excludedIds) {
@@ -1501,7 +1662,7 @@ Item {
             "processorCount": Math.max(0, segments.length - 1), "lane": lane
         })
     }
-    function snapshotWireGeometry(entries) {
+    function snapshotWireGeometry(entries, captureLiveDrag) {
         const snapshot = []
         const sourceEntries = entries || []
         for (let entryIndex = 0; entryIndex < sourceEntries.length; ++entryIndex) {
@@ -1512,12 +1673,16 @@ Item {
             for (let segmentIndex = 0; segmentIndex < sourceSegments.length; ++segmentIndex) {
                 const segment = sourceSegments[segmentIndex]
                 if (!segment) continue
+                const liveSegment = Boolean(captureLiveDrag) && liveDragSegmentTouches(segment)
                 // Canvas only needs these immutable presentation fields while
                 // the current cache is rebuilt underneath it.
                 segments.push({ "routeSegmentId": String(segment.routeSegmentId || ""),
-                    "startX": Number(segment.startX), "startY": Number(segment.startY),
-                    "endX": Number(segment.endX), "endY": Number(segment.endY),
-                    "hasDetour": Boolean(segment.hasDetour), "detourY": Number(segment.detourY || 0),
+                    "startX": liveSegment ? liveDragSegmentStartX(segment) : Number(segment.startX),
+                    "startY": liveSegment ? liveDragSegmentStartY(segment) : Number(segment.startY),
+                    "endX": liveSegment ? liveDragSegmentEndX(segment) : Number(segment.endX),
+                    "endY": liveSegment ? liveDragSegmentEndY(segment) : Number(segment.endY),
+                    "hasDetour": liveSegment ? false : Boolean(segment.hasDetour),
+                    "detourY": liveSegment ? 0 : Number(segment.detourY || 0),
                     "underCard": Boolean(segment.underCard) })
             }
             if (segments.length > 0) snapshot.push({ "route": entry.route || ({}),
@@ -1544,7 +1709,7 @@ Item {
     function wireIsAppearing(routeId) {
         return Boolean(appearingWireRouteIds[String(routeId || "")])
     }
-    function prepareWireReflow(duration) {
+    function prepareWireReflow(duration, captureLiveDrag) {
         if (!wireGeometry || wireGeometry.length === 0) {
             reflowWireGeometry = []
             reflowWireSegmentIndex = ({})
@@ -1555,13 +1720,14 @@ Item {
         wireReflowAnimation.stop()
         wireReflowDuration = Number(duration || (autoLayoutMotionActive
             ? motionLayoutDuration : motionStructuralDuration))
-        reflowWireGeometry = snapshotWireGeometry(wireGeometry)
+        reflowWireGeometry = snapshotWireGeometry(wireGeometry, captureLiveDrag)
         reflowWireSegmentIndex = indexReflowWireSegments(reflowWireGeometry)
         wireReflowPending = reflowWireGeometry.length > 0
         wireReflow = wireReflowPending ? 0 : 1
     }
     function rebuildWireGeometry() {
         geometryRebuildCount += 1
+        wireBucketFullRebuildCount += 1
         const routes = graph.routes || []
         const nodes = graph.nodes || []
         const nodeById = ({})
@@ -1614,6 +1780,20 @@ Item {
         wireBuckets = buckets
         wireSegmentBucketKeys = segmentBucketKeys
         wireNodeSegmentRefs = nodeSegmentRefs
+        // Full cache reconstruction is reserved for an actual graph/layout
+        // invalidation. Only then hand overlay routes back to the settled
+        // Canvas; an ordinary card drop keeps its small final overlay intact.
+        if (liveDragRouteSettlePending || (!liveDragNodeId && hasWireOverlayRoutes())) {
+            liveDragRouteSettlePending = false
+            activeDragRouteIds = ({})
+            liveDragRenderNodeId = ""
+            liveDragDeltaX = 0
+            liveDragDeltaY = 0
+            requestSettledWirePaint()
+            if (activeDiagram) activeDiagram.requestPaint()
+        } else {
+            requestWirePaint()
+        }
         if (wireReflowPending) {
             wireReflowPending = false
             if (reflowWireGeometry.length > 0) {
@@ -1637,7 +1817,6 @@ Item {
                 beginRouteDestinationAcknowledgement()
             }
         }
-        if (diagram) diagram.requestPaint()
     }
     function refreshLiveDragGeometry(nodeId) {
         const movedNode = nodeForId(nodeId)
@@ -1646,55 +1825,227 @@ Item {
             || wireNodeSegmentRefs[nodeIdentity(movedNode)]
             || wireNodeSegmentRefs[nodeStorageIdentity(movedNode)] || []
         if (refs.length === 0) return 0
-        // Preserve all unrelated route entries by reference. Only incident
-        // routes receive a replacement segments array.
-        const next = wireGeometry
-        const changedRoutes = ({})
-        let changedCount = 0
-        for (let refIndex = 0; refIndex < refs.length; ++refIndex) {
-            const ref = refs[refIndex]
-            const entry = next[ref.entryIndex]
-            if (!entry) continue
-            let replacement = changedRoutes[String(ref.entryIndex)]
-            if (!replacement) {
-                replacement = ({ "route": entry.route || ({}), "routeId": entry.routeId,
-                    "lane": Number(entry.lane || 0), "segments": (entry.segments || []).slice() })
-                changedRoutes[String(ref.entryIndex)] = replacement
-            }
-            const oldSegment = replacement.segments[ref.segmentIndex]
-            if (!oldSegment) continue
-            const sourceNode = nodeForId(oldSegment.sourceNodeId)
-            const destinationNode = nodeForId(oldSegment.destinationNodeId)
-            const canonical = ({ "id": oldSegment.routeSegmentId,
-                "sourceNodeId": oldSegment.sourceNodeId, "destinationNodeId": oldSegment.destinationNodeId,
-                "sourceEndpointId": oldSegment.sourceEndpointId,
-                "destinationEndpointId": oldSegment.destinationEndpointId })
-            const updated = geometryForCanonicalSegment(replacement.routeId, canonical, sourceNode, destinationNode,
-                replacement.lane, true)
-            replacement.segments[ref.segmentIndex] = updated
-            changedCount += 1
-        }
-        for (const entryIndex in changedRoutes) {
-            const replacement = changedRoutes[entryIndex]
-            next[Number(entryIndex)] = routeGeometryEntry(replacement.route, replacement.segments, replacement.lane)
-        }
-        if (changedCount === 0) return 0
-        // A card owns the pointer throughout its drag, so wire hit testing is
-        // not meaningful until release. Keep the settled spatial index intact
-        // instead of allocating/filtering every touched bucket on every frame.
-        // finishLiveNodeDrag() performs the single complete cache rebuild.
-        wireGeometry = next
+        // The settled geometry and hit structure intentionally remain
+        // immutable while a card owns the pointer. activeDiagram adjusts the
+        // small incident set with liveDragDeltaX/Y at paint time; rebuilding
+        // replacement route/segment arrays here used to allocate a graph-wide
+        // array for every sample even though only these endpoints could move.
         liveDragGeometryUpdates += 1
-        liveDragAffectedSegments += changedCount
-        if (diagram) diagram.requestPaint()
-        return changedCount
+        liveDragAffectedSegments += refs.length
+        requestWirePaint()
+        return refs.length
+    }
+    function cloneWireBucketForMutation(nextBuckets, clonedBuckets, key) {
+        if (!clonedBuckets[key]) {
+            nextBuckets[key] = (nextBuckets[key] || []).slice()
+            clonedBuckets[key] = true
+        }
+        return nextBuckets[key]
+    }
+    function removeSegmentFromIncrementalBuckets(nextBuckets, nextSegmentBucketKeys,
+                                                  clonedBuckets, cacheKey) {
+        const keys = nextSegmentBucketKeys[cacheKey] || []
+        let updates = 0
+        for (let keyIndex = 0; keyIndex < keys.length; ++keyIndex) {
+            const key = keys[keyIndex]
+            const bucket = cloneWireBucketForMutation(nextBuckets, clonedBuckets, key)
+            let writeIndex = 0
+            for (let entryIndex = 0; entryIndex < bucket.length; ++entryIndex) {
+                if (String(bucket[entryIndex].cacheKey || "") === String(cacheKey)) {
+                    updates += 1
+                    continue
+                }
+                bucket[writeIndex++] = bucket[entryIndex]
+            }
+            bucket.length = writeIndex
+        }
+        delete nextSegmentBucketKeys[cacheKey]
+        return updates
+    }
+    function addSegmentToIncrementalBuckets(nextBuckets, nextSegmentBucketKeys,
+                                            clonedBuckets, route, routeId, segment) {
+        const cell = 96
+        const cacheKey = routeSegmentCacheKey(routeId, segment)
+        const keys = []
+        let updates = 0
+        segment.cacheKey = cacheKey
+        for (let bx = Math.floor(segment.bounds.left / cell); bx <= Math.floor(segment.bounds.right / cell); ++bx) {
+            for (let by = Math.floor(segment.bounds.top / cell); by <= Math.floor(segment.bounds.bottom / cell); ++by) {
+                const key = bx + ":" + by
+                const bucket = cloneWireBucketForMutation(nextBuckets, clonedBuckets, key)
+                bucket.push({ "route": route, "routeId": routeId,
+                    "routeSegmentId": segment.routeSegmentId, "cacheKey": cacheKey, "points": segment.points })
+                keys.push(key)
+                updates += 1
+            }
+        }
+        nextSegmentBucketKeys[cacheKey] = keys
+        return updates
+    }
+    function canonicalSegmentForCachedSegment(route, segment, segmentIndex) {
+        const canonicalSegments = route && route.segments || []
+        const cachedId = String(segment && segment.routeSegmentId || "")
+        const indexed = canonicalSegments[segmentIndex]
+        if (indexed && (!cachedId || String(indexed.id || "") === cachedId)) return indexed
+        for (let index = 0; index < canonicalSegments.length; ++index) {
+            if (String(canonicalSegments[index].id || "") === cachedId) return canonicalSegments[index]
+        }
+        return null
+    }
+    function wireSegmentsHaveSameGeometry(first, second) {
+        if (!first || !second) return false
+        return String(first.sourceNodeId || "") === String(second.sourceNodeId || "")
+            && String(first.destinationNodeId || "") === String(second.destinationNodeId || "")
+            && String(first.sourceEndpointId || "") === String(second.sourceEndpointId || "")
+            && String(first.destinationEndpointId || "") === String(second.destinationEndpointId || "")
+            && Math.abs(Number(first.startX) - Number(second.startX)) < 0.01
+            && Math.abs(Number(first.startY) - Number(second.startY)) < 0.01
+            && Math.abs(Number(first.endX) - Number(second.endX)) < 0.01
+            && Math.abs(Number(first.endY) - Number(second.endY)) < 0.01
+            && Boolean(first.hasDetour) === Boolean(second.hasDetour)
+            && Boolean(first.underCard) === Boolean(second.underCard)
+            && Math.abs(Number(first.detourY) - Number(second.detourY)) < 0.01
+    }
+    // A card release promotes the existing interaction geometry into its
+    // stable presentation cache.  Endpoint routes are always reconsidered;
+    // every other cached segment is compared once, only at release, so a card
+    // that newly obstructs an unrelated wire gets its detour without reviving
+    // a graph-wide rebuild or changing any unaffected route-entry identity.
+    function rebuildReleaseWireGeometry(nodeId) {
+        const movedNode = nodeForId(nodeId)
+        if (!movedNode || !nodeIdentity(movedNode)) return 0
+        const movedId = nodeIdentity(movedNode)
+        const movedStorageId = nodeStorageIdentity(movedNode)
+        const replacements = ({})
+        const replacementEntries = ({})
+        let incidentUpdates = 0
+        let obstacleUpdates = 0
+        for (let entryIndex = 0; entryIndex < wireGeometry.length; ++entryIndex) {
+            const entry = wireGeometry[entryIndex]
+            const cachedSegments = entry && entry.segments || []
+            for (let segmentIndex = 0; segmentIndex < cachedSegments.length; ++segmentIndex) {
+                const oldSegment = cachedSegments[segmentIndex]
+                const canonical = canonicalSegmentForCachedSegment(entry && entry.route, oldSegment, segmentIndex)
+                if (!entry || !oldSegment || !canonical) continue
+                const sourceNode = nodeForId(canonical.sourceNodeId) || nodeForId(entry.route.sourceNodeId)
+                const destinationNode = nodeForId(canonical.destinationNodeId) || nodeForId(entry.route.destinationNodeId)
+                if (!sourceNode || !destinationNode) continue
+                const newSegment = geometryForCanonicalSegment(entry.routeId, canonical, sourceNode,
+                    destinationNode, Number(entry.lane || 0), false)
+                if (wireSegmentsHaveSameGeometry(oldSegment, newSegment)) continue
+                const replacementKey = entryIndex + ":" + segmentIndex
+                replacements[replacementKey] = ({ "entryIndex": entryIndex, "segmentIndex": segmentIndex,
+                    "entry": entry, "oldSegment": oldSegment, "newSegment": newSegment })
+                if (!replacementEntries[entryIndex]) replacementEntries[entryIndex] = cachedSegments.slice()
+                replacementEntries[entryIndex][segmentIndex] = newSegment
+                const touchesMovedNode = String(oldSegment.sourceNodeId || "") === movedId
+                    || String(oldSegment.destinationNodeId || "") === movedId
+                    || String(oldSegment.sourceNodeId || "") === movedStorageId
+                    || String(oldSegment.destinationNodeId || "") === movedStorageId
+                if (touchesMovedNode) ++incidentUpdates
+                else ++obstacleUpdates
+            }
+        }
+        const replacementKeys = Object.keys(replacements)
+        if (replacementKeys.length === 0) return 0
+        // Capture the visible held-drag curve before replacing the cache.
+        // The active layer can then glide into the obstacle-aware result
+        // instead of visually jumping to it on release.
+        if (!reducedMotion) {
+            prepareWireReflow(motionStructuralDuration, true)
+            wireReflowTouchesSettledRoutes = obstacleUpdates > 0
+        } else wireReflowTouchesSettledRoutes = false
+        const nextGeometry = wireGeometry.slice()
+        for (const entryIndex in replacementEntries) {
+            const oldEntry = wireGeometry[Number(entryIndex)]
+            nextGeometry[Number(entryIndex)] = routeGeometryEntry(oldEntry.route,
+                replacementEntries[entryIndex], Number(oldEntry.lane || 0))
+        }
+        const nextBuckets = ({})
+        const nextSegmentBucketKeys = ({})
+        const clonedBuckets = ({})
+        for (const key in wireBuckets) nextBuckets[key] = wireBuckets[key]
+        for (const key in wireSegmentBucketKeys) nextSegmentBucketKeys[key] = wireSegmentBucketKeys[key]
+        let bucketUpdates = 0
+        for (let replacementIndex = 0; replacementIndex < replacementKeys.length; ++replacementIndex) {
+            const replacement = replacements[replacementKeys[replacementIndex]]
+            const oldCacheKey = String(replacement.oldSegment.cacheKey
+                || routeSegmentCacheKey(replacement.entry.routeId, replacement.oldSegment))
+            bucketUpdates += removeSegmentFromIncrementalBuckets(nextBuckets, nextSegmentBucketKeys,
+                clonedBuckets, oldCacheKey)
+            bucketUpdates += addSegmentToIncrementalBuckets(nextBuckets, nextSegmentBucketKeys,
+                clonedBuckets, replacement.entry.route, replacement.entry.routeId, replacement.newSegment)
+        }
+        wireGeometry = nextGeometry
+        wireBuckets = nextBuckets
+        wireSegmentBucketKeys = nextSegmentBucketKeys
+        incidentWireGeometryUpdateCount += incidentUpdates
+        obstacleWireGeometryUpdateCount += obstacleUpdates
+        incrementalWireBucketUpdateCount += bucketUpdates
+        // Full graph rebuilds consume this pending handoff themselves. The
+        // incremental release path owns no rebuild, so start the same
+        // presentation-only morph once its replacement cache is complete.
+        if (!reducedMotion && wireReflowPending) {
+            wireReflowPending = false
+            wireReflowAnimation.restart()
+        }
+        requestWirePaint()
+        return replacementKeys.length
+    }
+    function liveDragSegmentTouches(segment) {
+        if (!segment || !(liveDragRenderNodeId || liveDragNodeId)) return false
+        const renderId = String(liveDragRenderNodeId || liveDragNodeId || "")
+        return String(segment.sourceNodeId || "") === renderId
+            || String(segment.destinationNodeId || "") === renderId
+    }
+    function liveDragSegmentStartX(segment) {
+        return Number(segment && segment.startX || 0)
+            + (String(segment && segment.sourceNodeId || "")
+                === String(liveDragRenderNodeId || liveDragNodeId) ? liveDragDeltaX : 0)
+    }
+    function liveDragSegmentStartY(segment) {
+        return Number(segment && segment.startY || 0)
+            + (String(segment && segment.sourceNodeId || "")
+                === String(liveDragRenderNodeId || liveDragNodeId) ? liveDragDeltaY : 0)
+    }
+    function liveDragSegmentEndX(segment) {
+        return Number(segment && segment.endX || 0)
+            + (String(segment && segment.destinationNodeId || "")
+                === String(liveDragRenderNodeId || liveDragNodeId) ? liveDragDeltaX : 0)
+    }
+    function liveDragSegmentEndY(segment) {
+        return Number(segment && segment.endY || 0)
+            + (String(segment && segment.destinationNodeId || "")
+                === String(liveDragRenderNodeId || liveDragNodeId) ? liveDragDeltaY : 0)
     }
     function beginLiveNodeDrag(nodeData) {
         const id = nodeIdentity(nodeData)
         if (!id) return false
         pendingLiveNodeDrag = ({})
-        dragFrameTimer.stop()
+        dragFrameRequested = false
+        liveDragRouteSettlePending = false
+        liveDragDeltaX = 0
+        liveDragDeltaY = 0
+        liveDragRenderNodeId = id
+        // The segment index was built at the last stable graph boundary.
+        // Resolve the small incident set once on press; it must not be
+        // discovered by traversing every route on every pointer frame.
+        const refs = wireNodeSegmentRefs[id] || wireNodeSegmentRefs[nodeStorageIdentity(nodeData)] || []
+        const active = ({})
+        // Previously released cards can remain in the lightweight overlay
+        // until a real topology change.  Starting another drag must not make
+        // those already-committed wires disappear from either layer.
+        for (const routeId in activeDragRouteIds) active[routeId] = activeDragRouteIds[routeId]
+        for (let index = 0; index < refs.length; ++index) {
+            const entry = wireGeometry[Number(refs[index].entryIndex)]
+            if (entry && entry.routeId) active[String(entry.routeId)] = true
+        }
+        activeDragRouteIds = active
         liveDragNodeId = id
+        // One press-time settled paint removes incident routes from its cache.
+        // Thereafter only activeDiagram is invalidated until release.
+        requestSettledWirePaint()
+        if (activeDiagram) activeDiagram.requestPaint()
         return true
     }
     function isLiveNodeDrag(nodeData) {
@@ -1704,13 +2055,13 @@ Item {
         const id = nodeIdentity(nodeData)
         if (!id || !isFinite(x) || !isFinite(y)) return 0
         if (!liveDragNodeId) liveDragNodeId = id
-        const next = ({})
-        for (const key in liveNodePositions) next[key] = liveNodePositions[key]
         const position = ({ "x": Number(x), "y": Number(y) })
-        next[id] = position
-        const storedId = nodeStorageIdentity(nodeData)
-        if (storedId) next[storedId] = position
-        liveNodePositions = next
+        // One card owns one gesture.  A direct position avoids cloning a
+        // graph-wide JS map for every rendered drag sample.
+        liveDragPosition = position
+        const settled = settledNodePosition(nodeData, Number(nodeData.x || 0), Number(nodeData.y || 0))
+        liveDragDeltaX = Number(position.x) - Number(settled.x)
+        liveDragDeltaY = Number(position.y) - Number(settled.y)
         // Test-only measurement can choose to observe each drag sample without
         // adding visual-anchor work to the product pointer path.
         if (portAnchorDiagnosticsEnabled) requestPortAnchorMeasurement()
@@ -1721,13 +2072,12 @@ Item {
         if (!id || !isFinite(x) || !isFinite(y) || !isLiveNodeDrag(nodeData)) return false
         pendingLiveNodeDrag = ({ "nodeId": id, "x": Number(x), "y": Number(y),
             "altBypass": Boolean(altBypass) })
-        if (!dragFrameTimer.running) dragFrameTimer.start()
-        return true
+        return flushQueuedLiveNodeDrag()
     }
     function flushQueuedLiveNodeDrag() {
         const pending = pendingLiveNodeDrag || ({})
         pendingLiveNodeDrag = ({})
-        dragFrameTimer.stop()
+        dragFrameRequested = false
         if (!pending.nodeId) return false
         const nodeData = nodeForId(pending.nodeId)
         if (!nodeData || !isLiveNodeDrag(nodeData)) return false
@@ -1752,61 +2102,81 @@ Item {
             : nodeSnapCandidate(nodeData, x, y, Boolean(altBypass))
         const settledX = Number(candidate.x)
         const settledY = Number(candidate.y)
-        // Snapshot the exact live wire the user just moved. The final cache
-        // pass is allowed to route around nearby cards, but it will hand over
-        // through a short geometry morph instead of popping to the new path.
-        prepareWireReflow(candidate.changed ? motionFastDuration : motionStructuralDuration)
         if (candidate.changed) markNodeSnapSettling(nodeData)
-        // Keep the last pointer position live until `liveNodePositions` is
-        // cleared below. That makes the following short animation genuinely
-        // release-time settling rather than a visible quantized drag step.
+        // The release candidate is the only visual destination. Promote it
+        // before persistence, then derive the small incident cache from that
+        // same coordinate. This eliminates an old-position fallback between
+        // the final drag frame and the saved presentation state.
+        liveDragPosition = ({ "x": settledX, "y": settledY })
         noteNodePosition(nodeStorageIdentity(nodeData), settledX, settledY, false)
-        const next = ({})
-        for (const key in liveNodePositions) {
-            if (key !== id && key !== nodeStorageIdentity(nodeData)) next[key] = liveNodePositions[key]
-        }
-        liveNodePositions = next
-        liveDragNodeId = ""
-        clearNodeSnapPreview()
-        // A fixture can deliberately skip persistence; it still receives one
-        // complete obstacle pass on release. The product path gets that same
-        // one pass from onGraphChanged after the single layout save, avoiding
-        // a redundant pre-save rebuild.
+        // A fixture can deliberately skip persistence; that legacy path
+        // deliberately exercises a full cache rebuild. Product placement
+        // commits instead preserve every unaffected route entry and update
+        // only endpoint geometry or routes whose obstacle plan changed.
         if (persist === false) {
+            liveDragPosition = ({})
+            liveDragRouteSettlePending = true
+            liveDragNodeId = ""
+            clearNodeSnapPreview()
             rebuildWireGeometry()
             return true
         }
-        const saved = saveNodePlacement(nodeData, settledX, settledY, Boolean(nodeData.pinned))
-        if (!saved) rebuildWireGeometry()
-        if (saved) nodePlacementWriteCount += 1
-        return saved
+        const obstacleUpdatesBeforeRelease = obstacleWireGeometryUpdateCount
+        rebuildReleaseWireGeometry(id)
+        layoutCommitAnchorSuppressionNodeId = id
+        layoutCommitAnchorSuppressionTimer.restart()
+        liveDragPosition = ({})
+        liveDragRouteSettlePending = false
+        liveDragNodeId = ""
+        liveDragRenderNodeId = ""
+        liveDragDeltaX = 0
+        liveDragDeltaY = 0
+        clearNodeSnapPreview()
+        // An endpoint stays on the active interaction layer until a real
+        // topology boundary.  A newly rerouted non-endpoint wire belongs to
+        // the settled layer, so repaint that texture once after the release
+        // state is cleared. Ordinary endpoint-only drops keep it asleep.
+        if (obstacleWireGeometryUpdateCount > obstacleUpdatesBeforeRelease)
+            requestSettledWirePaint()
+        queueNodePlacementPersistence(nodeData, settledX, settledY, Boolean(nodeData.pinned))
+        return true
+    }
+    function queueNodePlacementPersistence(nodeData, x, y, pinned) {
+        if (!nodeData || !nodeData.objectId) return false
+        const objectId = String(nodeData.objectId)
+        const next = (pendingNodePlacementPersistences || []).slice()
+        let replaced = false
+        for (let index = 0; index < next.length; ++index) {
+            if (String(next[index].objectId || "") !== objectId) continue
+            next[index] = ({ "objectId": objectId, "x": Number(x), "y": Number(y),
+                "pinned": Boolean(pinned) })
+            replaced = true
+            break
+        }
+        if (!replaced) next.push(({ "objectId": objectId, "x": Number(x), "y": Number(y),
+            "pinned": Boolean(pinned) }))
+        pendingNodePlacementPersistences = next
+        nodePlacementPersistenceTimer.restart()
+        return true
     }
     function cancelLiveNodeDrag(nodeData) {
         if (!isLiveNodeDrag(nodeData)) return
         pendingLiveNodeDrag = ({})
-        dragFrameTimer.stop()
-        const id = nodeIdentity(nodeData)
-        const storedId = nodeStorageIdentity(nodeData)
-        const next = ({})
-        for (const key in liveNodePositions) {
-            if (key !== id && key !== storedId) next[key] = liveNodePositions[key]
-        }
-        liveNodePositions = next
+        dragFrameRequested = false
+        liveDragPosition = ({})
+        liveDragRouteSettlePending = true
         liveDragNodeId = ""
         clearNodeSnapPreview()
         rebuildWireGeometry()
     }
     function restartWireMotion() {
-        if (reducedMotion) {
-            wireReveal = 1
-            if (retiringWireGeometry.length > 0) {
-                wireRetire = 0
-                wireRetireAnimation.restart()
-            } else wireRetire = 1
-            return
-        }
-        wireReveal = 0
-        wireRevealAnimation.restart()
+        // A topology transition can retire route records, but it must never
+        // hide and redraw every surviving route. Newly added IDs use the
+        // per-route wireAppear lifecycle; existing IDs remain continuously
+        // visible. This also makes an accidental layout acknowledgement
+        // harmless rather than turning it into a global wire flash.
+        wireRevealAnimation.stop()
+        wireReveal = 1
         if (retiringWireGeometry.length > 0) {
             wireRetire = 0
             wireRetireAnimation.restart()
@@ -2233,7 +2603,15 @@ Item {
     }
     function saveWorkspace() {
         if (!graph.workspace) return true
-        return persistWorkspace({}, "")
+        // The 650 ms debounce only captures viewport pan/zoom.  Do not turn
+        // that acknowledgement into a graph-model refresh which could land
+        // immediately after an unrelated card release.
+        const saved = backendObject.signalFlowSaveWorkspaceSilently(workspaceSnapshot({}))
+        if (!saved) {
+            notice = "Signal Flow workspace could not be saved."
+            noticeError = true
+        }
+        return saved
     }
     function toggleWireStyle() {
         const nextStyle = graph.workspace && graph.workspace.wireStyle === "orthogonal" ? "smooth" : "orthogonal"
@@ -2340,6 +2718,8 @@ Item {
     }
 
     onGraphChanged: {
+        graphRefreshCount += 1
+        refreshSceneBounds()
         const nextRouteIds = ({})
         const nextRoutes = graph.routes || []
         const nextNodeIds = ({})
@@ -2424,6 +2804,19 @@ Item {
         nodePositions = ({})
         liveNodePositions = ({})
         liveDragNodeId = ""
+        // A card release writes its stable placement through AppBackend, which
+        // immediately replaces `graph`.  Keep the active layer's last live
+        // endpoint offset through that replacement: clearing it here would
+        // make incident routes paint from the old settled cache until the
+        // deferred port measurements finished the one allowed final rebuild.
+        // rebuildWireGeometry() owns the atomic handoff and clears these
+        // values only after the new cache is ready.
+        if (!liveDragRouteSettlePending) {
+            liveDragRenderNodeId = ""
+            liveDragDeltaX = 0
+            liveDragDeltaY = 0
+        }
+        liveDragPosition = ({})
         clearNodeSnapPreview()
         // Repeater delegates report their measured centers on the following
         // geometry turn. Their timers are queued before the handoff timer, so
@@ -2449,9 +2842,16 @@ Item {
     // clears those offsets first (above), so its deferred anchor handoff stays
     // a single stable rebuild.
     onNodePositionsChanged: {
+        refreshSceneBounds()
         if (!liveDragNodeId && Object.keys(portAnchorOffsets).length > 0)
             wireGeometryTimer.restart()
     }
+    // This is intentionally a change counter rather than instrumentation in
+    // graphLayoutBounds(): mutating state from that binding would itself turn
+    // a diagnostic into a layout dependency. A card drag must not alter the
+    // settled graph extent at all.
+    onSceneBoundsChanged: sceneBoundsChangeCount += 1
+    onWireGeometryChanged: requestWirePaint()
     onPresentationStateChanged: {
         presentationRestored = false
         Qt.callLater(restorePresentationState)
@@ -2460,25 +2860,30 @@ Item {
         if (routingActive && inspectedRoute && inspectedRoute.id)
             cancelRouting("Connection cancelled because a route was selected.", true)
         restartInspectorMotion()
-        if (diagram) diagram.requestPaint()
+        refreshSceneBounds()
+        requestWirePaint()
     }
-    onHoveredRouteIdChanged: if (diagram) diagram.requestPaint()
-    onSourceChanged: if (diagram) diagram.requestPaint()
+    onHoveredRouteIdChanged: requestWirePaint()
+    onSourceChanged: {
+        refreshSceneBounds()
+        requestWirePaint()
+    }
     onInspectedNodeChanged: {
         if (routingActive && inspectedNode && inspectedNode.id)
             cancelRouting("Connection cancelled because a card was selected.", true)
         restartInspectorMotion()
-        if (diagram) diagram.requestPaint()
+        refreshSceneBounds()
+        requestWirePaint()
     }
     onModeChanged: {
         if (mode === "effective" && routingActive)
             cancelRouting("Connection cancelled because Effective view is read-only.", true)
         if (mode === "effective") clearNodeSnapPreview()
-        if (diagram) diagram.requestPaint()
+        requestWirePaint()
     }
-    onLiveTelemetryChanged: if (diagram) diagram.requestPaint()
-    onSignalFocusChanged: if (diagram) diagram.requestPaint()
-    onXrayModeChanged: if (diagram) diagram.requestPaint()
+    onLiveTelemetryChanged: requestWirePaint()
+    onSignalFocusChanged: requestWirePaint()
+    onXrayModeChanged: requestWirePaint()
     onReducedMotionChanged: {
         if (reducedMotion) {
             wireRevealAnimation.stop()
@@ -2494,6 +2899,7 @@ Item {
             wireReflowPending = false
             reflowWireGeometry = []
             reflowWireSegmentIndex = ({})
+            wireReflowTouchesSettledRoutes = false
             wireAppear = 1
             wireAppearancePending = false
             appearingWireRouteIds = ({})
@@ -2502,16 +2908,42 @@ Item {
             nodeAppear = 1
             appearingNodeIds = ({})
         }
-        if (diagram) diagram.requestPaint()
+        requestWirePaint()
     }
-    onWireRevealChanged: if (diagram) diagram.requestPaint()
-    onWireRetireChanged: if (diagram) diagram.requestPaint()
-    onWireReflowChanged: if (diagram) diagram.requestPaint()
-    onWireAppearChanged: if (diagram) diagram.requestPaint()
-    onLiveModeChanged: if (diagram) diagram.requestPaint()
-    onDragWireChanged: if (diagram) diagram.requestPaint()
-    onRouteStateFilterChanged: if (diagram) diagram.requestPaint()
-    onQueryChanged: if (diagram) diagram.requestPaint()
+    onWireRevealChanged: requestWirePaint()
+    onWireRetireChanged: requestWirePaint()
+    onWireReflowChanged: {
+        // Most card drops remain entirely on the small active overlay. A
+        // moved blocker can also re-route a settled wire, so repaint that
+        // texture only for that exceptional affected-route case.
+        if (wireReflowTouchesSettledRoutes || !hasWireOverlayRoutes()) requestSettledWirePaint()
+        if (hasWireOverlayRoutes() && activeDiagram) activeDiagram.requestPaint()
+    }
+    onWireAppearChanged: requestWirePaint()
+    onLiveModeChanged: requestWirePaint()
+    onDragWireChanged: {
+        // Clearing a source-wire preview must also clear the transparent
+        // interaction canvas; a settled repaint alone would leave its last
+        // painted tip visible until a later graph invalidation.
+        if (activeDiagram) activeDiagram.requestPaint()
+        if (!dragWire || !dragWire.active) {
+            refreshSceneBounds()
+            requestSettledWirePaint()
+        }
+    }
+    onRouteStateFilterChanged: {
+        refreshSceneBounds()
+        requestWirePaint()
+    }
+    onFilterChanged: {
+        refreshSceneBounds()
+        requestWirePaint()
+    }
+    onQueryChanged: {
+        refreshSceneBounds()
+        requestWirePaint()
+    }
+    onLearnedSourcePortIdChanged: refreshSceneBounds()
     onNoticeChanged: {
         if (notice.length > 0) noticeTimer.restart()
         else noticeTimer.stop()
@@ -2550,6 +2982,7 @@ Item {
         }
     }
     Component.onCompleted: {
+        refreshSceneBounds()
         Qt.callLater(restoreWorkspace)
         Qt.callLater(restorePresentationState)
         Qt.callLater(applyBackendFocus)
@@ -2576,17 +3009,42 @@ Item {
     }
 
     Timer {
-        id: dragFrameTimer
-        interval: 16
+        id: layoutCommitAnchorSuppressionTimer
+        // Delegate layout reports immediately after a card coordinate changes
+        // repeat its already-known local port offsets. They are not a reason
+        // to rebuild every route. Later genuine port changes remain observed.
+        interval: root.motionFastDuration + 24
         repeat: false
-        onTriggered: root.flushQueuedLiveNodeDrag()
+        onTriggered: root.layoutCommitAnchorSuppressionNodeId = ""
     }
 
     Timer {
-        id: sourceDragFrameTimer
+        id: nodePlacementPersistenceTimer
+        // Presentation has already committed when this runs. Yield one normal
+        // presentation turn before persisting so a synchronous settings write
+        // can never hold the pointer-release handler hostage. Its completion
+        // remains visually silent and never changes the committed coordinate.
         interval: 16
         repeat: false
-        onTriggered: root.flushQueuedSourceDrag()
+        onTriggered: {
+            const pending = root.pendingNodePlacementPersistences || []
+            if (pending.length === 0) return
+            const placement = pending[0]
+            root.pendingNodePlacementPersistences = pending.slice(1)
+            const saved = root.backendObject
+                && root.backendObject.signalFlowSaveNodeLayout(String(placement.objectId),
+                    Number(placement.x), Number(placement.y), Boolean(placement.pinned))
+            root.nodePlacementWriteCount += 1
+            root.layoutPersistenceAcknowledgementCount += 1
+            if (saved) {
+                root.notice = Boolean(placement.pinned) ? "Pinned node placement saved." : "Node placement saved."
+                root.noticeError = false
+            } else {
+                root.notice = "Node placement was not saved."
+                root.noticeError = true
+            }
+            if (root.pendingNodePlacementPersistences.length > 0) nodePlacementPersistenceTimer.restart()
+        }
     }
 
     Timer {
@@ -2647,6 +3105,8 @@ Item {
         onStopped: if (root.wireReflow >= 0.999) {
             root.reflowWireGeometry = []
             root.reflowWireSegmentIndex = ({})
+            root.wireReflowTouchesSettledRoutes = false
+            if (activeDiagram) activeDiagram.requestPaint()
         }
     }
     NumberAnimation {
@@ -3077,10 +3537,11 @@ Item {
                     height: 20
                     spacing: 4
                     Text {
-                        width: Math.max(48, groupHeader.width - groupToggle.width - 4)
+                        width: groupHeader.width
                         anchors.verticalCenter: parent.verticalCenter
                         text: groupColumn.groupName.toUpperCase() + " · " + groupColumn.routeCount
                             + (groupColumn.routeCount === 1 ? " ROUTE" : " ROUTES")
+                            + (groupColumn.collapsed ? " · HOVER TO OPEN" : "")
                         color: deck.textMuted
                         font.family: deck.telemetryFont
                         font.pixelSize: 8
@@ -3089,7 +3550,8 @@ Item {
                     }
                     DeckButton {
                         id: groupToggle
-                        width: 28
+                        visible: false
+                        width: 0
                         height: 20
                         padding: 0
                         text: groupColumn.collapsed ? "+" : "−"
@@ -3392,6 +3854,7 @@ Item {
                             }
                             onPaint: {
                                 root.canvasPaintCount += 1
+                                root.settledCanvasPaintCount += 1
                                 const context = getContext("2d")
                                 context.clearRect(0, 0, width, height)
                                 context.strokeStyle = deck.graphGrid
@@ -3415,6 +3878,11 @@ Item {
                                 const geometry = root.wireGeometry || []
                                 for (let i = 0; i < geometry.length; ++i) {
                                     const entry = geometry[i]
+                                    // A pointer-owned card promotes its few
+                                    // incident routes to activeDiagram.  Keep
+                                    // this settled texture unchanged while
+                                    // that smaller layer follows the pointer.
+                                    if (root.routeIsActiveDrag(entry.routeId)) continue
                                     const route = entry.route
                                     if (root.mode === "effective" && !route.effective) continue
                                     const live = root.routeIsLive(route)
@@ -3471,6 +3939,80 @@ Item {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        // The active canvas is intentionally clear at rest.
+                        // It paints only the local card-drag routes or a
+                        // source-wire preview, leaving the full settled graph
+                        // texture untouched on every interaction frame.
+                        Canvas {
+                            id: activeDiagram
+                            anchors.fill: parent
+                            onPaint: {
+                                root.canvasPaintCount += 1
+                                root.activeCanvasPaintCount += 1
+                                const context = getContext("2d")
+                                context.clearRect(0, 0, width, height)
+                                const geometry = root.wireGeometry || []
+                                for (let i = 0; i < geometry.length; ++i) {
+                                    const entry = geometry[i]
+                                    if (!root.routeIsActiveDrag(entry.routeId)) continue
+                                    const route = entry.route || ({})
+                                    if (root.mode === "effective" && !route.effective) continue
+                                    const live = root.routeIsLive(route)
+                                    const selected = root.inspectedRoute && root.inspectedRoute.id === route.id
+                                    const hovered = String(root.hoveredRouteId || "") === String(route.id || "")
+                                    const color = selected ? deck.attention : hovered ? deck.focus
+                                        : route.effective ? deck.healthy : root.routeHasProblem(route) ? deck.attention : deck.graphLabel
+                                    const lineWidth = selected ? 3.6 : hovered ? 3.0 : live ? 2.5 : 1.65
+                                    const alpha = root.routeVisualAlpha(route, live)
+                                    const dashed = root.routeHasProblem(route)
+                                    const entryReveal = root.wireIsAppearing(entry.routeId)
+                                        ? root.wireAppear : root.wireReveal
+                                    const segments = entry.segments || []
+                                    for (let segmentIndex = 0; segmentIndex < segments.length; ++segmentIndex) {
+                                        const segment = segments[segmentIndex]
+                                        const segmentSelected = String(root.selectedSegmentId || "") === String(segment.routeSegmentId || "")
+                                        const segmentHovered = String(root.hoveredSegmentId || "") === String(segment.routeSegmentId || "")
+                                        const segmentPreview = String(root.pendingProcessorSegmentId || "") === String(segment.routeSegmentId || "")
+                                        const segmentColor = segmentSelected || segmentPreview ? deck.attention
+                                            : segmentHovered ? deck.focus : color
+                                        const segmentWidth = segmentSelected || segmentPreview ? Math.max(3.8, lineWidth)
+                                            : segmentHovered ? Math.max(3.1, lineWidth) : lineWidth
+                                        const lane = Number(entry.lane === undefined
+                                            ? root.stableLane(route.id, 9) - 4 : entry.lane)
+                                        const previous = root.reflowSourceSegment(entry.routeId, segment.routeSegmentId)
+                                        if (previous && root.wireReflow < 0.999) {
+                                            // Release has committed the new cache. Animate from
+                                            // the exact live curve held under the pointer to that
+                                            // settled, obstacle-aware route on this local layer.
+                                            diagram.drawWireMorph(context, previous, segment, segmentColor,
+                                                segmentWidth, alpha, lane, dashed)
+                                        } else {
+                                            const liveSegment = root.liveDragSegmentTouches(segment)
+                                            const startX = root.liveDragSegmentStartX(segment)
+                                            const startY = root.liveDragSegmentStartY(segment)
+                                            const endX = root.liveDragSegmentEndX(segment)
+                                            const endY = root.liveDragSegmentEndY(segment)
+                                            // A held endpoint needs a cheaper, direct curve;
+                                            // release restores obstacle refinement through the
+                                            // morph above rather than a visual jump.
+                                            diagram.drawWire(context, startX, startY, endX, endY,
+                                                segmentColor, segmentWidth, alpha, lane, dashed,
+                                                entryReveal, liveSegment ? false : segment.hasDetour,
+                                                liveSegment ? 0 : segment.detourY, segment.underCard)
+                                        }
+                                        if (segmentPreview) {
+                                            context.save()
+                                            context.globalAlpha = 0.96
+                                            context.fillStyle = deck.attention
+                                            context.font = "bold 9px " + deck.telemetryFont
+                                            context.fillText("INSERT", (segment.startX + segment.endX) * 0.5 + 8,
+                                                (segment.startY + segment.endY) * 0.5 - 7)
+                                            context.restore()
+                                        }
+                                    }
+                                }
                                 if (root.dragWire && root.dragWire.active) {
                                     const sourcePort = root.dragWire.source || ({})
                                     const sourceId = String(sourcePort.id || "")
@@ -3488,7 +4030,7 @@ Item {
                                         ? Number(snappedCenter.x) : Number(root.dragWire.x || startX)
                                     const pointerY = snappedTarget && snappedTarget.id
                                         ? Number(snappedCenter.y) : Number(root.dragWire.y || startY)
-                                    drawDragPreview(context, startX, startY, pointerX, pointerY)
+                                    diagram.drawDragPreview(context, startX, startY, pointerX, pointerY)
                                     context.save()
                                     context.fillStyle = Qt.rgba(deck.attention.r, deck.attention.g, deck.attention.b, 0.28)
                                     context.globalAlpha = 0.96
@@ -3611,8 +4153,12 @@ Item {
                             readonly property var nodeData: root.node("input")
                             readonly property string routingState: root.routingNodeState(nodeData)
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
-                            x: Number(root.nodePosition(nodeData, 80, 120).x)
-                            y: Number(root.nodePosition(nodeData, 80, 120).y)
+                            x: Number(root.settledNodePosition(nodeData, 80, 120).x)
+                            y: Number(root.settledNodePosition(nodeData, 80, 120).y)
+                            transform: Translate {
+                                x: root.liveNodeTranslationX(inputNode.nodeData, 80, 120)
+                                y: root.liveNodeTranslationY(inputNode.nodeData, 80, 120)
+                            }
                             Behavior on x { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(inputNode.nodeData); easing.type: Easing.OutCubic } }
                             Behavior on y { enabled: !root.isLiveNodeDrag(inputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(inputNode.nodeData); easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
@@ -3633,6 +4179,9 @@ Item {
                                 Text { width: parent.width; text: inputNode.nodeData.label || "Input context"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                 Text { width: parent.width; text: inputNode.nodeData.connected ? "CONNECTED · VERIFIED" : "OFFLINE · SAVED IDENTITY"; color: inputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                 SignalFlowPortGroups { width: parent.width; nodeData: inputNode.nodeData; destination: false }
+                            }
+                            HoverHandler {
+                                onHoveredChanged: root.setNodeHovered(inputNode.nodeData, hovered)
                             }
                             MouseArea {
                                 objectName: "signalFlowNodeDrag:" + root.nodeIdentity(inputNode.nodeData)
@@ -3669,7 +4218,9 @@ Item {
                                 }
                                 onReleased: function(mouse) {
                                     if (!root.isLiveNodeDrag(inputNode.nodeData)) return
-                                    if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData, inputNode.x, inputNode.y,
+                                    if (pointerMoved) root.finishLiveNodeDrag(inputNode.nodeData,
+                                        root.nodePosition(inputNode.nodeData, 80, 120).x,
+                                        root.nodePosition(inputNode.nodeData, 80, 120).y,
                                         true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(inputNode.nodeData)
                                 }
@@ -3688,8 +4239,12 @@ Item {
                                 tokens: deck
                                 readonly property string routingState: root.routingNodeState(modelData)
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
-                                x: Number(root.nodePosition(modelData, 80, 120).x)
-                                y: Number(root.nodePosition(modelData, 80, 120).y)
+                                x: Number(root.settledNodePosition(modelData, 80, 120).x)
+                                y: Number(root.settledNodePosition(modelData, 80, 120).y)
+                                transform: Translate {
+                                    x: root.liveNodeTranslationX(modelData, 80, 120)
+                                    y: root.liveNodeTranslationY(modelData, 80, 120)
+                                }
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
@@ -3711,6 +4266,9 @@ Item {
                                     Text { width: parent.width; text: modelData.label || "Saved input"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                     Text { width: parent.width; text: modelData.connected ? "CONNECTED · SAVED MEMBER" : modelData.missingReference ? "MISSING REFERENCE" : "OFFLINE · SAVED MEMBER"; color: modelData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                     SignalFlowPortGroups { width: parent.width; nodeData: modelData; destination: false }
+                                }
+                                HoverHandler {
+                                    onHoveredChanged: root.setNodeHovered(modelData, hovered)
                                 }
                                 MouseArea {
                                     objectName: "signalFlowNodeDrag:" + root.nodeIdentity(modelData)
@@ -3745,7 +4303,9 @@ Item {
                                     }
                                     onReleased: function(mouse) {
                                         if (!root.isLiveNodeDrag(modelData)) return
-                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, secondaryInputNode.x, secondaryInputNode.y,
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData,
+                                            root.nodePosition(modelData, 80, 120).x,
+                                            root.nodePosition(modelData, 80, 120).y,
                                             true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
@@ -3763,8 +4323,12 @@ Item {
                                 tokens: deck
                                 readonly property string routingState: root.routingNodeState(modelData)
                                 objectName: "signalFlowNodeCard:" + root.nodeIdentity(modelData)
-                                x: Number(root.nodePosition(modelData, 680, 120).x)
-                                y: Number(root.nodePosition(modelData, 680, 120).y)
+                                x: Number(root.settledNodePosition(modelData, 680, 120).x)
+                                y: Number(root.settledNodePosition(modelData, 680, 120).y)
+                                transform: Translate {
+                                    x: root.liveNodeTranslationX(modelData, 680, 120)
+                                    y: root.liveNodeTranslationY(modelData, 680, 120)
+                                }
                                 Behavior on x { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 Behavior on y { enabled: !root.isLiveNodeDrag(modelData); NumberAnimation { duration: root.nodeMotionDuration(modelData); easing.type: Easing.OutCubic } }
                                 width: root.graphCardWidth(modelData)
@@ -3841,6 +4405,9 @@ Item {
                                         }
                                     }
                                 }
+                                HoverHandler {
+                                    onHoveredChanged: root.setNodeHovered(modelData, hovered)
+                                }
                                 MouseArea {
                                     objectName: "signalFlowNodeDrag:" + root.nodeIdentity(modelData)
                                     anchors.fill: parent
@@ -3874,7 +4441,9 @@ Item {
                                     }
                                     onReleased: function(mouse) {
                                         if (!root.isLiveNodeDrag(modelData)) return
-                                        if (pointerMoved) root.finishLiveNodeDrag(modelData, processorNode.x, processorNode.y,
+                                        if (pointerMoved) root.finishLiveNodeDrag(modelData,
+                                            root.nodePosition(modelData, 680, 120).x,
+                                            root.nodePosition(modelData, 680, 120).y,
                                             true, Boolean(mouse.modifiers & Qt.AltModifier))
                                         else root.cancelLiveNodeDrag(modelData)
                                     }
@@ -3890,8 +4459,12 @@ Item {
                             readonly property var nodeData: root.node("output")
                             readonly property string routingState: root.routingNodeState(nodeData)
                             objectName: "signalFlowNodeCard:" + root.nodeIdentity(nodeData)
-                            x: Number(root.nodePosition(nodeData, 1320, 120).x)
-                            y: Number(root.nodePosition(nodeData, 1320, 120).y)
+                            x: Number(root.settledNodePosition(nodeData, 1320, 120).x)
+                            y: Number(root.settledNodePosition(nodeData, 1320, 120).y)
+                            transform: Translate {
+                                x: root.liveNodeTranslationX(outputNode.nodeData, 1320, 120)
+                                y: root.liveNodeTranslationY(outputNode.nodeData, 1320, 120)
+                            }
                             Behavior on x { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(outputNode.nodeData); easing.type: Easing.OutCubic } }
                             Behavior on y { enabled: !root.isLiveNodeDrag(outputNode.nodeData); NumberAnimation { duration: root.nodeMotionDuration(outputNode.nodeData); easing.type: Easing.OutCubic } }
                             width: root.graphCardWidth(nodeData)
@@ -3912,6 +4485,9 @@ Item {
                                 Text { width: parent.width; text: outputNode.nodeData.label || "Virtual output"; color: deck.textPrimary; font.family: deck.bodyFont; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight }
                                 Text { width: parent.width; text: outputNode.nodeData.connected ? "READY · VIRTUAL OUTPUT" : "OUTPUT UNAVAILABLE"; color: outputNode.nodeData.connected ? deck.healthy : deck.attention; font.family: deck.telemetryFont; font.pixelSize: 8; font.bold: true }
                                 SignalFlowPortGroups { width: parent.width; nodeData: outputNode.nodeData; destination: true }
+                            }
+                            HoverHandler {
+                                onHoveredChanged: root.setNodeHovered(outputNode.nodeData, hovered)
                             }
                             MouseArea {
                                 objectName: "signalFlowNodeDrag:" + root.nodeIdentity(outputNode.nodeData)
@@ -3946,7 +4522,9 @@ Item {
                                 }
                                 onReleased: function(mouse) {
                                     if (!root.isLiveNodeDrag(outputNode.nodeData)) return
-                                    if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData, outputNode.x, outputNode.y,
+                                    if (pointerMoved) root.finishLiveNodeDrag(outputNode.nodeData,
+                                        root.nodePosition(outputNode.nodeData, 1320, 120).x,
+                                        root.nodePosition(outputNode.nodeData, 1320, 120).y,
                                         true, Boolean(mouse.modifiers & Qt.AltModifier))
                                     else root.cancelLiveNodeDrag(outputNode.nodeData)
                                 }
