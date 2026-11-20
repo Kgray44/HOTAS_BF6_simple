@@ -471,3 +471,21 @@ install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
 )
+
+# V2.4-X2 is a default-OFF, offline-only independent HOLDOUT qualification.
+# It is compile-gated and has no MappingWorker, device, UI, or product route.
+option(HOTAS_BUILD_V24_X2_INDEPENDENT_HOLDOUT_QUALIFICATION
+    "Build the V2.4-X2 independent source-native HOLDOUT qualification runner" OFF)
+if (HOTAS_BUILD_V24_X2_INDEPENDENT_HOLDOUT_QUALIFICATION)
+    qt_add_executable(adaptive_response_v24_x2_holdout_qualification
+        tests/adaptive_response_v24_x2_holdout_qualification.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x2_holdout_qualification PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x2_holdout_qualification PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x2_holdout_qualification PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x2_holdout_qualification PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
