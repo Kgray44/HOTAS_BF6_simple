@@ -467,6 +467,95 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Phase 3 verifies the untouched synthetic holdout in a separate, opt-in
+# executable. It links the frozen estimator only and never initializes the UI,
+# DirectInput, vJoy, or the mapper worker.
+option(HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE3_HOLDOUT
+    "Build the offline V2.3.T Adaptive Response Phase 3 holdout validator" OFF)
+if (HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE3_HOLDOUT)
+    qt_add_executable(adaptive_response_phase3_holdout_identity
+        tests/adaptive_response/phase3_holdout_identity.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase3_holdout_identity PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase3_holdout_identity PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase3_holdout_identity PRIVATE
+        HOTAS_PHASE3_FREEZE_SHA="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase3-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_phase3_holdout_identity PROPERTIES WIN32_EXECUTABLE FALSE)
+
+    qt_add_executable(adaptive_response_phase3_architecture_sentinel
+        tests/adaptive_response/phase3_architecture_sentinel_main.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase3_architecture_sentinel PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase3_architecture_sentinel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase3_architecture_sentinel PRIVATE
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase3-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_phase3_architecture_sentinel PROPERTIES WIN32_EXECUTABLE FALSE)
+
+    qt_add_executable(adaptive_response_phase3_holdout_validator
+        tests/adaptive_response/phase3_holdout_validator.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase3_holdout_validator PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase3_holdout_validator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase3_holdout_validator PRIVATE
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase3-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}"
+    )
+    set_target_properties(adaptive_response_phase3_holdout_validator PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
