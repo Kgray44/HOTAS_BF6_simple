@@ -456,6 +456,15 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         std::chrono::duration<double>(timestamp - m_lastMeaningfulTimestamp).count()),
         kMinimumPredictionDeltaSeconds, kMaximumPredictionDeltaSeconds) : dt;
     const bool sourceUpdated = absoluteDelta >= kMinimumMeaningfulDelta * 0.10F;
+#if defined(HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    // R0 captures scalar facts locally and never feeds them into estimator
+    // state. The production arithmetic and state layout are therefore
+    // unchanged when this macro is absent.
+    float researchInnovation = 0.0F;
+    float researchPredictedMeasurement = physical;
+    float researchPredictedVelocity = m_velocity;
+    float researchSourcePeriodResidual = 0.0F;
+#endif
     float acceptedSourceInterval = 0.0F;
     if (sourceUpdated) {
         const float sourceInterval = std::clamp(static_cast<float>(
@@ -465,6 +474,9 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         m_sourceUpdatePeriodSeconds += (sourceInterval - m_sourceUpdatePeriodSeconds) * 0.45F;
         m_sourceUpdatePeriodSeconds = std::clamp(m_sourceUpdatePeriodSeconds,
             kMinimumPredictionDeltaSeconds, kMaximumSourceUpdatePeriodSeconds);
+#if defined(HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+        researchSourcePeriodResidual = sourceInterval - m_sourceUpdatePeriodSeconds;
+#endif
         m_lastSourceTimestamp = timestamp;
         m_quietDurationSeconds = 0.0F;
         m_holdConfidence = 1.0F;
@@ -692,6 +704,11 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
         const float predictedVelocity = m_velocity
             + (usesAcceleration ? m_acceleration * meaningfulDeltaSeconds : 0.0F);
         const float innovation = physical - predictedPosition;
+#if defined(HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+        researchInnovation = innovation;
+        researchPredictedMeasurement = predictedPosition;
+        researchPredictedVelocity = predictedVelocity;
+#endif
         const float motion = std::clamp(std::max(std::abs(predictedVelocity),
                                                   std::abs(trendVelocity))
                                              / std::max(0.02F, configuration.motionSensitivity * 18.0F),
@@ -1226,6 +1243,19 @@ AdaptiveResponseTelemetry AdaptiveResponseProcessor::process(
     result.meaningfulMeasurement = meaningfulMeasurement;
     result.sourceUpdated = sourceUpdated;
     result.braking = braking;
+#endif
+#if defined(HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    result.innovationSigned = researchInnovation;
+    result.predictedMeasurement = researchPredictedMeasurement;
+    result.predictedVelocity = researchPredictedVelocity;
+    result.meaningfulDeltaSeconds = meaningfulDeltaSeconds;
+    result.noiseThreshold = configuration.noiseRejection;
+    result.physicalDelta = measuredDelta;
+    result.holdConfidence = holdConfidence;
+    result.sourcePeriodResidualSeconds = researchSourcePeriodResidual;
+    result.cadenceJitterSeconds = std::abs(researchSourcePeriodResidual);
+    result.estimatorUpdated = trustedMeasurement;
+    result.sourceUpdatedForResearch = sourceUpdated;
 #endif
     result.state = reversal ? AdaptiveMotionState::Reversing
         : confirmedQuiet || speed <= velocityThreshold ? AdaptiveMotionState::Stable
