@@ -147,6 +147,7 @@ private slots:
     void adaptiveResponseRejectsStationaryJitterAndSingleOppositeSpike();
     void adaptiveResponseHandlesHardGentleAndRepeatedReversals();
     void adaptiveResponseConvergesEstimatorsAfterStopAndResume();
+    void adaptiveResponseBaselineHumanLikeMetrics();
     void responseCurveFamiliesAreBoundedMonotonicAndCompiled();
     void universalStrengthUsesIdentityAtZeroAndFullResponseAtOne();
     void strengthAndAxisSelectionPersistPerProfile();
@@ -1078,6 +1079,75 @@ void MappingCoreTests::adaptiveResponseConvergesEstimatorsAfterStopAndResume()
         QVERIFY(resumed.predicted >= resumed.physical - 0.0001F);
         QVERIFY(std::abs(resumed.estimated - resumed.physical) < 0.20F);
     }
+}
+
+void MappingCoreTests::adaptiveResponseBaselineHumanLikeMetrics()
+{
+    constexpr size_t samples = 211;
+    constexpr size_t turn = 85;
+    constexpr size_t finalStop = 150;
+    std::vector<float> physical;
+    physical.reserve(samples);
+    const auto smootherStep = [](float progress) {
+        const float u = std::clamp(progress, 0.0F, 1.0F);
+        return u * u * u * (u * (u * 6.0F - 15.0F) + 10.0F);
+    };
+    for (size_t index = 0; index < samples; ++index) {
+        const float elapsed = static_cast<float>(index) * 0.004F;
+        float value = -0.60F;
+        if (elapsed < 0.080F) value = -0.60F;
+        else if (elapsed < 0.340F) value = -0.60F + 1.32F * smootherStep((elapsed - 0.080F) / 0.260F);
+        else if (elapsed < 0.600F) value = 0.72F - 1.12F * smootherStep((elapsed - 0.340F) / 0.260F);
+        else value = -0.40F;
+        physical.push_back(value);
+    }
+    const auto run = [&](const char *name, float horizon, float maximumLead, float velocity,
+                         float acceleration) {
+        RuntimeAdaptiveResponseConfig configuration;
+        configuration.enabled = true;
+        configuration.model = AdaptiveResponseModel::Auto;
+        configuration.maximumHorizonSeconds = horizon;
+        configuration.maximumLead = maximumLead;
+        configuration.velocityResponse = velocity;
+        configuration.accelerationResponse = acceleration;
+        configuration.motionSensitivity = 0.035F;
+        configuration.noiseRejection = 0.012F;
+        configuration.reversalDetection = 0.075F;
+        configuration.reversalResponse = 1.0F;
+        configuration.decelerationResponse = 0.85F;
+        configuration.settlingResponse = 0.92F;
+        configuration.endpointTaper = 0.16F;
+        const AdaptiveResponseSimulation trace = simulateAdaptiveResponse(configuration, physical, 0.004F);
+        float peak = 0.0F;
+        float halfSpeedLead = 0.0F;
+        float turningLead = 0.0F;
+        float finalStopLead = 0.0F;
+        float stationaryLead = 0.0F;
+        float maximumStep = 0.0F;
+        size_t cancellation = trace.size();
+        size_t reacquisition = trace.size();
+        for (size_t index = 1; index < trace.size(); ++index) {
+            const float lead = trace[index].telemetry.lead;
+            if (index < turn) peak = std::max(peak, lead);
+            if (index >= 70 && index < turn && std::abs(physical[index] - physical[index - 1])
+                <= 0.5F * std::abs(physical[55] - physical[54])) halfSpeedLead = std::max(halfSpeedLead, lead);
+            if (index >= turn - 3 && index <= turn) turningLead = std::max(turningLead, lead);
+            if (index >= finalStop && index < finalStop + 20) finalStopLead = std::min(finalStopLead, lead);
+            if (index >= finalStop + 20) stationaryLead = std::max(stationaryLead, std::abs(lead));
+            maximumStep = std::max(maximumStep, std::abs(lead - trace[index - 1].telemetry.lead));
+            if (index > turn && cancellation == trace.size() && lead <= 0.0001F) cancellation = index;
+            if (index > turn && reacquisition == trace.size() && lead < -0.0001F) reacquisition = index;
+        }
+        qInfo().nospace() << "Baseline HumanLike " << name << " peak=" << peak
+                          << " half_speed=" << halfSpeedLead << " turning_lead=" << turningLead
+                          << " final_stop_lead=" << finalStopLead << " stationary=" << stationaryLead
+                          << " lead_step=" << maximumStep << " cancel_ms="
+                          << (cancellation == trace.size() ? -1 : static_cast<int>((cancellation - turn) * 4))
+                          << " reacquire_ms="
+                          << (reacquisition == trace.size() ? -1 : static_cast<int>((reacquisition - turn) * 4));
+    };
+    run("Fast", 0.012F, 0.18F, 0.80F, 0.68F);
+    run("Extreme", 0.030F, 0.40F, 1.00F, 0.95F);
 }
 
 void MappingCoreTests::responseCurveFamiliesAreBoundedMonotonicAndCompiled()
