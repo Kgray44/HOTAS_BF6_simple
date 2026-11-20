@@ -1,6 +1,7 @@
 #include "app_backend.h"
 #include "axis_transform.h"
 #include "config_store.h"
+#include "profile_model.h"
 #include "response_curve.h"
 #include "theme_manager.h"
 
@@ -5910,20 +5911,17 @@ bool seedDeviceRigFixture()
     rig.id = QStringLiteral("fixture-rig");
     rig.name = QStringLiteral("Fixture Flight Rig");
     rig.isDefault = true;
-    rig.members = {{stick.id, true, true, hotas::defaultOutputLayoutId()},
-                   {throttle.id, true, false, hotas::defaultOutputLayoutId()}};
+    rig.members = {{stick.id, true, true, hotas::defaultOutputLayoutId(), QStringLiteral("stick")},
+                   {throttle.id, true, false, hotas::defaultOutputLayoutId(), QStringLiteral("throttle")}};
     rig.outputs = {{hotas::defaultOutputLayoutId(), true}};
     rig.primaryOutputLayoutId = hotas::defaultOutputLayoutId();
     configuration.deviceRigs = {rig};
-    // Profiles select their Device Rig, while the Rig selects the output.
-    // Keep the editing context clear so the route-parity section below still
-    // exercises base-profile mappings; its active output must nevertheless
-    // resolve through the active fixture Rig rather than through a legacy
-    // Profile-owned output field.
+    // The Rig owns physical identities and output topology; Profiles carry
+    // behavior keyed by its portable logical member roles.
     configuration.activeDeviceRigId = rig.id;
     for (hotas::ControllerProfile &profile : configuration.profiles) {
-        profile.deviceRigId = rig.id;
-        profile.outputLayoutId.clear();
+        hotas::ensureDeviceProfileMapping(profile, QStringLiteral("stick"));
+        hotas::ensureDeviceProfileMapping(profile, QStringLiteral("throttle"));
     }
     configuration.editingDeviceRigId.clear();
     configuration.editingDeviceRecordIds.clear();
@@ -7276,7 +7274,7 @@ bool verifySignalFlowQmlSurface(hotas::AppBackend &backend, hotas::ThemeManager 
         return QString{};
     };
     const QString multiDeviceDestination = outputDestination(QStringLiteral("axis:8"));
-    const bool multiDevicePrepared = backend.assignProfileDeviceRig(backend.activeProfileId(), fixtureRigId)
+    const bool multiDevicePrepared = backend.setDeviceRigDefaultProfile(fixtureRigId, backend.activeProfileId())
         && !multiDeviceDestination.isEmpty()
         && backend.setEditingDeviceContext(fixtureRigId, {stickId});
     const QVariantMap stickRouteResult = multiDevicePrepared ? backend.signalFlowConnect(

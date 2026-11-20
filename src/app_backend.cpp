@@ -436,7 +436,10 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         condition.pressCount = input.value(u"pressCount"_qs, 2).toInt();
         condition.multiPressWindowMs = input.value(u"multiPressWindowMs"_qs, 350).toInt();
         condition.longPressDurationMs = input.value(u"longPressDurationMs"_qs, 600).toInt();
-        condition.controllerRecordId = input.value(u"controllerRecordId"_qs).toString().trimmed();
+        condition.logicalMemberId = input.value(u"logicalMemberId"_qs).toString().trimmed();
+        if (condition.logicalMemberId.isEmpty()) {
+            condition.logicalMemberId = input.value(u"controllerRecordId"_qs).toString().trimmed();
+        }
         if (static_cast<int>(condition.type) < static_cast<int>(AutomationConditionType::Always)
             || static_cast<int>(condition.type) > static_cast<int>(AutomationConditionType::AxisCrossesBelow)) {
             if (reason) *reason = u"Condition type is invalid."_qs;
@@ -461,9 +464,12 @@ bool automationDefinitionFromVariant(const QVariantMap &map, AutomationDefinitio
         action.minimum = static_cast<float>(input.value(u"minimum"_qs, -1.0).toDouble());
         action.maximum = static_cast<float>(input.value(u"maximum"_qs, 1.0).toDouble());
         action.tapDurationMs = input.value(u"tapDurationMs"_qs, 80).toInt();
-        action.sourceControllerRecordId = input.value(u"sourceControllerRecordId"_qs)
+        action.sourceLogicalMemberId = input.value(u"sourceLogicalMemberId"_qs)
             .toString().trimmed();
-        action.outputLayoutId = input.value(u"outputLayoutId"_qs).toString().trimmed();
+        if (action.sourceLogicalMemberId.isEmpty()) {
+            action.sourceLogicalMemberId = input.value(u"sourceControllerRecordId"_qs)
+                .toString().trimmed();
+        }
         if (static_cast<int>(action.type) < static_cast<int>(AutomationActionType::VJoyButtonHold)
             || static_cast<int>(action.type) > static_cast<int>(AutomationActionType::AdaptiveResponsePreset)) {
             if (reason) *reason = u"Action type is invalid."_qs;
@@ -1729,37 +1735,33 @@ bool AppBackend::configureActivationTransactionFixtureForTest()
     DeviceRig rig;
     rig.id = u"activation-transaction-rig"_qs;
     rig.name = u"Activation Transaction Rig"_qs;
-    rig.members = {{record.id, true, true, fixture.outputLayouts.front().id}};
+    rig.members = {{record.id, true, true, fixture.outputLayouts.front().id, u"member-1"_qs}};
     rig.outputs = {{fixture.outputLayouts.front().id, true}};
     rig.primaryOutputLayoutId = fixture.outputLayouts.front().id;
-    // A second Rig owns the alternate vJoy descriptor.  This deliberately
-    // exercises the only legal output switch: Profile -> different Rig ->
-    // that Rig's primary Virtual Output.  Profiles themselves cannot select
-    // an output.
+    // A second Rig owns the alternate vJoy descriptor. This deliberately
+    // exercises the only legal cross-Rig output switch: an explicit Device
+    // Rig activation selects that Rig's primary Virtual Output. Profiles
+    // themselves cannot select a Rig or an output.
     DeviceRig alternateRig;
     alternateRig.id = u"activation-transaction-alternate-rig"_qs;
     alternateRig.name = u"Activation Transaction Alternate Rig"_qs;
-    alternateRig.members = {{record.id, true, true, alternate.id}};
+    alternateRig.members = {{record.id, true, true, alternate.id, u"member-1"_qs}};
     alternateRig.outputs = {{alternate.id, true}};
     alternateRig.primaryOutputLayoutId = alternate.id;
     fixture.deviceRigs = {rig, alternateRig};
 
     DeviceProfileMapping mapping;
-    mapping.controllerRecordId = record.id;
+    mapping.logicalMemberId = u"member-1"_qs;
     mapping.enabled = true;
-    normal->deviceRigId = rig.id;
-    normal->outputLayoutId = fixture.outputLayouts.front().id;
     normal->deviceMappings = {mapping};
     normal->automaticSelectionMode = ProfileAutomaticSelectionMode::Preferred;
-    precision->deviceRigId = alternateRig.id;
-    precision->outputLayoutId = alternate.id;
     precision->deviceMappings = {mapping};
     precision->automaticSelectionMode = ProfileAutomaticSelectionMode::Fallback;
     fixture.activeProfileId = normal->id;
     fixture.activeDeviceRigId = rig.id;
 
     if (!compileDeviceRigRuntime(fixture, rig.id, normal->id).valid
-        || !compileDeviceRigRuntime(fixture, alternateRig.id, precision->id).valid
+        || !compileDeviceRigRuntime(fixture, alternateRig.id, normal->id).valid
         || !ConfigStore::save(fixture)) return false;
     m_configuration = std::move(fixture);
     ++m_configurationGeneration;
@@ -1805,13 +1807,10 @@ bool AppBackend::configureRigOwnedOutputFixtureForTest()
         layout.hidhideManaged = false;
         layout.hidHideDeviceInstanceId.clear();
     }
-    normal->outputLayoutId = defaultOutputLayoutId();
-    // This fixture models two Profiles sharing the owner-selected Rig.  The
-    // precision Profile inherited a distinct Rig in the transaction fixture
-    // above solely to exercise a cross-Rig switch; put it back here so this
-    // focused case proves an intra-Rig switch cannot reselect stale output.
-    precision->deviceRigId = rig->id;
-    precision->outputLayoutId = defaultOutputLayoutId();
+    // This fixture models two Profiles sharing the owner-selected Rig. The
+    // separate Rig in the transaction fixture exists only to exercise an
+    // explicit manual-Rig switch; Profile behavior must retain this Rig and
+    // cannot reselect a stale output.
     m_configuration.activeProfileId = normal->id;
     m_configuration.activeDeviceRigId = rig->id;
     synchronizeActiveOutputLayout();
@@ -1900,6 +1899,29 @@ bool AppBackend::configureSetupTruthReadyToActivateFixtureForTest()
     setSetupConvergenceStage(SetupConvergenceStage::Results);
     emit deviceRigsChanged();
     emit stateChanged();
+    return true;
+}
+
+bool AppBackend::configureSetupTruthVJoyDescriptorMismatchFixtureForTest()
+{
+    if (!configureSetupTruthReadyToActivateFixtureForTest()) return false;
+    const QString outputId = u"activation-transaction-output"_qs;
+    const auto found = m_virtualOutputReadinessPlans.constFind(outputId);
+    if (found == m_virtualOutputReadinessPlans.cend()) return false;
+    ControllerReadinessPlan mismatch = *found;
+    mismatch.state = ControllerReadinessState::NeedsChanges;
+    mismatch.vjoyNeedsChanges = true;
+    mismatch.vjoyCanApply = true;
+    mismatch.canApplyAutomatically = true;
+    mismatch.vjoy.inspectionComplete = true;
+    mismatch.vjoy.installed = true;
+    mismatch.vjoy.devicePresent = true;
+    mismatch.vjoy.driverReady = true;
+    mismatch.vjoySummary = u"The selected Device Rig primary output needs its vJoy descriptor repaired."_qs;
+    m_virtualOutputReadinessPlans.insert(outputId, mismatch);
+    m_setupTruthSnapshot = buildSetupTruthSnapshot();
+    m_setupTruthCheckSnapshot = m_setupTruthSnapshot;
+    setSetupConvergenceStage(SetupConvergenceStage::Results);
     return true;
 }
 
@@ -3258,19 +3280,20 @@ QVariantList AppBackend::profiles() const
             : categoryAdaptiveOverrides > 0 ? u"Category response defaults"_qs
                                         : u"Global response defaults"_qs);
         item.insert(u"curveTransitionInherited"_qs, !profile.curveTransitionSmoothingOverride);
-        const DeviceRig *rig = findDeviceRig(m_configuration, profile.deviceRigId);
+        // This is read-only runtime context, not a Profile-owned assignment.
+        const DeviceRig *rig = activeDeviceRig();
         const VirtualOutputLayout *layout = rig
             ? findOutputLayout(m_configuration, deviceRigPrimaryOutputLayoutId(*rig)) : nullptr;
         const auto rigStatus = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
-            [&profile](const DeviceRigStatus &status) { return status.rigId == profile.deviceRigId; });
-        item.insert(u"deviceRigId"_qs, profile.deviceRigId);
-        item.insert(u"deviceRigName"_qs, rig ? rig->name : u"Device Rig assignment required"_qs);
+            [rig](const DeviceRigStatus &status) { return rig && status.rigId == rig->id; });
+        item.insert(u"deviceRigId"_qs, rig ? rig->id : QString{});
+        item.insert(u"deviceRigName"_qs, rig ? rig->name : u"No active Device Rig"_qs);
         item.insert(u"deviceRigReady"_qs, rigStatus != m_deviceRigStatuses.cend() && rigStatus->complete
             && rigStatus->ambiguousRequiredMemberIds.isEmpty()
             && rigStatus->needsVerificationRequiredMemberIds.isEmpty());
         item.insert(u"outputLayoutId"_qs, rig ? deviceRigPrimaryOutputLayoutId(*rig) : QString{});
         item.insert(u"outputLayoutName"_qs, layout ? layout->name
-            : rig ? u"Rig output needs selection"_qs : u"Device Rig assignment required"_qs);
+            : rig ? u"Rig output needs selection"_qs : u"No active Device Rig"_qs);
         item.insert(u"outputDeviceId"_qs, layout ? layout->requirements.deviceId : 0);
         result.append(item);
     }
@@ -3519,7 +3542,8 @@ const DeviceRig *AppBackend::setupAssistantDeviceRig(const QString &scopeType,
 
 QString AppBackend::setupTruthDirectInputId() const
 {
-    const DeviceRig *rig = activeDeviceRig();
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_setupTargetRigId);
+    if (!rig) rig = activeDeviceRig();
     if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
         rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     }
@@ -3618,7 +3642,9 @@ QVariantList AppBackend::deviceRigs() const
                 // nothing about the active runtime rig.
                 {u"editing"_qs, rig.id == m_configuration.editingDeviceRigId
                     && m_configuration.editingDeviceRecordIds.contains(member.controllerRecordId)},
-                {u"needsVerification"_qs, health.needsVerificationMemberIds.contains(member.controllerRecordId)},
+                {u"needsVerification"_qs, member.required
+                    ? health.needsVerificationRequiredMemberIds.contains(member.controllerRecordId)
+                    : health.needsVerificationOptionalMemberIds.contains(member.controllerRecordId)},
                 {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId},
                 {u"visibilityManaged"_qs, visibilityManaged},
                 {u"hiddenFromGames"_qs, detail.value(u"hiddenFromGames"_qs, false)},
@@ -3743,7 +3769,16 @@ QVariantMap AppBackend::physicalDeviceDetail(const QString &recordId) const
             })) rigNames.append(rig.name);
     }
     for (const ControllerProfile &profile : m_configuration.profiles) {
-        const DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, record->id);
+        const DeviceProfileMapping *mapping = nullptr;
+        for (const DeviceRig &rig : m_configuration.deviceRigs) {
+            const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(), [record](const DeviceRigMember &item) {
+                return item.controllerRecordId == record->id;
+            });
+            if (member != rig.members.cend()) {
+                mapping = findDeviceProfileMapping(profile, member->logicalMemberId);
+                if (mapping) break;
+            }
+        }
         if (!mapping) continue;
         for (const AxisMapping &axis : mapping->axes) {
             if (axis.target != VirtualAxis::Disabled) ++mappedAxes;
@@ -3839,17 +3874,14 @@ QVariantMap AppBackend::virtualOutputDetail(const QString &layoutId) const
         }
     };
     for (const ControllerProfile &profile : m_configuration.profiles) {
-        const DeviceRig *profileRig = findDeviceRig(m_configuration, profile.deviceRigId);
-        if (!profileRig) continue;
-        for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
-            const auto member = std::find_if(profileRig->members.cbegin(), profileRig->members.cend(),
-                [&mapping](const DeviceRigMember &candidate) {
-                    return candidate.controllerRecordId == mapping.controllerRecordId;
-                });
-            if (member == profileRig->members.cend()) continue;
-            const QString target = member->preferredOutputLayoutId.isEmpty()
-                ? deviceRigPrimaryOutputLayoutId(*profileRig) : member->preferredOutputLayoutId;
-            if (target == layout->id) countMappingRoutes(mapping);
+        for (const DeviceRig &rig : m_configuration.deviceRigs) {
+            for (const DeviceRigMember &member : rig.members) {
+                const DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, member.logicalMemberId);
+                if (!mapping) continue;
+                const QString target = member.preferredOutputLayoutId.isEmpty()
+                    ? deviceRigPrimaryOutputLayoutId(rig) : member.preferredOutputLayoutId;
+                if (target == layout->id) countMappingRoutes(*mapping);
+            }
         }
     }
     const HidHideCapabilities &hidhide = m_readiness.plan().hidhide;
@@ -3943,7 +3975,16 @@ void AppBackend::refreshVirtualOutputReadiness(const QString &layoutId)
 
 void AppBackend::refreshSelectedRigOutputReadiness()
 {
-    const DeviceRig *rig = activeDeviceRig();
+    const bool setupSessionOwnsTarget = m_setupConvergenceStage == SetupConvergenceStage::Checking
+        || m_setupConvergenceStage == SetupConvergenceStage::Results
+        || m_setupConvergenceStage == SetupConvergenceStage::Repairing
+        || m_setupConvergenceStage == SetupConvergenceStage::VerifyingIdentity
+        || m_setupConvergenceStage == SetupConvergenceStage::RepairingVJoy
+        || m_setupConvergenceStage == SetupConvergenceStage::WaitingForUser
+        || m_setupConvergenceStage == SetupConvergenceStage::FinalChecking;
+    const DeviceRig *rig = setupSessionOwnsTarget
+        ? findDeviceRig(m_configuration, m_setupTargetRigId) : nullptr;
+    if (!rig) rig = activeDeviceRig();
     if (!rig && !m_configuration.editingDeviceRigId.isEmpty()) {
         rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     }
@@ -3989,7 +4030,8 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
         const QString id = recordId.trimmed();
         if (!savedControllerRecord(id) || uniqueIds.contains(id)) return {};
         uniqueIds.insert(id);
-        rig.members.push_back({id, true, true, selectedOutput});
+        rig.members.push_back({id, true, true, selectedOutput,
+                               QString(u"member-%1"_qs).arg(rig.members.size() + 1)});
     }
     rig.outputs.push_back({selectedOutput, true});
     m_configuration.deviceRigs.push_back(rig);
@@ -3998,14 +4040,8 @@ QString AppBackend::createDeviceRig(const QString &name, const QStringList &cont
         m_configuration.editingDeviceRecordIds = controllerRecordIds;
     }
     for (ControllerProfile &profile : m_configuration.profiles) {
-        if (profile.deviceRigId.isEmpty()) {
-            // A Profile joins the new Rig's physical topology. Output choice
-            // belongs exclusively to the Rig and is never copied into Profile
-            // state.
-            profile.deviceRigId = rig.id;
-        }
         for (const DeviceRigMember &member : rig.members) {
-            DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, member.controllerRecordId);
+            DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, member.logicalMemberId);
             if (mapping.nativePovBindings.empty()) mapping.nativePovBindings = m_configuration.nativePovBindings;
         }
     }
@@ -4605,12 +4641,11 @@ bool AppBackend::addDeviceRigMember(const QString &rigId, const QString &control
            })) return false;
     const QString primaryOutput = deviceRigPrimaryOutputLayoutId(*rig);
     if (primaryOutput.isEmpty()) return false;
-    rig->members.push_back({id, true, required, primaryOutput});
+    rig->members.push_back({id, true, required, primaryOutput,
+                            QString(u"member-%1"_qs).arg(rig->members.size() + 1)});
     for (ControllerProfile &profile : m_configuration.profiles) {
-        if (profile.deviceRigId == rig->id) {
-            DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, id);
-            if (mapping.nativePovBindings.empty()) mapping.nativePovBindings = m_configuration.nativePovBindings;
-        }
+        DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, rig->members.back().logicalMemberId);
+        if (mapping.nativePovBindings.empty()) mapping.nativePovBindings = m_configuration.nativePovBindings;
     }
     m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
     persistAndApply();
@@ -4631,12 +4666,8 @@ bool AppBackend::removeDeviceRigMember(const QString &rigId, const QString &cont
     const QString removed = found->controllerRecordId;
     rig->members.erase(rig->members.begin() + static_cast<std::ptrdiff_t>(
         std::distance(rig->members.cbegin(), found)));
-    for (ControllerProfile &profile : m_configuration.profiles) {
-        if (profile.deviceRigId != rig->id) continue;
-        profile.deviceMappings.erase(std::remove_if(profile.deviceMappings.begin(), profile.deviceMappings.end(),
-            [&removed](const DeviceProfileMapping &mapping) { return mapping.controllerRecordId == removed; }),
-            profile.deviceMappings.end());
-    }
+    // Mapping behavior is portable by logical role. Deleting one hardware
+    // member must not erase it; another Rig can resolve the same role later.
     m_configuration.editingDeviceRecordIds.removeAll(removed);
     m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
     persistAndApply();
@@ -4764,14 +4795,14 @@ bool AppBackend::focusIssueTarget(const QString &objectType, const QString &obje
         if (route.profileId.isEmpty() || !findProfile(m_configuration, route.profileId)) return false;
         if (route.profileId != m_configuration.activeProfileId
             && !activateProfile(route.profileId)) return false;
-        if (!route.controllerRecordId.isEmpty()) {
+        if (!route.logicalMemberId.isEmpty()) {
             for (const DeviceRig &rig : m_configuration.deviceRigs) {
-                const bool containsController = std::any_of(rig.members.cbegin(), rig.members.cend(),
-                    [&route](const DeviceRigMember &member) {
-                        return member.controllerRecordId == route.controllerRecordId;
+                const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(),
+                    [&route](const DeviceRigMember &candidate) {
+                        return candidate.logicalMemberId == route.logicalMemberId;
                     });
-                if (!containsController) continue;
-                const QStringList exactScope{route.controllerRecordId};
+                if (member == rig.members.cend()) continue;
+                const QStringList exactScope{member->controllerRecordId};
                 if ((m_configuration.editingDeviceRigId != rig.id
                      || m_configuration.editingDeviceRecordIds != exactScope)
                     && !setEditingDeviceContext(rig.id, exactScope)) return false;
@@ -4798,7 +4829,7 @@ bool AppBackend::focusIssueTarget(const QString &objectType, const QString &obje
 
     for (const DeviceRig &rig : m_configuration.deviceRigs) {
         const auto member = std::find_if(rig.members.cbegin(), rig.members.cend(), [&id](const DeviceRigMember &candidate) {
-            return candidate.controllerRecordId == id;
+            return candidate.logicalMemberId == id;
         });
         const auto output = std::find_if(rig.outputs.cbegin(), rig.outputs.cend(), [&id](const DeviceRigOutputTarget &candidate) {
             return candidate.outputLayoutId == id;
@@ -4832,8 +4863,7 @@ QVariantMap AppBackend::editingAxisBatchPreview(int physicalAxis, const QString 
     QVariantMap result{{u"property"_qs, property}, {u"value"_qs, value}};
     const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     const ControllerProfile &profile = currentProfile();
-    if (!validAxis(physicalAxis) || !rig || (!profile.deviceRigId.isEmpty()
-        && profile.deviceRigId != rig->id)
+    if (!validAxis(physicalAxis) || !rig
         || (property != u"inverted"_qs && property != u"deadzone"_qs)) {
         result.insert(u"valid"_qs, false);
         result.insert(u"summary"_qs, u"This edit is unavailable for the current context."_qs);
@@ -4849,7 +4879,11 @@ QVariantMap AppBackend::editingAxisBatchPreview(int physicalAxis, const QString 
     for (const QString &id : ids) {
         const SavedControllerRecord *record = savedControllerRecord(id);
         if (!record) continue;
-        const DeviceProfileMapping *mapping = findDeviceProfileMapping(profile, id);
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&id](const DeviceRigMember &candidate) {
+            return candidate.logicalMemberId == id;
+        });
+        const DeviceProfileMapping *mapping = member == rig->members.cend() ? nullptr
+            : findDeviceProfileMapping(profile, member->logicalMemberId);
         const AxisMapping &axis = mapping ? mapping->axes[static_cast<size_t>(physicalAxis)]
                                           : profile.axes[static_cast<size_t>(physicalAxis)];
         targets.append(QVariantMap{{u"id"_qs, id}, {u"name"_qs, record->displayName},
@@ -4885,7 +4919,11 @@ bool AppBackend::applyEditingAxisBatch(int physicalAxis, const QString &property
     int applied = 0;
     for (const QString &id : ids) {
         if (!savedControllerRecord(id)) continue;
-        DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, id);
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&id](const DeviceRigMember &candidate) {
+            return candidate.logicalMemberId == id;
+        });
+        if (member == rig->members.cend()) continue;
+        DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, member->logicalMemberId);
         AxisMapping &axis = mapping.axes[static_cast<size_t>(physicalAxis)];
         if (property == u"inverted"_qs) {
             axis.inverted = value.toBool();
@@ -4907,9 +4945,6 @@ bool AppBackend::deleteDeviceRig(const QString &rigId)
         [&rigId](const DeviceRig &rig) { return rig.id == rigId.trimmed(); });
     if (found == m_configuration.deviceRigs.cend()) return false;
     const QString name = found->name;
-    for (ControllerProfile &profile : m_configuration.profiles) {
-        if (profile.deviceRigId == found->id) profile.deviceRigId.clear();
-    }
     const bool wasActive = found->id == m_configuration.activeDeviceRigId;
     const bool wasEditing = found->id == m_configuration.editingDeviceRigId;
     m_configuration.deviceRigs.erase(m_configuration.deviceRigs.begin()
@@ -5118,7 +5153,9 @@ QVariantList AppBackend::controllerReadinessChecks() const
                     member.required ? u"Required device is not connected."_qs
                                     : u"Optional device is offline; the rig may continue without its routes."_qs,
                     member.required ? u"error"_qs : u"info"_qs);
-            } else if (status.needsVerificationMemberIds.contains(member.controllerRecordId)) {
+            } else if (member.required
+                       ? status.needsVerificationRequiredMemberIds.contains(member.controllerRecordId)
+                       : status.needsVerificationOptionalMemberIds.contains(member.controllerRecordId)) {
                 appendRigCheck(checks, u"INPUT · "_qs + name, u"NEEDS VERIFICATION"_qs,
                     u"Identity is saved and connected; run setup verification before automatic activation."_qs,
                     u"warning"_qs);
@@ -5152,7 +5189,7 @@ QVariantList AppBackend::controllerReadinessChecks() const
             const auto compiledMember = std::find_if(compiled.members.cbegin(),
                 compiled.members.cbegin() + compiled.memberCount,
                 [&member](const CompiledDeviceRigMember &candidate) {
-                    return candidate.controllerRecordId == member.controllerRecordId;
+                    return candidate.logicalMemberId == member.logicalMemberId;
                 });
             if (compiledMember != compiled.members.cbegin() + compiled.memberCount) {
                 const int memberIndex = static_cast<int>(std::distance(compiled.members.cbegin(), compiledMember));
@@ -5964,7 +6001,8 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
             {u"title"_qs, action}, {u"requiresElevation"_qs, elevated}, {u"status"_qs, u"WAITING"_qs}});
     };
 
-    const DeviceRig *rig = activeDeviceRig();
+    const DeviceRig *rig = findDeviceRig(m_configuration, m_setupTargetRigId);
+    if (!rig) rig = activeDeviceRig();
     if (!rig && !m_configuration.editingDeviceRigId.isEmpty())
         rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     if (!rig) {
@@ -5973,12 +6011,12 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
         if (enabled != m_configuration.deviceRigs.cend()) rig = &*enabled;
     }
 
-    const DeviceRigStatus *rigStatus = nullptr;
-    if (rig) {
-        const auto found = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
-            [rig](const DeviceRigStatus &candidate) { return candidate.rigId == rig->id; });
-        if (found != m_deviceRigStatuses.cend()) rigStatus = &*found;
-    }
+    // Setup Truth and activation must consume the same fresh derivation.  Do
+    // not reuse a cached status that predates an identity proof or repair.
+    const DeviceRigStatus freshRigStatus = rig
+        ? evaluateDeviceRig(*rig, m_configuration.savedControllers, m_discoveredControllers)
+        : DeviceRigStatus{};
+    const DeviceRigStatus *rigStatus = rig ? &freshRigStatus : nullptr;
     QVariantList physicalMembers;
     bool requiredOffline = false;
     bool requiredAmbiguous = false;
@@ -6199,7 +6237,9 @@ QVariantMap AppBackend::buildSetupTruthSnapshot() const
     if (rig) {
         const CompiledDeviceRigRuntime compiled = compileDeviceRigRuntime(m_configuration, rig->id);
         if (!checking && !compiled.valid) { mappingState = SetupTruthStatus::Attention; mappingDetail = compiled.issue; }
-        const ActivationDecision manualActivation = activationDecision({}, ActivationIntent::ManualRig, {}, rig->id);
+        ActivationContext freshContext = activationContext({}, ActivationIntent::ManualRig, {}, rig->id);
+        freshContext.rigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
+        const ActivationDecision manualActivation = resolveActivation(m_configuration, freshContext);
         if (!checking && !manualActivation.valid) {
             mappingState = SetupTruthStatus::Attention;
             mappingDetail = manualActivation.explanation + u" "_qs + manualActivation.blockers.join(u"; "_qs);
@@ -6352,8 +6392,11 @@ QVariantMap AppBackend::setupRepairSession() const
         if (status == u"SUCCEEDED"_qs) ++repairedIssueCount;
         else if (status == u"FAILED"_qs || status == u"CANCELLED"_qs) ++failedIssueCount;
     }
+    const DeviceRig *targetRig = findDeviceRig(m_configuration, m_setupTargetRigId);
     QVariantMap result{{u"sessionId"_qs, m_setupConvergenceSessionId}, {u"mode"_qs, mode},
         {u"active"_qs, active}, {u"startedAt"_qs, m_setupConvergenceStarted.toString(Qt::ISODate)},
+        {u"targetRigId"_qs, m_setupTargetRigId},
+        {u"targetRigName"_qs, targetRig ? targetRig->name : QString{}},
         {u"steps"_qs, m_setupRepairProgress}, {u"stepCount"_qs, totalStepCount},
         {u"totalStepCount"_qs, totalStepCount}, {u"completedStepCount"_qs, completedStepCount},
         {u"currentStepNumber"_qs, currentStepNumber}, {u"progressPercent"_qs, progressPercent},
@@ -6452,6 +6495,9 @@ void AppBackend::updateSetupRepairProgress(const QString &id, const QString &sta
 
 void AppBackend::captureSetupTruthSnapshot(bool finalSnapshot)
 {
+    // A repair/identity commit invalidates every prior aggregate. Rebuild the
+    // authoritative RigStatus before projecting Mapping or Activation.
+    m_deviceRigStatuses = evaluateDeviceRigs(m_configuration, m_discoveredControllers);
     m_setupTruthSnapshot = buildSetupTruthSnapshot();
     if (finalSnapshot) m_setupTruthAfterSnapshot = m_setupTruthSnapshot;
 }
@@ -6545,6 +6591,14 @@ QVariantMap AppBackend::checkSetupHealth()
     m_setupConvergenceHidHideRepairFailed = false;
     m_setupConvergenceCancelled = false;
     m_setupConvergenceCurrentIssueId.clear();
+    m_setupTargetRigId = !m_configuration.editingDeviceRigId.isEmpty()
+        && findDeviceRig(m_configuration, m_configuration.editingDeviceRigId)
+        ? m_configuration.editingDeviceRigId : m_configuration.activeDeviceRigId;
+    if (m_setupTargetRigId.isEmpty()) {
+        const auto firstEnabled = std::find_if(m_configuration.deviceRigs.cbegin(),
+            m_configuration.deviceRigs.cend(), [](const DeviceRig &rig) { return rig.enabled; });
+        if (firstEnabled != m_configuration.deviceRigs.cend()) m_setupTargetRigId = firstEnabled->id;
+    }
     m_pendingSetupVerificationRecordId.clear();
     m_setupConvergenceIdentityRecordId.clear();
     m_setupTruthBeforeSnapshot.clear();
@@ -7080,16 +7134,6 @@ QVariantList AppBackend::appIssues() const
                u"open-devices"_qs, u"OPEN DEVICES"_qs, 5, mappingStatus());
     }
 
-    for (const ControllerProfile &profile : m_configuration.profiles) {
-        if (!profile.enabled) continue;
-        if (!profile.deviceRigId.isEmpty() && !findDeviceRig(m_configuration, profile.deviceRigId)) {
-            append(u"ProfileRigMissing"_qs, u"Profile"_qs, u"warning"_qs, u"profile"_qs, profile.id,
-                   u"Profile needs a Device Rig"_qs,
-                   profile.name + u" references a Device Rig that is no longer available."_qs,
-                   u"choose-rig"_qs, u"CHOOSE RIG"_qs, 110, profile.deviceRigId);
-        }
-    }
-
     for (const DeviceRig &rig : m_configuration.deviceRigs) {
         const QString outputId = deviceRigPrimaryOutputLayoutId(rig);
         if (!outputId.isEmpty() && findOutputLayout(m_configuration, outputId)) continue;
@@ -7325,13 +7369,17 @@ const VirtualOutputLayout *AppBackend::activeOutputLayout() const
 
 const VirtualOutputLayout *AppBackend::profilePrimaryOutputLayout(const ControllerProfile &profile) const
 {
-    const DeviceRig *rig = findDeviceRig(m_configuration, profile.deviceRigId);
+    Q_UNUSED(profile);
+    const DeviceRig *rig = activeDeviceRig();
+    if (!rig) rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     return rig ? findOutputLayout(m_configuration, deviceRigPrimaryOutputLayoutId(*rig)) : nullptr;
 }
 
 VirtualOutputLayout *AppBackend::profilePrimaryOutputLayoutForWrite(const ControllerProfile &profile)
 {
-    DeviceRig *rig = findDeviceRig(m_configuration, profile.deviceRigId);
+    Q_UNUSED(profile);
+    DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
+    if (!rig) rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     return rig ? findOutputLayout(m_configuration, deviceRigPrimaryOutputLayoutId(*rig)) : nullptr;
 }
 
@@ -7377,11 +7425,9 @@ QVariantList AppBackend::virtualOutputLayouts() const
                 axes.append(virtualAxisLabel(static_cast<VirtualAxis>(index)));
             }
         }
-        int profileCount = 0;
-        for (const ControllerProfile &profile : m_configuration.profiles) {
-            const DeviceRig *rig = findDeviceRig(m_configuration, profile.deviceRigId);
-            profileCount += rig && deviceRigPrimaryOutputLayoutId(*rig) == layout.id ? 1 : 0;
-        }
+        const DeviceRig *runtimeRig = activeDeviceRig();
+        const int profileCount = runtimeRig && deviceRigPrimaryOutputLayoutId(*runtimeRig) == layout.id
+            ? static_cast<int>(m_configuration.profiles.size()) : 0;
         const VirtualOutputLayout *activeLayout = activeOutputLayout();
         const bool active = activeLayout && activeLayout->id == layout.id;
         const QVariantMap detail = virtualOutputDetail(layout.id);
@@ -7438,12 +7484,8 @@ QVariantList AppBackend::automationRules() const
         QStringList conditionLabels;
         for (const AutomationConditionDefinition &condition : definition.conditions) {
             QString label = automationConditionSummary(condition, m_configuration);
-            if (!condition.controllerRecordId.isEmpty()) {
-                if (const SavedControllerRecord *record = savedControllerRecord(condition.controllerRecordId)) {
-                    label = record->displayName + u" · "_qs + label;
-                } else {
-                    label = u"Missing device · "_qs + label;
-                }
+            if (!condition.logicalMemberId.isEmpty()) {
+                label = u"Rig role "_qs + condition.logicalMemberId + u" · "_qs + label;
             }
             conditionLabels.append(label);
             conditions.append(QVariantMap{{u"type"_qs, static_cast<int>(condition.type)},
@@ -7454,21 +7496,14 @@ QVariantList AppBackend::automationRules() const
                 {u"profileId"_qs, condition.profileId}, {u"pressCount"_qs, condition.pressCount},
                 {u"multiPressWindowMs"_qs, condition.multiPressWindowMs},
                 {u"longPressDurationMs"_qs, condition.longPressDurationMs},
-                {u"controllerRecordId"_qs, condition.controllerRecordId}});
+                {u"logicalMemberId"_qs, condition.logicalMemberId}});
         }
         QVariantList actions;
         QStringList actionLabels;
         for (const AutomationActionDefinition &action : definition.actions) {
             QString label = automationActionSummary(action, m_configuration);
-            if (!action.sourceControllerRecordId.isEmpty()) {
-                if (const SavedControllerRecord *record = savedControllerRecord(action.sourceControllerRecordId)) {
-                    label = record->displayName + u" · "_qs + label;
-                }
-            }
-            if (!action.outputLayoutId.isEmpty()) {
-                if (const VirtualOutputLayout *layout = findOutputLayout(m_configuration, action.outputLayoutId)) {
-                    label += u" → "_qs + layout->name;
-                }
+            if (!action.sourceLogicalMemberId.isEmpty()) {
+                label = u"Rig role "_qs + action.sourceLogicalMemberId + u" · "_qs + label;
             }
             actionLabels.append(label);
             actions.append(QVariantMap{{u"type"_qs, static_cast<int>(action.type)},
@@ -7478,8 +7513,7 @@ QVariantList AppBackend::automationRules() const
                 {u"sourceStage"_qs, static_cast<int>(action.sourceStage)}, {u"value"_qs, action.value},
                 {u"offset"_qs, action.offset}, {u"minimum"_qs, action.minimum}, {u"maximum"_qs, action.maximum},
                 {u"tapDurationMs"_qs, action.tapDurationMs},
-                {u"sourceControllerRecordId"_qs, action.sourceControllerRecordId},
-                {u"outputLayoutId"_qs, action.outputLayoutId}});
+                {u"sourceLogicalMemberId"_qs, action.sourceLogicalMemberId}});
         }
         AutomationHealth health = AutomationHealth::Valid;
         QString healthMessage;
@@ -7683,7 +7717,7 @@ QVariantList AppBackend::quickMapButtonTargets() const
 QString AppBackend::signalFlowWorkspaceKey() const
 {
     const DeviceProfileMapping *mapping = editingDeviceMapping();
-    const QString source = mapping ? mapping->controllerRecordId : u"legacy-source"_qs;
+    const QString source = mapping ? mapping->logicalMemberId : u"profile-source"_qs;
     return QString(u"signal-flow:%1:%2:%3"_qs).arg(currentProfile().id,
         m_configuration.editingDeviceRigId.isEmpty() ? u"no-rig"_qs : m_configuration.editingDeviceRigId,
         source.isEmpty() ? u"legacy-source"_qs : source);
@@ -7706,7 +7740,7 @@ QVariantMap AppBackend::signalFlowGraph() const
     const ControllerProfile &profile = currentProfile();
     const DeviceProfileMapping *editingMapping = editingDeviceMapping();
     const QString graphDeviceRigId = !m_configuration.editingDeviceRigId.trimmed().isEmpty()
-        ? m_configuration.editingDeviceRigId : profile.deviceRigId;
+        ? m_configuration.editingDeviceRigId : m_configuration.activeDeviceRigId;
     const DeviceRig *graphDeviceRig = findDeviceRig(m_configuration, graphDeviceRigId);
     const QString graphDeviceRigName = graphDeviceRig ? graphDeviceRig->name
         : graphDeviceRigId.isEmpty() ? u"Profile-local input scope"_qs : u"Missing Device Rig"_qs;
@@ -7716,20 +7750,28 @@ QVariantMap AppBackend::signalFlowGraph() const
     // Pick a stable visible primary member for presentation only; mutation
     // remains disabled until the user chooses an explicit input scope.
     const DeviceProfileMapping *mapping = editingMapping;
-    QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    QString logicalMemberId = mapping ? mapping->logicalMemberId : QString{};
     if (!mapping && graphDeviceRig) {
         for (const DeviceRigMember &member : graphDeviceRig->members) {
             if (!member.enabled) continue;
-            if (const DeviceProfileMapping *candidate = findDeviceProfileMapping(profile, member.controllerRecordId)) {
+            if (const DeviceProfileMapping *candidate = findDeviceProfileMapping(profile, member.logicalMemberId)) {
                 mapping = candidate;
-                controllerId = candidate->controllerRecordId;
+                logicalMemberId = candidate->logicalMemberId;
                 break;
             }
         }
     }
     if (!mapping && !profile.deviceMappings.empty()) {
         mapping = &profile.deviceMappings.front();
-        controllerId = mapping->controllerRecordId;
+        logicalMemberId = mapping->logicalMemberId;
+    }
+    QString controllerId;
+    if (graphDeviceRig && !logicalMemberId.isEmpty()) {
+        const auto member = std::find_if(graphDeviceRig->members.cbegin(), graphDeviceRig->members.cend(),
+            [&logicalMemberId](const DeviceRigMember &candidate) {
+                return candidate.logicalMemberId == logicalMemberId;
+            });
+        if (member != graphDeviceRig->members.cend()) controllerId = member->controllerRecordId;
     }
     const AxisMappings &axes = mapping ? mapping->axes : profile.axes;
     const ButtonBindings &buttons = mapping ? mapping->buttons : profile.buttons;
@@ -7800,7 +7842,7 @@ QVariantMap AppBackend::signalFlowGraph() const
     QVariantList nodes;
     QVariantList routes;
     const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
-        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+        return route.profileId == profile.id && route.logicalMemberId == controllerId;
     };
     const auto sourcePortId = [](SignalFlowPortKind kind, int index, int subIndex) {
         switch (kind) {
@@ -8039,7 +8081,7 @@ QVariantMap AppBackend::signalFlowGraph() const
         return u"Disabled"_qs;
     };
     for (const SignalFlowMixer &mixer : m_configuration.signalFlow.mixers) {
-        if (mixer.profileId != profile.id || mixer.controllerRecordId != controllerId
+        if (mixer.profileId != profile.id || mixer.logicalMemberId != controllerId
             || !mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled || mixer.id.isEmpty()) continue;
         const QString nodeId = addProcessor(mixer.id, -1, 5.0F + mixer.destinationAxis * 0.2F);
         if (nodeId.isEmpty()) continue;
@@ -8219,10 +8261,10 @@ QVariantMap AppBackend::signalFlowGraph() const
         }
     }
     for (const DeviceProfileMapping &candidate : profile.deviceMappings) {
-        appendSecondaryController(candidate.controllerRecordId);
+        appendSecondaryController(candidate.logicalMemberId);
     }
     for (const SignalFlowRoute &candidate : m_configuration.signalFlow.routes) {
-        if (candidate.profileId == profile.id) appendSecondaryController(candidate.controllerRecordId);
+        if (candidate.profileId == profile.id) appendSecondaryController(candidate.logicalMemberId);
     }
     const auto scopedSourcePortId = [&sourcePortId](const QString &scopeId, SignalFlowPortKind kind,
                                                      int index, int subIndex) {
@@ -8283,7 +8325,7 @@ QVariantMap AppBackend::signalFlowGraph() const
         const auto scopeMapped = [this, &profile, &scopeId](SignalFlowPortKind kind, int index, int subIndex) {
             return std::any_of(m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
                 [&profile, &scopeId, kind, index, subIndex](const SignalFlowRoute &route) {
-                    return route.profileId == profile.id && route.controllerRecordId == scopeId && route.enabled
+                    return route.profileId == profile.id && route.logicalMemberId == scopeId && route.enabled
                         && route.sourceKind == kind && route.sourceIndex == index && route.sourceSubIndex == subIndex;
                 });
         };
@@ -8331,7 +8373,7 @@ QVariantMap AppBackend::signalFlowGraph() const
         }
         int scopeRouteCount = 0;
         for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
-            if (route.profileId != profile.id || route.controllerRecordId != scopeId) continue;
+            if (route.profileId != profile.id || route.logicalMemberId != scopeId) continue;
             ++scopeRouteCount;
             QVariantList processors;
             QVariantList processorDetails;
@@ -8515,7 +8557,7 @@ QVariantMap AppBackend::signalFlowExplainRoute(const QString &routeId) const
 {
     const ControllerProfile &profile = currentProfile();
     const DeviceProfileMapping *mapping = editingDeviceMapping();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString controllerId = mapping ? mapping->logicalMemberId : QString{};
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)) {
         return signalFlowActionResult(false, u"Route is no longer available"_qs,
@@ -8597,7 +8639,7 @@ QVariantMap AppBackend::signalFlowExplainRoute(const QString &routeId) const
             const auto mixer = std::find_if(m_configuration.signalFlow.mixers.cbegin(),
                 m_configuration.signalFlow.mixers.cend(), [route](const SignalFlowMixer &candidate) {
                     return candidate.profileId == route->profileId
-                        && candidate.controllerRecordId == route->controllerRecordId
+                        && candidate.logicalMemberId == route->logicalMemberId
                         && candidate.destinationAxis == route->destinationIndex;
                 });
             if (mixer != m_configuration.signalFlow.mixers.cend()) {
@@ -8661,7 +8703,7 @@ QVariantMap AppBackend::signalFlowLiveTelemetry() const
     // containers, signals QML, or logs a Signal Flow update per report.
     const ControllerProfile &profile = currentProfile();
     const DeviceProfileMapping *mapping = editingDeviceMapping();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString controllerId = mapping ? mapping->logicalMemberId : QString{};
     const AtomicRuntimeState &runtime = m_worker.runtime();
     QVariantList axes;
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -8802,7 +8844,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
             u"This Device Rig contains multiple selected inputs. Select one source before creating a route."_qs);
     }
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     VirtualOutputLayout *layout = activeOutputLayout();
     if (!layout) {
         return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
@@ -8816,7 +8858,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
     QString description;
     SignalFlowState &topology = m_configuration.signalFlow;
     const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
-        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+        return route.profileId == profile.id && route.logicalMemberId == controllerId;
     };
     const auto sameSource = [&inScope](const SignalFlowRoute &route, SignalFlowPortKind source,
                                        int index, int subIndex) {
@@ -8872,7 +8914,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         }
         const auto existingMixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
             [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
-                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                return mixer.profileId == profile.id && mixer.logicalMemberId == controllerId
                     && mixer.destinationAxis == targetIndex;
             });
         const bool mixerActive = existingMixer != topology.mixers.end() && existingMixer->enabled
@@ -8897,7 +8939,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
                 }), topology.routes.end());
             topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
                 [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
-                    return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                    return mixer.profileId == profile.id && mixer.logicalMemberId == controllerId
                         && mixer.destinationAxis == targetIndex;
                 }), topology.mixers.end());
         } else if (requestedMixer != SignalFlowMixerMode::Disabled) {
@@ -8907,7 +8949,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
             } else {
                 SignalFlowMixer mixer;
                 mixer.profileId = profile.id;
-                mixer.controllerRecordId = controllerId;
+                mixer.logicalMemberId = controllerId;
                 mixer.destinationAxis = targetIndex;
                 mixer.mode = requestedMixer;
                 mixer.enabled = true;
@@ -8918,7 +8960,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         layout->requirements.axes[static_cast<size_t>(targetIndex)] = true;
         SignalFlowRoute route;
         route.profileId = profile.id;
-        route.controllerRecordId = controllerId;
+        route.logicalMemberId = controllerId;
         route.sourceKind = SignalFlowPortKind::Axis;
         route.sourceIndex = sourceIndex;
         route.sourceSubIndex = -1;
@@ -8979,7 +9021,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         // the fixed report-path source buckets.
         SignalFlowRoute route;
         route.profileId = profile.id;
-        route.controllerRecordId = controllerId;
+        route.logicalMemberId = controllerId;
         route.sourceKind = sourcePort;
         route.sourceIndex = sourceIndex;
         route.sourceSubIndex = normalizedSubIndex;
@@ -9053,7 +9095,7 @@ QVariantMap AppBackend::signalFlowConnectInternal(const QString &sourceKind, int
         }
         SignalFlowRoute route;
         route.profileId = profile.id;
-        route.controllerRecordId = controllerId;
+        route.logicalMemberId = controllerId;
         route.sourceKind = SignalFlowPortKind::NativePov;
         route.sourceIndex = sourceIndex;
         route.sourceSubIndex = -1;
@@ -9093,7 +9135,7 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
             u"Select one source before changing a route in this multi-device Device Rig."_qs, id);
     }
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     SignalFlowRoute *selected = findSignalFlowRouteById(&m_configuration.signalFlow, id);
     if (!selected || !signalFlowRouteMatchesScope(*selected, profile, controllerId)) {
         return signalFlowActionResult(false, u"Route is no longer available"_qs,
@@ -9158,7 +9200,7 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
         const int remainingInputs = static_cast<int>(std::count_if(topology.routes.cbegin(),
             topology.routes.cend(), [&profile, &controllerId, destinationIndex](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
-                    && route.controllerRecordId == controllerId
+                    && route.logicalMemberId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis
                     && route.destinationKind == SignalFlowPortKind::Axis
                     && route.destinationIndex == destinationIndex;
@@ -9166,7 +9208,7 @@ QVariantMap AppBackend::signalFlowDisconnect(const QString &routeId, qulonglong 
         if (remainingInputs <= 1) {
             topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
                 [&profile, &controllerId, destinationIndex](const SignalFlowMixer &mixer) {
-                    return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                    return mixer.profileId == profile.id && mixer.logicalMemberId == controllerId
                         && mixer.destinationAxis == destinationIndex;
                 }), topology.mixers.end());
         }
@@ -9218,7 +9260,7 @@ QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
     }
     reconcileSignalFlowState(&m_configuration);
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
         || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
@@ -9231,7 +9273,7 @@ QVariantMap AppBackend::signalFlowToggleProcessor(const QString &routeId,
         m_configuration.signalFlow.sharedProcessors.cend(), [&profile, &controllerId, &kind, route](
             const SignalFlowSharedProcessor &processor) {
             return processor.enabled && processor.profileId == profile.id
-                && processor.controllerRecordId == controllerId && processor.kind == kind
+                && processor.logicalMemberId == controllerId && processor.kind == kind
                 && std::find(processor.sourceAxes.cbegin(), processor.sourceAxes.cend(),
                              route->sourceIndex) != processor.sourceAxes.cend();
         });
@@ -9304,7 +9346,7 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
     }
     reconcileSignalFlowState(&m_configuration);
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     if (routeIds.size() < 2 || routeIds.size() > kPhysicalAxisCount) {
         return signalFlowActionResult(false, u"Choose two or more axis routes"_qs,
             u"A shared processor needs two to eight distinct axis sources in the current Signal Flow scope."_qs);
@@ -9360,7 +9402,7 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
     SignalFlowState &topology = m_configuration.signalFlow;
     for (auto iterator = topology.sharedProcessors.begin();
          iterator != topology.sharedProcessors.end();) {
-        if (iterator->profileId != profile.id || iterator->controllerRecordId != controllerId
+        if (iterator->profileId != profile.id || iterator->logicalMemberId != controllerId
             || iterator->kind != kind) {
             ++iterator;
             continue;
@@ -9385,7 +9427,7 @@ QVariantMap AppBackend::signalFlowShareProcessor(const QStringList &routeIds,
     }
     SignalFlowSharedProcessor shared;
     shared.profileId = profile.id;
-    shared.controllerRecordId = controllerId;
+    shared.logicalMemberId = controllerId;
     shared.kind = kind;
     shared.ownerAxis = ownerAxis;
     shared.sourceAxes = std::move(sourceAxes);
@@ -9428,7 +9470,7 @@ QVariantMap AppBackend::signalFlowSplitSharedProcessor(const QString &routeId,
     }
     reconcileSignalFlowState(&m_configuration);
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     const SignalFlowRoute *route = findSignalFlowRouteById(m_configuration.signalFlow, routeId.trimmed());
     if (!route || !signalFlowRouteMatchesScope(*route, profile, controllerId)
         || route->sourceKind != SignalFlowPortKind::Axis || route->sourceIndex < 0
@@ -9440,7 +9482,7 @@ QVariantMap AppBackend::signalFlowSplitSharedProcessor(const QString &routeId,
     const auto shared = std::find_if(topology.sharedProcessors.cbegin(), topology.sharedProcessors.cend(),
         [&profile, &controllerId, &kind, route](const SignalFlowSharedProcessor &processor) {
             return processor.enabled && processor.profileId == profile.id
-                && processor.controllerRecordId == controllerId && processor.kind == kind
+                && processor.logicalMemberId == controllerId && processor.kind == kind
                 && std::find(processor.sourceAxes.cbegin(), processor.sourceAxes.cend(), route->sourceIndex)
                     != processor.sourceAxes.cend();
         });
@@ -9489,7 +9531,7 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
             u"Default Connections needs one explicit source in this multi-device Device Rig."_qs);
     }
     const ControllerProfile &profile = currentProfile();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString controllerId = mapping ? mapping->logicalMemberId : QString{};
     QVariantList changes;
     int actionableChanges = 0;
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
@@ -9497,7 +9539,7 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
         QStringList existing;
         bool hasDesiredOnly = true;
         for (const SignalFlowRoute &route : m_configuration.signalFlow.routes) {
-            if (!route.enabled || route.profileId != profile.id || route.controllerRecordId != controllerId
+            if (!route.enabled || route.profileId != profile.id || route.logicalMemberId != controllerId
                 || route.sourceKind != SignalFlowPortKind::Axis || route.sourceIndex != axis
                 || route.destinationKind != SignalFlowPortKind::Axis) continue;
             existing.append(virtualAxisLabel(static_cast<VirtualAxis>(route.destinationIndex)));
@@ -9509,7 +9551,7 @@ QVariantMap AppBackend::signalFlowDefaultPreview(const QString &mode) const
             m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
             [&profile, &controllerId, axis](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
-                    && route.controllerRecordId == controllerId
+                    && route.logicalMemberId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex != axis
                     && route.destinationKind == SignalFlowPortKind::Axis
                     && route.destinationIndex == axis + 1;
@@ -9548,26 +9590,26 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
     if (!layout) return signalFlowActionResult(false, u"Virtual output is unavailable"_qs,
         u"Assign a Virtual Output before applying default connections."_qs);
     ControllerProfile &profile = currentProfile();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString controllerId = mapping ? mapping->logicalMemberId : QString{};
     MapperConfiguration before = m_configuration;
     SignalFlowState &topology = m_configuration.signalFlow;
     if (normalized == u"replace-all"_qs) {
         topology.routes.erase(std::remove_if(topology.routes.begin(), topology.routes.end(),
             [&profile, &controllerId](const SignalFlowRoute &route) {
-                return route.profileId == profile.id && route.controllerRecordId == controllerId
+                return route.profileId == profile.id && route.logicalMemberId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis
                     && route.destinationKind == SignalFlowPortKind::Axis;
             }), topology.routes.end());
         topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
             [&profile, &controllerId](const SignalFlowMixer &mixer) {
-                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId;
+                return mixer.profileId == profile.id && mixer.logicalMemberId == controllerId;
             }), topology.mixers.end());
     }
     for (int axis = 0; axis < kPhysicalAxisCount; ++axis) {
         const bool assigned = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
             [&profile, &controllerId, axis](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
-                    && route.controllerRecordId == controllerId
+                    && route.logicalMemberId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex == axis
                     && route.destinationKind == SignalFlowPortKind::Axis;
             });
@@ -9576,7 +9618,7 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
             const bool destinationBusy = std::any_of(topology.routes.cbegin(), topology.routes.cend(),
                 [&profile, &controllerId, axis](const SignalFlowRoute &route) {
                     return route.enabled && route.profileId == profile.id
-                        && route.controllerRecordId == controllerId
+                        && route.logicalMemberId == controllerId
                         && route.sourceKind == SignalFlowPortKind::Axis
                         && route.sourceIndex != axis && route.destinationKind == SignalFlowPortKind::Axis
                         && route.destinationIndex == axis + 1;
@@ -9585,7 +9627,7 @@ QVariantMap AppBackend::signalFlowApplyDefaults(const QString &mode, qulonglong 
         }
         SignalFlowRoute route;
         route.profileId = profile.id;
-        route.controllerRecordId = controllerId;
+        route.logicalMemberId = controllerId;
         route.sourceKind = SignalFlowPortKind::Axis;
         route.sourceIndex = axis;
         route.sourceSubIndex = -1;
@@ -9759,7 +9801,7 @@ QVariantMap AppBackend::signalFlowAutoLayout()
 {
     const ControllerProfile &profile = currentProfile();
     const DeviceProfileMapping *mapping = editingDeviceMapping();
-    const QString controllerId = mapping ? mapping->controllerRecordId : QString{};
+    const QString controllerId = mapping ? mapping->logicalMemberId : QString{};
     const QString workspaceKey = signalFlowWorkspaceKey();
     const QString inputId = mapping ? QString(u"input:%1:%2"_qs).arg(profile.id, controllerId)
                                     : QString(u"input:%1:legacy"_qs).arg(profile.id);
@@ -9967,9 +10009,9 @@ QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QStri
             u"Choose Replace, Average, Sum Clamped, or Highest Magnitude for this analog conflict."_qs);
     }
 
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     const auto inScope = [&profile, &controllerId](const SignalFlowRoute &route) {
-        return route.profileId == profile.id && route.controllerRecordId == controllerId;
+        return route.profileId == profile.id && route.logicalMemberId == controllerId;
     };
     const bool anotherAnalogInput = std::any_of(m_configuration.signalFlow.routes.cbegin(),
         m_configuration.signalFlow.routes.cend(), [&inScope, physicalAxis, targetIndex](const SignalFlowRoute &route) {
@@ -10002,13 +10044,13 @@ QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QStri
             }), topology.routes.end());
         topology.mixers.erase(std::remove_if(topology.mixers.begin(), topology.mixers.end(),
             [&profile, &controllerId, targetIndex](const SignalFlowMixer &mixer) {
-                return mixer.profileId == profile.id && mixer.controllerRecordId == controllerId
+                return mixer.profileId == profile.id && mixer.logicalMemberId == controllerId
                     && mixer.destinationAxis == targetIndex;
             }), topology.mixers.end());
     } else {
         const auto mixer = std::find_if(topology.mixers.begin(), topology.mixers.end(),
             [&profile, &controllerId, targetIndex](const SignalFlowMixer &candidate) {
-                return candidate.profileId == profile.id && candidate.controllerRecordId == controllerId
+                return candidate.profileId == profile.id && candidate.logicalMemberId == controllerId
                     && candidate.destinationAxis == targetIndex;
             });
         if (mixer != topology.mixers.end()) {
@@ -10017,7 +10059,7 @@ QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QStri
         } else {
             SignalFlowMixer created;
             created.profileId = profile.id;
-            created.controllerRecordId = controllerId;
+            created.logicalMemberId = controllerId;
             created.destinationAxis = targetIndex;
             created.mode = mixerMode;
             created.enabled = true;
@@ -10028,7 +10070,7 @@ QVariantMap AppBackend::resolveAxisMappingConflict(int physicalAxis, const QStri
 
     SignalFlowRoute route;
     route.profileId = profile.id;
-    route.controllerRecordId = controllerId;
+    route.logicalMemberId = controllerId;
     route.sourceKind = SignalFlowPortKind::Axis;
     route.sourceIndex = physicalAxis;
     route.sourceSubIndex = -1;
@@ -10083,12 +10125,12 @@ bool AppBackend::setMapping(int physicalAxis, const QString &target, bool explic
     // Do not mutate any persistent state until the conflict decision has
     // completed. In particular, Cancel must leave both routes and output
     // layout metadata exactly as they were before the attempted selection.
-    const QString controllerId = deviceMapping ? deviceMapping->controllerRecordId : QString{};
+    const QString controllerId = deviceMapping ? deviceMapping->logicalMemberId : QString{};
     const bool topologyConflict = virtualAxis != VirtualAxis::Disabled
         && std::any_of(m_configuration.signalFlow.routes.cbegin(), m_configuration.signalFlow.routes.cend(),
             [&profile, &controllerId, physicalAxis, targetIndex](const SignalFlowRoute &route) {
                 return route.enabled && route.profileId == profile.id
-                    && route.controllerRecordId == controllerId
+                    && route.logicalMemberId == controllerId
                     && route.sourceKind == SignalFlowPortKind::Axis
                     && route.destinationKind == SignalFlowPortKind::Axis
                     && route.sourceIndex != physicalAxis && route.destinationIndex == targetIndex;
@@ -11234,44 +11276,6 @@ QVariantMap AppBackend::activateProfileResult(const QString &profileId)
             u"profile"_qs, requestedProfileId, u"review-activation"_qs,
             u"Review activation details"_qs));
     }
-    if (profile && profile->enabled && profile->deviceRigId.isEmpty()) {
-        // Preserve pre-rig manual profiles without permitting a mismatched
-        // Profile/Rig pair. They are never automatic candidates, and once a
-        // Device Rig is active the user must select an explicitly compatible
-        // routed profile instead.
-        if (!m_configuration.activeDeviceRigId.isEmpty()) {
-            const QString message = u"This legacy Profile has no Device Rig while a routed Device Rig is active."_qs;
-            appendEvent(u"Manual activation refused: "_qs + message);
-            return attachFeedback({}, actionResult(false, profileName + u" could not be activated"_qs,
-                message, u"profile"_qs, requestedProfileId, u"review-activation"_qs,
-                u"Review activation details"_qs, message));
-        }
-        const QString legacyProfileId = profile->id;
-        const QString legacyCategoryId = profile->categoryId;
-        MapperConfiguration candidate = m_configuration;
-        if (!hotas::activateProfile(candidate, requestedProfileId)) {
-            return attachFeedback({}, actionResult(false, profileName + u" could not be activated"_qs,
-                u"The legacy Profile selection could not be prepared. The previous selection was retained."_qs,
-                u"profile"_qs, requestedProfileId, u"review-activation"_qs,
-                u"Review activation details"_qs));
-        }
-        candidate.activationManualOverride = false;
-        candidate.manualOverrideProfileId.clear();
-        if (!commitActivationConfiguration(candidate)) {
-            appendEvent(u"Manual activation could not save the legacy Profile selection."_qs);
-            return attachFeedback({}, actionResult(false, profileName + u" could not be activated"_qs,
-                u"HOTAS BF6 could not save the legacy Profile selection. The previous selection was retained."_qs,
-                u"profile"_qs, requestedProfileId, u"review-activation"_qs,
-                u"Review activation details"_qs));
-        }
-        m_manualActivationOverride = true;
-        m_manualOverrideProfileId = legacyProfileId;
-        m_manualOverrideCategoryId = legacyCategoryId;
-        appendEvent(u"Manual activation retained for a legacy Profile without a Device Rig."_qs);
-        return attachFeedback({}, actionResult(true, profileName + u" activated"_qs,
-            u"The legacy Profile was activated without changing a Device Rig or Virtual Output."_qs,
-            u"profile"_qs, requestedProfileId));
-    }
     const ActivationDecision decision = activationDecision({}, ActivationIntent::ManualProfile, requestedProfileId);
     QVariantMap result = activationDecisionVariant(decision);
     if (!decision.valid) {
@@ -11851,14 +11855,14 @@ bool AppBackend::reorderCategoryAutomaticProfiles(const QString &categoryId,
     return true;
 }
 
-bool AppBackend::assignProfileDeviceRig(const QString &profileId, const QString &rigId)
+bool AppBackend::setDeviceRigDefaultProfile(const QString &rigId, const QString &profileId)
 {
     ControllerProfile *profile = findProfile(m_configuration, profileId);
-    const DeviceRig *rig = findDeviceRig(m_configuration, rigId);
+    DeviceRig *rig = findDeviceRig(m_configuration, rigId);
     if (!profile || !rig) return false;
-    profile->deviceRigId = rig->id;
+    rig->defaultProfileId = profile->id;
     persistAndApply();
-    scheduleActivationResolution(u"Profile Device Rig changed"_qs);
+    scheduleActivationResolution(u"Device Rig default Profile changed"_qs);
     return true;
 }
 
@@ -11892,7 +11896,7 @@ void AppBackend::updateRequiredDeviceDisconnectGrace()
 {
     const DeviceRig *activeRig = findDeviceRig(m_configuration, m_configuration.activeDeviceRigId);
     const ControllerProfile *activeProfile = findProfile(m_configuration, m_configuration.activeProfileId);
-    if (!activeRig || !activeProfile || activeProfile->deviceRigId != activeRig->id) {
+    if (!activeRig || !activeProfile) {
         m_requiredDeviceDisconnectStartedMs.clear();
         m_requiredDisconnectGraceRigId.clear();
         m_requiredDisconnectGraceProfileId.clear();
@@ -11999,9 +12003,9 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
                   profileAutomaticSelectionModeKey(profile->automaticSelectionMode));
     detail.insert(u"automaticSelectionLabel"_qs,
                   profileAutomaticSelectionModeLabel(profile->automaticSelectionMode));
-    const DeviceRig *profileRig = findDeviceRig(m_configuration, profile->deviceRigId);
+    const DeviceRig *profileRig = activeDeviceRig();
     const auto profileRigStatus = std::find_if(m_deviceRigStatuses.cbegin(), m_deviceRigStatuses.cend(),
-        [profile](const DeviceRigStatus &status) { return status.rigId == profile->deviceRigId; });
+        [profileRig](const DeviceRigStatus &status) { return profileRig && status.rigId == profileRig->id; });
     int requiredCount = 0;
     int optionalCount = 0;
     if (profileRig) {
@@ -12018,9 +12022,9 @@ QVariantMap AppBackend::profileDetail(const QString &profileId) const
     const bool rigReady = profileRig && profileRigStatus != m_deviceRigStatuses.cend()
         && profileRigStatus->complete && profileRigStatus->ambiguousRequiredMemberIds.isEmpty()
         && profileRigStatus->needsVerificationRequiredMemberIds.isEmpty();
-    detail.insert(u"deviceRigId"_qs, profile->deviceRigId);
+    detail.insert(u"deviceRigId"_qs, profileRig ? profileRig->id : QString{});
     detail.insert(u"deviceRigName"_qs, profileRig ? profileRig->name
-                                                   : u"Device Rig assignment required"_qs);
+                                                    : u"No active Device Rig"_qs);
     detail.insert(u"rigOutputLayoutId"_qs,
                   profileRig ? deviceRigPrimaryOutputLayoutId(*profileRig) : QString{});
     detail.insert(u"deviceRigReady"_qs, rigReady);
@@ -12586,16 +12590,6 @@ void AppBackend::setVjoyDeviceId(int deviceId)
     persistAndApply();
 }
 
-bool AppBackend::assignProfileOutputLayout(const QString &profileId, const QString &layoutId)
-{
-    ControllerProfile *profile = findProfile(m_configuration, profileId);
-    if (!profile || profile->deviceRigId.isEmpty()) return false;
-    // Compatibility entry point for older integrations. Output choice is now
-    // explicitly redirected to the Profile's Device Rig and never stored on
-    // the Profile itself.
-    return setDeviceRigPrimaryOutput(profile->deviceRigId, layoutId);
-}
-
 QString AppBackend::createFiveAxisOutputLayout(const QString &name, int deviceId)
 {
     const QString trimmed = name.trimmed().left(64);
@@ -12934,13 +12928,24 @@ bool AppBackend::saveAutomation(const QVariantMap &automation)
         emit stateChanged();
         return false;
     }
-    QString defaultSourceId;
-    if (m_configuration.editingDeviceRecordIds.size() == 1) {
-        defaultSourceId = m_configuration.editingDeviceRecordIds.front();
-    } else if (const DeviceRig *rig = activeDeviceRig(); rig && rig->members.size() == 1) {
-        defaultSourceId = rig->members.front().controllerRecordId;
-    } else {
-        defaultSourceId = m_configuration.activeControllerRecordId;
+    const DeviceRig *sourceRig = findDeviceRig(m_configuration,
+                                                m_configuration.editingDeviceRigId);
+    if (!sourceRig) sourceRig = activeDeviceRig();
+    const auto logicalRoleFor = [sourceRig](const QString &legacyOrRole) {
+        if (!sourceRig || legacyOrRole.isEmpty()) return QString{};
+        for (const DeviceRigMember &member : sourceRig->members) {
+            if (member.logicalMemberId == legacyOrRole
+                || member.controllerRecordId == legacyOrRole) return member.logicalMemberId;
+        }
+        return QString{};
+    };
+    QString defaultLogicalMemberId;
+    if (sourceRig && sourceRig->members.size() == 1) {
+        defaultLogicalMemberId = sourceRig->members.front().logicalMemberId;
+    } else if (sourceRig && m_configuration.editingDeviceRecordIds.size() == 1) {
+        defaultLogicalMemberId = logicalRoleFor(m_configuration.editingDeviceRecordIds.front());
+    } else if (sourceRig) {
+        defaultLogicalMemberId = logicalRoleFor(m_configuration.activeControllerRecordId);
     }
     const auto physicalCondition = [](AutomationConditionType type) {
         return type != AutomationConditionType::Always && type != AutomationConditionType::BaseProfileIs
@@ -12955,28 +12960,40 @@ bool AppBackend::saveAutomation(const QVariantMap &automation)
             || type == AutomationActionType::AdaptiveResponsePreset;
     };
     for (AutomationConditionDefinition &condition : candidate.conditions) {
-        if (!physicalCondition(condition.type) || !condition.controllerRecordId.isEmpty()) continue;
-        if (defaultSourceId.isEmpty()) {
-            m_automationValidationMessage = u"Choose one physical device before saving a physical Automation condition."_qs;
-            emit stateChanged();
-            return false;
-        }
-        condition.controllerRecordId = defaultSourceId;
-    }
-    for (AutomationActionDefinition &action : candidate.actions) {
-        if (deviceAction(action.type) && action.sourceControllerRecordId.isEmpty()) {
-            if (defaultSourceId.isEmpty()) {
-                m_automationValidationMessage = u"Choose one physical device before saving a device-scoped Automation action."_qs;
+        if (!physicalCondition(condition.type)) continue;
+        if (!condition.logicalMemberId.isEmpty()) {
+            const QString resolved = logicalRoleFor(condition.logicalMemberId);
+            if (resolved.isEmpty()) {
+                m_automationValidationMessage = u"Choose a current Device Rig member role for this Automation condition."_qs;
                 emit stateChanged();
                 return false;
             }
-            action.sourceControllerRecordId = defaultSourceId;
+            condition.logicalMemberId = resolved;
+            continue;
         }
-        if ((action.type == AutomationActionType::VJoyButtonHold
-             || action.type == AutomationActionType::VJoyButtonToggle
-             || action.type == AutomationActionType::VJoyButtonTap)
-            && action.outputLayoutId.isEmpty()) {
-            action.outputLayoutId = activeOutputLayout() ? activeOutputLayout()->id : QString{};
+        if (defaultLogicalMemberId.isEmpty()) {
+            m_automationValidationMessage = u"Choose one Device Rig member before saving a physical Automation condition."_qs;
+            emit stateChanged();
+            return false;
+        }
+        condition.logicalMemberId = defaultLogicalMemberId;
+    }
+    for (AutomationActionDefinition &action : candidate.actions) {
+        if (deviceAction(action.type) && action.sourceLogicalMemberId.isEmpty()) {
+            if (defaultLogicalMemberId.isEmpty()) {
+                m_automationValidationMessage = u"Choose one Device Rig member before saving a device-scoped Automation action."_qs;
+                emit stateChanged();
+                return false;
+            }
+            action.sourceLogicalMemberId = defaultLogicalMemberId;
+        } else if (deviceAction(action.type)) {
+            const QString resolved = logicalRoleFor(action.sourceLogicalMemberId);
+            if (resolved.isEmpty()) {
+                m_automationValidationMessage = u"Choose a current Device Rig member role for this device-scoped Automation action."_qs;
+                emit stateChanged();
+                return false;
+            }
+            action.sourceLogicalMemberId = resolved;
         }
     }
     const auto found = std::find_if(m_configuration.automations.begin(), m_configuration.automations.end(),
@@ -15754,42 +15771,52 @@ const DeviceProfileMapping *AppBackend::editingDeviceMapping() const
 {
     const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     const ControllerProfile &profile = currentProfile();
-    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
-    QString controllerId;
+    if (!rig) return nullptr;
+    QString logicalMemberId;
     if (m_configuration.editingDeviceRecordIds.size() == 1) {
-        controllerId = m_configuration.editingDeviceRecordIds.front();
+        const QString controllerId = m_configuration.editingDeviceRecordIds.front();
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&controllerId](const DeviceRigMember &candidate) {
+            return candidate.logicalMemberId == controllerId;
+        });
+        if (member == rig->members.cend()) return nullptr;
+        logicalMemberId = member->logicalMemberId;
     } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
         const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
             [](const DeviceRigMember &candidate) { return candidate.enabled; });
         if (member == rig->members.cend()
             || std::count_if(rig->members.cbegin(), rig->members.cend(),
                 [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
-        controllerId = member->controllerRecordId;
+        logicalMemberId = member->logicalMemberId;
     } else {
         return nullptr;
     }
-    return findDeviceProfileMapping(profile, controllerId);
+    return findDeviceProfileMapping(profile, logicalMemberId);
 }
 
 DeviceProfileMapping *AppBackend::editingDeviceMappingForWrite()
 {
     const DeviceRig *rig = findDeviceRig(m_configuration, m_configuration.editingDeviceRigId);
     ControllerProfile &profile = currentProfile();
-    if (!rig || (!profile.deviceRigId.isEmpty() && profile.deviceRigId != rig->id)) return nullptr;
-    QString controllerId;
+    if (!rig) return nullptr;
+    QString logicalMemberId;
     if (m_configuration.editingDeviceRecordIds.size() == 1) {
-        controllerId = m_configuration.editingDeviceRecordIds.front();
+        const QString controllerId = m_configuration.editingDeviceRecordIds.front();
+        const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(), [&controllerId](const DeviceRigMember &candidate) {
+            return candidate.logicalMemberId == controllerId;
+        });
+        if (member == rig->members.cend()) return nullptr;
+        logicalMemberId = member->logicalMemberId;
     } else if (m_configuration.editingDeviceRecordIds.isEmpty()) {
         const auto member = std::find_if(rig->members.cbegin(), rig->members.cend(),
             [](const DeviceRigMember &candidate) { return candidate.enabled; });
         if (member == rig->members.cend()
             || std::count_if(rig->members.cbegin(), rig->members.cend(),
                 [](const DeviceRigMember &candidate) { return candidate.enabled; }) != 1) return nullptr;
-        controllerId = member->controllerRecordId;
+        logicalMemberId = member->logicalMemberId;
     } else {
         return nullptr;
     }
-    return &ensureDeviceProfileMapping(profile, controllerId);
+    return &ensureDeviceProfileMapping(profile, logicalMemberId);
 }
 
 AxisMapping *AppBackend::selectedAxisMapping()
@@ -15851,7 +15878,7 @@ void AppBackend::persistAxisProcessorEdit(const QString &kind, int physicalAxis)
         const DeviceProfileMapping *mapping = editingDeviceMapping();
         if (!findDeviceRig(m_configuration, m_configuration.editingDeviceRigId) || mapping) {
             signalFlowPropagateSharedProcessorSettings(&m_configuration, currentProfile().id,
-                mapping ? mapping->controllerRecordId : QString{}, kind, physicalAxis);
+                mapping ? mapping->logicalMemberId : QString{}, kind, physicalAxis);
         }
     }
     persistAndApply();

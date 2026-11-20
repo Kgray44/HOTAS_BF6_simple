@@ -577,9 +577,9 @@ struct AutomationConditionDefinition {
     int pressCount = 2;
     int multiPressWindowMs = 350;
     int longPressDurationMs = 600;
-    // Empty is the V2.3 compatibility sentinel. V2.4 migration resolves it
-    // to the proven active physical controller when one exists.
-    QString controllerRecordId;
+    // Empty is the compatibility sentinel. Migration resolves legacy
+    // physical-controller references to the active Rig's logical member role.
+    QString logicalMemberId;
 };
 
 struct AutomationActionDefinition {
@@ -595,8 +595,11 @@ struct AutomationActionDefinition {
     float minimum = -1.0F;
     float maximum = 1.0F;
     int tapDurationMs = 80;
-    QString sourceControllerRecordId;
-    QString outputLayoutId;
+    // Device-scoped behavior follows the source logical member role. A Rig
+    // resolves that role to its current physical input and owned output.
+    QString sourceLogicalMemberId;
+    // Read only while loading older schema data; cleared before persistence.
+    QString legacyOutputLayoutId;
 };
 
 struct AutomationDefinition {
@@ -666,6 +669,10 @@ struct DeviceRigMember {
     bool enabled = true;
     bool required = true;
     QString preferredOutputLayoutId;
+    // Stable logical role used by Profiles.  The controller record and HID
+    // identity stay exclusively in this Rig-owned topology record.  Keep it
+    // last so existing aggregate construction remains source-compatible.
+    QString logicalMemberId;
 };
 
 struct DeviceRigOutputTarget {
@@ -688,6 +695,9 @@ struct DeviceRig {
     // The current runtime has one authoritative output; future simultaneous
     // output routing remains represented by outputs plus member assignments.
     QString primaryOutputLayoutId;
+    // Activation policy may prefer a behavior Profile, but it never transfers
+    // device or output ownership to that Profile.
+    QString defaultProfileId;
     // V2.4 preserves the existing opt-in HidHide ownership contract.  It is
     // presentation/control-plane metadata only; reports never change it.
     bool hidhideManaged = false;
@@ -708,12 +718,11 @@ inline QString deviceRigPrimaryOutputLayoutId(const DeviceRig &rig)
         ? rig.primaryOutputLayoutId : QString{};
 }
 
-// A profile still owns gameplay behavior, but each physical member owns a
-// separate mapping payload.  The legacy fields remain temporarily on
-// ControllerProfile to make the schema migration lossless and to preserve
-// portable V2.3 profiles; V2.4 runtime compilation selects these records.
+// A Profile owns gameplay behavior for a logical Rig member role.  A concrete
+// controller record is intentionally absent: the active Rig resolves this role
+// to its current physical controller at the configuration boundary.
 struct DeviceProfileMapping {
-    QString controllerRecordId;
+    QString logicalMemberId;
     bool enabled = true;
     AxisMappings axes{};
     ButtonBindings buttons;
@@ -733,13 +742,11 @@ struct ControllerProfile {
     // Control-plane-only activation policy. MappingWorker receives the
     // resolved profile at a configuration boundary and never reads this.
     ProfileAutomaticSelectionMode automaticSelectionMode = ProfileAutomaticSelectionMode::Preferred;
-    // Empty means an unassigned portable/legacy profile.  A V2.4 migration
-    // fills it only when an existing active controller can be proven.
-    QString deviceRigId;
-    // Schema-28 and earlier persisted a Profile-owned output. It is read only
-    // as migration evidence and is never consulted by runtime activation,
-    // readiness, vJoy repair, HidHide, or normal Profile editing.
-    QString outputLayoutId;
+    // Read only while loading an older schema.  These are deliberately named
+    // as migration data so runtime code cannot accidentally treat a Profile as
+    // a hardware or output authority.  They are cleared before persistence.
+    QString legacyDeviceRigId;
+    QString legacyOutputLayoutId;
     // Profiles inherit the global bumpless-transfer behavior unless this
     // explicit advanced override is selected.
     bool curveTransitionSmoothingOverride = false;
@@ -903,7 +910,9 @@ struct SignalFlowRoute {
     QString identityKey;
     QString id;
     QString profileId;
-    QString controllerRecordId;
+    // Profile behavior is scoped to a logical Rig member, never a concrete
+    // controller record. The active Rig resolves it at compilation time.
+    QString logicalMemberId;
     SignalFlowPortKind sourceKind = SignalFlowPortKind::Axis;
     int sourceIndex = -1;
     int sourceSubIndex = -1;
@@ -927,7 +936,7 @@ struct SignalFlowMixer {
     QString identityKey;
     QString id;
     QString profileId;
-    QString controllerRecordId;
+    QString logicalMemberId;
     int destinationAxis = -1;
     SignalFlowMixerMode mode = SignalFlowMixerMode::Disabled;
     bool enabled = true;
@@ -942,7 +951,7 @@ struct SignalFlowSharedProcessor {
     QString identityKey;
     QString id;
     QString profileId;
-    QString controllerRecordId;
+    QString logicalMemberId;
     QString kind;
     int ownerAxis = -1;
     std::vector<int> sourceAxes;
@@ -1472,31 +1481,31 @@ inline ControllerProfile *findProfile(MapperConfiguration &configuration, const 
 }
 
 inline const DeviceProfileMapping *findDeviceProfileMapping(const ControllerProfile &profile,
-                                                            const QString &controllerRecordId)
+                                                            const QString &logicalMemberId)
 {
     const auto found = std::find_if(profile.deviceMappings.cbegin(), profile.deviceMappings.cend(),
-                                    [&controllerRecordId](const DeviceProfileMapping &mapping) {
-        return mapping.controllerRecordId == controllerRecordId;
+                                    [&logicalMemberId](const DeviceProfileMapping &mapping) {
+        return mapping.logicalMemberId == logicalMemberId;
     });
     return found == profile.deviceMappings.cend() ? nullptr : &*found;
 }
 
 inline DeviceProfileMapping *findDeviceProfileMapping(ControllerProfile &profile,
-                                                      const QString &controllerRecordId)
+                                                      const QString &logicalMemberId)
 {
     const auto found = std::find_if(profile.deviceMappings.begin(), profile.deviceMappings.end(),
-                                    [&controllerRecordId](const DeviceProfileMapping &mapping) {
-        return mapping.controllerRecordId == controllerRecordId;
+                                    [&logicalMemberId](const DeviceProfileMapping &mapping) {
+        return mapping.logicalMemberId == logicalMemberId;
     });
     return found == profile.deviceMappings.end() ? nullptr : &*found;
 }
 
 inline DeviceProfileMapping &ensureDeviceProfileMapping(ControllerProfile &profile,
-                                                        const QString &controllerRecordId)
+                                                        const QString &logicalMemberId)
 {
-    if (DeviceProfileMapping *existing = findDeviceProfileMapping(profile, controllerRecordId)) return *existing;
+    if (DeviceProfileMapping *existing = findDeviceProfileMapping(profile, logicalMemberId)) return *existing;
     DeviceProfileMapping mapping;
-    mapping.controllerRecordId = controllerRecordId;
+    mapping.logicalMemberId = logicalMemberId;
     // This copy makes the first V2.4 mapping deterministic and lossless for
     // every V2.3 route, curve, button, POV, and Adaptive Response setting.
     mapping.axes = profile.axes;

@@ -153,7 +153,7 @@ void collectDesiredIdentities(const MapperConfiguration &configuration,
         }
         for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
             if (!mapping.enabled) continue;
-            collectMappingIdentities(configuration, profile, &mapping, mapping.controllerRecordId, desired);
+            collectMappingIdentities(configuration, profile, &mapping, mapping.logicalMemberId, desired);
         }
     }
     for (const AutomationDefinition &automation : configuration.automations) {
@@ -263,7 +263,7 @@ QString routeScopeKey(const QString &profileId, const QString &controllerRecordI
 
 QString routeSourceSlotKey(const SignalFlowRoute &route)
 {
-    return routeScopeKey(route.profileId, route.controllerRecordId) + u":"_qs
+    return routeScopeKey(route.profileId, route.logicalMemberId) + u":"_qs
         + portKindKey(route.sourceKind) + u":"_qs + QString::number(route.sourceIndex)
         + u":"_qs + QString::number(route.sourceSubIndex);
 }
@@ -342,7 +342,7 @@ bool routeScopeExists(const MapperConfiguration &configuration, const SignalFlow
 {
     const ControllerProfile *profile = findProfile(configuration, route.profileId);
     if (!profile) return false;
-    const QString controllerId = route.controllerRecordId.trimmed();
+    const QString controllerId = route.logicalMemberId.trimmed();
     if (controllerId.isEmpty()) return profile->deviceMappings.empty();
     return findDeviceProfileMapping(*profile, controllerId) != nullptr;
 }
@@ -353,7 +353,7 @@ bool scopeAxisIsRouted(const SignalFlowState &state, const SignalFlowSharedProce
     return std::any_of(state.routes.cbegin(), state.routes.cend(),
         [&processor, axis](const SignalFlowRoute &route) {
             return route.enabled && route.profileId == processor.profileId
-                && route.controllerRecordId == processor.controllerRecordId
+                && route.logicalMemberId == processor.logicalMemberId
                 && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex == axis;
         });
 }
@@ -362,7 +362,7 @@ bool sharedProcessorUsesAxis(const SignalFlowSharedProcessor &processor, const Q
                              const QString &controllerRecordId, const QString &kind, int axis)
 {
     return processor.enabled && processor.profileId == profileId
-        && processor.controllerRecordId == controllerRecordId && processor.kind == kind
+        && processor.logicalMemberId == controllerRecordId && processor.kind == kind
         && std::find(processor.sourceAxes.cbegin(), processor.sourceAxes.cend(), axis)
             != processor.sourceAxes.cend();
 }
@@ -498,7 +498,7 @@ void appendCompatibilityRoute(std::vector<SignalFlowRoute> *routes, const Contro
     if (!routes) return;
     SignalFlowRoute route;
     route.profileId = profile.id;
-    route.controllerRecordId = controllerRecordId.trimmed();
+    route.logicalMemberId = controllerRecordId.trimmed();
     route.sourceKind = sourceKind;
     route.sourceIndex = sourceIndex;
     route.sourceSubIndex = sourceSubIndex;
@@ -573,7 +573,7 @@ void importCompatibilityTopology(MapperConfiguration *configuration)
         for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
             if (!mapping.enabled) continue;
             appendCompatibilityScopeRoutes(*configuration, profile, &mapping,
-                                           mapping.controllerRecordId, &state.routes);
+                                           mapping.logicalMemberId, &state.routes);
         }
     }
     state.topologyVersion = kSignalFlowCanonicalTopologyVersion;
@@ -587,7 +587,7 @@ void normalizeTopology(MapperConfiguration *configuration)
     repaired.reserve(state.routes.size());
     for (SignalFlowRoute route : state.routes) {
         route.profileId = route.profileId.trimmed().left(96);
-        route.controllerRecordId = route.controllerRecordId.trimmed().left(96);
+        route.logicalMemberId = route.logicalMemberId.trimmed().left(96);
         route.identityKey = route.identityKey.trimmed().left(320);
         route.id = route.id.trimmed().left(96);
         QStringList processors;
@@ -604,9 +604,9 @@ void normalizeTopology(MapperConfiguration *configuration)
             const ControllerProfile *profile = findProfile(*configuration, route.profileId);
             if (!profile) continue;
             route.identityKey = route.primaryProjection
-                ? routeKey(*profile, route.controllerRecordId, portKindKey(route.sourceKind),
+                ? routeKey(*profile, route.logicalMemberId, portKindKey(route.sourceKind),
                            route.sourceIndex, route.sourceSubIndex)
-                : fanoutRouteKey(*profile, route.controllerRecordId, portKindKey(route.sourceKind),
+                : fanoutRouteKey(*profile, route.logicalMemberId, portKindKey(route.sourceKind),
                                  route.sourceIndex, route.sourceSubIndex, route.destinationKind,
                                  route.destinationIndex, route.destinationSubIndex);
         }
@@ -649,7 +649,7 @@ void normalizeTopology(MapperConfiguration *configuration)
     QSet<QString> mixerDestinations;
     for (SignalFlowMixer mixer : state.mixers) {
         mixer.profileId = mixer.profileId.trimmed().left(96);
-        mixer.controllerRecordId = mixer.controllerRecordId.trimmed().left(96);
+        mixer.logicalMemberId = mixer.logicalMemberId.trimmed().left(96);
         mixer.identityKey = mixer.identityKey.trimmed().left(320);
         mixer.id = mixer.id.trimmed().left(96);
         if (!findProfile(*configuration, mixer.profileId)
@@ -657,14 +657,14 @@ void normalizeTopology(MapperConfiguration *configuration)
             || !validMixerMode(mixer.mode)) continue;
         SignalFlowRoute scope;
         scope.profileId = mixer.profileId;
-        scope.controllerRecordId = mixer.controllerRecordId;
+        scope.logicalMemberId = mixer.logicalMemberId;
         if (!routeScopeExists(*configuration, scope)) continue;
         const ControllerProfile *profile = findProfile(*configuration, mixer.profileId);
         if (!profile) continue;
         if (mixer.identityKey.isEmpty()) {
-            mixer.identityKey = mixerKey(*profile, mixer.controllerRecordId, mixer.destinationAxis);
+            mixer.identityKey = mixerKey(*profile, mixer.logicalMemberId, mixer.destinationAxis);
         }
-        const QString destination = routeScopeKey(mixer.profileId, mixer.controllerRecordId)
+        const QString destination = routeScopeKey(mixer.profileId, mixer.logicalMemberId)
             + u":axis:"_qs + QString::number(mixer.destinationAxis);
         if (mixerDestinations.contains(destination)) continue;
         mixerDestinations.insert(destination);
@@ -672,9 +672,9 @@ void normalizeTopology(MapperConfiguration *configuration)
     }
     std::sort(repairedMixers.begin(), repairedMixers.end(), [](const SignalFlowMixer &left,
                                                                 const SignalFlowMixer &right) {
-        const QString leftKey = routeScopeKey(left.profileId, left.controllerRecordId)
+        const QString leftKey = routeScopeKey(left.profileId, left.logicalMemberId)
             + u":"_qs + QString::number(left.destinationAxis);
-        const QString rightKey = routeScopeKey(right.profileId, right.controllerRecordId)
+        const QString rightKey = routeScopeKey(right.profileId, right.logicalMemberId)
             + u":"_qs + QString::number(right.destinationAxis);
         return leftKey == rightKey ? left.identityKey < right.identityKey : leftKey < rightKey;
     });
@@ -688,7 +688,7 @@ void normalizeTopology(MapperConfiguration *configuration)
             const int contributors = static_cast<int>(std::count_if(state.routes.cbegin(),
                 state.routes.cend(), [&mixer](const SignalFlowRoute &route) {
                     return route.enabled && route.profileId == mixer.profileId
-                        && route.controllerRecordId == mixer.controllerRecordId
+                        && route.logicalMemberId == mixer.logicalMemberId
                         && route.sourceKind == SignalFlowPortKind::Axis
                         && route.destinationKind == SignalFlowPortKind::Axis
                         && route.destinationIndex == mixer.destinationAxis;
@@ -705,7 +705,7 @@ void normalizeSharedProcessors(MapperConfiguration *configuration)
     candidates.reserve(state.sharedProcessors.size());
     for (SignalFlowSharedProcessor processor : state.sharedProcessors) {
         processor.profileId = processor.profileId.trimmed().left(96);
-        processor.controllerRecordId = processor.controllerRecordId.trimmed().left(96);
+        processor.logicalMemberId = processor.logicalMemberId.trimmed().left(96);
         processor.identityKey = processor.identityKey.trimmed().left(320);
         processor.id = processor.id.trimmed().left(96);
         processor.kind = processor.kind.trimmed().toLower().left(48);
@@ -715,7 +715,7 @@ void normalizeSharedProcessors(MapperConfiguration *configuration)
         }
         SignalFlowRoute scope;
         scope.profileId = processor.profileId;
-        scope.controllerRecordId = processor.controllerRecordId;
+        scope.logicalMemberId = processor.logicalMemberId;
         if (!routeScopeExists(*configuration, scope)) continue;
         std::sort(processor.sourceAxes.begin(), processor.sourceAxes.end());
         processor.sourceAxes.erase(std::unique(processor.sourceAxes.begin(), processor.sourceAxes.end()),
@@ -733,16 +733,16 @@ void normalizeSharedProcessors(MapperConfiguration *configuration)
         const ControllerProfile *profile = findProfile(*configuration, processor.profileId);
         if (!profile) continue;
         if (processor.identityKey.isEmpty()) {
-            processor.identityKey = sharedProcessorKey(*profile, processor.controllerRecordId,
+            processor.identityKey = sharedProcessorKey(*profile, processor.logicalMemberId,
                                                        processor.kind, processor.ownerAxis);
         }
         candidates.push_back(std::move(processor));
     }
     std::sort(candidates.begin(), candidates.end(), [](const SignalFlowSharedProcessor &left,
                                                         const SignalFlowSharedProcessor &right) {
-        const QString leftScope = routeScopeKey(left.profileId, left.controllerRecordId)
+        const QString leftScope = routeScopeKey(left.profileId, left.logicalMemberId)
             + u":"_qs + left.kind + u":"_qs + QString::number(left.ownerAxis);
-        const QString rightScope = routeScopeKey(right.profileId, right.controllerRecordId)
+        const QString rightScope = routeScopeKey(right.profileId, right.logicalMemberId)
             + u":"_qs + right.kind + u":"_qs + QString::number(right.ownerAxis);
         return leftScope == rightScope ? left.identityKey < right.identityKey : leftScope < rightScope;
     });
@@ -755,7 +755,7 @@ void normalizeSharedProcessors(MapperConfiguration *configuration)
         std::vector<int> available;
         available.reserve(processor.sourceAxes.size());
         for (const int axis : processor.sourceAxes) {
-            const QString claim = routeScopeKey(processor.profileId, processor.controllerRecordId)
+            const QString claim = routeScopeKey(processor.profileId, processor.logicalMemberId)
                 + u":"_qs + processor.kind + u":"_qs + QString::number(axis);
             if (claimedAxes.contains(claim)) continue;
             available.push_back(axis);
@@ -767,7 +767,7 @@ void normalizeSharedProcessors(MapperConfiguration *configuration)
             processor.ownerAxis = processor.sourceAxes.front();
         }
         for (const int axis : processor.sourceAxes) {
-            claimedAxes.insert(routeScopeKey(processor.profileId, processor.controllerRecordId)
+            claimedAxes.insert(routeScopeKey(processor.profileId, processor.logicalMemberId)
                 + u":"_qs + processor.kind + u":"_qs + QString::number(axis));
         }
         identities.insert(processor.identityKey);
@@ -783,7 +783,7 @@ void mirrorSharedProcessorSettings(MapperConfiguration *configuration)
         if (!processor.enabled || processor.sourceAxes.size() < 2) continue;
         AdaptiveResponseLayer *adaptiveLayer = nullptr;
         AxisMappings *axes = axisMappingsForScope(configuration, processor.profileId,
-                                                  processor.controllerRecordId, &adaptiveLayer);
+                                                  processor.logicalMemberId, &adaptiveLayer);
         if (!axes || processor.ownerAxis < 0 || processor.ownerAxis >= kPhysicalAxisCount) continue;
         const AxisMapping owner = (*axes)[static_cast<size_t>(processor.ownerAxis)];
         const AdaptiveResponseAxisOverride ownerAdaptive = adaptiveLayer
@@ -808,7 +808,7 @@ void splitDivergedSharedProcessorSettings(MapperConfiguration *configuration)
     for (SignalFlowSharedProcessor processor : state.sharedProcessors) {
         AdaptiveResponseLayer *adaptiveLayer = nullptr;
         AxisMappings *axes = axisMappingsForScope(configuration, processor.profileId,
-                                                  processor.controllerRecordId, &adaptiveLayer);
+                                                  processor.logicalMemberId, &adaptiveLayer);
         if (!axes || processor.ownerAxis < 0 || processor.ownerAxis >= kPhysicalAxisCount) continue;
         const AxisMapping owner = (*axes)[static_cast<size_t>(processor.ownerAxis)];
         const AdaptiveResponseAxisOverride ownerAdaptive = adaptiveLayer
@@ -852,7 +852,7 @@ bool activeMixerForDestination(const SignalFlowState &state, const SignalFlowRou
     return std::any_of(state.mixers.cbegin(), state.mixers.cend(), [&route](const SignalFlowMixer &mixer) {
         return mixer.enabled && mixer.mode != SignalFlowMixerMode::Disabled
             && mixer.profileId == route.profileId
-            && mixer.controllerRecordId == route.controllerRecordId
+            && mixer.logicalMemberId == route.logicalMemberId
             && mixer.destinationAxis == route.destinationIndex;
     });
 }
@@ -864,7 +864,7 @@ void enforceExplicitAnalogMerge(SignalFlowState *state)
     for (SignalFlowRoute &route : state->routes) {
         if (!route.enabled || route.sourceKind != SignalFlowPortKind::Axis
             || route.destinationKind != SignalFlowPortKind::Axis) continue;
-        const QString destination = routeScopeKey(route.profileId, route.controllerRecordId)
+        const QString destination = routeScopeKey(route.profileId, route.logicalMemberId)
             + u":axis:"_qs + QString::number(route.destinationIndex);
         if (!occupied.contains(destination)) {
             occupied.insert(destination);
@@ -895,7 +895,7 @@ void projectScopeToCompatibility(const SignalFlowState &state, ControllerProfile
     QSet<QString> projectedSources;
     for (const SignalFlowRoute &route : state.routes) {
         if (!route.enabled || route.profileId != profile->id
-            || route.controllerRecordId != controllerRecordId) continue;
+            || route.logicalMemberId != controllerRecordId) continue;
         const QString source = routeSourceSlotKey(route);
         if (projectedSources.contains(source)) continue;
         projectedSources.insert(source);
@@ -945,7 +945,7 @@ void projectTopologyToCompatibility(MapperConfiguration *configuration)
         }
         for (DeviceProfileMapping &mapping : profile.deviceMappings) {
             projectScopeToCompatibility(configuration->signalFlow, &profile, &mapping,
-                                        mapping.controllerRecordId, &mapping.nativePovBindings);
+                                        mapping.logicalMemberId, &mapping.nativePovBindings);
         }
     }
 }
@@ -956,7 +956,7 @@ void eraseRoutesForSource(std::vector<SignalFlowRoute> *routes, const QString &p
 {
     if (!routes) return;
     routes->erase(std::remove_if(routes->begin(), routes->end(), [&](const SignalFlowRoute &route) {
-        return route.profileId == profileId && route.controllerRecordId == controllerRecordId
+        return route.profileId == profileId && route.logicalMemberId == controllerRecordId
             && route.sourceKind == sourceKind && route.sourceIndex == sourceIndex
             && route.sourceSubIndex == sourceSubIndex;
     }), routes->end());
@@ -980,7 +980,7 @@ void synchronizeCompatibilitySource(MapperConfiguration *configuration,
     const auto matchingPrimary = std::find_if(state.routes.begin(), state.routes.end(),
         [&](const SignalFlowRoute &route) {
             return route.enabled && route.primaryProjection && route.profileId == profile.id
-                && route.controllerRecordId == controllerRecordId && route.sourceKind == sourceKind
+                && route.logicalMemberId == controllerRecordId && route.sourceKind == sourceKind
                 && route.sourceIndex == sourceIndex && route.sourceSubIndex == sourceSubIndex
                 && route.destinationKind == destinationKind && route.destinationIndex == destinationIndex
                 && route.destinationSubIndex == destinationSubIndex;
@@ -1060,7 +1060,7 @@ void synchronizeTopologyFromCompatibility(MapperConfiguration *configuration)
             continue;
         }
         for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
-            synchronizeCompatibilityScope(configuration, profile, &mapping, mapping.controllerRecordId);
+            synchronizeCompatibilityScope(configuration, profile, &mapping, mapping.logicalMemberId);
         }
     }
 }
@@ -1088,7 +1088,7 @@ void collectTopologyDesiredIdentities(const MapperConfiguration &configuration,
                 bool routed = false;
                 for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
                     routed = routed || (route.enabled && route.profileId == profile.id
-                        && route.controllerRecordId == controllerId
+                        && route.logicalMemberId == controllerId
                         && route.sourceKind == SignalFlowPortKind::Axis && route.sourceIndex == axis);
                 }
                 if (!routed) continue;
@@ -1112,7 +1112,7 @@ void collectTopologyDesiredIdentities(const MapperConfiguration &configuration,
         };
         if (profile.deviceMappings.empty()) collectProcessors(nullptr, {});
         else for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
-            if (mapping.enabled) collectProcessors(&mapping, mapping.controllerRecordId);
+            if (mapping.enabled) collectProcessors(&mapping, mapping.logicalMemberId);
         }
     }
     for (const AutomationDefinition &automation : configuration.automations) {
@@ -1158,19 +1158,19 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
         if (!route.enabled || route.sourceKind != SignalFlowPortKind::Axis) continue;
         const ControllerProfile *profile = findProfile(*configuration, route.profileId);
         if (!profile) continue;
-        const DeviceProfileMapping *mapping = route.controllerRecordId.isEmpty() ? nullptr
-            : findDeviceProfileMapping(*profile, route.controllerRecordId);
+        const DeviceProfileMapping *mapping = route.logicalMemberId.isEmpty() ? nullptr
+            : findDeviceProfileMapping(*profile, route.logicalMemberId);
         const AxisMappings &axes = mapping ? mapping->axes : profile->axes;
         if (route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount) continue;
         const AxisMapping &axis = axes[static_cast<size_t>(route.sourceIndex)];
         const auto appendProcessor = [&](bool active, const QString &kind) {
             if (!active) return;
             const SignalFlowSharedProcessor *shared = sharedProcessorForAxis(
-                state, route.profileId, route.controllerRecordId, kind, route.sourceIndex);
+                state, route.profileId, route.logicalMemberId, kind, route.sourceIndex);
             const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
                 state.processorIdentities,
                 shared ? shared->identityKey
-                    : processorKey(*profile, route.controllerRecordId, route.sourceIndex, kind));
+                    : processorKey(*profile, route.logicalMemberId, route.sourceIndex, kind));
             if (processor && processor->active && !route.processorPath.contains(processor->id)) {
                 route.processorPath.append(processor->id);
             }
@@ -1186,7 +1186,7 @@ void populateRouteIdsAndProcessorPaths(MapperConfiguration *configuration)
         for (const SignalFlowMixer &mixer : state.mixers) {
             if (!mixer.enabled || mixer.mode == SignalFlowMixerMode::Disabled
                 || mixer.profileId != route.profileId
-                || mixer.controllerRecordId != route.controllerRecordId
+                || mixer.logicalMemberId != route.logicalMemberId
                 || mixer.destinationAxis != route.destinationIndex) continue;
             const SignalFlowIdentityRecord *processor = findSignalFlowIdentity(
                 state.processorIdentities, mixer.identityKey);
@@ -1279,7 +1279,7 @@ bool signalFlowRouteMatchesScope(const SignalFlowRoute &route,
                                  const ControllerProfile &profile,
                                  const QString &controllerRecordId)
 {
-    return route.profileId == profile.id && route.controllerRecordId == controllerRecordId.trimmed();
+    return route.profileId == profile.id && route.logicalMemberId == controllerRecordId.trimmed();
 }
 
 bool signalFlowPropagateSharedProcessorSettings(MapperConfiguration *configuration,
@@ -1293,7 +1293,7 @@ bool signalFlowPropagateSharedProcessorSettings(MapperConfiguration *configurati
     const auto shared = std::find_if(configuration->signalFlow.sharedProcessors.cbegin(),
         configuration->signalFlow.sharedProcessors.cend(), [&](const SignalFlowSharedProcessor &processor) {
             return processor.enabled && processor.profileId == profileId
-                && processor.controllerRecordId == normalizedControllerId
+                && processor.logicalMemberId == normalizedControllerId
                 && processor.kind == normalizedKind && processor.ownerAxis == ownerAxis;
         });
     if (shared == configuration->signalFlow.sharedProcessors.cend()

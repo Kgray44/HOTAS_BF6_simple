@@ -31,9 +31,10 @@ bool isEligible(const DeviceRig &rig, const DeviceRigStatus &status)
     const bool ambiguousRequired = !status.ambiguousRequiredMemberIds.isEmpty()
         || (!status.ambiguousMemberIds.isEmpty()
             && status.ambiguousOptionalMemberIds.isEmpty());
-    const bool unverifiedRequired = !status.needsVerificationRequiredMemberIds.isEmpty()
-        || (!status.needsVerificationMemberIds.isEmpty()
-            && status.needsVerificationOptionalMemberIds.isEmpty());
+    // This is the one authoritative, fresh RigStatus derivation.  The legacy
+    // aggregate list is presentation compatibility only and never participates
+    // in activation eligibility.
+    const bool unverifiedRequired = !status.needsVerificationRequiredMemberIds.isEmpty();
     return rig.enabled && rig.autoActivate && status.complete
         && !ambiguousRequired && !unverifiedRequired;
 }
@@ -253,10 +254,6 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         runtime.issue = u"The active profile is unavailable."_qs;
         return runtime;
     }
-    if (!profile->deviceRigId.isEmpty() && profile->deviceRigId != rig->id) {
-        runtime.issue = u"The active profile belongs to another Device Rig."_qs;
-        return runtime;
-    }
     const RuntimeProfileCache profileCache = compileRuntimeProfileCache(configuration);
 
     for (int index = 0; index < static_cast<int>(rig->outputs.size()); ++index) {
@@ -312,9 +309,16 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
             // cannot emit routes until it has completed the same setup path.
             continue;
         }
-        const DeviceProfileMapping *deviceMapping = findDeviceProfileMapping(*profile, record->id);
+        // Persisted schema-30 rigs always carry an explicit logical role.
+        // Keep a narrowly scoped in-memory fallback for callers holding a
+        // pre-migration snapshot; ConfigStore resolves that snapshot before
+        // it can be persisted again.
+        const QString logicalMemberId = configured.logicalMemberId.trimmed().isEmpty()
+            ? configured.controllerRecordId : configured.logicalMemberId.trimmed();
+        const DeviceProfileMapping *deviceMapping = findDeviceProfileMapping(*profile,
+                                                                              logicalMemberId);
         if (!deviceMapping || !deviceMapping->enabled) {
-            runtime.issue = u"The active profile has no enabled mapping for a Device Rig member."_qs;
+            runtime.issue = u"The active profile has no enabled mapping for the required logical Rig member."_qs;
             return runtime;
         }
         // Member-specific destinations remain Rig topology. A member without
@@ -339,6 +343,7 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         }
         CompiledDeviceRigMember &member = runtime.members[static_cast<size_t>(runtime.memberCount++)];
         member.controllerRecordId = record->id;
+        member.logicalMemberId = logicalMemberId;
         member.directInputId = record->lastDirectInputId;
         member.displayName = record->displayName;
         member.outputLayoutId = outputLayoutId;
@@ -347,8 +352,8 @@ CompiledDeviceRigRuntime compileDeviceRigRuntime(const MapperConfiguration &conf
         member.mapping = compileDeviceProfileMapping(configuration, *profile, *deviceMapping, record);
         member.nativePovBindings = deviceMapping->nativePovBindings;
         QString automationIssue;
-        member.automation = compileDeviceAutomationSet(configuration, profileCache, record->id,
-            outputLayoutId, rig->members.size() > 1, &automationIssue);
+        member.automation = compileDeviceAutomationSet(configuration, profileCache,
+            logicalMemberId, rig->members.size() > 1, &automationIssue);
         if (!automationIssue.isEmpty()) {
             runtime.issue = automationIssue;
             return runtime;

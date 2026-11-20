@@ -25,7 +25,7 @@ namespace hotas {
 namespace {
 
 constexpr auto kConfigKey = "mapper/config";
-constexpr int kProfileSchemaVersion = 29;
+constexpr int kProfileSchemaVersion = 30;
 constexpr int kUniversalStrengthSchemaVersion = 7;
 constexpr auto kBundledBattlefieldCategoryId = "starter-battlefield-6";
 constexpr auto kBundledBattlefieldHelicopterProfileId = "starter-battlefield-6-helicopter";
@@ -149,7 +149,7 @@ QJsonObject signalFlowRouteToJson(const SignalFlowRoute &route)
     return {{u"identityKey"_qs, route.identityKey.trimmed().left(320)},
             {u"id"_qs, route.id.trimmed().left(96)},
             {u"profileId"_qs, route.profileId.trimmed().left(96)},
-            {u"controllerRecordId"_qs, route.controllerRecordId.trimmed().left(96)},
+            {u"logicalMemberId"_qs, route.logicalMemberId.trimmed().left(96)},
             {u"sourceKind"_qs, signalFlowPortKindKey(route.sourceKind)},
             {u"sourceIndex"_qs, route.sourceIndex},
             {u"sourceSubIndex"_qs, route.sourceSubIndex},
@@ -178,7 +178,8 @@ bool signalFlowRouteFromJson(const QJsonObject &json, SignalFlowRoute *route)
     restored.identityKey = json.value(u"identityKey"_qs).toString().trimmed().left(320);
     restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
     restored.profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
-    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    restored.logicalMemberId = json.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+    if (restored.logicalMemberId.isEmpty()) restored.logicalMemberId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
     if (restored.identityKey.isEmpty() || restored.id.isEmpty() || restored.profileId.isEmpty()
         || !signalFlowPortKindFromJson(json.value(u"sourceKind"_qs), &restored.sourceKind)
         || !signalFlowPortKindFromJson(json.value(u"destinationKind"_qs), &restored.destinationKind)) {
@@ -212,7 +213,7 @@ QJsonObject signalFlowMixerToJson(const SignalFlowMixer &mixer)
     return {{u"identityKey"_qs, mixer.identityKey.trimmed().left(320)},
             {u"id"_qs, mixer.id.trimmed().left(96)},
             {u"profileId"_qs, mixer.profileId.trimmed().left(96)},
-            {u"controllerRecordId"_qs, mixer.controllerRecordId.trimmed().left(96)},
+            {u"logicalMemberId"_qs, mixer.logicalMemberId.trimmed().left(96)},
             {u"destinationAxis"_qs, mixer.destinationAxis},
             {u"mode"_qs, signalFlowMixerModeKey(mixer.mode)},
             {u"enabled"_qs, mixer.enabled}};
@@ -226,7 +227,8 @@ bool signalFlowMixerFromJson(const QJsonObject &json, SignalFlowMixer *mixer)
     restored.identityKey = json.value(u"identityKey"_qs).toString().trimmed().left(320);
     restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
     restored.profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
-    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    restored.logicalMemberId = json.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+    if (restored.logicalMemberId.isEmpty()) restored.logicalMemberId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
     if (restored.identityKey.isEmpty() || restored.id.isEmpty() || restored.profileId.isEmpty()
         || !signalFlowMixerModeFromJson(json.value(u"mode"_qs), &restored.mode)) return false;
     restored.destinationAxis = json.value(u"destinationAxis"_qs).toInt();
@@ -242,7 +244,7 @@ QJsonObject signalFlowSharedProcessorToJson(const SignalFlowSharedProcessor &pro
     return {{u"identityKey"_qs, processor.identityKey.trimmed().left(320)},
             {u"id"_qs, processor.id.trimmed().left(96)},
             {u"profileId"_qs, processor.profileId.trimmed().left(96)},
-            {u"controllerRecordId"_qs, processor.controllerRecordId.trimmed().left(96)},
+            {u"logicalMemberId"_qs, processor.logicalMemberId.trimmed().left(96)},
             {u"kind"_qs, processor.kind.trimmed().left(48)},
             {u"ownerAxis"_qs, processor.ownerAxis},
             {u"sourceAxes"_qs, sourceAxes},
@@ -261,7 +263,8 @@ bool signalFlowSharedProcessorFromJson(const QJsonObject &json, SignalFlowShared
     restored.identityKey = json.value(u"identityKey"_qs).toString().trimmed().left(320);
     restored.id = json.value(u"id"_qs).toString().trimmed().left(96);
     restored.profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
-    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    restored.logicalMemberId = json.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+    if (restored.logicalMemberId.isEmpty()) restored.logicalMemberId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
     restored.kind = json.value(u"kind"_qs).toString().trimmed().toLower().left(48);
     if (restored.identityKey.isEmpty() || restored.id.isEmpty() || restored.profileId.isEmpty()
         || restored.kind.isEmpty()) return false;
@@ -444,7 +447,7 @@ bool signalFlowStateFromJson(const QJsonValue &value, SignalFlowState *state)
                                         signalFlowMixerFromJson,
                                         [](const auto &mixer) {
                                             return mixer.profileId + u":"_qs
-                                                + mixer.controllerRecordId + u":"_qs
+                                                + mixer.logicalMemberId + u":"_qs
                                                 + QString::number(mixer.destinationAxis);
                                         })
             || (json.contains(u"sharedProcessors"_qs)
@@ -1103,7 +1106,7 @@ bool automationActionTypeFromString(const QString &value, AutomationActionType *
 
 QJsonObject automationConditionToJson(const AutomationConditionDefinition &condition)
 {
-    return {{u"controllerRecordId"_qs, condition.controllerRecordId},
+    return {{u"logicalMemberId"_qs, condition.logicalMemberId},
             {u"type"_qs, automationConditionTypeToString(condition.type)}, {u"axis"_qs, condition.axis},
             {u"minimum"_qs, condition.minimum}, {u"maximum"_qs, condition.maximum},
             {u"hysteresis"_qs, condition.hysteresis}, {u"button"_qs, condition.button},
@@ -1116,7 +1119,10 @@ QJsonObject automationConditionToJson(const AutomationConditionDefinition &condi
 bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDefinition *condition)
 {
     if (!condition || !automationConditionTypeFromString(json.value(u"type"_qs).toString(), &condition->type)) return false;
-    condition->controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    condition->logicalMemberId = json.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+    if (condition->logicalMemberId.isEmpty()) {
+        condition->logicalMemberId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    }
     condition->axis = json.value(u"axis"_qs).toInt(static_cast<int>(PhysicalAxis::X));
     condition->minimum = static_cast<float>(json.value(u"minimum"_qs).toDouble());
     condition->maximum = static_cast<float>(json.value(u"maximum"_qs).toDouble());
@@ -1139,8 +1145,7 @@ bool automationConditionFromJson(const QJsonObject &json, AutomationConditionDef
 
 QJsonObject automationActionToJson(const AutomationActionDefinition &action)
 {
-    return {{u"sourceControllerRecordId"_qs, action.sourceControllerRecordId},
-            {u"outputLayoutId"_qs, action.outputLayoutId},
+    return {{u"sourceLogicalMemberId"_qs, action.sourceLogicalMemberId},
             {u"type"_qs, automationActionTypeToString(action.type)}, {u"virtualButton"_qs, action.virtualButton},
             {u"profileId"_qs, action.profileId},
             {u"adaptiveResponsePresetId"_qs, action.adaptiveResponsePresetId},
@@ -1154,8 +1159,11 @@ QJsonObject automationActionToJson(const AutomationActionDefinition &action)
 bool automationActionFromJson(const QJsonObject &json, AutomationActionDefinition *action)
 {
     if (!action || !automationActionTypeFromString(json.value(u"type"_qs).toString(), &action->type)) return false;
-    action->sourceControllerRecordId = json.value(u"sourceControllerRecordId"_qs).toString().trimmed().left(96);
-    action->outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
+    action->sourceLogicalMemberId = json.value(u"sourceLogicalMemberId"_qs).toString().trimmed().left(96);
+    if (action->sourceLogicalMemberId.isEmpty()) {
+        action->sourceLogicalMemberId = json.value(u"sourceControllerRecordId"_qs).toString().trimmed().left(96);
+    }
+    action->legacyOutputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     action->virtualButton = json.value(u"virtualButton"_qs).toInt(1);
     action->profileId = json.value(u"profileId"_qs).toString().trimmed().left(96);
     action->adaptiveResponsePresetId = json.value(u"adaptiveResponsePresetId"_qs)
@@ -1414,7 +1422,7 @@ QJsonObject deviceProfileMappingToJson(const DeviceProfileMapping &mapping)
 {
     QJsonArray axes;
     for (const AxisMapping &axis : mapping.axes) axes.append(axisMappingToJson(axis));
-    return {{u"controllerRecordId"_qs, mapping.controllerRecordId},
+    return {{u"logicalMemberId"_qs, mapping.logicalMemberId},
             {u"enabled"_qs, mapping.enabled},
             {u"axes"_qs, axes},
             {u"buttons"_qs, buttonBindingsToJson(mapping.buttons)},
@@ -1427,9 +1435,14 @@ bool deviceProfileMappingFromJson(const QJsonObject &json, DeviceProfileMapping 
 {
     if (!mapping) return false;
     DeviceProfileMapping restored;
-    restored.controllerRecordId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    restored.logicalMemberId = json.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+    if (restored.logicalMemberId.isEmpty()) {
+        // Schema 29 migration evidence. It is resolved to a Rig role before
+        // the configuration is saved as schema 30.
+        restored.logicalMemberId = json.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+    }
     const QJsonArray axes = json.value(u"axes"_qs).toArray();
-    if (restored.controllerRecordId.isEmpty() || axes.size() != kPhysicalAxisCount) return false;
+    if (restored.logicalMemberId.isEmpty() || axes.size() != kPhysicalAxisCount) return false;
     restored.enabled = json.value(u"enabled"_qs).toBool(true);
     for (int index = 0; index < kPhysicalAxisCount; ++index) {
         const QJsonObject axis = axes.at(index).toObject();
@@ -1453,7 +1466,8 @@ QJsonObject deviceRigToJson(const DeviceRig &rig)
 {
     QJsonArray members;
     for (const DeviceRigMember &member : rig.members) {
-        members.append(QJsonObject{{u"controllerRecordId"_qs, member.controllerRecordId},
+        members.append(QJsonObject{{u"logicalMemberId"_qs, member.logicalMemberId},
+                                    {u"controllerRecordId"_qs, member.controllerRecordId},
                                    {u"enabled"_qs, member.enabled}, {u"required"_qs, member.required},
                                    {u"preferredOutputLayoutId"_qs, member.preferredOutputLayoutId}});
     }
@@ -1468,6 +1482,7 @@ QJsonObject deviceRigToJson(const DeviceRig &rig)
             {u"disconnectBehavior"_qs, static_cast<int>(rig.disconnectBehavior)},
             {u"members"_qs, members}, {u"outputs"_qs, outputs},
             {u"primaryOutputLayoutId"_qs, deviceRigPrimaryOutputLayoutId(rig)},
+            {u"defaultProfileId"_qs, rig.defaultProfileId},
             {u"hidhideManaged"_qs, rig.hidhideManaged}, {u"presentationOrder"_qs, rig.presentationOrder}};
 }
 
@@ -1494,19 +1509,26 @@ bool deviceRigFromJson(const QJsonObject &json, DeviceRig *rig)
     restored.disconnectBehavior = static_cast<DeviceRigDisconnectBehavior>(behavior);
     restored.primaryOutputLayoutId = json.value(u"primaryOutputLayoutId"_qs)
         .toString().trimmed().left(96);
+    restored.defaultProfileId = json.value(u"defaultProfileId"_qs).toString().trimmed().left(96);
     restored.hidhideManaged = json.value(u"hidhideManaged"_qs).toBool(false);
     restored.presentationOrder = std::max(0, json.value(u"presentationOrder"_qs).toInt());
     QSet<QString> memberIds;
+    QSet<QString> logicalMemberIds;
+    int memberIndex = 0;
     for (const QJsonValue &value : members) {
         const QJsonObject member = value.toObject();
         DeviceRigMember parsed;
         parsed.controllerRecordId = member.value(u"controllerRecordId"_qs).toString().trimmed().left(96);
+        parsed.logicalMemberId = member.value(u"logicalMemberId"_qs).toString().trimmed().left(96);
+        if (parsed.logicalMemberId.isEmpty()) parsed.logicalMemberId = QString(u"member-%1"_qs).arg(++memberIndex);
         parsed.enabled = member.value(u"enabled"_qs).toBool(true);
         parsed.required = member.value(u"required"_qs).toBool(true);
         parsed.preferredOutputLayoutId = member.value(u"preferredOutputLayoutId"_qs)
             .toString().trimmed().left(96);
-        if (parsed.controllerRecordId.isEmpty() || memberIds.contains(parsed.controllerRecordId)) return false;
+        if (parsed.controllerRecordId.isEmpty() || memberIds.contains(parsed.controllerRecordId)
+            || logicalMemberIds.contains(parsed.logicalMemberId)) return false;
         memberIds.insert(parsed.controllerRecordId);
+        logicalMemberIds.insert(parsed.logicalMemberId);
         restored.members.push_back(std::move(parsed));
     }
     QSet<QString> outputIds;
@@ -1545,7 +1567,6 @@ QJsonObject profileToJson(const ControllerProfile &profile)
         {u"categoryId"_qs, profile.categoryId},
         {u"enabled"_qs, profile.enabled},
         {u"automaticSelectionMode"_qs, profileAutomaticSelectionModeKey(profile.automaticSelectionMode)},
-        {u"deviceRigId"_qs, profile.deviceRigId},
         {u"curveTransitionSmoothingOverride"_qs, profile.curveTransitionSmoothingOverride},
         {u"curveTransitionSmoothing"_qs,
          curveTransitionSmoothingToJson(profile.curveTransitionSmoothing)},
@@ -1579,8 +1600,8 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
                                                   &restored.automaticSelectionMode)) {
         return false;
     }
-    restored.deviceRigId = json.value(u"deviceRigId"_qs).toString().trimmed().left(96);
-    restored.outputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
+    restored.legacyDeviceRigId = json.value(u"deviceRigId"_qs).toString().trimmed().left(96);
+    restored.legacyOutputLayoutId = json.value(u"outputLayoutId"_qs).toString().trimmed().left(96);
     restored.curveTransitionSmoothingOverride = json.value(
         u"curveTransitionSmoothingOverride"_qs).toBool(false);
     restored.curveTransitionSmoothing = curveTransitionSmoothingFromJson(
@@ -1612,8 +1633,8 @@ bool profileFromJson(const QJsonObject &json, ControllerProfile *profile, bool m
     for (const QJsonValue &value : deviceMappings) {
         DeviceProfileMapping mapping;
         if (!deviceProfileMappingFromJson(value.toObject(), &mapping)
-            || deviceMappingIds.contains(mapping.controllerRecordId)) return false;
-        deviceMappingIds.insert(mapping.controllerRecordId);
+            || deviceMappingIds.contains(mapping.logicalMemberId)) return false;
+        deviceMappingIds.insert(mapping.logicalMemberId);
         restored.deviceMappings.push_back(std::move(mapping));
     }
     *profile = std::move(restored);
@@ -1910,8 +1931,8 @@ bool seedBundledBattlefieldHelicopterProfile(MapperConfiguration *configuration)
     // provisioning recipe. It deliberately arrives unattached so the owner
     // selects a verified local Device Rig; it must never create or redirect a
     // vJoy output during startup seeding.
-    seeded.deviceRigId.clear();
-    seeded.outputLayoutId.clear();
+    seeded.legacyDeviceRigId.clear();
+    seeded.legacyOutputLayoutId.clear();
 
     configuration->profiles.push_back(std::move(seeded));
     destinationCategory->profileIds.push_back(configuration->profiles.back().id);
@@ -1954,9 +1975,9 @@ void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
         if (selected.isEmpty() && rig.id == configuration->activeDeviceRigId) {
             if (const ControllerProfile *active = findProfile(*configuration,
                                                                configuration->activeProfileId);
-                active && active->deviceRigId == rig.id
-                    && enabledOutputs.contains(active->outputLayoutId)) {
-                selected = active->outputLayoutId;
+                active && active->legacyDeviceRigId == rig.id
+                    && enabledOutputs.contains(active->legacyOutputLayoutId)) {
+                selected = active->legacyOutputLayoutId;
             }
         }
 
@@ -1965,9 +1986,9 @@ void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
         if (selected.isEmpty()) {
             QSet<QString> agreedOutputs;
             for (const ControllerProfile &profile : configuration->profiles) {
-                if (profile.deviceRigId == rig.id
-                    && enabledOutputs.contains(profile.outputLayoutId)) {
-                    agreedOutputs.insert(profile.outputLayoutId);
+                if (profile.legacyDeviceRigId == rig.id
+                    && enabledOutputs.contains(profile.legacyOutputLayoutId)) {
+                    agreedOutputs.insert(profile.legacyOutputLayoutId);
                 }
             }
             if (agreedOutputs.size() == 1) selected = *agreedOutputs.cbegin();
@@ -1984,26 +2005,13 @@ void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
     // Legacy Profile output fields are migration evidence only. Clearing them
     // here makes it structurally impossible for a later runtime consumer to
     // restore Profile-owned output selection.
-    for (ControllerProfile &profile : configuration->profiles) profile.outputLayoutId.clear();
+    for (ControllerProfile &profile : configuration->profiles) profile.legacyOutputLayoutId.clear();
 
     if (const DeviceRig *activeRig = findDeviceRig(*configuration,
                                                     configuration->activeDeviceRigId)) {
         if (const VirtualOutputLayout *layout = findOutputLayout(
                 *configuration, deviceRigPrimaryOutputLayoutId(*activeRig))) {
             configuration->vjoyDeviceId = layout->requirements.deviceId;
-            // Automation output IDs are an explicit advanced-routing target,
-            // not a Profile ownership field. Fill only formerly implicit
-            // actions so they continue to follow the now-canonical Rig route.
-            for (AutomationDefinition &automation : configuration->automations) {
-                for (AutomationActionDefinition &action : automation.actions) {
-                    if ((action.type == AutomationActionType::VJoyButtonHold
-                         || action.type == AutomationActionType::VJoyButtonToggle
-                         || action.type == AutomationActionType::VJoyButtonTap)
-                        && action.outputLayoutId.isEmpty()) {
-                        action.outputLayoutId = layout->id;
-                    }
-                }
-            }
         }
     }
 
@@ -2011,6 +2019,116 @@ void migrateDeviceRigOutputOwnership(MapperConfiguration *configuration)
         configuration->deviceRigMigrationWarning = QString(
             u"Choose a Primary Virtual Output for %1 before it can become ready. "
             u"Profiles no longer choose virtual outputs."_qs).arg(unresolvedRigs.join(u", "_qs));
+    }
+}
+
+// Schema 30 removes every Profile-to-hardware link.  Schema-29 mapping keys
+// are controller record IDs, so resolve them once through the Rig topology and
+// persist only the stable logical member role thereafter.  An ambiguous legacy
+// key is retained as a non-hardware placeholder rather than guessing a device.
+void migrateProfileHardwareOwnership(MapperConfiguration *configuration)
+{
+    if (!configuration) return;
+    QHash<QString, QString> roleByLegacyKey;
+    for (DeviceRig &rig : configuration->deviceRigs) {
+        QSet<QString> roles;
+        int index = 0;
+        for (DeviceRigMember &member : rig.members) {
+            if (member.logicalMemberId.isEmpty()) {
+                member.logicalMemberId = QString(u"member-%1"_qs).arg(++index);
+            }
+            roles.insert(member.logicalMemberId);
+        }
+    }
+    for (ControllerProfile &profile : configuration->profiles) {
+        const DeviceRig *legacyRig = findDeviceRig(*configuration, profile.legacyDeviceRigId);
+        int unresolvedIndex = 0;
+        for (DeviceProfileMapping &mapping : profile.deviceMappings) {
+            const QString legacyKey = mapping.logicalMemberId;
+            bool alreadyLogical = false;
+            QString resolvedRole;
+            const auto consider = [&legacyKey, &alreadyLogical, &resolvedRole](const DeviceRig &rig) {
+                for (const DeviceRigMember &member : rig.members) {
+                    if (member.logicalMemberId == legacyKey) {
+                        alreadyLogical = true;
+                        resolvedRole = member.logicalMemberId;
+                        return;
+                    }
+                    if (member.controllerRecordId == legacyKey) {
+                        if (resolvedRole.isEmpty()) resolvedRole = member.logicalMemberId;
+                        else if (resolvedRole != member.logicalMemberId) resolvedRole.clear();
+                    }
+                }
+            };
+            if (legacyRig) consider(*legacyRig);
+            else {
+                for (const DeviceRig &rig : configuration->deviceRigs) consider(rig);
+            }
+            if (alreadyLogical || !resolvedRole.isEmpty()) {
+                mapping.logicalMemberId = resolvedRole;
+            } else {
+                mapping.logicalMemberId = QString(u"unresolved-member-%1"_qs).arg(++unresolvedIndex);
+            }
+            if (!legacyKey.isEmpty()) {
+                roleByLegacyKey.insert(profile.id + u"\x1f"_qs + legacyKey, mapping.logicalMemberId);
+            }
+        }
+        // Both values are migration evidence only.  Do not preserve a latent
+        // Profile hardware authority after the conversion has completed.
+        profile.legacyDeviceRigId.clear();
+        profile.legacyOutputLayoutId.clear();
+    }
+    const auto migrateTopologyRole = [&roleByLegacyKey](const QString &profileId, QString *role) {
+        if (!role || role->isEmpty()) return;
+        if (const auto found = roleByLegacyKey.constFind(profileId + u"\x1f"_qs + *role);
+            found != roleByLegacyKey.cend()) {
+            *role = *found;
+        }
+    };
+    for (SignalFlowRoute &route : configuration->signalFlow.routes) {
+        migrateTopologyRole(route.profileId, &route.logicalMemberId);
+    }
+    for (SignalFlowMixer &mixer : configuration->signalFlow.mixers) {
+        migrateTopologyRole(mixer.profileId, &mixer.logicalMemberId);
+    }
+    for (SignalFlowSharedProcessor &processor : configuration->signalFlow.sharedProcessors) {
+        migrateTopologyRole(processor.profileId, &processor.logicalMemberId);
+    }
+    const auto migrateAutomationRole = [configuration](QString *role) {
+        if (!role || role->isEmpty()) return;
+        const DeviceRig *preferredRig = findDeviceRig(*configuration,
+                                                       configuration->activeDeviceRigId);
+        const auto resolveInRig = [role](const DeviceRig &rig) {
+            for (const DeviceRigMember &member : rig.members) {
+                if (member.logicalMemberId == *role) return member.logicalMemberId;
+                if (member.controllerRecordId == *role) return member.logicalMemberId;
+            }
+            return QString{};
+        };
+        if (preferredRig) {
+            const QString resolved = resolveInRig(*preferredRig);
+            if (!resolved.isEmpty()) { *role = resolved; return; }
+        }
+        QString resolved;
+        for (const DeviceRig &rig : configuration->deviceRigs) {
+            const QString candidate = resolveInRig(rig);
+            if (candidate.isEmpty()) continue;
+            if (!resolved.isEmpty() && candidate != resolved) {
+                *role = u"unresolved-member"_qs;
+                return;
+            }
+            resolved = candidate;
+        }
+        *role = resolved.isEmpty() ? u"unresolved-member"_qs : resolved;
+    };
+    for (AutomationDefinition &automation : configuration->automations) {
+        for (AutomationConditionDefinition &condition : automation.conditions) {
+            migrateAutomationRole(&condition.logicalMemberId);
+        }
+        for (AutomationActionDefinition &action : automation.actions) {
+            migrateAutomationRole(&action.sourceLogicalMemberId);
+            action.legacyOutputLayoutId.clear();
+        }
     }
 }
 
@@ -2050,11 +2168,12 @@ bool ConfigStore::save(const MapperConfiguration &configuration)
 QJsonObject ConfigStore::toJson(const MapperConfiguration &input)
 {
     // Exporting a fixture or a freshly created configuration must produce the
-    // same schema-29 canonical topology as an immediate-persistence edit.
+    // same schema-30 canonical topology as an immediate-persistence edit.
     // This remains control-plane work; MappingWorker receives an already
     // reconciled snapshot from AppBackend.
     MapperConfiguration configuration = input;
     migrateDeviceRigOutputOwnership(&configuration);
+    migrateProfileHardwareOwnership(&configuration);
     reconcileSignalFlowState(&configuration);
     QJsonArray calibration;
     for (const Calibration &axis : configuration.calibration) calibration.append(calibrationToJson(axis));
@@ -2167,6 +2286,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         && version != 26
         && version != 27
         && version != 28
+        && version != 29
         && version != kProfileSchemaVersion) {
         if (valid) *valid = false;
         return fallbackWithGlobalSettings(json);
@@ -2522,7 +2642,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         }
         configuration.outputLayouts = {std::move(migrated)};
         for (ControllerProfile &profile : configuration.profiles) {
-            profile.outputLayoutId = defaultOutputLayoutId();
+            profile.legacyOutputLayoutId = defaultOutputLayoutId();
         }
     }
 
@@ -2609,26 +2729,9 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         // event. Do not restore it: migration evidence remains in the saved
         // data and event log, but an old warning is not an active condition.
         configuration.deviceRigMigrationWarning.clear();
-        for (const ControllerProfile &profile : configuration.profiles) {
-            if (!profile.deviceRigId.isEmpty() && !rigIds.contains(profile.deviceRigId)) {
-                if (valid) *valid = false;
-                return fallbackWithGlobalSettings(json);
-            }
-            QSet<QString> rigMemberIds;
-            if (const DeviceRig *rig = findDeviceRig(configuration, profile.deviceRigId)) {
-                for (const DeviceRigMember &member : rig->members) rigMemberIds.insert(member.controllerRecordId);
-            }
-            for (const DeviceProfileMapping &mapping : profile.deviceMappings) {
-                if (std::none_of(configuration.savedControllers.cbegin(), configuration.savedControllers.cend(),
-                                 [&mapping](const SavedControllerRecord &record) {
-                                     return record.id == mapping.controllerRecordId;
-                                 })
-                    || (!profile.deviceRigId.isEmpty() && !rigMemberIds.contains(mapping.controllerRecordId))) {
-                    if (valid) *valid = false;
-                    return fallbackWithGlobalSettings(json);
-                }
-            }
-        }
+        // Profile mapping keys are logical roles in schema 30.  Older
+        // controller-record keys are intentionally accepted as migration data
+        // and resolved below; they are never used as a runtime authority.
     } else {
         // V2.3 had one selected controller.  Preserve a durable relationship
         // whenever it can be proven from an active saved record or a unique
@@ -2662,13 +2765,13 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             migrated.name = legacyRecord->displayName.left(52).trimmed() + u" Rig"_qs;
             migrated.isDefault = true;
             migrated.autoActivate = true;
-            migrated.members.push_back({legacyRecord->id, true, true, {}});
+            migrated.members.push_back({legacyRecord->id, true, true, {}, u"member-1"_qs});
             QSet<QString> profileOutputs;
             for (ControllerProfile &profile : configuration.profiles) {
-                profile.deviceRigId = migrated.id;
-                DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, legacyRecord->id);
+                profile.legacyDeviceRigId = migrated.id;
+                DeviceProfileMapping &mapping = ensureDeviceProfileMapping(profile, u"member-1"_qs);
                 mapping.nativePovBindings = configuration.nativePovBindings;
-                if (!profile.outputLayoutId.isEmpty()) profileOutputs.insert(profile.outputLayoutId);
+                if (!profile.legacyOutputLayoutId.isEmpty()) profileOutputs.insert(profile.legacyOutputLayoutId);
             }
             for (const QString &outputId : profileOutputs) migrated.outputs.push_back({outputId, true});
             if (migrated.outputs.empty()) migrated.outputs.push_back({defaultOutputLayoutId(), true});
@@ -2678,10 +2781,11 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
             configuration.editingDeviceRecordIds = {legacyRecord->id};
             for (AutomationDefinition &automation : configuration.automations) {
                 for (AutomationConditionDefinition &condition : automation.conditions) {
-                    condition.controllerRecordId = legacyRecord->id;
+                    condition.logicalMemberId = u"member-1"_qs;
                 }
                 for (AutomationActionDefinition &action : automation.actions) {
-                    action.sourceControllerRecordId = legacyRecord->id;
+                    action.sourceLogicalMemberId = u"member-1"_qs;
+                    action.legacyOutputLayoutId.clear();
                 }
             }
         } else {
@@ -2722,6 +2826,7 @@ MapperConfiguration ConfigStore::fromJson(const QJsonObject &json, bool *valid)
         seedBundledBattlefieldHelicopterProfile(&configuration);
     }
     migrateDeviceRigOutputOwnership(&configuration);
+    migrateProfileHardwareOwnership(&configuration);
     // Schema 27 made topology canonical. Restore the one-target focused
     // editor projection before reconciliation so a parser's legacy duplicate
     // normalizer cannot erase an explicit mixer/fan-out route from disk.

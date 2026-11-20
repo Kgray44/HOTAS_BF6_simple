@@ -40,6 +40,21 @@ void setError(QString *error, const QString &message)
     if (error) *error = message;
 }
 
+bool canonicalPortableConfiguration(const MapperConfiguration &source,
+                                    MapperConfiguration *canonical,
+                                    QString *error)
+{
+    if (!canonical) return false;
+    bool valid = false;
+    MapperConfiguration migrated = ConfigStore::fromJson(ConfigStore::toJson(source), &valid);
+    if (!valid) {
+        setError(error, u"The selected configuration could not be prepared for portable export"_qs);
+        return false;
+    }
+    *canonical = std::move(migrated);
+    return true;
+}
+
 bool hasExpectedExtension(const QString &fileName, PortableConfigurationKind kind)
 {
     return QFileInfo(localPath(fileName)).suffix().compare(
@@ -317,7 +332,6 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
         }
     }
     QSet<QString> selectedCategoryIds;
-    QSet<QString> selectedLayoutIds;
     QSet<QString> selectedCurveIds;
     for (const ControllerProfile &profile : configuration.profiles) {
         if (!resolvedProfileIds.contains(profile.id)) continue;
@@ -354,20 +368,14 @@ QJsonObject bundleToJson(const MapperConfiguration &configuration, PortableConfi
     for (const AutomationDefinition &automation : configuration.automations) {
         if (includeAutomations && automationReferencesAnyProfile(automation, resolvedProfileIds)) {
             automations.append(ConfigStore::portableAutomationToJson(automation));
-            // Automation actions may intentionally target a named output.
-            // That is advanced routing data, not Profile output ownership.
-            for (const AutomationActionDefinition &action : automation.actions) {
-                if (!action.outputLayoutId.isEmpty()) selectedLayoutIds.insert(action.outputLayoutId);
-            }
         }
     }
-    // Only a deliberately explicit Automation target can carry a portable
-    // output descriptor. Profiles and ordinary Packs never derive an output
-    // from a Profile field; a destination Device Rig remains responsible for
-    // its own primary output.
+    // A portable bundle never carries virtual-output topology.  The
+    // destination Device Rig owns its outputs and resolves Automation vJoy
+    // actions through its selected member route.
     QJsonArray layouts;
     for (const VirtualOutputLayout &layout : configuration.outputLayouts) {
-        if (selectedLayoutIds.contains(layout.id)) layouts.append(ConfigStore::portableOutputLayoutToJson(layout));
+        Q_UNUSED(layout);
     }
     // Carry only the custom Adaptive Response presets that this export can
     // actually reference. Built-ins travel by stable ID and are reconstructed
@@ -560,12 +568,14 @@ QString uniqueImportedCurveName(const MapperConfiguration &configuration, const 
 bool ProfilePortability::exportProfile(const MapperConfiguration &configuration, const QString &profileId,
                                        const QString &fileName, QString *error)
 {
-    const ControllerProfile *profile = findProfile(configuration, profileId);
+    MapperConfiguration canonical;
+    if (!canonicalPortableConfiguration(configuration, &canonical, error)) return false;
+    const ControllerProfile *profile = findProfile(canonical, profileId);
     if (!profile) { setError(error, u"The selected profile is unavailable"_qs); return false; }
-    const ProfileCategory *category = findProfileCategory(configuration, profile->categoryId);
+    const ProfileCategory *category = findProfileCategory(canonical, profile->categoryId);
     const QString name = category ? QString(u"%1 / %2"_qs).arg(category->name, profile->name) : profile->name;
     return writeDocument(fileName, PortableConfigurationKind::Profile,
-        bundleToJson(configuration, PortableConfigurationKind::Profile, {profileId}, name, {}, false, false,
+        bundleToJson(canonical, PortableConfigurationKind::Profile, {profileId}, name, {}, false, false,
                      true, true, true), error);
 }
 
@@ -576,9 +586,11 @@ bool ProfilePortability::exportPack(const MapperConfiguration &configuration, co
                                     bool includeGameDetection,
                                     const QString &fileName, QString *error)
 {
+    MapperConfiguration canonical;
+    if (!canonicalPortableConfiguration(configuration, &canonical, error)) return false;
     QSet<QString> selected(profileIds.cbegin(), profileIds.cend());
     for (const QString &categoryId : categoryIds) {
-        const ProfileCategory *category = findProfileCategory(configuration, categoryId);
+        const ProfileCategory *category = findProfileCategory(canonical, categoryId);
         if (!category) continue;
         for (const QString &profileId : category->profileIds) selected.insert(profileId);
     }
@@ -586,7 +598,7 @@ bool ProfilePortability::exportPack(const MapperConfiguration &configuration, co
     const QString trimmedName = name.trimmed().left(96);
     if (trimmedName.isEmpty()) { setError(error, u"Give the Pack a name before exporting"_qs); return false; }
     return writeDocument(fileName, PortableConfigurationKind::Pack,
-        bundleToJson(configuration, PortableConfigurationKind::Pack, selected, trimmedName,
+        bundleToJson(canonical, PortableConfigurationKind::Pack, selected, trimmedName,
                      description, includeDevices, includeCalibration, includeAutomations,
                      includeProfileRelationships, includeGameDetection), error);
 }
@@ -702,17 +714,17 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
             return findDeviceProfileMapping(*profile, controllerRecordId) != nullptr;
         };
         for (const SignalFlowRoute &route : parsed.signalFlow.routes) {
-            if (!scopeAvailable(route.profileId, route.controllerRecordId)) {
+            if (!scopeAvailable(route.profileId, route.logicalMemberId)) {
                 setError(error, u"A Signal Flow route references a missing portable profile scope"_qs); return false;
             }
         }
         for (const SignalFlowMixer &mixer : parsed.signalFlow.mixers) {
-            if (!scopeAvailable(mixer.profileId, mixer.controllerRecordId)) {
+            if (!scopeAvailable(mixer.profileId, mixer.logicalMemberId)) {
                 setError(error, u"A Signal Flow mixer references a missing portable profile scope"_qs); return false;
             }
         }
         for (const SignalFlowSharedProcessor &processor : parsed.signalFlow.sharedProcessors) {
-            if (!scopeAvailable(processor.profileId, processor.controllerRecordId)) {
+            if (!scopeAvailable(processor.profileId, processor.logicalMemberId)) {
                 setError(error, u"A shared Signal Flow processor references a missing portable profile scope"_qs); return false;
             }
         }
@@ -792,13 +804,6 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
             setError(error, u"A portable profile references a missing Adaptive Response preset"_qs); return false;
         }
     }
-    for (const AutomationDefinition &automation : parsed.automations) {
-        for (const AutomationActionDefinition &action : automation.actions) {
-            if (!action.outputLayoutId.isEmpty() && !layoutIds.contains(action.outputLayoutId)) {
-                setError(error, u"An Automation references a missing explicit vJoy output"_qs); return false;
-            }
-        }
-    }
     for (const ProfileCategory &category : parsed.categories) {
         if (!adaptiveLayerReferencesAvailable(category.adaptiveResponse, adaptivePresetIds)) {
             setError(error, u"A portable category references a missing Adaptive Response preset"_qs); return false;
@@ -807,15 +812,28 @@ bool ProfilePortability::inspect(const QString &fileName, PortableConfigurationB
     const auto isBundleProfile = [&profileIds](const QString &id) {
         return id.isEmpty() || profileIds.contains(id);
     };
+    const auto isPortableLogicalMember = [&parsed](const QString &logicalMemberId) {
+        if (logicalMemberId.isEmpty()) return true;
+        return std::any_of(parsed.profiles.cbegin(), parsed.profiles.cend(),
+            [&logicalMemberId](const ControllerProfile &profile) {
+                return findDeviceProfileMapping(profile, logicalMemberId) != nullptr;
+            });
+    };
     for (const AutomationDefinition &automation : parsed.automations) {
         for (const AutomationConditionDefinition &condition : automation.conditions) {
             if (!isBundleProfile(condition.profileId)) {
                 setError(error, u"An Automation references a profile missing from this portable configuration"_qs); return false;
             }
+            if (!isPortableLogicalMember(condition.logicalMemberId)) {
+                setError(error, u"An Automation references a missing portable logical Rig role"_qs); return false;
+            }
         }
         for (const AutomationActionDefinition &action : automation.actions) {
             if (!isBundleProfile(action.profileId)) {
                 setError(error, u"An Automation references a profile missing from this portable configuration"_qs); return false;
+            }
+            if (!isPortableLogicalMember(action.sourceLogicalMemberId)) {
+                setError(error, u"An Automation references a missing portable logical Rig role"_qs); return false;
             }
             if (action.type == AutomationActionType::AdaptiveResponsePreset
                 && !adaptivePresetReferenceAvailable(action.adaptiveResponsePresetId, adaptivePresetIds)) {
@@ -1078,17 +1096,17 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
         copied.name = destinationName;
         copied.categoryId = destinationCategoryId;
         copied.enabled = true;
-        copied.outputLayoutId.clear();
-        // A Device Rig is an explicitly verified, machine-local relationship
-        // between physical controller records and output ownership. Its UUID
-        // cannot be meaningful on another computer, and neither a Rig name nor
-        // a controller display name is sufficient evidence to recreate it.
-        // Keep portable behavior, but make the destination Rig assignment an
-        // intentional destination-machine decision.
-        if (!copied.deviceRigId.isEmpty()) {
-            copied.deviceRigId.clear();
+        // A Profile carries portable behavior only.  Legacy profile-scoped
+        // hardware references are never imported as a destination topology;
+        // the destination Device Rig remains the sole owner of physical
+        // identity and virtual output.
+        const bool discardedLegacyHardware = !copied.legacyDeviceRigId.isEmpty()
+            || !copied.legacyOutputLayoutId.isEmpty();
+        copied.legacyDeviceRigId.clear();
+        copied.legacyOutputLayoutId.clear();
+        if (discardedLegacyHardware) {
             if (warnings) {
-                warnings->append(QString(u"%1: Device Rig assignment required; the imported Device Rig is machine-local and was not matched by name."_qs)
+                warnings->append(QString(u"%1: legacy Profile hardware ownership was discarded; select a compatible destination Device Rig separately."_qs)
                     .arg(copied.name));
             }
         }
@@ -1135,9 +1153,9 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             route.id.clear();
             route.processorPath.clear();
             route.identityKey = route.primaryProjection
-                ? signalFlowRouteIdentityKey(*importedProfile, route.controllerRecordId,
+                ? signalFlowRouteIdentityKey(*importedProfile, route.logicalMemberId,
                     routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex)
-                : signalFlowFanoutRouteIdentityKey(*importedProfile, route.controllerRecordId,
+                : signalFlowFanoutRouteIdentityKey(*importedProfile, route.logicalMemberId,
                     routeKind(route.sourceKind), route.sourceIndex, route.sourceSubIndex,
                     route.destinationKind, route.destinationIndex, route.destinationSubIndex);
             destinationTopology.routes.push_back(std::move(route));
@@ -1152,7 +1170,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             mixer.profileId = importedProfileId;
             mixer.id.clear();
             mixer.identityKey = signalFlowMixerIdentityKey(*importedProfile,
-                                                           mixer.controllerRecordId,
+                                                           mixer.logicalMemberId,
                                                            mixer.destinationAxis);
             destinationTopology.mixers.push_back(std::move(mixer));
         }
@@ -1166,7 +1184,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
             processor.profileId = importedProfileId;
             processor.id.clear();
             processor.identityKey = signalFlowSharedProcessorIdentityKey(*importedProfile,
-                processor.controllerRecordId, processor.kind, processor.ownerAxis);
+                processor.logicalMemberId, processor.kind, processor.ownerAxis);
             destinationTopology.sharedProcessors.push_back(std::move(processor));
         }
         destinationTopology.topologyVersion = std::max(destinationTopology.topologyVersion, 1);
@@ -1190,6 +1208,7 @@ bool ProfilePortability::apply(MapperConfiguration *configuration, const Portabl
         for (AutomationActionDefinition &action : copied.actions) {
             if (profileIds.contains(action.profileId)) action.profileId = profileIds.value(action.profileId);
             else if (!action.profileId.isEmpty()) action.profileId.clear();
+            action.legacyOutputLayoutId.clear();
         }
         candidate.automations.push_back(std::move(copied));
     }

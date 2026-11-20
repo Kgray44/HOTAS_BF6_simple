@@ -271,17 +271,6 @@ Flickable {
         return choices;
     }
 
-    function profilesReferencingRig(rigId) {
-        const names = [];
-        const profiles = backend.profiles || [];
-        for (let index = 0; index < profiles.length; ++index) {
-            const profile = profiles[index] || ({});
-            if (String(profile.deviceRigId || "") === String(rigId || ""))
-                names.push(String(profile.name || profile.displayName || "Profile"));
-        }
-        return names;
-    }
-
     function selectedRig() { return rigFor(selectedRigId); }
 
     function normalizeRigSelection() {
@@ -1437,7 +1426,7 @@ Flickable {
                     RigButton { text: "ADD OUTPUT"; enabled: rigOutputAdder.currentIndex >= 0; onClicked: { const added = backend.addDeviceRigOutput(String(rigDetailsContent.rig.id || ""), rigDetailsDialog.addOutputId); root.reportBooleanAction(added, "Virtual Output added", "Assign controllers to the new output before removing another output.", "Virtual Output was not added", "Choose an available output and try again."); rigDetailsDialog.resetChoices(); } }
                 }
 
-                Text { visible: root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").length > 0; text: "REFERENCED BY PROFILES  ·  " + root.profilesReferencingRig(rigDetailsContent.rig ? rigDetailsContent.rig.id : "").join("  ·  "); color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Text { text: "Profiles remain portable. This Device Rig exclusively owns its physical members and virtual-output topology."; color: deck.textMuted; font.family: deck.telemetryFont; font.pixelSize: 9; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                 RowLayout {
                     Layout.fillWidth: true
                     RigButton { text: "OPEN SETUP HEALTH"; subdued: true; enabled: !!rigDetailsContent.rig; onClicked: { backend.setEditingDeviceContext(String(rigDetailsContent.rig.id || ""), []); rigDetailsDialog.close(); setupHealthDialog.open(); } }
@@ -1462,13 +1451,13 @@ Flickable {
             width: deleteRigDialog.availableWidth
             spacing: deck.space12
             Text { text: deleteRigDialog.rig ? "Delete “" + String(deleteRigDialog.rig.name || "Device Rig") + "”? This cannot be undone." : "This Device Rig is no longer available."; color: deck.textPrimary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Text { text: root.profilesReferencingRig(deleteRigDialog.rigId).length ? root.profilesReferencingRig(deleteRigDialog.rigId).length + " Profile(s) reference this Rig. Their Device Rig assignment will be cleared through the canonical configuration path; no Profile will be remapped automatically." : "No Profiles currently reference this Rig. Saved physical-controller records remain available for other Rigs."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text { text: "Deleting this Rig removes only its physical members and virtual-output topology. Profiles remain portable and no Profile is reassigned."; color: deck.textSecondary; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Text { visible: deleteRigDialog.rig && deleteRigDialog.rig.configured; text: "This Rig is currently configured. HOTAS BF6 will use its existing safe configuration transition when the canonical delete command clears it."; color: deck.attention; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 RigButton { text: "CANCEL"; subdued: true; onClicked: deleteRigDialog.close() }
-                RigButton { objectName: "flightDeckDeleteRigConfirm"; text: "DELETE RIG"; destructive: true; enabled: !!deleteRigDialog.rig; onClicked: { const deleted = backend.deleteDeviceRig(deleteRigDialog.rigId); root.reportBooleanAction(deleted, "Device Rig deleted", "Affected Profile assignments were cleared; no Profile was remapped.", "Device Rig was not deleted", "Refresh the Device Rig list and try again."); deleteRigDialog.close(); rigDetailsDialog.close(); } }
+                RigButton { objectName: "flightDeckDeleteRigConfirm"; text: "DELETE RIG"; destructive: true; enabled: !!deleteRigDialog.rig; onClicked: { const deleted = backend.deleteDeviceRig(deleteRigDialog.rigId); root.reportBooleanAction(deleted, "Device Rig deleted", "The Rig topology was removed. Profiles remain portable.", "Device Rig was not deleted", "Refresh the Device Rig list and try again."); deleteRigDialog.close(); rigDetailsDialog.close(); } }
             }
         }
     }

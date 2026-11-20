@@ -29,8 +29,8 @@ Flickable {
     property string actionNoticeTone: "informational"
 
     signal navigateToPage(int page)
-    // A Profile may point to a Device Rig, but inspecting that relationship
-    // is intentionally view-only.  The Flight Deck shell owns the route.
+    // The active Device Rig is a read-only runtime context. Profiles own
+    // behavior and never select physical hardware or virtual outputs.
     signal navigateToDeviceRig(string rigId)
     signal navigateToAutomation(string automationId)
     signal navigateToAdaptiveProfile(string profileId)
@@ -1642,7 +1642,7 @@ Flickable {
                 }
 
                 SectionLabel {
-                    label: "DEVICE RIG & AUTOMATIC ACTIVATION"
+                    label: "RUNTIME CONTEXT & AUTOMATIC ACTIVATION"
                 }
                 FlightDeckCard {
                     tokens: deck
@@ -1654,39 +1654,21 @@ Flickable {
                         anchors.margins: deck.space12
                         spacing: deck.space8
                         Text {
-                            text: "Device Rig"
+                            text: "Current Device Rig"
                             color: deck.textMuted
                             font.family: deck.telemetryFont
                             font.pixelSize: 8
                             font.bold: true
                         }
-                        DeckCombo {
-                            id: profileRigSelector
-                            objectName: "flightDeckProfileRigSelector"
-                            Layout.fillWidth: true
-                            model: backend.deviceRigs
-                            textRole: "name"
-                            valueRole: "id"
-                            currentIndex: {
-                                const rigs = backend.deviceRigs || [];
-                                for (let index = 0; index < rigs.length; ++index) {
-                                    if (String(rigs[index].id || "") === String(root.selectedDetail.deviceRigId || ""))
-                                        return index;
-                                }
-                                return -1;
-                            }
-                            enabled: !root.usingPresentationFixture && (backend.deviceRigs || []).length > 0
-                            onActivated: backend.assignProfileDeviceRig(root.selectedProfileId, currentValue)
-                        }
                         Text {
-                            text: String(root.selectedDetail.deviceRigName || "Device Rig assignment required") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for automatic selection" : "requires a complete, verified rig before automatic selection")
+                            text: String(root.selectedDetail.deviceRigName || "No active Device Rig") + "  ·  " + (root.selectedDetail.deviceRigReady ? "ready for compatible profiles" : "choose and verify a Device Rig in Devices")
                             color: root.selectedDetail.deviceRigReady ? deck.textSecondary : deck.statusColor("attention")
                             font.pixelSize: 9
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
                         Text {
-                            text: "Output provided by Rig  ·  " + String(root.selectedDetail.outputName || "Output needs selection")
+                            text: "Output provided by current Rig  ·  " + String(root.selectedDetail.outputName || "No active output")
                                 + (Number(root.selectedDetail.vjoyDevice || 0) > 0 ? " · vJoy " + Number(root.selectedDetail.vjoyDevice) : "")
                             color: deck.textMuted
                             font.family: deck.telemetryFont
@@ -1730,7 +1712,7 @@ Flickable {
                             }
                             DeckButton {
                                 objectName: "flightDeckOpenAssignedRig"
-                                text: root.selectedDetail.deviceRigId ? "OPEN RIG" : "OPEN DEVICES"
+                                text: root.selectedDetail.deviceRigId ? "OPEN CURRENT RIG" : "OPEN DEVICES"
                                 subdued: true
                                 onClicked: {
                                     if (root.selectedDetail.deviceRigId)

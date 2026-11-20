@@ -59,6 +59,7 @@ struct CompiledDeviceRigOutput {
 
 struct CompiledDeviceRigMember {
     QString controllerRecordId;
+    QString logicalMemberId;
     QString directInputId;
     QString displayName;
     QString outputLayoutId;

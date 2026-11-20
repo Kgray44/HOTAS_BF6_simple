@@ -33,7 +33,7 @@ private slots:
     void inputLearningAndLiveNameDraftsStayOnControlPlane();
     void buttonLearningIsDestinationFirstAndCardsShowLiveSignalFlow();
     void axisConflictsRequireExplicitSignalFlowDecisions();
-    void installerUpgradeAcceptanceTracksSchema29();
+    void installerUpgradeAcceptanceTracksSchema30();
     void flightDeckTypographyContract();
     void flightDeckInformationArchitectureContract();
     void mapperPostBuildDeploymentIncludesQmlModules();
@@ -388,7 +388,8 @@ void UiReleaseContractTests::virtualOutputLayoutsAreExactAndTelemetryStaysTruthf
     const QString legacy = sourceFile(QStringLiteral("qml/Legacy.qml"));
 
     QVERIFY(backendHeader.contains(QStringLiteral("virtualOutputLayouts READ virtualOutputLayouts")));
-    QVERIFY(backendHeader.contains(QStringLiteral("assignProfileOutputLayout")));
+    QVERIFY(!backendHeader.contains(QStringLiteral("assignProfileOutputLayout")));
+    QVERIFY(backendHeader.contains(QStringLiteral("setDeviceRigPrimaryOutput")));
     QVERIFY(backendHeader.contains(QStringLiteral("createFiveAxisOutputLayout")));
     QVERIFY(backendHeader.contains(QStringLiteral("adoptVirtualOutputVisibility")));
     QVERIFY(backend.contains(QStringLiteral("physicalAxisActivityForObservedSpan")));
@@ -970,23 +971,23 @@ void UiReleaseContractTests::axisConflictsRequireExplicitSignalFlowDecisions()
     }
 }
 
-void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema29()
+void UiReleaseContractTests::installerUpgradeAcceptanceTracksSchema30()
 {
     const QString fixture = sourceFile(QStringLiteral("tests/upgrade_configuration_fixture.cpp"));
     const QString installer = sourceFile(QStringLiteral("scripts/verify-installer-upgrade.ps1"));
     const QString updater = sourceFile(QStringLiteral("scripts/verify-published-updater.ps1"));
-    QVERIFY(fixture.contains(QStringLiteral("persist schema 29")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-v29")));
-    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v29")));
+    QVERIFY(fixture.contains(QStringLiteral("persist schema 30")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-v30")));
+    QVERIFY(fixture.contains(QStringLiteral("--assert-fresh-v30")));
     QVERIFY(!fixture.contains(QStringLiteral("--assert-v16")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v29")));
-    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v29")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-v30")));
+    QVERIFY(installer.contains(QStringLiteral("& $fixture --assert-fresh-v30")));
     QVERIFY(installer.contains(QStringLiteral("v2.5.0 -> candidate")));
     QVERIFY(installer.contains(QStringLiteral("Assert-InstalledPackage")));
     QVERIFY(installer.contains(QStringLiteral("-AllowMissingLauncher")));
     QVERIFY(installer.contains(QStringLiteral("Remove-InstallerTestInstallation $priorStableInstall")));
     QVERIFY(installer.contains(QStringLiteral("Default acceptance path")));
-    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v29")));
+    QVERIFY(updater.contains(QStringLiteral("& $fixture --assert-v30")));
     QVERIFY(updater.contains(QStringLiteral("v2.5.0 updater")));
 }
 

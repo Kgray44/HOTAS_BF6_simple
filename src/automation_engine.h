@@ -122,8 +122,8 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
 // of being allowed to follow DirectInput polling order.
 std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
     const MapperConfiguration &configuration, const RuntimeProfileCache &cache,
-    const QString &controllerRecordId, const QString &outputLayoutId,
-    bool multiMemberRig, QString *qualificationIssue = nullptr);
+    const QString &logicalMemberId, bool multiMemberRig,
+    QString *qualificationIssue = nullptr);
 
 class AutomationRuntime final {
 public:

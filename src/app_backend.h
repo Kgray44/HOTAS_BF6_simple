@@ -306,6 +306,7 @@ public:
     bool configureActivationTransactionFixtureForTest();
     bool configureRigOwnedOutputFixtureForTest();
     bool configureSetupTruthReadyToActivateFixtureForTest();
+    bool configureSetupTruthVJoyDescriptorMismatchFixtureForTest();
     bool configureStartupSetupTruthFixtureForTest();
     bool finishStartupSetupTruthInspectionForTest();
     bool startupSetupTruthInspectionScheduledForTest() const;
@@ -615,7 +616,7 @@ public:
     Q_INVOKABLE bool setProfileAutomaticSelectionMode(const QString &profileId, const QString &mode);
     Q_INVOKABLE bool reorderCategoryAutomaticProfiles(const QString &categoryId,
                                                       const QStringList &profileIds);
-    Q_INVOKABLE bool assignProfileDeviceRig(const QString &profileId, const QString &rigId);
+    Q_INVOKABLE bool setDeviceRigDefaultProfile(const QString &rigId, const QString &profileId);
     Q_INVOKABLE QVariantMap activationPreview(const QString &categoryId = {}) const;
     Q_INVOKABLE QVariantMap explainActivation(const QString &categoryId = {}) const;
     Q_INVOKABLE bool activateRecommendedConfiguration(const QString &categoryId = {});
@@ -650,7 +651,6 @@ public:
     Q_INVOKABLE void resetCalibration();
     Q_INVOKABLE void setStartMappingOnLaunch(bool enabled);
     Q_INVOKABLE void setVjoyDeviceId(int deviceId);
-    Q_INVOKABLE bool assignProfileOutputLayout(const QString &profileId, const QString &layoutId);
     Q_INVOKABLE QString createFiveAxisOutputLayout(const QString &name, int deviceId);
     Q_INVOKABLE int suggestedVirtualOutputDeviceId() const;
     Q_INVOKABLE QString createVirtualOutputLayout(const QString &name, int deviceId,
@@ -1254,6 +1254,9 @@ private:
     };
     SetupConvergenceStage m_setupConvergenceStage = SetupConvergenceStage::Idle;
     QString m_setupConvergenceSessionId;
+    // Frozen at CHECK. Every snapshot, issue, repair and final read-back uses
+    // this viewed/selected Rig instead of following a later active-Rig change.
+    QString m_setupTargetRigId;
     QDateTime m_setupConvergenceStarted;
     QDateTime m_setupConvergenceFinished;
     QVariantMap m_setupTruthSnapshot;

@@ -364,6 +364,17 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     // descriptor. Profiles may switch mappings inside a Rig but must never
     // silently move the mapper to a different virtual device.
     const DeviceRig *activeRig = findDeviceRig(configuration, configuration.activeDeviceRigId);
+    const auto profileCompatibleWithActiveRig = [activeRig](const ControllerProfile &profile) {
+        if (!activeRig) return false;
+        // Profiles never select hardware.  They are eligible for a Rig only
+        // when they contain behavior for each enabled, required logical role
+        // that the Rig provides.
+        for (const DeviceRigMember &member : activeRig->members) {
+            if (!member.enabled || !member.required) continue;
+            if (!findDeviceProfileMapping(profile, member.logicalMemberId)) return false;
+        }
+        return true;
+    };
     const VirtualOutputLayout *layout = activeRig
         ? findOutputLayout(configuration, deviceRigPrimaryOutputLayoutId(*activeRig)) : nullptr;
     if (layout) {
@@ -373,7 +384,7 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
         // floor from every Profile that can switch inside this Rig.
         requirements.buttons = 0;
         for (const ControllerProfile &profile : configuration.profiles) {
-            if (!activeRig || profile.deviceRigId != activeRig->id) continue;
+            if (!profileCompatibleWithActiveRig(profile)) continue;
             for (const AxisMapping &axis : profile.axes) {
                 const int index = static_cast<int>(axis.target);
                 if (index > 0 && index < kVirtualAxisSlotCount) {
@@ -413,7 +424,7 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
     // Canonical Signal Flow can retain fan-out legs which intentionally do
     // not fit in the historical one-target compatibility projections.  The
     // active output contract must therefore derive its capability floor from
-    // every enabled canonical sink in profiles assigned to this active Rig.
+    // every enabled canonical sink in profiles compatible with this active Rig.
     // This also makes imported topology safe when an older layout descriptor
     // did not yet record a secondary button, axis, or native POV endpoint.
     if (configuration.signalFlow.topologyVersion >= 1) {
@@ -421,7 +432,7 @@ MapperOutputRequirements ControllerReadinessService::requirementsFor(const Mappe
             if (!route.enabled) continue;
             const ControllerProfile *routeProfile = findProfile(configuration, route.profileId);
             if (!routeProfile
-                || (activeRig ? routeProfile->deviceRigId != activeRig->id
+                || (activeRig ? !profileCompatibleWithActiveRig(*routeProfile)
                               : routeProfile->id != configuration.activeProfileId)) continue;
             if (route.destinationKind == SignalFlowPortKind::Axis
                 && route.destinationIndex > 0 && route.destinationIndex < kVirtualAxisSlotCount) {

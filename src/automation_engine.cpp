@@ -429,8 +429,8 @@ std::shared_ptr<const CompiledAutomationSet> compileAutomationSet(
 
 std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
     const MapperConfiguration &configuration, const RuntimeProfileCache &cache,
-    const QString &controllerRecordId, const QString &outputLayoutId,
-    bool multiMemberRig, QString *qualificationIssue)
+    const QString &logicalMemberId, bool multiMemberRig,
+    QString *qualificationIssue)
 {
     if (qualificationIssue) qualificationIssue->clear();
     MapperConfiguration projected = configuration;
@@ -466,9 +466,9 @@ std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
         bool unqualifiedPhysicalSource = false;
         for (const AutomationConditionDefinition &condition : rule.conditions) {
             if (!physicalCondition(condition.type)) continue;
-            if (condition.controllerRecordId.isEmpty()) {
+            if (condition.logicalMemberId.isEmpty()) {
                 unqualifiedPhysicalSource = true;
-            } else if (condition.controllerRecordId == controllerRecordId) {
+            } else if (condition.logicalMemberId == logicalMemberId) {
                 localPhysicalSource = true;
             } else {
                 foreignPhysicalSource = true;
@@ -493,19 +493,12 @@ std::shared_ptr<const CompiledAutomationSet> compileDeviceAutomationSet(
         bool validForMember = true;
         for (const AutomationActionDefinition &action : rule.actions) {
             if (vjoyAction(action.type)) {
-                if (action.outputLayoutId.isEmpty()) {
-                    reject(u"An Automation vJoy action needs an explicit Device Rig output."_qs);
-                    validForMember = false;
-                } else if (action.outputLayoutId != outputLayoutId) {
-                    // The physical source belongs to this member, but its
-                    // button action points at a different output. Do not
-                    // silently publish that output from the wrong session.
-                    reject(u"An Automation source and vJoy output are assigned to different Device Rig routes."_qs);
-                    validForMember = false;
-                }
+                // vJoy actions publish through this Rig member's already
+                // compiled output. An Automation never owns or selects a
+                // virtual-output layout itself.
             }
             if (deviceAction(action.type) && multiMemberRig
-                && action.sourceControllerRecordId != controllerRecordId) {
+                && action.sourceLogicalMemberId != logicalMemberId) {
                 reject(u"A device-scoped Automation action does not match its physical source."_qs);
                 validForMember = false;
             }

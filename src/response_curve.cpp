@@ -935,7 +935,7 @@ namespace {
 
 void compileSignalFlowTopology(const MapperConfiguration &configuration,
                                const ControllerProfile &profile,
-                               const QString &controllerRecordId,
+                                const QString &logicalMemberId,
                                RuntimeMappingConfiguration *runtime)
 {
     if (!runtime) return;
@@ -960,13 +960,13 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
     }
     for (const SignalFlowMixer &mixer : configuration.signalFlow.mixers) {
         if (!mixer.enabled || mixer.profileId != profile.id
-            || mixer.controllerRecordId != controllerRecordId
+             || mixer.logicalMemberId != logicalMemberId
             || mixer.destinationAxis <= 0 || mixer.destinationAxis >= kVirtualAxisSlotCount) continue;
         runtime->signalFlowAxisMixers[static_cast<size_t>(mixer.destinationAxis)] = mixer.mode;
     }
     for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
         if (!route.enabled || route.profileId != profile.id
-            || route.controllerRecordId != controllerRecordId
+             || route.logicalMemberId != logicalMemberId
             || route.sourceKind != SignalFlowPortKind::Axis
             || route.destinationKind != SignalFlowPortKind::Axis
             || route.sourceIndex < 0 || route.sourceIndex >= kPhysicalAxisCount
@@ -985,7 +985,7 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
     std::array<int, kRuntimeSignalFlowDigitalSourceCount> digitalCounts{};
     for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
         if (!route.enabled || route.profileId != profile.id
-            || route.controllerRecordId != controllerRecordId
+             || route.logicalMemberId != logicalMemberId
             || route.destinationKind != SignalFlowPortKind::Button
             || route.destinationIndex < 1 || route.destinationIndex > kMaximumVirtualButtons) {
             continue;
@@ -1007,7 +1007,7 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
     std::array<int, kRuntimeSignalFlowDigitalSourceCount> digitalCursors{};
     for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
         if (!route.enabled || route.profileId != profile.id
-            || route.controllerRecordId != controllerRecordId
+             || route.logicalMemberId != logicalMemberId
             || route.destinationKind != SignalFlowPortKind::Button
             || route.destinationIndex < 1 || route.destinationIndex > kMaximumVirtualButtons) {
             continue;
@@ -1030,7 +1030,7 @@ void compileSignalFlowTopology(const MapperConfiguration &configuration,
     // report path.
     for (const SignalFlowRoute &route : configuration.signalFlow.routes) {
         if (!route.enabled || route.profileId != profile.id
-            || route.controllerRecordId != controllerRecordId
+             || route.logicalMemberId != logicalMemberId
             || route.sourceKind != SignalFlowPortKind::NativePov
             || route.destinationKind != SignalFlowPortKind::NativePov
             || route.sourceIndex < 0 || route.sourceIndex >= kMaximumPhysicalPovs
@@ -1091,7 +1091,7 @@ RuntimeMappingConfiguration compileDeviceProfileMapping(const MapperConfiguratio
     runtime.curveTransitionSmoothing = sanitizedCurveTransitionSmoothing(
         profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                  : configuration.curveTransitionSmoothing);
-    compileSignalFlowTopology(configuration, profile, deviceMapping.controllerRecordId, &runtime);
+    compileSignalFlowTopology(configuration, profile, deviceMapping.logicalMemberId, &runtime);
     return runtime;
 }
 
@@ -1104,11 +1104,9 @@ bool runtimeProfileControlTargetIsCompatible(const MapperConfiguration &configur
         || targetProfileIndex < 0 || targetProfileIndex >= profileCount) {
         return false;
     }
-    // Profile controls switch only the compiled mapping. They cannot perform a
-    // Device Rig transition, so the source and target must retain the exact
-    // same explicit Rig identity (including the legacy unassigned case).
-    return configuration.profiles[static_cast<size_t>(cache.baseProfileIndex)].deviceRigId
-        == configuration.profiles[static_cast<size_t>(targetProfileIndex)].deviceRigId;
+    // Profiles own behavior only. A mapping control cannot transition device
+    // topology, so behavior switches are compatible with the active Rig.
+    return true;
 }
 
 RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &configuration)
@@ -1135,7 +1133,7 @@ RuntimeProfileCache compileRuntimeProfileCache(const MapperConfiguration &config
             profile.curveTransitionSmoothingOverride ? profile.curveTransitionSmoothing
                                                      : configuration.curveTransitionSmoothing);
         compileSignalFlowTopology(configuration, profile, {}, &runtime);
-        const DeviceRig *rig = findDeviceRig(configuration, profile.deviceRigId);
+        const DeviceRig *rig = findDeviceRig(configuration, configuration.activeDeviceRigId);
         const VirtualOutputLayout *layout = rig ? findOutputLayout(
             configuration, deviceRigPrimaryOutputLayoutId(*rig)) : nullptr;
         cache.profileVjoyDeviceIds.push_back(layout ? layout->requirements.deviceId

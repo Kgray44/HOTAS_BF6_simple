@@ -15,7 +15,6 @@ namespace {
 bool verifyActivationTransactionFaults()
 {
     auto backend = std::make_unique<hotas::AppBackend>();
-    const QString targetProfile = hotas::precisionProfileId();
     const QString baselineProfile = hotas::normalProfileId();
     const QString baselineRig = QStringLiteral("activation-transaction-rig");
     const QString targetRig = QStringLiteral("activation-transaction-alternate-rig");
@@ -30,7 +29,7 @@ bool verifyActivationTransactionFaults()
             return false;
         }
         backend->setActivationFaultInjectionsForTest({stage});
-        if (backend->activateProfile(targetProfile) || !retainsBaseline()
+        if (backend->activateDeviceRig(targetRig) || !retainsBaseline()
             || backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
             std::fprintf(stderr, "activation transaction did not retain the prior route at %s\n",
                          stage.toUtf8().constData());
@@ -40,18 +39,18 @@ bool verifyActivationTransactionFaults()
     if (!backend->configureActivationTransactionFixtureForTest()) return false;
     backend->setActivationFaultInjectionsForTest({QStringLiteral("reacquire"),
                                                    QStringLiteral("rollback")});
-    if (backend->activateProfile(targetProfile) || !retainsBaseline()
+    if (backend->activateDeviceRig(targetRig) || !retainsBaseline()
         || !backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
         std::fprintf(stderr, "activation transaction did not expose the injected degraded rollback state\n");
         return false;
     }
     if (!backend->configureActivationTransactionFixtureForTest()) return false;
     backend->setActivationFaultInjectionsForTest({});
-    if (!backend->activateProfile(targetProfile)
-        || backend->activeProfileId() != targetProfile
+    if (!backend->activateDeviceRig(targetRig)
+        || backend->activeProfileId() != baselineProfile
         || backend->activeDeviceRigId() != targetRig
         || backend->activationResolverState().value(QStringLiteral("degraded")).toBool()) {
-        std::fprintf(stderr, "activation transaction normal path did not commit the full route\n");
+        std::fprintf(stderr, "manual Device Rig activation did not commit the full route\n");
         return false;
     }
     return true;
@@ -138,29 +137,29 @@ bool verifyManualProfileUsesRigOwnedOutputTransaction()
     return false;
 }
 
-bool verifyViewedProfileUsesRigOwnedOutputForMappingEdits()
+bool verifyViewedDeviceRigUsesRigOwnedOutputForMappingEdits()
 {
     auto backend = std::make_unique<hotas::AppBackend>();
     if (!backend->configureSetupTruthReadyToActivateFixtureForTest()
         || !backend->activeDeviceRigId().isEmpty()) {
-        std::fprintf(stderr, "viewed-Profile mapping fixture did not preserve inactive Rig state\n");
+        std::fprintf(stderr, "viewed-Device-Rig mapping fixture did not preserve inactive Rig state\n");
         return false;
     }
 
-    // This is the exact VIEWING-versus-ACTIVE seam: the Profile's selected
-    // Rig owns its vJoy 2 output, but no Rig is yet active.  Editing remains
-    // valid and must not silently activate the Rig.
+    // This is the exact VIEWING-versus-ACTIVE seam: the viewed Device Rig
+    // owns its vJoy 2 output, but no Rig is yet active. Editing remains valid
+    // and must not silently activate the Rig.
     backend->setVirtualAxisAvailabilityForTest(true);
     if (!backend->setMapping(0, QStringLiteral("X"), true)
         || !backend->activeDeviceRigId().isEmpty()) {
         std::fprintf(stderr,
-            "a viewed Profile could not write through its Device Rig primary output without activating it\n");
+            "a viewed Device Rig could not write through its primary output without activating it\n");
         return false;
     }
     const QVariantList axes = backend->axes();
     if (axes.isEmpty() || axes.front().toMap().value(QStringLiteral("target")).toString()
             != QStringLiteral("X")) {
-        std::fprintf(stderr, "viewed-Profile mapping edit did not persist its selected virtual axis\n");
+        std::fprintf(stderr, "viewed-Device-Rig mapping edit did not persist its selected virtual axis\n");
         return false;
     }
     return true;
@@ -212,6 +211,34 @@ bool verifySetupTruthReadyToActivateCompletion()
         || !session.value(QStringLiteral("afterSnapshot")).toMap().value(QStringLiteral("manualActions")).toList().isEmpty()
         || session.value(QStringLiteral("mode")).toString() != QStringLiteral("COMPLETE")) {
         std::fprintf(stderr, "Setup Complete did not refresh to the activated Profile, Rig, and output state\n");
+        return false;
+    }
+    return true;
+}
+
+bool verifySetupTruthVJoyDescriptorMismatchOffersScopedRepair()
+{
+    auto backend = std::make_unique<hotas::AppBackend>();
+    if (!backend->configureSetupTruthVJoyDescriptorMismatchFixtureForTest()) {
+        std::fprintf(stderr, "vJoy descriptor mismatch fixture could not be configured\n");
+        return false;
+    }
+    const QVariantMap snapshot = backend->setupTruthSnapshot();
+    const QVariantList issues = snapshot.value(QStringLiteral("issues")).toList();
+    const QVariantList repairPlan = snapshot.value(QStringLiteral("repairPlan")).toList();
+    const auto mismatch = std::find_if(issues.cbegin(), issues.cend(), [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("code")).toString()
+            == QStringLiteral("VJoyDescriptorMismatch");
+    });
+    if (snapshot.value(QStringLiteral("overallStatus")).toString() != QStringLiteral("ACTION NEEDED")
+        || mismatch == issues.cend() || !mismatch->toMap().value(QStringLiteral("repairable")).toBool()
+        || !mismatch->toMap().value(QStringLiteral("requiresElevation")).toBool()
+        || repairPlan.size() != 1
+        || repairPlan.front().toMap().value(QStringLiteral("subsystem")).toString()
+            != QStringLiteral("Virtual output")
+        || snapshot.value(QStringLiteral("rigId")).toString()
+            != QStringLiteral("activation-transaction-rig")) {
+        std::fprintf(stderr, "vJoy descriptor mismatch was not projected as the scoped Device Rig repair\n");
         return false;
     }
     return true;
@@ -355,8 +382,9 @@ int main(int argc, char *argv[])
     if (!verifyActivationTransactionFaults()) return 1;
     if (!verifyManualRigUsesRigOwnedOutputTransaction()) return 1;
     if (!verifyManualProfileUsesRigOwnedOutputTransaction()) return 1;
-    if (!verifyViewedProfileUsesRigOwnedOutputForMappingEdits()) return 1;
+    if (!verifyViewedDeviceRigUsesRigOwnedOutputForMappingEdits()) return 1;
     if (!verifySetupTruthReadyToActivateCompletion()) return 1;
+    if (!verifySetupTruthVJoyDescriptorMismatchOffersScopedRepair()) return 1;
     bool passed = false;
     // Let startup control-plane work settle before exercising the real
     // presentation lifecycle and then taking the visible steady-state sample.
