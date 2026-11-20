@@ -471,3 +471,21 @@ install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
 )
+
+# Offline-only V2.4-X1R freeze-completion refit.  This target has no product,
+# device, UI, or MappingWorker integration and is disabled by default.
+option(HOTAS_BUILD_V24_X1R_FREEZE_ADDENDUM
+    "Build the V2.4-X1R full-DEVELOPMENT calibration freeze-addendum runner" OFF)
+if (HOTAS_BUILD_V24_X1R_FREEZE_ADDENDUM)
+    qt_add_executable(adaptive_response_v24_x1r_freeze_addendum
+        tests/adaptive_response_v24_x1r_freeze_addendum.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x1r_freeze_addendum PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x1r_freeze_addendum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x1r_freeze_addendum PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x1r_freeze_addendum PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
