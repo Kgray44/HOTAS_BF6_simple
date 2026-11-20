@@ -467,6 +467,24 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Offline-only V2.4-X2 pre-HOLDOUT qualification authority repair.  It is
+# disabled by default and has no product, device, UI, or MappingWorker path.
+option(HOTAS_BUILD_V24_X2_QUALIFICATION_AUTHORITY_REPAIR
+    "Build the V2.4-X2 split-routing authority-repair verifier" OFF)
+if (HOTAS_BUILD_V24_X2_QUALIFICATION_AUTHORITY_REPAIR)
+    qt_add_executable(adaptive_response_v24_x2_qualification_authority_repair
+        tests/adaptive_response_v24_x2_qualification_authority_repair.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x2_qualification_authority_repair PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x2_qualification_authority_repair PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x2_qualification_authority_repair PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x2_qualification_authority_repair PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
