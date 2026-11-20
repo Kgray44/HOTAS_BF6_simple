@@ -467,6 +467,25 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4-X0 is a sealed, offline research laboratory.  It is deliberately
+# compile-gated and has no MappingWorker, DirectInput, vJoy, QML, or product
+# integration path.
+option(HOTAS_BUILD_V24_X0_RESEARCH_FOUNDATION
+    "Build the V2.4-X0 source-native Adaptive Response research foundation" OFF)
+if (HOTAS_BUILD_V24_X0_RESEARCH_FOUNDATION)
+    qt_add_executable(adaptive_response_v24_x0_research_foundation
+        tests/adaptive_response_v24_x0_research_foundation.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+    )
+    target_link_libraries(adaptive_response_v24_x0_research_foundation PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_v24_x0_research_foundation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_v24_x0_research_foundation PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_v24_x0_research_foundation PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
