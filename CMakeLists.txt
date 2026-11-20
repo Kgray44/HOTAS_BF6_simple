@@ -467,6 +467,29 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1B-R.1 is a compile-gated, offline-only directional forensic pass.
+# It is excluded from DirectInput, vJoy, QML, MappingWorker, and all
+# production mapper targets.
+option(HOTAS_BUILD_ADAPTIVE_R1BR1_FORENSICS
+    "Build the V2.4.R1B-R.1 Predictor D directional ownership forensics" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1BR1_FORENSICS)
+    qt_add_executable(adaptive_response_r1br_directional_ownership_forensics
+        tests/adaptive_response_r1br_directional_ownership_forensics.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1br_directional_ownership_forensics PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1br_directional_ownership_forensics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_r1br_directional_ownership_forensics PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1br_directional_ownership_forensics PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
