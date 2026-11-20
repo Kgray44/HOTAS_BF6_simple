@@ -467,6 +467,29 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R1B is an offline, compile-gated Predictor D shadow study. It links
+# deterministic estimator/test sources only; it cannot enter DirectInput,
+# vJoy, QML, MappingWorker, or a production mapper target.
+option(HOTAS_BUILD_ADAPTIVE_R1B_RESEARCH
+    "Build the V2.4.R1B Predictor D shadow validation" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R1B_RESEARCH)
+    qt_add_executable(adaptive_response_r1b_predictor_d_shadow
+        tests/adaptive_response_r1b_predictor_d_shadow.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r1b_predictor_d_shadow PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r1b_predictor_d_shadow PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_r1b_predictor_d_shadow PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r1b_predictor_d_shadow PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
