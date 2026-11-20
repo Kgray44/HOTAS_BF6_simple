@@ -467,6 +467,29 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# V2.4.R0.75 is an offline, compile-gated measurement-semantics audit.  This
+# executable links only the estimator/test sources and cannot enter
+# DirectInput, vJoy, QML, or MappingWorker.
+option(HOTAS_BUILD_ADAPTIVE_R075_RESEARCH
+    "Build the V2.4.R0.75 forecast-truth metric audit" OFF)
+if (HOTAS_BUILD_ADAPTIVE_R075_RESEARCH)
+    qt_add_executable(adaptive_response_r075_forecast_truth_audit
+        tests/adaptive_response_r075_forecast_truth_metric_audit.cpp
+        src/mapping_types.h
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/response_curve.h
+        src/response_curve.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_r075_forecast_truth_audit PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_r075_forecast_truth_audit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(adaptive_response_r075_forecast_truth_audit PRIVATE
+        HOTAS_ADAPTIVE_FORECAST_RESEARCH)
+    set_target_properties(adaptive_response_r075_forecast_truth_audit PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
