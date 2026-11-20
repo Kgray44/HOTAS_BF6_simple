@@ -467,6 +467,76 @@ if (HOTAS_BUILD_CURVE_RESEARCH_REPORT)
     target_include_directories(curve_research_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
+# Phase 2B is an opt-in offline evidence target. It links only the frozen
+# estimator and test harness; it cannot initialize the mapper, UI, DirectInput,
+# vJoy, or any physical device path.
+option(HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE2B_OPTIMIZER
+    "Build the offline V2.3.T Adaptive Response Phase 2B constrained optimizer" OFF)
+if (HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE2B_OPTIMIZER)
+    qt_add_executable(adaptive_response_phase2b_optimizer
+        tests/adaptive_response/phase2b_robust_preset_optimizer.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase2b_optimizer PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase2b_optimizer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase2b_optimizer PRIVATE
+        HOTAS_PHASE2B_FREEZE_SHA="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase2b-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}")
+    set_target_properties(adaptive_response_phase2b_optimizer PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
+# Phase 3B consumes the separately sealed final corpus exactly once.  This
+# test-only target reuses the Phase 2B corpus generator but links only the
+# frozen estimator and verification harness; it never opens the mapper, UI,
+# DirectInput, vJoy, or a physical device.
+option(HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE3B_QUALIFICATION
+    "Build the offline V2.3.T Phase 3B final baseline qualification runner" OFF)
+if (HOTAS_BUILD_ADAPTIVE_RESPONSE_PHASE3B_QUALIFICATION)
+    qt_add_executable(adaptive_response_phase3b_qualification
+        tests/adaptive_response/phase3b_final_baseline_qualification.cpp
+        tests/adaptive_response/verification_harness.h
+        tests/adaptive_response/trajectory_generator.cpp
+        tests/adaptive_response/recorded_trace_io.cpp
+        tests/adaptive_response/verification_harness.cpp
+        src/mapping_types.h
+        src/axis_mapping_transition.h
+        src/axis_mapping_transition.cpp
+        src/adaptive_response.h
+        src/adaptive_response.cpp
+        src/automation_engine.h
+        src/automation_engine.cpp
+    )
+    target_link_libraries(adaptive_response_phase3b_qualification PRIVATE Qt6::Core)
+    target_include_directories(adaptive_response_phase3b_qualification PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/adaptive_response
+    )
+    target_compile_definitions(adaptive_response_phase3b_qualification PRIVATE
+        HOTAS_PHASE3B_FREEZE_SHA="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_PHASE2B_FREEZE_SHA="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_COMMIT="055e047e2847fc2ec0f59ec457188f66124898e7"
+        HOTAS_VERIFICATION_SOURCE_BRANCH="codex/v2.3.0-adaptive-response"
+        HOTAS_VERIFICATION_HARNESS_COMMIT="phase3b-test-only"
+        HOTAS_VERIFICATION_APPLICATION_VERSION="${HOTAS_BF6_VERSION}")
+    set_target_properties(adaptive_response_phase3b_qualification PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 install(TARGETS HOTASMapper HOTASBF6Launcher
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
